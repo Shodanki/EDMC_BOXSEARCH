@@ -1,5 +1,5 @@
 1. This Plugin comes with NO Warrantie what so ever!.
-2. This Plugin is created via ChatGpt version 5 again we booth my make errors.
+2. This Plugin is created via ChatGpt version 5 again we booth may make errors.
 3. i still did not solved the theme aware issue so if you can create a fix i am happy to involve it.
 4. Other then this i am happy if this works for you as for me future updates my come if i need something.
 EDMC_SphereSurvey — README (v1.4.1)
