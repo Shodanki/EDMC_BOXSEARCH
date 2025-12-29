@@ -1,119 +1,429 @@
-1. This Plugin comes with NO Warrantie what so ever!.
-2. This Plugin is created via ChatGpt version 5 again we booth may make errors.
-3. i still did not solved the theme aware issue so if you can create a fix i am happy to involve it.
-4. Other then this i am happy if this works for you as for me future updates my come if i need something.
-EDMC_SphereSurvey — README (v1.4.1)
+# EDMC Sphere Survey Plugin (SHBOXSEARCH)
 
-A lightweight EDMarketConnector plugin to systematically survey all star systems in a spherical radius around your current location. It builds a worklist, selects the next target automatically, copies it to your clipboard for easy Galaxy Map search, and tracks progress to avoid duplicate jumps.
+Systematic Sphere/Box Survey Plugin for Elite Dangerous via ED Market Connector.
 
-What changed vs prior drafts: This edition reflects the actual implementation in v1.4.1 — local‑first neighbour data, EDSM cube‑tiling fallback, no EDSM token required, clipboard post‑jump fallback, and persistent resume. (The earlier ideas for single‑hop filtering, CETI integration, and EDSM personal logs are not part of this version.)
+**Version:** 3.0.7  
+**Date:** 2025-12-25  
+**License:** MIT
 
-Features
+## Features
 
-One‑click start: Build the nearby‑systems checklist from Local JSON (EDDiscovery/EDDicovery export) by default; if not available, use EDSM cube-systems tiling and compute the sphere locally from coordinates.
+- **Multi-API Support**: EDSM, Spansh, EDGIS, EDDiscovery DB, manual JSON import
+- **Intelligent Routing**: Prefers shortest jumps, considers jump range
+- **Progress Tracking**: Complete tracking of visited systems with persistence
+- **Theme Adaptation**: Automatically adapts to ED Market Connector theme
+- **Return to Start**: Navigation back to starting system after completion
+- **Clipboard Integration**: Automatic copying of next target
+- **Duplicate Prevention**: Robust dual-ID system (ID64 + Name)
 
-Progress tracking: Marks systems as visited on FSDJump/Location journal events; deduplicates by SystemAddress (id64) and name; persists queue & progress to state.json and restores on EDMC restart.
+## Installation
 
-Auto‑target: Always shows the next system and copies its name to the clipboard. Includes a post‑jump fallback re‑copy to stay in sync after rapid double‑jumps or NavRoute delays.
+### Prerequisites
 
-Radius filter: User‑set radius (ly). Sorting is nearest‑first from the start system.
+- Elite Dangerous
+- [ED Market Connector](https://github.com/EDCD/EDMarketConnector) (EDMC)
+- Python 3.7+ (usually installed with EDMC)
+- Requests library (for API access)
 
-Local‑first data: Reads neareststars.json (EDDiscovery/EDDicovery) containing neighbour names and coordinates; distances are recomputed locally.
+### Step 1: Create Plugin Folder
 
-Online fallback (optional): Uses EDSM /api-v1/cube-systems with tiling (edge ≤ 200 ly) and filters by local distance. No API key required.
+Windows:
+```
+C:\Users\[YOUR_NAME]\AppData\Local\EDMarketConnector\plugins\SHBOXSEARCH\
+```
 
-Theme‑aware UI: Uses EDMC’s themed myNotebook widgets — no hardcoded colours. “Next target” is a label to avoid white fields in dark themes.
+Linux/Mac:
+```
+~/.local/share/EDMarketConnector/plugins/SHBOXSEARCH/
+```
 
-Not included in v1.4.1: single‑hop/jump‑range filtering, CETI integration, and EDSM personal‑log filtering. These may be considered for a future release.
+### Step 2: Copy Files
 
-Requirements
+Copy the following files to the SHBOXSEARCH folder:
+- `load.py` (main plugin)
+- Optional: `neareststars.json` (local system database)
+- Optional: `combine_jsons.py` (utility script for multiple JSON files)
 
-EDMarketConnector 5.x+
+### Step 3: Restart EDMC
 
-Optional internet access to EDSM (only when using the online fallback)
+1. Close EDMC completely
+2. Restart EDMC
+3. Log should show: "loading plugin SHBOXSEARCH"
 
-Installation
+## Quick Start
 
-Create folder: EDMarketConnector/plugins/EDMC_SphereSurvey/
+### 1. Start Survey
 
-Save load.py (v1.4.1) into that folder.
+1. Fly to your starting system in Elite Dangerous
+2. In EDMC: Click **"Detect"** button
+3. Set radius (default: 50 ly)
+4. Click **"Start"** button
 
-(Optional) Place your neareststars.json (EDDiscovery/EDDicovery export) in the same folder or note its path for Settings.
+### 2. Perform Survey
 
-(Optional) Delete state.json to start fresh.
+1. Next target appears in UI
+2. With Auto-Copy enabled: System name is already in clipboard
+3. In Elite: Open Galaxy Map → Paste → Jump to target
+4. After FSD jump: Plugin updates automatically
+5. Perform scan → Next target is loaded
 
-Launch EDMC.
+### 3. End Survey
 
-Configuration (Preferences tab)
+- **On completion**: Plugin automatically returns to starting system
+- **Manual**: Click **"Stop"** button
+- **Pause**: Survey status is saved, can resume on next start
 
-Enable EDMC_SphereSurvey: Master on/off for logic and event processing.
+## Configuration
 
-Debug logging: Adds verbose lines to EDMC logs (prefix <SHBOXSEARCH>).
+### EDMC Settings → EDMC_SphereSurvey
 
-Data source: auto / local / edsm
+#### Basic Settings
 
-auto → prefer Local JSON if available, otherwise use EDSM cube‑tiling.
+- **Enable plugin**: Activate/deactivate plugin
+- **Debug logging**: Detailed logs for troubleshooting
+- **Default radius (ly)**: Default search radius (1-200 ly)
+- **Max jump range (ly)**: Maximum jump range of your ship
 
-local → force Local JSON.
+#### Data Sources
 
-edsm → force EDSM cube‑tiling (no token required).
+**Preferred data source:**
+- `auto` (recommended): Automatic selection of best available source
+- `local_json`: Use only local JSON file
+- `edd`: Use EDDiscovery database
+- `edsm`: Use only EDSM API
 
-Local JSON (neareststars.json): File path to your EDDiscovery/EDDicovery export.
+**Local JSON file:** Path to local system database (e.g., neareststars.json)
 
-Default radius (ly): Sphere radius for new runs.
+#### Behavior
 
-Auto‑copy next target: Keep clipboard synced to the next system.
+- **Auto-copy next target to clipboard**: Automatically copy next target
+- **Prefer shortest jumps from current position**: Prioritize shortest jumps
 
-Usage (Main panel)
+## Advanced Usage
 
-Verify Enabled is checked.
+### Combining Multiple JSON Files
 
-Click Detect system (should show your current system). Set Radius (ly) and choose Source.
+The plugin supports three JSON formats:
+1. `neareststars.json` (EDDiscovery)
+2. `galacticmapping.json` (Galactic Mapping)
+3. `gecmapping.json` (GEC Mapping)
 
-Click Start. The plugin builds the list; Next target appears and is copied to your clipboard.
+#### Using the Utility Script
 
-Jump and explore as usual. On each FSDJump/Location, the plugin marks progress, advances the queue, and re‑copies the next target (with a short fallback re‑copy if needed).
+1. Copy all JSON files to the plugin folder
+2. In `combine_jsons.py`, adjust the `PLUGIN_DIR` path
+3. Run script:
+   ```
+   python combine_jsons.py
+   ```
+4. Creates combined `neareststars.json` with backup
 
-Click Stop to pause (progress is preserved). Click Reset to clear state and state.json.
+#### Manual Combining
 
-When the queue is exhausted the panel shows Queue size: 0. You can reset to begin a new survey.
+Example neareststars.json format:
+```json
+{
+  "System": {
+    "Name": "Combined Database",
+    "X": 0.0,
+    "Y": 0.0,
+    "Z": 0.0
+  },
+  "Nearest": [
+    {
+      "Name": "Sol",
+      "X": 0.0,
+      "Y": 0.0,
+      "Z": 0.0
+    },
+    {
+      "Name": "Alpha Centauri",
+      "X": 3.03,
+      "Y": -0.09,
+      "Z": 3.15
+    }
+  ]
+}
+```
 
-How it works (technical)
+### API Priorities
 
-Local JSON path: Parse EDDiscovery/EDDicovery neareststars.json → read neighbour Name/X/Y/Z → compute distance from center → filter ≤ radius → sort → deduplicate by id64/name → persist queue.
+The plugin automatically selects the best available API:
 
-EDSM fallback path: Resolve center coords via /api-v1/system (by name or id64). Tile /api-v1/cube-systems (edge ≤ 200 ly) around the center to cover your radius → merge & deduplicate → compute distances locally → filter ≤ radius.
+1. **Local JSON** (highest priority when configured)
+   - Instant response
+   - Available offline
+   - Limited to imported systems
 
-Recognition: On FSDJump/Location, mark current system visited by SystemAddress (id64) (preferred) and by name (fallback), then advance and copy next target. A post‑jump fallback re‑copies after ~1.5 s to defeat timing races.
+2. **EDDiscovery DB**
+   - Very comprehensive database
+   - Local access
+   - Requires EDDiscovery installation
 
-Persistence: The queue, visited sets, and settings snapshot are stored in state.json and loaded on startup.
+3. **EDGIS**
+   - Best coverage for remote regions
+   - Fast API
+   - Publicly available
 
-Notes & limits
+4. **EDSM**
+   - Reliable and established
+   - Good coverage of known regions
+   - With cube-tiling fallback
 
-EDSM sparsity: Some regions return few/no neighbours; use Local JSON for best coverage.
+5. **Spansh**
+   - Alternative API
+   - Good data quality
 
-Large radii: EDSM tiling issues multiple cube queries; initial build may take longer for very large spheres.
+### Track Progress
 
-No periodic refresh: The list is built at Start (or resume). To include newly discovered systems from external sources, rebuild the list (Start after Reset) or switch to Local JSON exports that include the new data.
+The UI displays:
+- **Current System**: Current system
+- **Next Target**: Next system to visit
+- **Distance**: Distance to target
+- **Progress**: Visited/Remaining systems
+- **Survey Info**: Starting system and radius
 
-Privacy
+Progress is saved in `survey_state.json` and survives EDMC restarts.
 
-No credentials required. If you use EDSM fallback, only public proximity endpoints are called. The plugin stores only its own settings and state in EDMC’s config and its state.json file.
+## Troubleshooting
 
-Support
+### Plugin Doesn't Load
 
-Enable Debug logging and check EDMarketConnector-debug.log for lines beginning with <SHBOXSEARCH>.
+**Symptom:** No SHBOXSEARCH entries in log
 
-Common fixes: ensure EDMC journaling is active; verify Local JSON path (or EDSM internet access); reduce radius for sparse regions.
+**Solution:**
+1. Check folder name: Must be `SHBOXSEARCH`
+2. Check file name: Must be `load.py`
+3. Delete `__pycache__` folder if exists
+4. Restart EDMC
 
-Version history (recent)
+### Current System Not Detected
 
-1.4.1 — Post‑jump clipboard fallback; robustness for rapid double‑jumps; local‑first data; EDSM cube‑tiling fallback; persistence; themed UI.
+**Symptom:** "Current: Unknown" in UI
 
-1.4.0 — Switch to cube‑tiling only (no sphere endpoint); compute distances locally; local‑first workflow.
+**Solution:**
+1. Perform a hyperspace jump in Elite
+2. Click "Detect" button
+3. Enable debug logging and check log
+4. Check journal files (should contain Location/FSDJump events)
 
-1.3.0 — Removed Spansh; stable clipboard; persistence; theme‑safe labels; EDSM public endpoints only.
+### No Systems Found
 
-1.2.0 — Added Local JSON provider and id64 name/coord resolution.
+**Symptom:** "No systems found" when starting
 
-License: MIT © 2025
+**Solutions:**
+
+1. **API Issues:**
+   - Check internet connection
+   - Fly to inhabited system (e.g., Sol, Shinrarta Dezhra)
+   - Increase radius
+
+2. **Local JSON:**
+   - Does file exist and is valid JSON?
+   - Is path correct in Settings?
+   - Check format (see above)
+
+3. **EDDiscovery DB:**
+   - Is EDDiscovery installed?
+   - Is database current?
+
+### Settings Tab Won't Open
+
+**Symptom:** Error when opening Settings
+
+**Solution:**
+1. Delete `__pycache__`
+2. Ensure version 3.0.7 is installed
+3. Completely restart EDMC
+
+### Theme Doesn't Match
+
+**Symptom:** Plugin looks different from EDMC
+
+**Solution:**
+1. EDMC Settings → Appearance
+2. Switch theme (e.g., Default → Dark → Default)
+3. Plugin should adapt
+
+## Performance Tips
+
+### Large Surveys (>100 Systems)
+
+- **Use Local JSON**: Much faster than API queries
+- **EDDiscovery DB**: Good balance between speed and coverage
+- **Limit radius**: 50-100 ly for optimal performance
+
+### Sparsely Populated Regions
+
+- **Increase radius**: More chances to find systems
+- **Prefer EDSM**: Best coverage for fringe/outer regions
+- **Combine multiple sources**: Local JSON + API
+
+### Jump Optimization
+
+- **Enable "Prefer shortest jumps"**: Better coverage
+- **Set max jump range correctly**: Prevents unreachable targets
+- **Avoid neutron highway**: Plugin doesn't optimize for boosts
+
+## Known Limitations
+
+1. **Large radii (>200 ly)**: EDSM cube-tiling can become slow
+2. **Unknown systems**: API databases don't contain all systems
+3. **Carrier jumps**: Treated like normal jumps
+4. **Multi-commander**: Separate state per commander
+
+## Logs and Debugging
+
+### Enable Debug Mode
+
+1. EDMC Settings → EDMC_SphereSurvey
+2. Enable "Debug logging"
+3. Restart EDMC
+
+### Find Log File
+
+Windows:
+```
+%TEMP%\EDMarketConnector.log
+```
+
+Linux/Mac:
+```
+~/.local/share/EDMarketConnector/EDMarketConnector.log
+```
+
+### Important Log Entries
+
+```
+# Plugin loaded
+loading plugin SHBOXSEARCH
+Plugin started v3.0.7
+
+# System detected
+Location update: [System name] @ (x, y, z)
+Current system from monitor: [System name]
+
+# Survey started
+Survey started: X systems from [Source]
+Next target: [System name] (X.XX ly)
+
+# System visited
+Marking visited: [System name]
+Progress: X/Y visited, Z pending
+```
+
+## Development
+
+### Structure
+
+```
+SHBOXSEARCH/
+├── load.py              # Main plugin (EDMC entry point)
+├── combine_jsons.py     # JSON combiner (optional)
+├── neareststars.json    # Local database (optional)
+├── survey_state.json    # Progress (auto-created)
+└── README.md            # This file
+```
+
+### Important Functions
+
+- `plugin_start3()`: Plugin initialization
+- `plugin_app()`: UI creation
+- `journal_entry()`: Journal event processing
+- `dashboard_entry()`: Dashboard updates
+- `plugin_prefs()`: Settings UI
+
+### Extending API Integration
+
+Add new data source:
+
+```python
+class MyCustomSource(SystemDataSource):
+    def is_available(self) -> bool:
+        # Check availability
+        return True
+    
+    def get_systems_near(self, x, y, z, radius, system_name=None):
+        # Query systems
+        return [SystemNode(...), ...]
+    
+    def get_name(self) -> str:
+        return "My Custom Source"
+    
+    def get_priority(self) -> int:
+        return 50  # Lower = higher priority
+```
+
+## Changelog
+
+### Version 3.0.7 (2025-12-25)
+
+- Multi-API support with intelligent prioritization
+- Robust progress tracking (dual-ID system)
+- Complete theme support
+- Intelligent routing (shortest jumps)
+- Return-to-start feature
+- Clipboard integration with retry
+- Comprehensive error handling
+- Thread-safe implementation
+
+### Previous Versions
+
+- 1.4.1: Basic functionality, limited APIs
+- 1.0.0: Initial version
+
+## Support
+
+### Reporting Issues
+
+When reporting issues, please provide:
+
+1. **EDMC Version**: EDMC → Help → About
+2. **Plugin Version**: In log or Settings
+3. **Operating System**: Windows/Linux/Mac
+4. **Error Description**: What happens, what should happen
+5. **Log Excerpt**: With debug logging enabled
+6. **Configuration**: Settings screenshot
+
+### Community
+
+- Elite Dangerous Community
+- EDMC GitHub: https://github.com/EDCD/EDMarketConnector
+- EDSM: https://www.edsm.net
+
+## License
+
+MIT License © 2025
+
+```
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Credits
+
+- **Elite Dangerous**: © Frontier Developments
+- **EDMC**: ED Market Connector Development Team
+- **EDSM**: Elite Dangerous Star Map
+- **Spansh**: Spansh Tools
+- **EDGIS**: Elite Dangerous Galactic Information System
+- **EDDiscovery**: EDDiscovery Development Team
+
+---
+
+**Fly safe, Commander! o7**
