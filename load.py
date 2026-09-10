@@ -1,1379 +1,2035 @@
-# EDMC_SphereSurvey - Systematisches Sphere/Box Survey Plugin für Elite Dangerous
-# Version 3.0.7
-# MIT License © 2025
-#
-# Features:
-# - Multi-API Support: EDSM, Spansh, EDGIS, EDDiscovery DB, Manueller JSON Import
-# - Automatische API-Auswahl basierend auf Verfügbarkeit und Datenqualität
-# - Intelligentes Routing: Kürzeste Sprünge bevorzugt, Sprungreichweite berücksichtigt
-# - Vollständiges Progress-Tracking mit Persistierung
-# - Theme-bewusstes UI (passt sich an ED Market Connector Theme an)
-# - Rückkehr zum Start-System nach Abschluss
-# - Vermeidung doppelter System-Besuche
-# - Clipboard-Integration für schnelles Kopieren des nächsten Ziels
+# -*- coding: utf-8 -*-
+"""
+SHBOXSEARCH v4.0 - systematic sphere survey for Elite Dangerous
+===============================================================
+EDMC plugin. Goal: fully explore and chart a radius around a start point,
+deliberately hunting for systems that appear in no database at all.
+
+Documentation: see README.md in the plugin folder.
+
+Tested against EDMC 6.1.2 / Python 3.13.
+MIT License (c) 2025-2026
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
-import sqlite3
+import sys
 import threading
 import time
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import filedialog, ttk
+from typing import Any, Dict, List, Optional, Tuple
 
-# EDMC public API imports
+# EDMC API
 import myNotebook as nb
 from config import appname, config
 from theme import theme
-from ttkHyperlinkLabel import HyperlinkLabel
 
-# Logging setup
-import logging
-plugin_name = os.path.basename(os.path.dirname(__file__))
-logger = logging.getLogger(f"{appname}.{plugin_name}")
-if not logger.hasHandlers():
-    logger.setLevel(logging.DEBUG)
-    ch = logging.StreamHandler()
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(lineno)d:%(funcName)s: %(message)s"
-    )
-    formatter.default_time_format = "%Y-%m-%d %H:%M:%S"
-    formatter.default_msec_format = "%s.%03d"
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
+_PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+if _PLUGIN_DIR not in sys.path:
+    sys.path.append(_PLUGIN_DIR)
+
+from procgen import MASSCODES, parse_name                      # noqa: E402
+from sysdb import SystemDB, Q_JOURNAL, Q_UNKNOWN               # noqa: E402
+from sources import SourceManager                              # noqa: E402
+from sysroute import (DEFAULT_MODEL, bodies_from_rows,        # noqa: E402
+                      calibrate_from_journal, plan_route,
+                      resolve_positions, shorten)
+from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
+                       K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
+                       set_origin)
+
+VERSION = "4.0.0"
+PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
+logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
+
+DB_FILE = os.path.join(_PLUGIN_DIR, "shboxsearch.sqlite")
+
+# ------------------------------------------------------------------- settings
+CFG = {
+    "radius": "%s_radius" % PLUGIN_NAME,
+    "masscodes": "%s_masscodes" % PLUGIN_NAME,
+    "probe_depth": "%s_probe_depth" % PLUGIN_NAME,
+    "include_empty": "%s_include_empty" % PLUGIN_NAME,
+    "include_tasks": "%s_include_tasks" % PLUGIN_NAME,
+    "autocopy": "%s_autocopy" % PLUGIN_NAME,
+    "src_edd": "%s_src_edd" % PLUGIN_NAME,
+    "src_spansh": "%s_src_spansh" % PLUGIN_NAME,
+    "src_edsm": "%s_src_edsm" % PLUGIN_NAME,
+    "edd_path": "%s_edd_path" % PLUGIN_NAME,
+    "jump_range": "%s_jump_range" % PLUGIN_NAME,
+    "harvest_navroute": "%s_harvest_navroute" % PLUGIN_NAME,
+    "harvest_destination": "%s_harvest_dest" % PLUGIN_NAME,
+    "debug": "%s_debug" % PLUGIN_NAME,
+    "carrier_start": "%s_carrier_start" % PLUGIN_NAME,
+    "show_stats": "%s_show_stats" % PLUGIN_NAME,
+    "show_route": "%s_show_route" % PLUGIN_NAME,
+    "route_all": "%s_route_all" % PLUGIN_NAME,
+    "route_top": "%s_route_top" % PLUGIN_NAME,
+    "route_map": "%s_route_map" % PLUGIN_NAME,
+}
+RADIUS_CHOICES = ["50", "100", "150"]
+
+KIND_SHORT = {K_SCAN: "FSS", K_DSS: "DSS", K_BIO: "BIO", K_NEW: "NEW",
+              K_GAP: "GAP", K_PROBE: "PROBE", K_EMPTY: "EMPTY",
+              K_CHECK: "CHECK"}
+
 
 # ============================================================================
-# Version & Constants
-# ============================================================================
-VERSION = "3.0.7"
-VERSION_DATE = "2025-12-25"
-
-STATE_FILE = os.path.join(os.path.dirname(__file__), "survey_state.json")
-
-# API Endpoints
-EDSM_BASE = "https://www.edsm.net"
-EDSM_SPHERE = "/api-v1/sphere-systems"
-EDSM_CUBE = "/api-v1/cube-systems"
-EDSM_SYSTEM = "/api-v1/system"
-
-SPANSH_BASE = "https://spansh.co.uk"
-SPANSH_NEAREST = "/api/nearest"
-
-EDGIS_BASE = "https://edgis.elitedangereuse.fr/api"
-EDGIS_NEARBY = "/systems/nearby"
-
-# Config keys
-CFG_ENABLED = f"{plugin_name}_enabled"
-CFG_DEBUG = f"{plugin_name}_debug"
-CFG_RADIUS = f"{plugin_name}_radius"
-CFG_JUMP_RANGE = f"{plugin_name}_jump_range"
-CFG_DATA_SOURCE = f"{plugin_name}_data_source"
-CFG_LOCAL_PATH = f"{plugin_name}_local_path"
-CFG_AUTOCOPY = f"{plugin_name}_autocopy"
-CFG_PREFER_SHORT_JUMPS = f"{plugin_name}_prefer_short"
-
-# ============================================================================
-# Data Structures
+# State
 # ============================================================================
 
-@dataclass
-class SystemNode:
-    """Represents a star system."""
-    name: str
-    id64: Optional[int]
-    x: float
-    y: float
-    z: float
-    distance: float  # from start system
-    
-    def __hash__(self):
-        return hash((self.name, self.id64))
-    
-    def __eq__(self, other):
-        if not isinstance(other, SystemNode):
-            return False
-        if self.id64 and other.id64:
-            return self.id64 == other.id64
-        return self.name == other.name
+class State:
+    def __init__(self):
+        self.db: Optional[SystemDB] = None
+        self.lock = threading.RLock()
+        self.sources = SourceManager()
+        self.planner: Optional[Planner] = None
 
-@dataclass
-class SurveyState:
-    """Persistent survey state."""
-    active: bool = False
-    start_system: Optional[str] = None
-    start_coords: Optional[Tuple[float, float, float]] = None
-    radius_ly: float = 50.0
-    max_jump_ly: Optional[float] = None
-    prefer_short_jumps: bool = True
-    
-    # Survey progress
-    pending_systems: List[SystemNode] = field(default_factory=list)
-    visited_ids: Set[int] = field(default_factory=set)
-    visited_names: Set[str] = field(default_factory=set)
-    all_systems: Dict[str, SystemNode] = field(default_factory=dict)
-    
-    # Metadata
-    started_ts: Optional[float] = None
-    data_source_used: Optional[str] = None
-    
-    def reset(self) -> None:
-        """Reset survey state."""
         self.active = False
-        self.start_system = None
-        self.start_coords = None
-        self.pending_systems.clear()
-        self.visited_ids.clear()
-        self.visited_names.clear()
-        self.all_systems.clear()
-        self.started_ts = None
-        self.data_source_used = None
+        self.center: Optional[Tuple[float, float, float]] = None
+        self.start_system: Optional[str] = None
+        self.radius: float = 50.0
+
+        self.flight: List[Target] = []
+        self.probe: List[Target] = []
+        self.plan_counts: Dict[str, int] = {}
+        self.plan_info: str = ""
+
+        self.cur_system: Optional[str] = None
+        self.cur_id64: Optional[int] = None
+        self.cur_pos: Optional[Tuple[float, float, float]] = None
+        self.max_jump: Optional[float] = None
+        self.last_dest_id64: Optional[int] = None
+
+        self.sphere_id: Optional[int] = None
+        self.stats: Dict[str, Any] = {}
+        self.stats_lines: List[str] = []
+        self.carrier: Optional[Dict[str, Any]] = None
+        self.route = None
+        self.route_lines: List[str] = []
+        self.route_done: set = set()
+        self.route_full = False
+        self.route_feedback = ""
+        self.route_started: Optional[float] = None
+        self.cost_model = DEFAULT_MODEL
+        self.sc_segments: List[Tuple[float, float]] = []
+        self._sc_start: Optional[Tuple[float, float]] = None
+        self.finished_announced = False
+
+        self.busy = False
+        self.status = "ready"
+
+
+ST = State()
+
+# UI references
+_frame: Optional[tk.Frame] = None
+_v_status: Optional[tk.StringVar] = None
+_v_target: Optional[tk.StringVar] = None
+_v_kind: Optional[tk.StringVar] = None
+_v_sys: Optional[tk.StringVar] = None
+_v_queue: Optional[tk.StringVar] = None
+_v_probe: Optional[tk.StringVar] = None
+_btn_start: Optional[tk.Button] = None
+_btn_fc: Optional[tk.Button] = None
+_btn_stats: Optional[tk.Button] = None
+_btn_boxel: Optional[tk.Button] = None
+_btn_prefix: Optional[tk.Button] = None
+_btn_next: Optional[tk.Button] = None
+_lbl_stats = None
+_v_stats: Optional[tk.StringVar] = None
+_v_route: Optional[tk.StringVar] = None
+_lbl_route = None
+_btn_route: Optional[tk.Button] = None
+_carrier_var: Optional[tk.IntVar] = None
+_btn_absent: Optional[tk.Button] = None
+_btn_skip: Optional[tk.Button] = None
+_radius_var: Optional[tk.StringVar] = None
+
 
 # ============================================================================
-# API Abstraction
+# Config helpers (robust across EDMC versions)
 # ============================================================================
 
-class SystemDataSource(ABC):
-    """Abstract base class for system data sources."""
-    
-    @abstractmethod
-    def is_available(self) -> bool:
-        """Check if this data source is available."""
-        pass
-    
-    @abstractmethod
-    def get_systems_near(
-        self,
-        x: float,
-        y: float,
-        z: float,
-        radius: float,
-        system_name: Optional[str] = None
-    ) -> Optional[List[SystemNode]]:
-        """Get systems near coordinates."""
-        pass
-    
-    @abstractmethod
-    def get_name(self) -> str:
-        """Get human-readable name of this source."""
-        pass
-    
-    @abstractmethod
-    def get_priority(self) -> int:
-        """Get priority (lower = higher priority)."""
-        pass
-
-
-class EDSMSource(SystemDataSource):
-    """EDSM API - Reliable public API."""
-    
-    def __init__(self):
-        try:
-            import requests
-            self._session = requests.Session()
-            self._session.headers.update({
-                'User-Agent': 'EDMC-SphereSurvey/3.0.1',
-                'Accept': 'application/json'
-            })
-        except ImportError:
-            self._session = None
-    
-    def is_available(self) -> bool:
-        return self._session is not None
-    
-    def get_systems_near(self, x: float, y: float, z: float, radius: float, system_name: Optional[str] = None) -> Optional[List[SystemNode]]:
-        try:
-            # Try sphere query with coordinates (more reliable than by name)
-            systems = self._query_sphere_coords(x, y, z, radius)
-            
-            # Fallback to cube query if sphere fails
-            if not systems:
-                logger.info("EDSM sphere query failed, trying cube tiling")
-                systems = self._query_cube_tiled(x, y, z, radius)
-            
-            return systems
-        except Exception as e:
-            logger.error(f"EDSM query failed: {e}", exc_info=True)
-            return None
-    
-    def _query_sphere_coords(self, x: float, y: float, z: float, radius: float) -> Optional[List[SystemNode]]:
-        """Query EDSM sphere by coordinates."""
-        try:
-            url = f"{EDSM_BASE}{EDSM_SPHERE}"
-            params = {
-                'x': x,
-                'y': y,
-                'z': z,
-                'radius': radius,
-                'showCoordinates': 1
-            }
-            
-            logger.info(f"EDSM Sphere Query: {url} with radius {radius}")
-            
-            response = self._session.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            
-            # EDSM returns dict with error if no systems found or parameters invalid
-            if isinstance(data, dict):
-                if 'error' in data or 'msg' in data:
-                    logger.warning(f"EDSM API message: {data.get('error') or data.get('msg')}")
-                    return None
-                # Sometimes dict with 'systems' key
-                if 'systems' in data:
-                    data = data['systems']
-                else:
-                    logger.warning(f"EDSM returned dict without 'systems' key: {list(data.keys())}")
-                    return None
-            
-            if not isinstance(data, list):
-                logger.warning(f"EDSM data is not a list: {type(data)}")
-                return None
-            
-            systems = []
-            for sys in data:
-                if not isinstance(sys, dict) or 'coords' not in sys:
-                    continue
-                
-                try:
-                    sx = float(sys['coords']['x'])
-                    sy = float(sys['coords']['y'])
-                    sz = float(sys['coords']['z'])
-                    
-                    dx = sx - x
-                    dy = sy - y
-                    dz = sz - z
-                    dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-                    
-                    systems.append(SystemNode(
-                        name=sys['name'],
-                        id64=sys.get('id64'),
-                        x=sx,
-                        y=sy,
-                        z=sz,
-                        distance=dist
-                    ))
-                except (KeyError, ValueError, TypeError) as e:
-                    logger.debug(f"Skipping invalid system: {e}")
-                    continue
-            
-            systems.sort(key=lambda s: s.distance)
-            logger.info(f"EDSM sphere returned {len(systems)} systems")
-            return systems if systems else None
-            
-        except Exception as e:
-            logger.error(f"EDSM sphere query failed: {e}")
-            return None
-    
-    def _query_cube_tiled(self, x: float, y: float, z: float, radius: float) -> Optional[List[SystemNode]]:
-        """Query EDSM using cube tiling to cover the sphere."""
-        try:
-            # Use larger cube size and more tiles for better coverage
-            cube_size = 200  # EDSM max is 200
-            tiles_needed = max(1, int(math.ceil(radius / 80)))  # More overlap
-            
-            all_systems = []
-            seen_ids = set()
-            seen_names = set()
-            
-            logger.info(f"EDSM Cube Tiling: {tiles_needed}x{tiles_needed}x{tiles_needed} tiles, cube size {cube_size}")
-            
-            tile_count = 0
-            for tx in range(-tiles_needed, tiles_needed + 1):
-                for ty in range(-tiles_needed, tiles_needed + 1):
-                    for tz in range(-tiles_needed, tiles_needed + 1):
-                        cx = x + tx * 80  # 80ly spacing for overlap
-                        cy = y + ty * 80
-                        cz = z + tz * 80
-                        
-                        url = f"{EDSM_BASE}{EDSM_CUBE}"
-                        params = {'x': cx, 'y': cy, 'z': cz, 'size': cube_size, 'showCoordinates': 1}
-                        
-                        try:
-                            response = self._session.get(url, params=params, timeout=15)
-                            if response.status_code != 200:
-                                logger.debug(f"Tile ({tx},{ty},{tz}) returned {response.status_code}")
-                                continue
-                            
-                            data = response.json()
-                            
-                            # Handle dict response
-                            if isinstance(data, dict):
-                                if 'systems' in data:
-                                    data = data['systems']
-                                else:
-                                    continue
-                            
-                            if not isinstance(data, list):
-                                continue
-                            
-                            tile_systems = 0
-                            for sys in data:
-                                if not isinstance(sys, dict) or 'coords' not in sys:
-                                    continue
-                                
-                                sys_id = sys.get('id64')
-                                sys_name = sys.get('name', '')
-                                
-                                # Deduplicate by ID or name
-                                if sys_id and sys_id in seen_ids:
-                                    continue
-                                if sys_name in seen_names:
-                                    continue
-                                
-                                if sys_id:
-                                    seen_ids.add(sys_id)
-                                if sys_name:
-                                    seen_names.add(sys_name)
-                                
-                                try:
-                                    sx = float(sys['coords']['x'])
-                                    sy = float(sys['coords']['y'])
-                                    sz = float(sys['coords']['z'])
-                                    
-                                    dx = sx - x
-                                    dy = sy - y
-                                    dz = sz - z
-                                    dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-                                    
-                                    if dist <= radius:
-                                        all_systems.append(SystemNode(
-                                            name=sys_name,
-                                            id64=sys_id,
-                                            x=sx,
-                                            y=sy,
-                                            z=sz,
-                                            distance=dist
-                                        ))
-                                        tile_systems += 1
-                                except (KeyError, ValueError, TypeError):
-                                    continue
-                            
-                            tile_count += 1
-                            if tile_systems > 0:
-                                logger.debug(f"Tile ({tx},{ty},{tz}) added {tile_systems} systems")
-                                    
-                        except Exception as e:
-                            logger.debug(f"Cube tile ({tx},{ty},{tz}) failed: {e}")
-                            continue
-            
-            all_systems.sort(key=lambda s: s.distance)
-            logger.info(f"EDSM cube tiling: queried {tile_count} tiles, returned {len(all_systems)} systems")
-            return all_systems if all_systems else None
-            
-        except Exception as e:
-            logger.error(f"EDSM cube tiling failed: {e}")
-            return None
-    
-    def get_name(self) -> str:
-        return "EDSM"
-    
-    def get_priority(self) -> int:
-        return 2
-
-
-class EDDiscoverySource(SystemDataSource):
-    """EDDiscovery local database."""
-    
-    def __init__(self):
-        self.db_path = None
-        self._check_paths()
-    
-    def _check_paths(self):
-        possible_paths = [
-            os.path.expandvars(r"%APPDATA%\EDDiscovery\EDDUser.sqlite"),
-            os.path.expandvars(r"%LOCALAPPDATA%\EDDiscovery\EDDUser.sqlite"),
-            # Try alternative table names
-            os.path.expandvars(r"%APPDATA%\EDDiscovery\Systems.sqlite"),
-        ]
-        for path in possible_paths:
-            if os.path.exists(path):
-                self.db_path = path
-                logger.info(f"Found EDDiscovery DB at: {path}")
-                break
-    
-    def is_available(self) -> bool:
-        if not self.db_path:
-            return False
-        
-        # Test if we can actually query the database
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            # Try to find the correct table name
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
-            conn.close()
-            
-            logger.info(f"EDDiscovery DB tables: {tables}")
-            
-            # Check for known table names
-            if any(t in ['SystemList', 'Systems', 'EdsmSystems'] for t in tables):
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"EDDiscovery DB test failed: {e}")
-            return False
-    
-    def get_systems_near(self, x: float, y: float, z: float, radius: float, system_name: Optional[str] = None) -> Optional[List[SystemNode]]:
-        if not self.is_available():
-            logger.info("EDDiscovery DB not available, skipping")
-            return None
-        
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Try different table names
-            table_name = None
-            for name in ['SystemList', 'Systems', 'EdsmSystems', 'system']:
-                try:
-                    cursor.execute(f"SELECT * FROM {name} LIMIT 1")
-                    table_name = name
-                    logger.info(f"Using EDDiscovery table: {name}")
-                    break
-                except:
-                    continue
-            
-            if not table_name:
-                conn.close()
-                logger.error("No suitable table found in EDDiscovery DB")
-                return None
-            
-            # Query with bounding box
-            query = f"""
-            SELECT name, x, y, z, id
-            FROM {table_name}
-            WHERE 
-                x BETWEEN ? AND ? AND
-                y BETWEEN ? AND ? AND
-                z BETWEEN ? AND ?
-            LIMIT 1000
-            """
-            
-            cursor.execute(query, (
-                x - radius, x + radius,
-                y - radius, y + radius,
-                z - radius, z + radius
-            ))
-            
-            systems = []
-            for row in cursor.fetchall():
-                name, sx, sy, sz, sys_id = row
-                dx = sx - x
-                dy = sy - y
-                dz = sz - z
-                dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-                
-                if dist <= radius:
-                    systems.append(SystemNode(
-                        name=name,
-                        id64=sys_id,
-                        x=sx,
-                        y=sy,
-                        z=sz,
-                        distance=dist
-                    ))
-            
-            conn.close()
-            systems.sort(key=lambda s: s.distance)
-            logger.info(f"EDDiscovery DB returned {len(systems)} systems")
-            return systems if systems else None
-        except Exception as e:
-            logger.error(f"EDDiscovery query failed: {e}")
-            return None
-    
-    def get_name(self) -> str:
-        return "EDDiscovery"
-    
-    def get_priority(self) -> int:
-        return 0  # Local DB has highest priority
-
-
-class LocalJSONSource(SystemDataSource):
-    """Local JSON file (EDDiscovery export)."""
-    
-    def __init__(self, file_path: Optional[str] = None):
-        self.file_path = file_path
-        self._data = None
-        if file_path:
-            self._load_file()
-    
-    def set_file(self, path: str):
-        self.file_path = path
-        self._load_file()
-    
-    def _load_file(self):
-        if not self.file_path or not os.path.exists(self.file_path):
-            self._data = None
-            return
-        
-        try:
-            with open(self.file_path, 'r', encoding='utf-8') as f:
-                self._data = json.load(f)
-            logger.info(f"Loaded local JSON: {self.file_path}")
-        except Exception as e:
-            logger.error(f"Failed to load JSON: {e}")
-            self._data = None
-    
-    def is_available(self) -> bool:
-        return self._data is not None
-    
-    def get_systems_near(self, x: float, y: float, z: float, radius: float, system_name: Optional[str] = None) -> Optional[List[SystemNode]]:
-        if not self.is_available():
-            return None
-        
-        try:
-            raw_systems = self._data.get('Nearest', [])
-            systems = []
-            
-            for sys in raw_systems:
-                if not all(k in sys for k in ['Name', 'X', 'Y', 'Z']):
-                    continue
-                
-                dx = sys['X'] - x
-                dy = sys['Y'] - y
-                dz = sys['Z'] - z
-                dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-                
-                if dist <= radius:
-                    systems.append(SystemNode(
-                        name=sys['Name'],
-                        id64=None,  # Will be filled from journal
-                        x=sys['X'],
-                        y=sys['Y'],
-                        z=sys['Z'],
-                        distance=dist
-                    ))
-            
-            systems.sort(key=lambda s: s.distance)
-            logger.info(f"Local JSON returned {len(systems)} systems")
-            return systems if systems else None
-        except Exception as e:
-            logger.error(f"Local JSON processing failed: {e}")
-            return None
-    
-    def get_name(self) -> str:
-        return "Local JSON"
-    
-    def get_priority(self) -> int:
-        return 0  # Highest priority when available
-
-
-class DataSourceManager:
-    """Manages multiple data sources with automatic fallback."""
-    
-    def __init__(self):
-        self.sources: Dict[str, SystemDataSource] = {
-            'local_json': LocalJSONSource(),
-            'edd': EDDiscoverySource(),
-            'edsm': EDSMSource(),
-        }
-    
-    def set_local_file(self, path: str):
-        self.sources['local_json'].set_file(path)
-    
-    def get_best_source(self, prefer_source: Optional[str] = None) -> Optional[SystemDataSource]:
-        """Get best available source."""
-        # If preference specified and available, use it
-        if prefer_source and prefer_source in self.sources:
-            source = self.sources[prefer_source]
-            if source.is_available():
-                logger.info(f"Using preferred source: {source.get_name()}")
-                return source
-            else:
-                logger.warning(f"Preferred source {prefer_source} not available")
-        
-        # Otherwise, use best available by priority
-        available = [(s.get_priority(), name, s) for name, s in self.sources.items() if s.is_available()]
-        if not available:
-            logger.error("No data sources available!")
-            return None
-        
-        available.sort()
-        logger.info(f"Available sources: {[(name, s.get_name()) for _, name, s in available]}")
-        
-        return available[0][2]
-    
-    def get_systems_near(self, x: float, y: float, z: float, radius: float, 
-                        system_name: Optional[str] = None,
-                        prefer_source: Optional[str] = None) -> Tuple[Optional[List[SystemNode]], Optional[str]]:
-        """Get systems from best available source with automatic fallback."""
-        
-        # Build list of sources to try
-        sources_to_try = []
-        
-        # If preference specified, try it first
-        if prefer_source and prefer_source in self.sources:
-            source = self.sources[prefer_source]
-            if source.is_available():
-                sources_to_try.append((prefer_source, source))
-        
-        # Add all other available sources by priority
-        available = [(s.get_priority(), name, s) for name, s in self.sources.items() 
-                    if s.is_available() and name != prefer_source]
-        available.sort()
-        sources_to_try.extend([(name, s) for _, name, s in available])
-        
-        if not sources_to_try:
-            logger.error("No data sources available to try")
-            return None, None
-        
-        # Try each source until one succeeds
-        for source_name, source in sources_to_try:
-            logger.info(f"Trying data source: {source.get_name()}")
-            
-            try:
-                systems = source.get_systems_near(x, y, z, radius, system_name)
-                
-                if systems and len(systems) > 0:
-                    logger.info(f"SUCCESS: {source.get_name()} returned {len(systems)} systems")
-                    return systems, source.get_name()
-                else:
-                    logger.warning(f"EMPTY: {source.get_name()} returned no systems")
-            except Exception as e:
-                logger.error(f"ERROR: {source.get_name()} failed: {e}")
-                continue
-        
-        # All sources failed
-        logger.error("All data sources failed or returned no results")
-        return None, None
-
-# ============================================================================
-# Global State
-# ============================================================================
-
-_state = SurveyState()
-_data_manager = DataSourceManager()
-_current_system: Optional[str] = None
-_current_system_id: Optional[int] = None
-_current_coords: Optional[Tuple[float, float, float]] = None
-_current_max_jump: Optional[float] = None
-
-# UI Widgets
-_root_frame: Optional[tk.Frame] = None
-_status_var: Optional[tk.StringVar] = None
-_target_var: Optional[tk.StringVar] = None
-_progress_var: Optional[tk.StringVar] = None
-_source_status_var: Optional[tk.StringVar] = None
-
-# ============================================================================
-# Helper Functions
-# ============================================================================
-
-def _get_config_bool(key: str, default: bool = False) -> bool:
-    """Get boolean config value with fallback for older EDMC versions."""
+def cfg_bool(key: str, default: bool) -> bool:
     try:
-        if hasattr(config, 'get_bool'):
-            return config.get_bool(key)
-        else:
-            val = config.get(key)
-            if val is None:
-                return default
-            return bool(val)
-    except:
-        return default
+        v = config.get_bool(key)
+        return default if v is None else bool(v)
+    except Exception:
+        v = config.get(key)
+        return default if v is None else str(v) not in ("0", "False", "")
 
 
-def _get_config_int(key: str, default: int = 0) -> int:
-    """Get integer config value with fallback."""
+def cfg_int(key: str, default: int) -> int:
     try:
-        if hasattr(config, 'get_int'):
-            return config.get_int(key)
-        else:
-            val = config.get(key)
-            if val is None:
-                return default
-            return int(val)
-    except:
-        return default
+        v = config.get_int(key)
+        return default if v in (None, 0) and default else (default if v is None else int(v))
+    except Exception:
+        try:
+            return int(config.get(key))
+        except Exception:
+            return default
 
 
-def _get_config_str(key: str, default: str = '') -> str:
-    """Get string config value with fallback."""
+def cfg_str(key: str, default: str = "") -> str:
     try:
-        if hasattr(config, 'get_str'):
-            return config.get_str(key)
-        else:
-            val = config.get(key)
-            return str(val) if val is not None else default
-    except:
-        return default
+        v = config.get_str(key)
+    except Exception:
+        v = config.get(key)
+    return default if v in (None, "") else str(v)
 
-# ============================================================================
-# State Persistence
-# ============================================================================
 
-def _save_state():
-    """Save state to disk."""
+def cfg_set(key: str, value) -> None:
     try:
-        data = {
-            'active': _state.active,
-            'start_system': _state.start_system,
-            'start_coords': list(_state.start_coords) if _state.start_coords else None,
-            'radius_ly': _state.radius_ly,
-            'max_jump_ly': _state.max_jump_ly,
-            'prefer_short_jumps': _state.prefer_short_jumps,
-            'pending_systems': [
-                {
-                    'name': s.name,
-                    'id64': s.id64,
-                    'x': s.x,
-                    'y': s.y,
-                    'z': s.z,
-                    'distance': s.distance
-                } for s in _state.pending_systems
-            ],
-            'visited_ids': list(_state.visited_ids),
-            'visited_names': list(_state.visited_names),
-            'all_systems': {
-                name: {
-                    'name': s.name,
-                    'id64': s.id64,
-                    'x': s.x,
-                    'y': s.y,
-                    'z': s.z,
-                    'distance': s.distance
-                } for name, s in _state.all_systems.items()
-            },
-            'started_ts': _state.started_ts,
-            'data_source_used': _state.data_source_used
-        }
-        
-        with open(STATE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2)
-        
-        logger.debug("State saved")
+        config.set(key, value)
     except Exception as e:
-        logger.error(f"Failed to save state: {e}")
+        logger.warning("config.set(%s) fehlgeschlagen: %s", key, e)
 
 
-def _load_state():
-    """Load state from disk."""
-    if not os.path.exists(STATE_FILE):
-        return
-    
-    try:
-        with open(STATE_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        _state.active = data.get('active', False)
-        _state.start_system = data.get('start_system')
-        coords = data.get('start_coords')
-        _state.start_coords = tuple(coords) if coords else None
-        _state.radius_ly = data.get('radius_ly', 50.0)
-        _state.max_jump_ly = data.get('max_jump_ly')
-        _state.prefer_short_jumps = data.get('prefer_short_jumps', True)
-        
-        _state.pending_systems = [
-            SystemNode(**s) for s in data.get('pending_systems', [])
-        ]
-        _state.visited_ids = set(data.get('visited_ids', []))
-        _state.visited_names = set(data.get('visited_names', []))
-        _state.all_systems = {
-            name: SystemNode(**s) for name, s in data.get('all_systems', {}).items()
-        }
-        _state.started_ts = data.get('started_ts')
-        _state.data_source_used = data.get('data_source_used')
-        
-        logger.info(f"State loaded: {len(_state.pending_systems)} pending, {len(_state.visited_names)} visited")
-    except Exception as e:
-        logger.error(f"Failed to load state: {e}")
+def get_masscodes() -> List[int]:
+    raw = cfg_str(CFG["masscodes"], "0,1,2,3")
+    out = []
+    for p in raw.split(","):
+        p = p.strip()
+        if p.isdigit() and 0 <= int(p) <= 7:
+            out.append(int(p))
+    return out or [0, 1, 2, 3]
+
 
 # ============================================================================
-# Current Location Detection
-# ============================================================================
-
-def _update_current_location_from_monitor():
-    """Update current location from EDMC monitor state."""
-    global _current_system, _current_system_id, _current_coords
-    
-    try:
-        from monitor import monitor
-        state = monitor.state
-        
-        if not state:
-            logger.debug("Monitor state is empty")
-            return False
-        
-        system_name = state.get('SystemName') or state.get('StarSystem')
-        system_id = state.get('SystemAddress')
-        coords = state.get('StarPos')
-        
-        changed = False
-        
-        if system_name and system_name != _current_system:
-            _current_system = system_name
-            changed = True
-            logger.info(f"Current system from monitor: {system_name}")
-        
-        if system_id and system_id != _current_system_id:
-            _current_system_id = system_id
-            changed = True
-            logger.info(f"Current system ID from monitor: {system_id}")
-        
-        if coords and len(coords) >= 3:
-            new_coords = tuple(coords[:3])
-            if new_coords != _current_coords:
-                _current_coords = new_coords
-                changed = True
-                logger.info(f"Current coords from monitor: {_current_coords}")
-        
-        return changed
-        
-    except Exception as e:
-        logger.error(f"Failed to update from monitor: {e}")
-        return False
-
-# ============================================================================
-# Survey Logic
-# ============================================================================
-
-def _get_next_target() -> Optional[SystemNode]:
-    """Get next system to visit, preferring shortest jumps if configured."""
-    if not _state.pending_systems or not _current_coords:
-        return None
-    
-    if _state.prefer_short_jumps and _current_coords:
-        # Find nearest unvisited system from current position
-        cx, cy, cz = _current_coords
-        
-        def dist_from_current(sys: SystemNode) -> float:
-            dx = sys.x - cx
-            dy = sys.y - cy
-            dz = sys.z - cz
-            return math.sqrt(dx*dx + dy*dy + dz*dz)
-        
-        # Filter by jump range if available
-        candidates = _state.pending_systems
-        if _state.max_jump_ly:
-            candidates = [s for s in candidates if dist_from_current(s) <= _state.max_jump_ly]
-        
-        if not candidates:
-            # No reachable systems, take closest even if out of range
-            candidates = _state.pending_systems
-        
-        # Sort by distance from current position
-        candidates.sort(key=dist_from_current)
-        return candidates[0] if candidates else None
-    else:
-        # Take next from queue (sorted by distance from start)
-        return _state.pending_systems[0] if _state.pending_systems else None
-
-
-def _mark_visited(system_name: str, system_id: Optional[int] = None):
-    """Mark a system as visited."""
-    if system_id:
-        _state.visited_ids.add(system_id)
-    _state.visited_names.add(system_name)
-    
-    # Remove from pending
-    _state.pending_systems = [s for s in _state.pending_systems 
-                              if s.name != system_name and (not system_id or s.id64 != system_id)]
-    
-    # Update UI
-    if _root_frame:
-        _root_frame.after(0, _refresh_ui)
-    
-    _save_state()
-    logger.info(f"Marked visited: {system_name} (ID: {system_id})")
-
-
-def _copy_to_clipboard(text: str):
-    """Copy text to clipboard."""
-    try:
-        if not _root_frame:
-            logger.error("Cannot copy to clipboard: _root_frame is None")
-            return
-        
-        _root_frame.clipboard_clear()
-        _root_frame.clipboard_append(text)
-        _root_frame.update()
-        logger.info(f"✓ Copied to clipboard: {text}")
-    except Exception as e:
-        logger.error(f"Clipboard copy failed: {e}", exc_info=True)
-
-
-def _start_survey():
-    """Start a new survey."""
-    global _current_system, _current_coords
-    
-    # Try to get current location from monitor
-    _update_current_location_from_monitor()
-    
-    if not _current_system or not _current_coords:
-        logger.error("Cannot start: no current system")
-        if _status_var:
-            _status_var.set("Error: No current system detected")
-            _status_var.set("Error: Start Elite Dangerous first")
-        return
-    
-    # Get config
-    radius = config.get_int(CFG_RADIUS) if hasattr(config, 'get_int') else int(config.get(CFG_RADIUS) or 50)
-    prefer_source = config.get_str(CFG_DATA_SOURCE) if hasattr(config, 'get_str') else config.get(CFG_DATA_SOURCE)
-    
-    # Reset state
-    _state.reset()
-    _state.active = True
-    _state.start_system = _current_system
-    _state.start_coords = _current_coords
-    _state.radius_ly = radius
-    _state.max_jump_ly = _current_max_jump
-    _state.prefer_short_jumps = config.get_bool(CFG_PREFER_SHORT_JUMPS) if hasattr(config, 'get_bool') else bool(config.get(CFG_PREFER_SHORT_JUMPS))
-    _state.started_ts = time.time()
-    
-    # Query systems in background thread
-    def query_systems():
-        x, y, z = _current_coords
-        systems, source_name = _data_manager.get_systems_near(x, y, z, radius, _current_system, prefer_source)
-        
-        if not systems:
-            logger.error("No systems found")
-            if _status_var:
-                _root_frame.after(0, lambda: _status_var.set("Error: No systems found"))
-            _state.reset()
-            return
-        
-        # Store all systems
-        _state.all_systems = {s.name: s for s in systems}
-        _state.pending_systems = list(systems)
-        _state.data_source_used = source_name
-        
-        # Mark start system as visited
-        _state.visited_names.add(_current_system)
-        if _current_system_id:
-            _state.visited_ids.add(_current_system_id)
-        
-        _state.pending_systems = [s for s in _state.pending_systems if s.name != _current_system]
-        
-        _save_state()
-        
-        # Update UI and copy first target
-        if _root_frame:
-            _root_frame.after(0, _refresh_ui)
-            target = _get_next_target()
-            autocopy_enabled = _get_config_bool(CFG_AUTOCOPY, True)
-            logger.info(f"Auto-copy enabled: {autocopy_enabled}, Target: {target.name if target else None}")
-            if target and autocopy_enabled:
-                logger.info(f"Scheduling clipboard copy for: {target.name}")
-                _root_frame.after(0, lambda: _copy_to_clipboard(target.name))
-        
-        logger.info(f"Survey started: {len(systems)} systems from {source_name}")
-    
-    thread = threading.Thread(target=query_systems, daemon=True)
-    thread.start()
-    
-    if _status_var:
-        _status_var.set("Loading systems...")
-
-
-def _stop_survey():
-    """Stop current survey."""
-    _state.active = False
-    _save_state()
-    _refresh_ui()
-    logger.info("Survey stopped")
-
-
-def _reset_survey():
-    """Reset survey state."""
-    _state.reset()
-    if os.path.exists(STATE_FILE):
-        os.remove(STATE_FILE)
-    _refresh_ui()
-    logger.info("Survey reset")
-
-
-def _return_to_start():
-    """Queue return to start system."""
-    if not _state.start_system:
-        return
-    
-    if _current_system == _state.start_system:
-        logger.info("Already at start system")
-        if _status_var:
-            _status_var.set("Already at start system")
-        return
-    
-    # Copy start system name to clipboard
-    _copy_to_clipboard(_state.start_system)
-    if _status_var:
-        _status_var.set(f"Return to: {_state.start_system}")
-    logger.info(f"Returning to start: {_state.start_system}")
-
-# ============================================================================
-# UI Functions
-# ============================================================================
-
-def _refresh_ui():
-    """Update all UI elements."""
-    if not _root_frame:
-        return
-    
-    try:
-        # Status
-        if _status_var:
-            if _state.active:
-                _status_var.set("Survey Active")
-            else:
-                _status_var.set("Inactive")
-        
-        # Target
-        if _target_var:
-            target = _get_next_target()
-            if target:
-                _target_var.set(target.name)
-            elif _state.active and not _state.pending_systems:
-                _target_var.set("Survey Complete!")
-            else:
-                _target_var.set("-")
-        
-        # Progress
-        if _progress_var:
-            if _state.all_systems:
-                total = len(_state.all_systems)
-                visited = len(_state.visited_names)
-                pending = len(_state.pending_systems)
-                _progress_var.set(f"{visited}/{total} visited, {pending} pending")
-            else:
-                _progress_var.set("-")
-        
-        # Source status
-        if _source_status_var:
-            if _state.data_source_used:
-                _source_status_var.set(f"Source: {_state.data_source_used}")
-            else:
-                _source_status_var.set("No data source")
-    except Exception as e:
-        logger.error(f"UI refresh failed: {e}")
-
-# ============================================================================
-# EDMC Plugin Interface
+# EDMC lifecycle
 # ============================================================================
 
 def plugin_start3(plugin_dir: str) -> str:
-    """Plugin initialization."""
-    global PLUGIN_DIR, STATE_PATH, _data_manager
-    PLUGIN_DIR = plugin_dir
-    STATE_PATH = STATE_FILE
-    
-    # Set defaults on first run
-    if config.get(CFG_ENABLED) is None:
-        config.set(CFG_ENABLED, True)
-    if config.get(CFG_AUTOCOPY) is None:
-        config.set(CFG_AUTOCOPY, True)
-    if config.get(CFG_PREFER_SHORT_JUMPS) is None:
-        config.set(CFG_PREFER_SHORT_JUMPS, True)
-    if config.get(CFG_RADIUS) is None:
-        config.set(CFG_RADIUS, 50)
-    
-    # Auto-load neareststars.json from plugin folder if present
-    auto_json = os.path.join(plugin_dir, 'neareststars.json')
-    if os.path.exists(auto_json):
-        logger.info(f"Auto-loading neareststars.json from plugin folder")
-        local_source = _data_manager.sources.get('local_json')
-        if local_source:
-            local_source.set_file(auto_json)
-            # Save to config so it appears in settings
-            config.set(CFG_LOCAL_PATH, auto_json)
-    
-    _load_state()
-    logger.info(f"Plugin started v{VERSION}")
-    return f"EDMC_SphereSurvey v{VERSION}"
+    logger.info("SHBOXSEARCH v%s starting", VERSION)
+    try:
+        ST.db = SystemDB(DB_FILE)
+        ST.planner = Planner(ST.db)
+    except Exception:
+        logger.exception("could not open database")
+        return "SHBOXSEARCH"
+
+    ST.sources = SourceManager(cfg_str(CFG["edd_path"]) or None)
+
+    if not ST.db.get_meta("migrated"):
+        _run_async(_first_run_migration, label="first-run import")
+
+    ST.carrier = ST.db.get_carrier()
+    if ST.carrier:
+        logger.info("fleet carrier remembered at %s", ST.carrier["system"])
+
+    row = ST.db.load_survey()
+    if row and row["active"] and row["cx"] is not None:
+        ST.active = True
+        ST.center = (row["cx"], row["cy"], row["cz"])
+        ST.start_system = row["start_system"]
+        ST.radius = row["radius"] or 50.0
+        logger.info("restored running survey: %s r=%.0f ly",
+                    ST.start_system, ST.radius)
+        _run_async(_rebuild_plan, label="loading plan")
+    _run_async(_rebuild_route, label="in-system route")
+    return "SHBOXSEARCH"
 
 
-def plugin_stop():
-    """Plugin shutdown."""
-    _save_state()
-    logger.info("Plugin stopped")
+def plugin_stop() -> None:
+    _route_window_close()
+    with ST.lock:
+        if ST.db:
+            ST.db.close()
+    logger.info("SHBOXSEARCH stopped")
+
+
+# ============================================================================
+# Background work
+# ============================================================================
+
+def _run_async(fn, *args, label: str = "working", **kw) -> None:
+    def wrapper():
+        ST.busy = True
+        _set_status(label + " ...")
+        try:
+            fn(*args, **kw)
+        except Exception:
+            logger.exception("background task '%s' failed", label)
+            _set_status("error - see log")
+        finally:
+            ST.busy = False
+            _ui(_refresh)
+    threading.Thread(target=wrapper, daemon=True, name="SHBOX-" + label).start()
+
+
+def _fetch_sources() -> None:
+    if not ST.center:
+        return
+    enabled = []
+    if cfg_bool(CFG["src_edd"], True):
+        enabled.append("edd")
+    if cfg_bool(CFG["src_spansh"], True):
+        enabled.append("spansh")
+    if cfg_bool(CFG["src_edsm"], True):
+        enabled.append("edsm")
+    if not enabled:
+        return
+    if ST.cur_id64 and ST.cur_pos:
+        ST.sources.set_reference(ST.cur_id64, ST.cur_pos)
+    logger.info("querying sources %s for r=%.0f ly around %s",
+                enabled, ST.radius, ST.center)
+    for name, ok, why in ST.sources.status():
+        logger.info("  source %-12s %-3s %s", name, "ok" if ok else "no", why)
+    rows, used = ST.sources.fetch_all(ST.center, ST.radius, enabled,
+                                      progress=lambda s: _set_status(s))
+    with ST.lock:
+        n = 0
+        for r in rows:
+            if ST.db.upsert(r.get("name"), r.get("x"), r.get("y"), r.get("z"),
+                            id64=r.get("id64"), source=r.get("source", "external"),
+                            commit=False):
+                n += 1
+            for extra in r.get("also") or []:
+                ST.db.upsert(r.get("name"), source=extra, quality=Q_UNKNOWN,
+                             commit=False)
+        ST.db.cx.commit()
+    logger.info("sources returned %d rows from %s -> %d new systems",
+                len(rows), ", ".join(used) or "none", n)
+    _set_status("%d new systems from %s" % (n, ", ".join(used) or "no source"))
+
+
+def _rebuild_plan() -> None:
+    if not (ST.center and ST.planner):
+        return
+    with ST.lock:
+        plan = ST.planner.build(
+            ST.center, ST.radius,
+            masscodes=get_masscodes(),
+            probe_depth=max(0, cfg_int(CFG["probe_depth"], 2)),
+            include_empty=cfg_bool(CFG["include_empty"], True),
+            include_tasks=cfg_bool(CFG["include_tasks"], True),
+            origin=ST.cur_pos)
+        ST.stats = ST.planner.statistics(plan)
+    ST.flight = plan["flight"]
+    ST.probe = plan["probe"]
+    ST.plan_counts = plan["counts"]
+    ST.plan_info = Planner.summary(plan)
+    ST.stats_lines = Planner.stats_lines(ST.stats)
+    for line in ST.stats_lines:
+        logger.info("stats | %s", line)
+    if ST.stats.get("finished") and not ST.finished_announced:
+        ST.finished_announced = True
+        logger.info("AREA COMPLETE: sphere r=%.0f ly around %s is exhausted",
+                    ST.radius, ST.start_system)
+        _set_status("AREA COMPLETE - move on, next sphere >= %.0f ly away"
+                    % (ST.radius * 2.0))
+    logger.info("plan rebuilt: %d flight targets, %d probes | %s",
+                len(ST.flight), len(ST.probe), ST.plan_counts)
+
+
+def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, float, float]]]:
+    """
+    Read the current system straight out of the newest journal file.
+
+    EDMC synthesises StartUp when the game is already running, so a session
+    that begins parked in a system never sees FSDJump or Location and the
+    plugin would otherwise have no idea where it is. Scanning the newest
+    journal backwards for the last location event answers it exactly - name,
+    id64 and coordinates, no guessing.
+    """
+    import glob
+    d = _journal_dir()
+    if not d:
+        return None
+    files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
+                   + glob.glob(os.path.join(d, "Journal_*.log")))
+    for fn in reversed(files[-3:]):
+        try:
+            with open(fn, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            line = line.strip()
+            if not line or '"StarSystem"' not in line:
+                continue
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("event") not in ("FSDJump", "Location", "CarrierJump"):
+                continue
+            pos = e.get("StarPos") or []
+            if e.get("StarSystem") and e.get("SystemAddress") and len(pos) >= 3:
+                return (e["StarSystem"], e["SystemAddress"],
+                        (pos[0], pos[1], pos[2]))
+    return None
+
+
+def _resolve_current_system() -> None:
+    """Establish the current system if no jump has been seen this session."""
+    if ST.cur_id64 or not ST.db:
+        return
+    found = _current_system_from_journal()
+    if found:
+        ST.cur_system, ST.cur_id64, ST.cur_pos = found
+        logger.info("current system read from journal: %s", ST.cur_system)
+        with ST.lock:
+            ST.db.upsert(ST.cur_system, ST.cur_pos[0], ST.cur_pos[1],
+                         ST.cur_pos[2], id64=ST.cur_id64, quality=Q_JOURNAL,
+                         source="journal", visited=True)
+        return
+    with ST.lock:
+        row = ST.db.cx.execute(
+            "SELECT name, id64, x, y, z FROM systems WHERE visited=1 "
+            "AND id64 IS NOT NULL ORDER BY visited_ts DESC LIMIT 1").fetchone()
+    if row:
+        ST.cur_system = row["name"]
+        ST.cur_id64 = row["id64"]
+        if row["x"] is not None:
+            ST.cur_pos = (row["x"], row["y"], row["z"])
+        logger.info("current system assumed from history: %s", ST.cur_system)
+
+
+def _rebuild_route() -> None:
+    """Order the bodies of the current system into a short in-system route."""
+    ST.route = None
+    ST.route_lines = []
+    _resolve_current_system()
+    if not (ST.db and ST.cur_id64):
+        logger.info("route | no current system known yet")
+        return
+    with ST.lock:
+        rows = ST.db.bodies_of(ST.cur_id64)
+    if not rows:
+        # Nothing stored for this system - the scans may predate the plugin or
+        # have happened while it was not running. Replay the recent journals
+        # once and try again.
+        logger.info("route | no bodies stored for %s, replaying recent journals",
+                    ST.cur_system)
+        d = _journal_dir()
+        if d:
+            with ST.lock:
+                res = ST.db.import_journals(d, max_files=6)
+            logger.info("route | replayed %s", res)
+            with ST.lock:
+                rows = ST.db.bodies_of(ST.cur_id64)
+    if not rows:
+        logger.info("route | %s has no scanned bodies yet - run a system scan",
+                    ST.cur_system)
+        _ui(_route_window_refresh)
+        return
+    bodies = bodies_from_rows(rows)
+    for b in bodies.values():
+        b.short = shorten(b.name, ST.cur_system or "")
+    want_all = cfg_bool(CFG["route_all"], False)
+    route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
+                       only_work=not want_all)
+    ST.route_full = False
+    if not route.stops and not want_all:
+        # Nothing outstanding - show the complete tour anyway rather than an
+        # empty window. Useful when revisiting a system, and it makes clear
+        # that the system really is finished rather than unknown.
+        route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
+                           only_work=False)
+        ST.route_full = True
+    ST.route = route
+    ST.route_lines = route.lines(limit=12)
+    valid = {st.body.body_id for st in route.stops}
+    ST.route_done = {b for b in ST.route_done if b in valid}
+    if not ST.route_done:
+        ST.route_started = None
+        ST.route_feedback = ""
+    logger.info("route | %s", route.summary())
+    for line in route.lines(limit=8):
+        logger.info("route | %s", line)
+    _ui(_route_window_refresh)
+
+
+# ---------------------------------------------------------------------------
+# In-system route window
+# ---------------------------------------------------------------------------
+
+_MONO_FAMILY = "Consolas" if sys.platform == "win32" else "TkFixedFont"
+_MONO = (_MONO_FAMILY, 9)
+_FONT_GROUP = (_MONO_FAMILY, 11, "bold")   # planetary system header
+_FONT_BODY = (_MONO_FAMILY, 9)             # a planet
+_FONT_MOON = (_MONO_FAMILY, 8)             # a moon, visually subordinate
+_FONT_SMALL = (_MONO_FAMILY, 8)
+# Markers that make the hierarchy readable at a glance
+_MARK_PLANET = "\u25cf"    # filled circle - a planetary system heading
+_MARK_BODY = "\u25cb"      # hollow circle - the planet itself
+_MARK_MOON = "\u00b7"      # middle dot - a moon of that planet
+_route_win: Optional[tk.Toplevel] = None
+_route_rows: List[Dict[str, Any]] = []
+_route_head: Optional[tk.StringVar] = None
+_route_body: Optional[tk.Frame] = None
+_route_map: Optional[tk.Canvas] = None
+_MAP_W, _MAP_H = 340, 340
+
+
+def _theme_colours() -> Dict[str, str]:
+    """
+    Take the colours straight off the main panel.
+
+    EDMC's theme module registers widgets it created itself; a Toplevel a
+    plugin opens is not part of that. Reading the live values from the plugin
+    frame therefore matches whatever theme is active - default, dark or the
+    user's own transparent setup - without depending on theme internals.
+    """
+    bg = fg = None
+    for widget in (_frame, _frame.master if _frame else None):
+        if widget is None:
+            continue
+        try:
+            bg = bg or str(widget.cget("background"))
+        except Exception:
+            pass
+        if bg:
+            break
+    for widget in (_frame,):
+        if widget is None:
+            continue
+        try:
+            for child in widget.winfo_children():
+                try:
+                    fg = str(child.cget("foreground"))
+                    if fg:
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    try:
+        font = _frame.cget("font") if _frame else None
+    except Exception:
+        font = None
+    return {"bg": bg or "", "fg": fg or "", "font": font or ""}
+
+
+def _apply_theme(widget, colours: Dict[str, str], is_text: bool = False) -> None:
+    """Paint one widget in the host application's colours."""
+    opts = {}
+    if colours.get("bg"):
+        opts["background"] = colours["bg"]
+    if is_text and colours.get("fg"):
+        opts["foreground"] = colours["fg"]
+    if opts:
+        try:
+            widget.configure(**opts)
+        except Exception:
+            pass
+
+
+def _theme_tree(widget, colours: Dict[str, str]) -> None:
+    """Apply the colours to a widget and everything below it."""
+    cls = widget.__class__.__name__
+    _apply_theme(widget, colours, is_text=cls in ("Label", "Checkbutton"))
+    try:
+        children = widget.winfo_children()
+    except Exception:
+        return
+    for child in children:
+        _theme_tree(child, colours)
+
+
+def _toggle_route_window() -> None:
+    """Open or close the route window."""
+    global _route_win
+    if _route_win is not None:
+        _route_window_close()
+        return
+    _route_window_open()
+
+
+def _route_window_close() -> None:
+    global _route_win, _route_body, _route_rows, _route_map
+    if _route_win is not None:
+        try:
+            _route_win.destroy()
+        except Exception:
+            pass
+    _route_win = None
+    _route_body = None
+    _route_map = None
+    _route_rows = []
+    _refresh()
+
+
+def _route_window_open() -> None:
+    """
+    A separate window listing the in-system route.
+
+    Copy and paste is pointless in here: bodies are picked in the system map,
+    not typed. So the window is a checklist - tick a stop off and the remaining
+    time updates. Only the external jump target is ever copied, from the main
+    panel.
+    """
+    global _route_win, _route_head, _route_body
+    if _frame is None:
+        return
+    _route_win = tk.Toplevel(_frame)
+    _route_win.title("SHBOXSEARCH - in-system route")
+    _route_win.protocol("WM_DELETE_WINDOW", _route_window_close)
+    try:
+        _route_win.attributes("-topmost", cfg_bool(CFG["route_top"], True))
+    except Exception:
+        pass
+
+    _route_head = tk.StringVar(value="")
+    tk.Label(_route_win, textvariable=_route_head, anchor=tk.W,
+             justify=tk.LEFT).grid(row=0, column=0, sticky=tk.EW,
+                                   padx=8, pady=(8, 4))
+
+    global _route_map
+    _route_map = tk.Canvas(_route_win, width=_MAP_W, height=_MAP_H,
+                           highlightthickness=0)
+    if cfg_bool(CFG["route_map"], True):
+        _route_map.grid(row=1, column=0, sticky=tk.EW, padx=8, pady=(2, 4))
+
+    _route_body = tk.Frame(_route_win)
+    _route_body.grid(row=2, column=0, sticky=tk.NSEW, padx=8)
+    _route_win.columnconfigure(0, weight=1)
+    _route_win.rowconfigure(2, weight=1)
+
+    bar = tk.Frame(_route_win)
+    bar.grid(row=3, column=0, sticky=tk.EW, padx=8, pady=(4, 8))
+    tk.Button(bar, text="refresh",
+              command=lambda: _run_async(_rebuild_route, label="route")).pack(
+        side=tk.LEFT)
+    tk.Button(bar, text="map", command=_route_map_toggle).pack(
+        side=tk.LEFT, padx=(4, 0))
+    tk.Button(bar, text="reset ticks", command=_route_reset).pack(
+        side=tk.LEFT, padx=(4, 0))
+    tk.Button(bar, text="map", command=_toggle_map).pack(
+        side=tk.LEFT, padx=(4, 0))
+    tk.Button(bar, text="review", command=_route_review).pack(
+        side=tk.LEFT, padx=(4, 0))
+    tk.Button(bar, text="close", command=_route_window_close).pack(
+        side=tk.LEFT, padx=(4, 0))
+
+    _route_theme()
+    _route_window_refresh()
+    _refresh()
+
+
+def _route_theme() -> None:
+    """Match the route window to the host application's theme."""
+    if _route_win is None:
+        return
+    try:
+        theme.register(_route_win)
+    except Exception:
+        pass
+    try:
+        theme.update(_route_win)
+    except Exception:
+        pass
+    _theme_tree(_route_win, _theme_colours())
+
+
+def _route_map_toggle() -> None:
+    show = not cfg_bool(CFG["route_map"], True)
+    cfg_set(CFG["route_map"], show)
+    if _route_map is not None:
+        try:
+            if show:
+                _route_map.grid(row=1, column=0, sticky=tk.EW, padx=8, pady=(2, 4))
+                _route_map_draw()
+            else:
+                _route_map.grid_remove()
+        except Exception:
+            pass
+
+
+def _route_map_draw() -> None:
+    """
+    Top-down map of the system with the route drawn on it.
+
+    Plain tkinter Canvas - no extra dependency, and it redraws in a millisecond.
+    The projection is the X/Z plane seen from galactic north, which is how the
+    in-game system map is laid out, so the picture matches what you see there.
+
+    Distances span four orders of magnitude in a single system (a moon 2 LS out,
+    a gas giant 4000 LS out), so the radius is drawn on a log scale. Angles are
+    exact; only the radial spacing is compressed.
+    """
+    if _route_map is None:
+        return
+    try:
+        _route_map.delete("all")
+    except Exception:
+        return
+    route = ST.route
+    if route is None or not route.stops:
+        return
+
+    try:
+        w = int(_route_map.winfo_width()) or _MAP_W
+        h = int(_route_map.winfo_height()) or _MAP_H
+    except Exception:
+        w, h = _MAP_W, _MAP_H
+    cx, cy = w / 2.0, h / 2.0
+    margin = 14.0
+    span = min(cx, cy) - margin
+    if span <= 10:
+        return
+
+    pts = [s.body.pos for s in route.stops if s.body.pos]
+    if not pts:
+        return
+    rmax = max(math.sqrt(p[0] ** 2 + p[2] ** 2) for p in pts) or 1.0
+
+    def project(p) -> Tuple[float, float]:
+        x, z = p[0], p[2]
+        r = math.sqrt(x * x + z * z)
+        if r < 1e-9:
+            return (cx, cy)
+        # log radial scale so moons and outer giants both stay visible
+        rr = math.log10(1.0 + r) / math.log10(1.0 + rmax)
+        return (cx + (x / r) * rr * span, cy + (z / r) * rr * span)
+
+    col = _theme_colours()
+    fg = col.get("fg") or "#ff8000"
+    dim = col.get("bg") or "#101010"
+
+    # range rings
+    for frac, lbl in ((1.0, "%.0f LS" % rmax), (0.5, "")):
+        rr = math.log10(1.0 + rmax * frac) / math.log10(1.0 + rmax) * span
+        _route_map.create_oval(cx - rr, cy - rr, cx + rr, cy + rr,
+                               outline=fg, width=1, dash=(2, 4))
+        if lbl:
+            _route_map.create_text(cx, cy - rr - 7, text=lbl, fill=fg,
+                                   font=_FONT_SMALL)
+
+    # the arrival star
+    _route_map.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, fill=fg, outline=fg)
+
+    # route legs
+    prev = (cx, cy)
+    for i, st in enumerate(route.stops):
+        if not st.body.pos:
+            continue
+        p = project(st.body.pos)
+        done = st.body.body_id in ST.route_done
+        _route_map.create_line(prev[0], prev[1], p[0], p[1], fill=fg,
+                               width=1, dash=(1, 3) if done else None,
+                               arrow="last" if st.group_start and i else None)
+        prev = p
+
+    # bodies
+    for i, st in enumerate(route.stops, 1):
+        if not st.body.pos:
+            continue
+        x, y = project(st.body.pos)
+        done = st.body.body_id in ST.route_done
+        r = 2.0 if st.is_moon else 4.0
+        if done:
+            _route_map.create_oval(x - r, y - r, x + r, y + r, outline=fg)
+        else:
+            _route_map.create_oval(x - r, y - r, x + r, y + r, fill=fg,
+                                   outline=fg)
+        if st.group_start or not st.is_moon:
+            _route_map.create_text(x + r + 3, y, text=st.body.short[:10],
+                                   fill=fg, anchor=tk.W,
+                                   font=_FONT_GROUP if st.group_start
+                                   else _FONT_SMALL)
+
+
+def _toggle_map() -> None:
+    cfg_set(CFG["route_map"], not cfg_bool(CFG["route_map"], True))
+    _route_window_close()
+    _route_window_open()
+
+
+def _route_reset() -> None:
+    ST.route_done.clear()
+    _route_window_refresh()
+    _refresh()
+
+
+def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
+    """
+    Tick a stop off automatically when the journal says you were there.
+
+    ApproachBody, SAAScanComplete, Touchdown and ScanOrganic all name the body
+    directly, so there is no need to tick anything by hand while flying. The
+    manual checkbox stays for the cases the journal cannot see - a body you
+    looked at and decided to skip.
+    """
+    if not (body_name and ST.route):
+        return
+    for st in ST.route.stops:
+        if st.body.name == body_name and st.body.body_id not in ST.route_done:
+            ST.route_done.add(st.body.body_id)
+            logger.info("route | reached %s (%s), %d of %d done",
+                        st.body.short, reason, len(ST.route_done),
+                        len(ST.route.stops))
+            _route_progress_feedback()
+            _ui(_route_window_refresh)
+            _ui(_refresh)
+            return
+
+
+def _route_progress_feedback() -> None:
+    """
+    Compare the estimate against what actually happened.
+
+    The first stop starts the clock. From then on the elapsed time is measured
+    against the sum of the legs already ticked off, which is the only honest
+    check the plugin can make on its own model - and it is the one that tells
+    you whether the remaining minutes are worth anything.
+    """
+    route = ST.route
+    if route is None or not ST.route_done:
+        ST.route_feedback = ""
+        return
+    if ST.route_started is None:
+        ST.route_started = time.time()
+        ST.route_feedback = ""
+        return
+    elapsed = time.time() - ST.route_started
+    planned = sum(s.leg_s for s in route.stops
+                  if s.body.body_id in ST.route_done)
+    if planned < 60 or elapsed < 60:
+        ST.route_feedback = ""
+        return
+    ratio = elapsed / planned
+    left = sum(s.leg_s for s in route.stops
+               if s.body.body_id not in ST.route_done)
+    ST.route_feedback = ("actual pace %.1fx the estimate - "
+                         "remaining is more like %.0f min"
+                         % (ratio, left * ratio / 60.0))
+    logger.info("route | %s (elapsed %.0f min vs planned %.0f min)",
+                ST.route_feedback, elapsed / 60.0, planned / 60.0)
+
+
+def _route_tick(body_id: int) -> None:
+    if body_id in ST.route_done:
+        ST.route_done.discard(body_id)
+    else:
+        ST.route_done.add(body_id)
+        _route_progress_feedback()
+    _route_window_refresh()
+    _refresh()
+
+
+def _route_window_refresh() -> None:
+    """
+    Redraw the route window: a top-down map, then the stop list.
+
+    The list is grouped by planetary system, because that is how the flight
+    actually feels - you arrive at a planet, work its moons, then make a long
+    transfer to the next planet. A planet heading is bold and full width, its
+    moons are indented under it, and the transfer distance is called out on
+    the heading so a long haul is obvious before you start it.
+    """
+    global _route_rows
+    if _route_win is None or _route_body is None:
+        return
+    try:
+        for w in _route_body.winfo_children():
+            w.destroy()
+    except Exception:
+        pass
+    _route_rows = []
+    col = _theme_colours()
+
+    route = ST.route
+    if route is None or not route.stops:
+        _route_head.set("%s\nnothing to fly here - scan the system first"
+                        % (ST.cur_system or "no system"))
+        _route_map_draw()
+        return
+
+    open_stops = [s for s in route.stops if s.body.body_id not in ST.route_done]
+    left_s = sum(s.leg_s for s in open_stops)
+    left_ls = sum(s.leg_ls for s in open_stops)
+    head = ["%s   %d of %d stops left in %d planetary systems"
+            % (route.system, len(open_stops), len(route.stops),
+               route.group_switches + 1),
+            "%.0f LS remaining, roughly %.0f min%s"
+            % (left_ls, left_s / 60.0,
+               "  (model from %d of your own runs)" % ST.cost_model.samples
+               if ST.cost_model.samples else "")]
+    if ST.route_full:
+        head.append("nothing outstanding here - showing the full tour")
+    _route_head.set("\n".join(head))
+
+    _route_map_draw()
+
+    row_i = 0
+    n = 0
+    for label, stops in route.groups():
+        n += 1
+        transfer = stops[0].leg_ls
+        # --- planet heading -------------------------------------------------
+        hdr = tk.Frame(_route_body)
+        hdr.grid(row=row_i, column=0, sticky=tk.EW, pady=(8 if row_i else 0, 1))
+        row_i += 1
+        moons = len(stops) - 1
+        htxt = "%s  %s" % (_MARK_PLANET, label)
+        if moons:
+            htxt += "   +%d moon%s" % (moons, "" if moons == 1 else "s")
+        if transfer >= 1.0:
+            htxt += "   transfer %.0f LS, %.0f min" % (transfer,
+                                                       stops[0].leg_s / 60.0)
+        lbl = tk.Label(hdr, text=htxt, anchor=tk.W, font=_FONT_GROUP)
+        lbl.pack(side=tk.LEFT)
+        _apply_theme(hdr, col)
+        _apply_theme(lbl, col, is_text=True)
+
+        # --- the stops of this planetary system -----------------------------
+        for st in stops:
+            done = st.body.body_id in ST.route_done
+            row = tk.Frame(_route_body)
+            row.grid(row=row_i, column=0, sticky=tk.EW)
+            row_i += 1
+            var = tk.IntVar(value=1 if done else 0)
+            cb = tk.Checkbutton(row, variable=var,
+                                command=lambda b=st.body.body_id: _route_tick(b))
+            cb.pack(side=tk.LEFT)
+            indent = "    " if st.is_moon else ""
+            marker = _MARK_MOON if st.is_moon else _MARK_BODY
+            text = "%s%s %-24s %7.0f LS %4.0f min  %s" % (
+                indent, marker, st.body.short[:24], st.leg_ls,
+                st.leg_s / 60.0, st.work)
+            body_lbl = tk.Label(row, text=text, anchor=tk.W,
+                                font=_FONT_MOON if st.is_moon else _FONT_BODY)
+            body_lbl.pack(side=tk.LEFT)
+            _apply_theme(row, col)
+            _apply_theme(cb, col, is_text=True)
+            _apply_theme(body_lbl, col, is_text=True)
+            _route_rows.append({"body_id": st.body.body_id, "var": var})
+
+    _route_theme()
+
+
+def _route_review() -> None:
+    """
+    Compare what actually happened against what the route suggested.
+
+    The journal records every body you approached (ApproachBody) and every
+    drop-out (SupercruiseExit), in order and with timestamps. Replaying that
+    for the current system gives the real order flown, the real distance
+    covered and the real time taken - which can be measured against the
+    planned tour. That is honest feedback: not "you did it wrong", but "this
+    is what the detour cost".
+    """
+    _run_async(_route_review_worker, label="review")
+
+
+def _route_review_worker() -> None:
+    if not (ST.db and ST.cur_id64 and ST.route and ST.route.stops):
+        _set_status("no route to review")
+        return
+    visits = _actual_visits(ST.cur_id64)
+    if not visits:
+        logger.info("review | no approaches recorded for %s yet", ST.cur_system)
+        _set_status("nothing flown here yet")
+        return
+
+    with ST.lock:
+        rows = ST.db.bodies_of(ST.cur_id64)
+    bodies = bodies_from_rows(rows)
+    for b in bodies.values():
+        b.short = shorten(b.name, ST.cur_system or "")
+    resolve_positions(bodies)          # needed before any distance is measured
+    by_name = {b.name: b for b in bodies.values()}
+
+    # what was actually flown, in order, with real distances
+    seq = [by_name[n] for n, _ in visits if n in by_name and by_name[n].pos]
+    if len(seq) < 2:
+        _set_status("only %d stop flown here so far" % len(seq))
+        return
+    actual_ls = 0.0
+    prev = (0.0, 0.0, 0.0)
+    for b in seq:
+        actual_ls += math.dist(prev, b.pos)
+        prev = b.pos
+    actual_s = visits[-1][1] - visits[0][1]
+
+    # the best possible tour over exactly those bodies
+    subset = {b.body_id: b for b in seq}
+    ideal = plan_route(ST.cur_system or "", subset, model=ST.cost_model,
+                       only_work=False)
+    ideal_ls = ideal.total_ls
+
+    over = (100.0 * (actual_ls - ideal_ls) / ideal_ls) if ideal_ls > 1 else 0.0
+    switches = _count_switches(seq, bodies)
+
+    logger.info("review | %s: %d bodies flown", ST.cur_system, len(seq))
+    logger.info("review | flown %.0f LS in %.0f min, %d planet changes",
+                actual_ls, actual_s / 60.0, switches)
+    logger.info("review | best possible over the same bodies %.0f LS (%+.0f%%)",
+                ideal_ls, over)
+    logger.info("review | order flown: %s",
+                " -> ".join(b.short for b in seq[:12])
+                + (" ..." if len(seq) > 12 else ""))
+    if over > 25:
+        logger.info("review | a shorter order existed: %s",
+                    " -> ".join(s.body.short for s in ideal.stops[:12]))
+        _set_status("review: %.0f LS flown, %.0f%% above the best order "
+                    "(details in log)" % (actual_ls, over))
+    else:
+        _set_status("review: %.0f LS flown, within %.0f%% of the best order"
+                    % (actual_ls, max(0.0, over)))
+
+
+def _actual_visits(sys_id64: int) -> List[Tuple[str, float]]:
+    """
+    (body name, unix time) for every body approached in this system, in order.
+
+    Read straight from the journals rather than kept in memory, so it also
+    works for a system flown before the plugin was running.
+    """
+    import glob
+    import calendar
+    d = _journal_dir()
+    if not d:
+        return []
+    files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
+                   + glob.glob(os.path.join(d, "Journal_*.log")))[-8:]
+    out: List[Tuple[str, float]] = []
+    seen = set()
+    for fn in files:
+        try:
+            with open(fn, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or '"Body' not in line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    if e.get("SystemAddress") != sys_id64:
+                        continue
+                    if e.get("event") not in ("ApproachBody", "SupercruiseExit",
+                                              "SAAScanComplete"):
+                        continue
+                    nm = e.get("Body") or e.get("BodyName")
+                    if not nm or nm in seen:
+                        continue
+                    try:
+                        ts = calendar.timegm(time.strptime(
+                            e["timestamp"], "%Y-%m-%dT%H:%M:%SZ"))
+                    except (KeyError, ValueError):
+                        continue
+                    seen.add(nm)
+                    out.append((nm, float(ts)))
+        except OSError:
+            continue
+    out.sort(key=lambda p: p[1])
+    return out
+
+
+def _count_switches(seq, bodies) -> int:
+    """How often the flown order moved from one planetary system to another."""
+    from sysroute import group_label
+    n = 0
+    last = None
+    for b in seq:
+        g = group_label(b)
+        if last is not None and g != last:
+            n += 1
+        last = g
+    return n
+def _start_survey() -> None:
+    """
+    Free start  - the sphere is centred on the current system.
+    Carrier start - the sphere is centred on the remembered fleet carrier,
+                    so it stays put while you range around it.
+    """
+    use_carrier = bool(_carrier_var.get()) if _carrier_var else False
+    if use_carrier:
+        if not (ST.carrier and ST.carrier.get("coords")):
+            _set_status("no carrier position known - dock at it once")
+            return
+        center = tuple(ST.carrier["coords"])
+        label = ST.carrier["system"]
+        origin_kind = "carrier"
+    else:
+        if not ST.cur_pos:
+            _set_status("position unknown - jump first")
+            return
+        center = ST.cur_pos
+        label = ST.cur_system
+        origin_kind = "free"
+
+    if ST.active and ST.center and ST.center != center:
+        logger.info("survey re-centred: %s -> %s", ST.start_system, label)
+
+    radius = float(_radius_var.get()) if _radius_var else 50.0
+
+    with ST.lock:
+        ov = ST.db.sphere_overlap(center, radius)
+    if ov["volume_pct"] > 0.5:
+        msg = ("overlap %.0f%% with earlier spheres (worst %s at %.0f ly, %.0f%%); "
+               "%d of %d known systems already visited"
+               % (ov["volume_pct"], ov["worst_label"] or "-",
+                  ov["worst_distance"] or 0.0, ov["worst_pct"],
+                  ov["visited"], ov["known"]))
+        logger.info(msg)
+        _set_status("overlap %.0f%% | %d systems already visited | move %.0f ly for none"
+                    % (ov["volume_pct"], ov["visited"], ov["clear_distance"]))
+    else:
+        logger.info("fresh sphere, no overlap with earlier work")
+
+    ST.center = center
+    ST.start_system = label
+    ST.radius = radius
+    ST.active = True
+    ST.finished_announced = False
+    with ST.lock:
+        ST.sphere_id = ST.db.record_sphere(center, radius, label, origin_kind)
+        ST.db.save_survey(True, label, center, radius, get_masscodes())
+    _run_async(_start_worker, label="starting survey")
+
+
+def _start_worker() -> None:
+    _fetch_sources()
+    _rebuild_plan()
+
+
+def _stop_survey() -> None:
+    ST.active = False
+    if ST.sphere_id and ST.stats.get("finished"):
+        with ST.lock:
+            ST.db.close_sphere(ST.sphere_id)
+    with ST.lock:
+        ST.db.save_survey(False, ST.start_system, ST.center, ST.radius, get_masscodes())
+    ST.flight = []
+    ST.probe = []
+    _refresh()
+
+
+# ============================================================================
+# Target logic
+# ============================================================================
+
+def current_flight() -> Optional[Target]:
+    return ST.flight[0] if ST.flight else None
+
+
+def current_probe() -> Optional[Target]:
+    return ST.probe[0] if ST.probe else None
+
+
+def _probe_absent() -> None:
+    """
+    Button: the candidate does not exist according to the galaxy map.
+
+    Because n2 runs contiguously from 0, a miss at -n proves that -n, -n-1,
+    -n-2 ... do not exist either. The whole boxel is closed at once and every
+    queued candidate above that number is dropped immediately.
+    """
+    t = current_probe()
+    if not t:
+        return
+    with ST.lock:
+        ST.db.mark_absent(t.name)
+    dropped = 0
+    if t.boxel_key is not None and t.n2 is not None:
+        keep = []
+        for q in ST.probe:
+            if q.boxel_key == t.boxel_key and q.n2 is not None and q.n2 >= t.n2:
+                dropped += 1
+                continue
+            keep.append(q)
+        ST.probe = keep
+    else:
+        ST.probe.pop(0)
+    logger.info("%s does not exist - boxel %s closed, %d further candidates dropped",
+                t.name, t.boxel_key, max(0, dropped - 1))
+    _set_status("%s does not exist - boxel closed (%d candidates dropped)"
+                % (t.name, max(0, dropped - 1)))
+    _refresh()
+    _copy_probe()
+
+
+def _boxel_done() -> None:
+    """
+    The galaxy map list for this boxel is fully accounted for. Close it in one
+    go - every remaining candidate of that boxel leaves the queue. This is the
+    cheap path: one prefix search plus one click retires a whole boxel.
+    """
+    t = current_probe()
+    if not t or not t.boxel_key:
+        return
+    with ST.lock:
+        end = ST.db.close_boxel(t.boxel_key)
+    key = t.boxel_key
+    before = len(ST.probe)
+    ST.probe = [q for q in ST.probe if q.boxel_key != key]
+    dropped = before - len(ST.probe)
+    logger.info("boxel %s closed at n2=%d by hand, %d candidates dropped",
+                key, end, dropped)
+    _set_status("boxel %s done (%d candidates dropped)" % (key, dropped))
+    _refresh()
+    _copy_probe()
+
+
+def _copy_prefix() -> None:
+    """Copy the boxel search prefix - one paste lists the whole boxel."""
+    t = current_probe()
+    if t and t.boxel_key:
+        _copy(t.boxel_key + "-")
+    else:
+        _set_status("no boxel prefix for this candidate")
+
+
+def _probe_skip() -> None:
+    if ST.probe:
+        ST.probe.append(ST.probe.pop(0))
+    _refresh()
+    _copy_probe()
+
+
+def _flight_skip() -> None:
+    if ST.flight:
+        ST.flight.append(ST.flight.pop(0))
+    _refresh()
+    _copy_flight()
+
+
+def _copy(text: str) -> None:
+    if not _frame or not text:
+        return
+    try:
+        _frame.clipboard_clear()
+        _frame.clipboard_append(text)
+        _frame.update_idletasks()
+        _set_status("copied: %s" % text)
+    except Exception as e:
+        logger.warning("clipboard: %s", e)
+
+
+def _copy_flight() -> None:
+    if cfg_bool(CFG["autocopy"], True):
+        t = current_flight()
+        if t:
+            _copy(t.name)
+
+
+def _copy_carrier() -> None:
+    """Put the carrier system on the clipboard - the way home."""
+    if ST.carrier and ST.carrier.get("system"):
+        _copy(ST.carrier["system"])
+    else:
+        _set_status("no carrier system remembered yet")
+
+
+def _toggle_stats() -> None:
+    show = not cfg_bool(CFG["show_stats"], False)
+    cfg_set(CFG["show_stats"], show)
+    _refresh()
+
+
+def _copy_probe() -> None:
+    t = current_probe()
+    if t:
+        _copy(t.name)
+
+
+def _resort_queues() -> None:
+    """Re-rank both queues by distance from the commander's current position."""
+    if not ST.cur_pos:
+        return
+    for q in (ST.flight, ST.probe):
+        set_origin(q, ST.cur_pos)
+        q.sort(key=lambda t: (int(t.dist_origin // 5), t.dist_origin))
+
+
+def _prune_queues() -> None:
+    """Drop completed targets from the head of both queues."""
+    if not ST.db:
+        return
+    changed = False
+    with ST.lock:
+        while ST.flight:
+            t = ST.flight[0]
+            row = ST.db.system(t.name)
+            done = False
+            if t.kind == K_NEW:
+                done = row is not None and bool(row["visited"])
+            elif row is not None and row["id64"]:
+                p = ST.db.system_progress(row["id64"])
+                if t.kind == K_SCAN:
+                    done = p["fss_complete"] or (
+                        p["body_count"] and p["scanned"] >= p["body_count"])
+                elif t.kind == K_DSS:
+                    done = not p["dss_open"]
+                elif t.kind == K_BIO:
+                    done = not p["bio_open"]
+            if not done:
+                break
+            ST.flight.pop(0)
+            changed = True
+        while ST.probe and ST.db.system(ST.probe[0].name) is not None:
+            ST.probe.pop(0)
+            changed = True
+    if changed:
+        _refresh()
+
+
+# ============================================================================
+# Journal / status
+# ============================================================================
+
+def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
+                  entry: Dict[str, Any], state: Dict[str, Any]) -> None:
+    if not ST.db:
+        return
+    ev = entry.get("event")
+    try:
+        # EDMC enriches NavRoute with the full Route array
+        if ev == "NavRoute" and not cfg_bool(CFG["harvest_navroute"], True):
+            return
+
+        with ST.lock:
+            ST.db.ingest_journal_event(entry)
+
+        if ev == "SupercruiseEntry":
+            ST._sc_start = (time.time(), 0.0)
+
+        elif ev == "SupercruiseExit":
+            if ST._sc_start and ST.cur_id64:
+                dt = time.time() - ST._sc_start[0]
+                with ST.lock:
+                    rows = {r["name"]: r for r in ST.db.bodies_of(ST.cur_id64)}
+                b = rows.get(entry.get("Body"))
+                if b is not None and b["arrival_ls"] and 5 < dt < 3600:
+                    ST.sc_segments.append((float(b["arrival_ls"]), dt))
+                    if len(ST.sc_segments) % 8 == 0:
+                        ST.cost_model = calibrate_from_journal(ST.sc_segments)
+                        logger.info("supercruise model recalibrated: %s",
+                                    ST.cost_model.as_dict())
+            ST._sc_start = None
+
+        if ev in ("FSDJump", "Location", "CarrierJump"):
+            if entry.get("SystemAddress") != ST.cur_id64:
+                ST.route_done.clear()
+                ST.route_started = None
+                ST.route_feedback = ""
+            ST.cur_system = entry.get("StarSystem")
+            ST.cur_id64 = entry.get("SystemAddress")
+            pos = entry.get("StarPos")
+            if pos and len(pos) >= 3:
+                ST.cur_pos = (pos[0], pos[1], pos[2])
+            if ST.active:
+                _prune_queues()
+                _resort_queues()
+                _ui(_copy_flight)
+            _run_async(_rebuild_route, label="in-system route")
+            _ui(_refresh)
+
+        elif ev in ("CarrierJump", "CarrierLocation", "CarrierStats") or (
+                ev == "Docked" and entry.get("StationType") == "FleetCarrier"):
+            with ST.lock:
+                ST.carrier = ST.db.get_carrier()
+            if ST.carrier:
+                logger.info("fleet carrier now at %s", ST.carrier["system"])
+                _set_status("carrier: %s" % ST.carrier["system"])
+            _ui(_refresh)
+
+        elif ev in ("ApproachBody", "Touchdown"):
+            _route_auto_tick(entry.get("Body") or entry.get("BodyName"),
+                             "approach" if ev == "ApproachBody" else "landed")
+
+        elif ev == "Loadout":
+            mj = entry.get("MaxJumpRange")
+            if mj:
+                ST.max_jump = float(mj)
+
+        elif ev == "StartUp":
+            if entry.get("StarSystem"):
+                ST.cur_system = entry["StarSystem"]
+                ST.cur_id64 = entry.get("SystemAddress") or ST.cur_id64
+                pos = entry.get("StarPos")
+                if pos and len(pos) >= 3:
+                    ST.cur_pos = (pos[0], pos[1], pos[2])
+            _run_async(_rebuild_route, label="in-system route")
+            route = state.get("NavRoute") if state else None
+            if route and cfg_bool(CFG["harvest_navroute"], True):
+                with ST.lock:
+                    ST.db.ingest_journal_event({"event": "NavRoute",
+                                                "Route": route.get("Route", [])})
+
+        elif ev in ("Scan", "SAAScanComplete", "SAASignalsFound", "FSSBodySignals",
+                    "FSSDiscoveryScan", "FSSAllBodiesFound", "ScanOrganic"):
+            if not ST.cur_id64 and entry.get("SystemAddress"):
+                ST.cur_id64 = entry["SystemAddress"]
+                ST.cur_system = (entry.get("StarSystem") or entry.get("SystemName")
+                                 or ST.cur_system)
+            if ST.active:
+                _prune_queues()
+            if ev in ("SAAScanComplete", "ScanOrganic"):
+                _route_auto_tick(entry.get("BodyName") or entry.get("Body"),
+                                 "mapped" if ev == "SAAScanComplete" else "sampled")
+            if ev in ("FSSAllBodiesFound", "SAAScanComplete", "ScanOrganic",
+                      "FSSBodySignals", "SAASignalsFound"):
+                _run_async(_rebuild_route, label="in-system route")
+            _ui(_refresh)
+
+        elif ev == "FSDTarget":
+            nm = entry.get("Name")
+            t = current_probe()
+            if t and nm == t.name:
+                _set_status("confirmed: %s" % nm)
+                if ST.active:
+                    _prune_queues()
+            _ui(_refresh)
+
+    except Exception:
+        logger.exception("journal_entry(%s) failed", ev)
+
+
+def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
+    """Status.json. The Destination field carries the id64 of any selected target."""
+    if not ST.db or not cfg_bool(CFG["harvest_destination"], True):
+        return
+    try:
+        dest = entry.get("Destination")
+        if not dest:
+            return
+        a = dest.get("System")
+        if not a or a == ST.last_dest_id64:
+            return
+        ST.last_dest_id64 = a
+        with ST.lock:
+            new = ST.db.ingest_status_destination(dest)
+        if new:
+            logger.info("new system confirmed via target selection: %s", new)
+            _set_status("confirmed: %s" % new)
+            if ST.active:
+                _prune_queues()
+        _ui(_refresh)
+    except Exception:
+        logger.exception("dashboard_entry failed")
+
+
+# ============================================================================
+# User interface
+# ============================================================================
+
+def _ui(fn) -> None:
+    if _frame:
+        try:
+            _frame.after(0, fn)
+        except Exception:
+            pass
+
+
+def _set_status(txt: str) -> None:
+    ST.status = txt
+    if _v_status:
+        _ui(lambda: _v_status.set(txt))
 
 
 def plugin_app(parent: tk.Frame) -> tk.Frame:
-    """Create main UI frame."""
-    global _root_frame, _status_var, _target_var, _progress_var, _source_status_var
-    
-    _root_frame = tk.Frame(parent)
-    _root_frame.columnconfigure(1, weight=1)
-    
-    row = 0
-    
-    # Title
-    tk.Label(_root_frame, text="Sphere Survey:").grid(row=row, column=0, sticky=tk.W)
-    _status_var = tk.StringVar(value="Inactive")
-    tk.Label(_root_frame, textvariable=_status_var).grid(row=row, column=1, sticky=tk.W)
-    row += 1
-    
-    # Current system display
-    tk.Label(_root_frame, text="Current:").grid(row=row, column=0, sticky=tk.W)
-    current_var = tk.StringVar(value=_current_system or "Unknown")
-    tk.Label(_root_frame, textvariable=current_var).grid(row=row, column=1, sticky=tk.W)
-    _root_frame.current_var = current_var  # Store for updates
-    row += 1
-    
-    # Next target
-    tk.Label(_root_frame, text="Next target:").grid(row=row, column=0, sticky=tk.W)
-    _target_var = tk.StringVar(value="-")
-    tk.Label(_root_frame, textvariable=_target_var).grid(row=row, column=1, sticky=tk.W)
-    row += 1
-    
-    # Progress
-    tk.Label(_root_frame, text="Progress:").grid(row=row, column=0, sticky=tk.W)
-    _progress_var = tk.StringVar(value="-")
-    tk.Label(_root_frame, textvariable=_progress_var).grid(row=row, column=1, sticky=tk.W)
-    row += 1
-    
-    # Source status
-    _source_status_var = tk.StringVar(value="No data source")
-    tk.Label(_root_frame, textvariable=_source_status_var, foreground="gray").grid(
-        row=row, column=0, columnspan=2, sticky=tk.W
-    )
-    row += 1
-    
-    # Buttons
-    btn_frame = tk.Frame(_root_frame)
-    btn_frame.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
-    
-    def detect_system():
-        """Manually detect current system."""
-        if _update_current_location_from_monitor():
-            if _root_frame.current_var:
-                _root_frame.current_var.set(_current_system or "Unknown")
-            if _status_var:
-                _status_var.set(f"Detected: {_current_system}")
+    global _frame, _v_status, _v_target, _v_kind, _v_sys, _v_queue, _v_probe
+    global _btn_start, _btn_absent, _btn_skip, _radius_var
+    global _btn_fc, _btn_stats, _lbl_stats, _v_stats, _carrier_var
+    global _btn_boxel, _btn_prefix, _btn_next, _v_route, _lbl_route, _btn_route
+
+    _frame = tk.Frame(parent)
+    _frame.columnconfigure(1, weight=1)
+
+    _v_status = tk.StringVar(value="ready")
+    _v_target = tk.StringVar(value="-")
+    _v_kind = tk.StringVar(value="survey inactive")
+    _v_sys = tk.StringVar(value="-")
+    _v_probe = tk.StringVar(value="-")
+    _v_queue = tk.StringVar(value="")
+    _v_stats = tk.StringVar(value="")
+    _v_route = tk.StringVar(value="")
+    _radius_var = tk.StringVar(value=str(cfg_int(CFG["radius"], 50)))
+    _carrier_var = tk.IntVar(value=1 if cfg_bool(CFG["carrier_start"], False) else 0)
+
+    # 0  flight target (click to copy)
+    tk.Label(_frame, text="Fly").grid(row=0, column=0, sticky=tk.W)
+    lt = tk.Label(_frame, textvariable=_v_target, anchor=tk.W)
+    lt.grid(row=0, column=1, sticky=tk.EW)
+    lt.bind("<Button-1>", lambda e: _copy_flight_click())
+
+    # 1  kind of flight target
+    tk.Label(_frame, textvariable=_v_kind, anchor=tk.W).grid(
+        row=1, column=1, sticky=tk.EW)
+
+    # 2  galaxy map probe
+    tk.Label(_frame, text="Probe").grid(row=2, column=0, sticky=tk.W)
+    lp = tk.Label(_frame, textvariable=_v_probe, anchor=tk.W)
+    lp.grid(row=2, column=1, sticky=tk.EW)
+    lp.bind("<Button-1>", lambda e: _copy_probe())
+
+    # 3  current system
+    tk.Label(_frame, text="Here").grid(row=3, column=0, sticky=tk.W)
+    tk.Label(_frame, textvariable=_v_sys, anchor=tk.W).grid(
+        row=3, column=1, sticky=tk.EW)
+
+    # 4  survey bar
+    bar = tk.Frame(_frame)
+    bar.grid(row=4, column=0, columnspan=2, sticky=tk.EW, pady=(3, 0))
+    _btn_start = tk.Button(bar, text="Start", width=6, command=_on_start)
+    _btn_start.pack(side=tk.LEFT)
+    ttk.OptionMenu(bar, _radius_var, _radius_var.get(), *RADIUS_CHOICES).pack(
+        side=tk.LEFT, padx=(3, 4))
+    tk.Button(bar, text="replan", width=7,
+              command=lambda: _run_async(_rebuild_plan, label="replanning")).pack(
+        side=tk.LEFT)
+    _btn_stats = tk.Button(bar, text="stats", width=6, command=_toggle_stats)
+    _btn_stats.pack(side=tk.LEFT, padx=(3, 0))
+
+    # 5  probe bar - everything that answers the galaxy map
+    bar2 = tk.Frame(_frame)
+    bar2.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
+    _btn_prefix = tk.Button(bar2, text="prefix", width=7, command=_copy_prefix)
+    _btn_prefix.pack(side=tk.LEFT)
+    _btn_absent = tk.Button(bar2, text="not there", width=9, command=_probe_absent)
+    _btn_absent.pack(side=tk.LEFT, padx=(3, 0))
+    _btn_boxel = tk.Button(bar2, text="boxel done", width=10, command=_boxel_done)
+    _btn_boxel.pack(side=tk.LEFT, padx=(3, 0))
+    _btn_skip = tk.Button(bar2, text="later", width=6, command=_probe_skip)
+    _btn_skip.pack(side=tk.LEFT, padx=(3, 0))
+
+    # 6  navigation bar
+    bar3 = tk.Frame(_frame)
+    bar3.grid(row=6, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
+    _btn_next = tk.Button(bar3, text="copy next", width=10, command=_copy_flight_click)
+    _btn_next.pack(side=tk.LEFT)
+    _btn_fc = tk.Button(bar3, text="copy FC", width=8, command=_copy_carrier)
+    _btn_fc.pack(side=tk.LEFT, padx=(3, 0))
+    _btn_route = tk.Button(bar3, text="route", width=6,
+                           command=_toggle_route_window)
+    _btn_route.pack(side=tk.LEFT, padx=(3, 0))
+    tk.Checkbutton(bar3, text="carrier start", variable=_carrier_var,
+                   command=_on_carrier_toggle).pack(side=tk.LEFT, padx=(6, 0))
+
+    # 7/8/9  counters, optional statistics block, status
+    tk.Label(_frame, textvariable=_v_queue, anchor=tk.W).grid(
+        row=7, column=0, columnspan=2, sticky=tk.EW)
+    _lbl_route = tk.Label(_frame, textvariable=_v_route, anchor=tk.W,
+                          justify=tk.LEFT)
+    _lbl_route.grid(row=8, column=0, columnspan=2, sticky=tk.EW)
+    _lbl_stats = tk.Label(_frame, textvariable=_v_stats, anchor=tk.W,
+                          justify=tk.LEFT)
+    _lbl_stats.grid(row=9, column=0, columnspan=2, sticky=tk.EW)
+    tk.Label(_frame, textvariable=_v_status, anchor=tk.W).grid(
+        row=10, column=0, columnspan=2, sticky=tk.EW)
+
+    _refresh()
+    theme.update(_frame)
+    return _frame
+
+
+def _on_carrier_toggle() -> None:
+    cfg_set(CFG["carrier_start"], bool(_carrier_var.get()))
+    _refresh()
+
+
+def _copy_flight_click() -> None:
+    t = current_flight()
+    if t:
+        _copy(t.name)
+
+
+def _on_start() -> None:
+    if ST.active:
+        _stop_survey()
+    else:
+        _start_survey()
+
+
+def _refresh() -> None:
+    if not _frame:
+        return
+    try:
+        t = current_flight()
+        if t:
+            _v_target.set("%s   %.1f ly" % (t.name, t.dist_origin))
+            _v_kind.set("%s %s" % (KIND_SHORT.get(t.kind, t.kind),
+                                   t.detail or LABEL.get(t.kind, "")))
         else:
-            if _status_var:
-                _status_var.set("Cannot detect system - Start Elite!")
-    
-    tk.Button(btn_frame, text="Detect", command=detect_system).pack(side=tk.LEFT, padx=2)
-    tk.Button(btn_frame, text="Start", command=_start_survey).pack(side=tk.LEFT, padx=2)
-    tk.Button(btn_frame, text="Stop", command=_stop_survey).pack(side=tk.LEFT, padx=2)
-    tk.Button(btn_frame, text="Reset", command=_reset_survey).pack(side=tk.LEFT, padx=2)
-    tk.Button(btn_frame, text="Return", command=_return_to_start).pack(side=tk.LEFT, padx=2)
-    
-    theme.update(_root_frame)
-    
-    # Initial detection
-    _update_current_location_from_monitor()
-    if _root_frame.current_var:
-        _root_frame.current_var.set(_current_system or "Unknown")
-    
-    _refresh_ui()
-    
-    return _root_frame
+            _v_target.set("-")
+            _v_kind.set("no flight targets left" if ST.active else "survey inactive")
+
+        p = current_probe()
+        if p:
+            same = sum(1 for q in ST.probe if q.boxel_key == p.boxel_key)
+            hint = "  odds %s" % ("high" if p.score >= 3.0
+                                  else "fair" if p.score >= 1.5
+                                  else "low" if p.score > 0 else "void")
+            _v_probe.set("%s   %.1f ly  +-%.0f   [%d in boxel]%s"
+                         % (p.name, p.dist_origin, p.uncertainty, same, hint))
+        else:
+            _v_probe.set("-")
+
+        if ST.cur_system:
+            line = ST.cur_system
+            if ST.cur_id64 and ST.db:
+                with ST.lock:
+                    pr = ST.db.system_progress(ST.cur_id64)
+                bits = []
+                if pr["body_count"]:
+                    bits.append("FSS %d/%d" % (pr["scanned"], pr["body_count"]))
+                if pr["dss_open"]:
+                    bits.append("DSS %d" % len(pr["dss_open"]))
+                if pr["bio_open"]:
+                    bits.append("Bio %d" % len(pr["bio_open"]))
+                if pr["new_discoveries"]:
+                    bits.append("first %d" % pr["new_discoveries"])
+                if bits:
+                    line += "   " + " | ".join(bits)
+            _v_sys.set(line)
+        else:
+            _v_sys.set("-")
+
+        if ST.active:
+            c = ST.plan_counts
+            _v_queue.set("r=%.0f ly | fly %d (new %d, tasks %d) | probes %d "
+                         "(gap %d, probe %d, empty %d)"
+                         % (ST.radius, len(ST.flight), c.get(K_NEW, 0),
+                            c.get(K_SCAN, 0) + c.get(K_DSS, 0) + c.get(K_BIO, 0),
+                            len(ST.probe), c.get(K_GAP, 0), c.get(K_PROBE, 0),
+                            c.get(K_EMPTY, 0)))
+        else:
+            if _carrier_var and _carrier_var.get() and ST.carrier:
+                _v_queue.set("Start centres the sphere on the carrier at %s"
+                             % ST.carrier["system"])
+            else:
+                _v_queue.set("Start sets the sphere centre to your current position")
+
+        # one compact line here; the full list lives in the route window
+        if cfg_bool(CFG["show_route"], True) and ST.route and ST.route.stops:
+            open_stops = [x for x in ST.route.stops
+                          if x.body.body_id not in ST.route_done]
+            nxt = open_stops[0].body.short if open_stops else "-"
+            _v_route.set("in-system%s: %d/%d left, %.0f min | next %s"
+                         % (" (all done)" if ST.route_full else "",
+                            len(open_stops), len(ST.route.stops),
+                            sum(x.leg_s for x in open_stops) / 60.0, nxt))
+            if _lbl_route:
+                _lbl_route.grid()
+        elif cfg_bool(CFG["show_route"], True) and ST.cur_id64:
+            _v_route.set("in-system: nothing to fly here")
+            if _lbl_route:
+                _lbl_route.grid()
+        else:
+            _v_route.set("")
+            if _lbl_route:
+                _lbl_route.grid_remove()
+
+        if cfg_bool(CFG["show_stats"], False):
+            lines = list(ST.stats_lines)
+            if ST.carrier:
+                lines.append("carrier: %s%s" % (
+                    ST.carrier["system"],
+                    "  (%s)" % ST.carrier["callsign"] if ST.carrier.get("callsign") else ""))
+            if ST.start_system:
+                lines.append("sphere: %s  r=%.0f ly" % (ST.start_system, ST.radius))
+            _v_stats.set("\n".join(lines) if lines else "no statistics yet")
+            if _lbl_stats:
+                _lbl_stats.grid()
+        else:
+            _v_stats.set("")
+            if _lbl_stats:
+                _lbl_stats.grid_remove()
+
+        if _btn_start:
+            _btn_start.config(text="Stop" if ST.active else "Start")
+        if _btn_fc:
+            _btn_fc.config(state=tk.NORMAL if ST.carrier else tk.DISABLED)
+        for b in (_btn_absent, _btn_skip, _btn_boxel, _btn_prefix):
+            if b:
+                b.config(state=tk.NORMAL if (ST.active and ST.probe) else tk.DISABLED)
+        if _btn_next:
+            _btn_next.config(state=tk.NORMAL if ST.flight else tk.DISABLED)
+        if _btn_route:
+            _btn_route.config(text="route x" if _route_win is not None else "route")
+    except Exception:
+        logger.exception("UI refresh failed")
 
 
-def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[tk.Frame]:
-    """Create preferences UI."""
-    frame = nb.Frame(parent)
-    frame.columnconfigure(1, weight=1)
-    
-    row = 0
-    
-    # Title
-    nb.Label(frame, text=f"Sphere Survey v{VERSION}").grid(row=row, column=0, columnspan=2, sticky=tk.W)
-    row += 1
-    
-    # Enabled
-    enabled_val = _get_config_bool(CFG_ENABLED, True)  # Use helper, default True
-    enabled_var = tk.IntVar(value=1 if enabled_val else 0)
-    nb.Checkbutton(frame, text="Enable plugin", variable=enabled_var, 
-                   command=lambda: config.set(CFG_ENABLED, bool(enabled_var.get()))).grid(
-        row=row, column=0, columnspan=2, sticky=tk.W
-    )
-    row += 1
-    
-    # Debug
-    debug_val = _get_config_bool(CFG_DEBUG, False)  # Use helper, default False
-    debug_var = tk.IntVar(value=1 if debug_val else 0)
-    nb.Checkbutton(frame, text="Debug logging", variable=debug_var,
-                   command=lambda: config.set(CFG_DEBUG, bool(debug_var.get()))).grid(
-        row=row, column=0, columnspan=2, sticky=tk.W
-    )
-    row += 1
-    
-    # Radius
-    nb.Label(frame, text="Default radius (ly):").grid(row=row, column=0, sticky=tk.W)
-    radius_var = tk.StringVar(value=str(config.get_int(CFG_RADIUS) if hasattr(config, 'get_int') else config.get(CFG_RADIUS) or 50))
-    
-    def save_radius(*args):
-        try:
-            config.set(CFG_RADIUS, int(radius_var.get()))
-        except:
-            pass
-    
-    radius_entry = nb.Entry(frame, textvariable=radius_var, width=10)
-    radius_entry.grid(row=row, column=1, sticky=tk.W)
-    radius_var.trace('w', save_radius)
-    row += 1
-    
-    # Jump range  
-    nb.Label(frame, text="Max jump range (ly):").grid(row=row, column=0, sticky=tk.W)
-    jump_var = tk.StringVar(value=str(config.get_int(CFG_JUMP_RANGE) if hasattr(config, 'get_int') else config.get(CFG_JUMP_RANGE) or 65))
-    
-    def save_jump(*args):
-        try:
-            config.set(CFG_JUMP_RANGE, int(jump_var.get()))
-        except:
-            pass
-    
-    jump_entry = nb.Entry(frame, textvariable=jump_var, width=10)
-    jump_entry.grid(row=row, column=1, sticky=tk.W)
-    jump_var.trace('w', save_jump)
-    row += 1
-    
-    # Data source
-    nb.Label(frame, text="Preferred data source:").grid(row=row, column=0, sticky=tk.W)
-    source_var = tk.StringVar(value=config.get_str(CFG_DATA_SOURCE) if hasattr(config, 'get_str') else config.get(CFG_DATA_SOURCE) or 'auto')
-    
-    def save_source(*args):
-        config.set(CFG_DATA_SOURCE, source_var.get())
-    
-    source_combo = ttk.Combobox(frame, textvariable=source_var, values=['auto', 'local_json', 'edd', 'edsm'], width=15, state='readonly')
-    source_combo.grid(row=row, column=1, sticky=tk.W)
-    source_combo.bind('<<ComboboxSelected>>', save_source)
-    row += 1
-    
-    # Local JSON path
-    nb.Label(frame, text="Local JSON file:").grid(row=row, column=0, sticky=tk.W)
-    path_var = tk.StringVar(value=config.get_str(CFG_LOCAL_PATH) if hasattr(config, 'get_str') else config.get(CFG_LOCAL_PATH) or '')
-    
-    def save_path(*args):
-        config.set(CFG_LOCAL_PATH, path_var.get())
-        if path_var.get():
-            _data_manager.set_local_file(path_var.get())
-    
-    path_entry = nb.Entry(frame, textvariable=path_var, width=30)
-    path_entry.grid(row=row, column=1, sticky=tk.EW)
-    path_var.trace('w', save_path)
-    row += 1
-    
-    def browse_file():
-        path = filedialog.askopenfilename(
-            title="Select neareststars.json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
-        )
-        if path:
-            path_var.set(path)
-    
-    nb.Button(frame, text="Browse...", command=browse_file).grid(row=row, column=1, sticky=tk.W)
-    row += 1
-    
-    # Auto-copy
-    autocopy_val = _get_config_bool(CFG_AUTOCOPY, True)  # Use helper, default True
-    autocopy_var = tk.IntVar(value=1 if autocopy_val else 0)
-    nb.Checkbutton(frame, text="Auto-copy next target to clipboard", variable=autocopy_var,
-                   command=lambda: config.set(CFG_AUTOCOPY, bool(autocopy_var.get()))).grid(
-        row=row, column=0, columnspan=2, sticky=tk.W
-    )
-    row += 1
-    
-    # Prefer short jumps
-    prefer_val = _get_config_bool(CFG_PREFER_SHORT_JUMPS, True)  # Use helper, default True
-    prefer_short_var = tk.IntVar(value=1 if prefer_val else 0)
-    nb.Checkbutton(frame, text="Prefer shortest jumps from current position", variable=prefer_short_var,
-                   command=lambda: config.set(CFG_PREFER_SHORT_JUMPS, bool(prefer_short_var.get()))).grid(
-        row=row, column=0, columnspan=2, sticky=tk.W
-    )
-    row += 1
-    
-    theme.update(frame)
-    return frame
+# ============================================================================
+# Preferences
+# ============================================================================
+
+_p: Dict[str, Any] = {}
+
+
+def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.Frame]:
+    """
+    Preferences tab. Everything is laid out with grid() - EDMC's notebook
+    frames already use the grid manager, and mixing in pack() raises
+    TclError: cannot use geometry manager pack inside ... managed by grid.
+    """
+    f = nb.Frame(parent)
+    f.columnconfigure(1, weight=1)
+    state = {"row": 0}
+
+    def head(text: str) -> None:
+        nb.Label(f, text=text).grid(row=state["row"], column=0, columnspan=9,
+                                    sticky=tk.W, pady=(10, 2))
+        state["row"] += 1
+
+    def field(label: str, widget, span: int = 8) -> None:
+        if label:
+            nb.Label(f, text=label).grid(row=state["row"], column=0,
+                                         sticky=tk.W, padx=(14, 8))
+        widget.grid(row=state["row"], column=1, columnspan=span, sticky=tk.W)
+        state["row"] += 1
+
+    nb.Label(f, text="SHBOXSEARCH v%s" % VERSION).grid(
+        row=state["row"], column=0, columnspan=9, sticky=tk.W)
+    state["row"] += 1
+
+    # ---------------------------------------------------------------- survey
+    head("Survey")
+
+    _p["radius"] = tk.StringVar(value=str(cfg_int(CFG["radius"], 50)))
+    field("Radius (ly)", ttk.OptionMenu(f, _p["radius"], _p["radius"].get(),
+                                        *RADIUS_CHOICES))
+
+    nb.Label(f, text="Mass codes").grid(row=state["row"], column=0,
+                                        sticky=tk.W, padx=(14, 8))
+    _p["mc"] = {}
+    active = set(get_masscodes())
+    for i in range(8):
+        v = tk.IntVar(value=1 if i in active else 0)
+        _p["mc"][i] = v
+        nb.Checkbutton(f, text=MASSCODES[i], variable=v).grid(
+            row=state["row"], column=1 + i, sticky=tk.W)
+    state["row"] += 1
+
+    _p["probe"] = tk.StringVar(value=str(cfg_int(CFG["probe_depth"], 2)))
+    field("Probes above boxel maximum",
+          nb.EntryMenu(f, textvariable=_p["probe"], width=6))
+
+    _p["empty"] = tk.IntVar(value=1 if cfg_bool(CFG["include_empty"], True) else 0)
+    field("", nb.Checkbutton(f, text="probe unexplored boxels with -0",
+                             variable=_p["empty"]))
+
+    _p["tasks"] = tk.IntVar(value=1 if cfg_bool(CFG["include_tasks"], True) else 0)
+    field("", nb.Checkbutton(f, text="queue outstanding scans and mappings",
+                             variable=_p["tasks"]))
+
+    _p["jump"] = tk.StringVar(value=str(cfg_int(CFG["jump_range"], 0) or ""))
+    field("Jump range (ly, 0 = auto)",
+          nb.EntryMenu(f, textvariable=_p["jump"], width=8))
+
+    _p["carrier_start"] = tk.IntVar(
+        value=1 if cfg_bool(CFG["carrier_start"], False) else 0)
+    field("", nb.Checkbutton(
+        f, text="carrier start: centre the sphere on the fleet carrier "
+                "instead of the current system", variable=_p["carrier_start"]))
+
+    _p["show_stats"] = tk.IntVar(value=1 if cfg_bool(CFG["show_stats"], False) else 0)
+    field("", nb.Checkbutton(f, text="show the statistics block in the panel",
+                             variable=_p["show_stats"]))
+
+    _p["show_route"] = tk.IntVar(value=1 if cfg_bool(CFG["show_route"], True) else 0)
+    field("", nb.Checkbutton(f, text="show the in-system route in the panel",
+                             variable=_p["show_route"]))
+
+    _p["route_all"] = tk.IntVar(value=1 if cfg_bool(CFG["route_all"], False) else 0)
+    field("", nb.Checkbutton(
+        f, text="route every body, not only the ones with work left",
+        variable=_p["route_all"]))
+
+    _p["route_top"] = tk.IntVar(value=1 if cfg_bool(CFG["route_top"], True) else 0)
+    field("", nb.Checkbutton(f, text="keep the route window above other windows",
+                             variable=_p["route_top"]))
+
+    _p["route_map"] = tk.IntVar(value=1 if cfg_bool(CFG["route_map"], True) else 0)
+    field("", nb.Checkbutton(f, text="draw the top-down map in the route window",
+                             variable=_p["route_map"]))
+
+    car = ST.db.get_carrier() if ST.db else None
+    nb.Label(f, text="   carrier: %s" % (
+        "%s%s, last seen %s" % (car["system"],
+                                "  (%s)" % car["callsign"] if car.get("callsign") else "",
+                                car.get("updated") or "?")
+        if car else "not known yet - dock at it once")).grid(
+        row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(14, 0))
+    state["row"] += 1
+
+    if ST.db:
+        with ST.lock:
+            hist = ST.db.list_spheres()
+        if hist:
+            nb.Label(f, text="   surveyed spheres: %d" % len(hist)).grid(
+                row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(14, 0))
+            state["row"] += 1
+            for r in hist[-6:]:
+                nb.Label(f, text="     %-28s r=%-4.0f %s %s"
+                         % (r["label"] or "-", r["radius"], r["origin"] or "",
+                            "closed" if r["closed"] else "open")).grid(
+                    row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(14, 0))
+                state["row"] += 1
+
+    # ----------------------------------------------------------- data sources
+    head("Data sources")
+
+    _p["edd"] = tk.IntVar(value=1 if cfg_bool(CFG["src_edd"], True) else 0)
+    _p["spansh"] = tk.IntVar(value=1 if cfg_bool(CFG["src_spansh"], True) else 0)
+    _p["edsm"] = tk.IntVar(value=1 if cfg_bool(CFG["src_edsm"], True) else 0)
+    field("", nb.Checkbutton(f, text="EDDiscovery (local database)", variable=_p["edd"]))
+    field("", nb.Checkbutton(f, text="Spansh", variable=_p["spansh"]))
+    field("", nb.Checkbutton(f, text="EDSM", variable=_p["edsm"]))
+
+    _p["eddpath"] = tk.StringVar(value=cfg_str(CFG["edd_path"]))
+    nb.Label(f, text="EDDSystem.sqlite").grid(row=state["row"], column=0,
+                                              sticky=tk.W, padx=(14, 8))
+    nb.EntryMenu(f, textvariable=_p["eddpath"], width=44).grid(
+        row=state["row"], column=1, columnspan=6, sticky=tk.EW)
+    tk.Button(f, text="...", width=3, command=_pick_edd).grid(
+        row=state["row"], column=7, sticky=tk.W, padx=4)
+    state["row"] += 1
+
+    for name, ok, why in ST.sources.status():
+        nb.Label(f, text="   %-12s %-4s %s" % (name, "ok" if ok else "no", why)).grid(
+            row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(14, 0))
+        state["row"] += 1
+
+    # -------------------------------------------------------------- harvesting
+    head("Automatic harvesting")
+
+    _p["navroute"] = tk.IntVar(value=1 if cfg_bool(CFG["harvest_navroute"], True) else 0)
+    field("", nb.Checkbutton(
+        f, text="read NavRoute (exact coordinates of every plotted hop)",
+        variable=_p["navroute"]))
+
+    _p["dest"] = tk.IntVar(value=1 if cfg_bool(CFG["harvest_destination"], True) else 0)
+    field("", nb.Checkbutton(
+        f, text="read target selection (Status.json Destination)", variable=_p["dest"]))
+
+    _p["autocopy"] = tk.IntVar(value=1 if cfg_bool(CFG["autocopy"], True) else 0)
+    field("", nb.Checkbutton(f, text="copy next flight target to clipboard",
+                             variable=_p["autocopy"]))
+
+    # ------------------------------------------------------------- maintenance
+    head("Maintenance")
+
+    buttons = [
+        ("Run first import", lambda: _run_async(_first_run_migration,
+                                                label="first-run import")),
+        ("Replay journals", lambda: _run_async(_import_journals, label="journals")),
+        ("Import JSON", lambda: _run_async(_import_json, label="JSON import")),
+    ]
+    for col, (text, cmd) in enumerate(buttons):
+        tk.Button(f, text=text, command=cmd).grid(
+            row=state["row"], column=col, sticky=tk.W, padx=(14 if col == 0 else 4, 0))
+    state["row"] += 1
+
+    buttons2 = [
+        ("Export plan (CSV)", _export_csv),
+        ("Export boxel prefixes", _export_prefixes),
+        ("Self test", lambda: _run_async(_selftest, label="self test")),
+    ]
+    for col, (text, cmd) in enumerate(buttons2):
+        tk.Button(f, text=text, command=cmd).grid(
+            row=state["row"], column=col, sticky=tk.W,
+            padx=(14 if col == 0 else 4, 0), pady=(4, 0))
+    state["row"] += 1
+
+    jd = _journal_dir()
+    nb.Label(f, text="Journal folder: %s" % (jd or "NOT FOUND")).grid(
+        row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=14, pady=(8, 0))
+    state["row"] += 1
+
+    if ST.db:
+        nb.Label(f, text="First import: %s"
+                 % (ST.db.get_meta("migrated") or "not run yet")).grid(
+            row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=14)
+        state["row"] += 1
+        with ST.lock:
+            stats = ST.db.stats()
+        nb.Label(f, text="   ".join("%s %d" % (k, v) for k, v in stats.items())).grid(
+            row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=14)
+        state["row"] += 1
+
+    _p["debug"] = tk.IntVar(value=1 if cfg_bool(CFG["debug"], False) else 0)
+    nb.Checkbutton(f, text="verbose logging", variable=_p["debug"]).grid(
+        row=state["row"], column=0, columnspan=9, sticky=tk.W, pady=(10, 0))
+    state["row"] += 1
+
+    return f
+
+
+def _pick_edd() -> None:
+    p = filedialog.askopenfilename(
+        title="Select EDDSystem.sqlite",
+        filetypes=[("SQLite database", "*.sqlite"), ("All files", "*.*")])
+    if p:
+        _p["eddpath"].set(p)
 
 
 def prefs_changed(cmdr: str, is_beta: bool) -> None:
-    """Save preference changes."""
     try:
-        # Config values are stored directly, not via frame reference
-        logger.info("Preferences saved")
-    except Exception as e:
-        logger.error(f"Failed to save preferences: {e}")
+        cfg_set(CFG["radius"], int(_p["radius"].get()))
+        cfg_set(CFG["masscodes"], ",".join(str(i) for i, v in _p["mc"].items() if v.get()))
+        cfg_set(CFG["probe_depth"], int(_p["probe"].get() or 2))
+        cfg_set(CFG["include_empty"], bool(_p["empty"].get()))
+        cfg_set(CFG["include_tasks"], bool(_p["tasks"].get()))
+        cfg_set(CFG["jump_range"], int(float(_p["jump"].get() or 0)))
+        cfg_set(CFG["src_edd"], bool(_p["edd"].get()))
+        cfg_set(CFG["src_spansh"], bool(_p["spansh"].get()))
+        cfg_set(CFG["src_edsm"], bool(_p["edsm"].get()))
+        cfg_set(CFG["edd_path"], _p["eddpath"].get())
+        cfg_set(CFG["harvest_navroute"], bool(_p["navroute"].get()))
+        cfg_set(CFG["harvest_destination"], bool(_p["dest"].get()))
+        cfg_set(CFG["autocopy"], bool(_p["autocopy"].get()))
+        cfg_set(CFG["carrier_start"], bool(_p["carrier_start"].get()))
+        cfg_set(CFG["show_stats"], bool(_p["show_stats"].get()))
+        cfg_set(CFG["show_route"], bool(_p["show_route"].get()))
+        cfg_set(CFG["route_all"], bool(_p["route_all"].get()))
+        cfg_set(CFG["route_top"], bool(_p["route_top"].get()))
+        cfg_set(CFG["route_map"], bool(_p["route_map"].get()))
+        if _carrier_var:
+            _carrier_var.set(_p["carrier_start"].get())
+        cfg_set(CFG["debug"], bool(_p["debug"].get()))
+        logger.setLevel(logging.DEBUG if _p["debug"].get() else logging.INFO)
+        ST.sources = SourceManager(_p["eddpath"].get() or None)
+        if _radius_var:
+            _radius_var.set(_p["radius"].get())
+        if ST.active:
+            _run_async(_rebuild_plan, label="Plan")
+    except Exception:
+        logger.exception("could not save settings")
 
 
-def dashboard_entry(cmdr: str, is_beta: bool, entry: dict) -> None:
-    """Process dashboard entry (Status.json)."""
-    global _current_max_jump
-    
-    try:
-        # Update current location from monitor when dashboard updates
-        _update_current_location_from_monitor()
-        
-        # Update UI with current system
-        if _root_frame and hasattr(_root_frame, 'current_var'):
-            _root_frame.after(0, lambda: _root_frame.current_var.set(_current_system or "Unknown"))
-        
-        # Get ship jump range from dashboard
-        if 'FuelCapacity' in entry:
-            fuel_cap = entry['FuelCapacity'].get('Main', 0)
-            if fuel_cap > 0 and _current_max_jump is None:
-                _current_max_jump = fuel_cap * 2.0
-                logger.info(f"Jump range estimate from dashboard: {_current_max_jump:.2f} ly")
-    except Exception as e:
-        logger.error(f"Error in dashboard_entry: {e}")
+# ============================================================================
+# Maintenance
+# ============================================================================
+
+def _journal_dir() -> Optional[str]:
+    """Journal folder: EDMC's own setting first, then the default paths."""
+    for getter in ("get_str", "get"):
+        try:
+            v = getattr(config, getter)("journaldir")
+            if v and os.path.isdir(v):
+                return v
+        except Exception:
+            pass
+    for attr in ("default_journal_dir", "default_journal_dir_path"):
+        try:
+            v = getattr(config, attr, None)
+            if callable(v):
+                v = v()
+            if v and os.path.isdir(str(v)):
+                return str(v)
+        except Exception:
+            pass
+    for p in (r"%USERPROFILE%\Saved Games\Frontier Developments\Elite Dangerous",
+              r"%HOMEPATH%\Saved Games\Frontier Developments\Elite Dangerous"):
+        q = os.path.expandvars(p)
+        if os.path.isdir(q):
+            return q
+    return None
 
 
-def journal_entry(
-    cmdr: str,
-    is_beta: bool,
-    system: str,
-    station: str,
-    entry: Dict[str, Any],
-    state: Dict[str, Any]
-) -> None:
-    """Process journal entries."""
-    global _current_system, _current_system_id, _current_coords, _current_max_jump
-    
-    try:
-        event = entry.get("event")
-        
-        # Location events
-        if event in ("Location", "FSDJump", "CarrierJump"):
-            _current_system = entry.get("StarSystem")
-            _current_system_id = entry.get("SystemAddress")
-            
-            coords = entry.get("StarPos")
-            if coords and len(coords) >= 3:
-                _current_coords = tuple(coords[:3])
-            
-            logger.info(f"Location update: {_current_system} @ {_current_coords}")
-            
-            # Update UI
-            if _root_frame and hasattr(_root_frame, 'current_var'):
-                _root_frame.after(0, lambda: _root_frame.current_var.set(_current_system or "Unknown"))
-            
-            # Mark visited if in survey
-            if _state.active and _current_system:
-                _mark_visited(_current_system, _current_system_id)
-                
-                # Copy next target to clipboard
-                target = _get_next_target()
-                autocopy_enabled = _get_config_bool(CFG_AUTOCOPY, True)
-                logger.info(f"After jump - Auto-copy: {autocopy_enabled}, Next target: {target.name if target else 'None'}")
-                if target and autocopy_enabled:
-                    # Delayed copy to handle rapid jumps
-                    logger.info(f"Scheduling delayed clipboard copy for: {target.name}")
-                    if _root_frame:
-                        _root_frame.after(1500, lambda: _copy_to_clipboard(target.name))
-            
-            if _root_frame:
-                _root_frame.after(0, _refresh_ui)
-        
-        # Ship loadout for jump range
-        elif event == "Loadout":
-            max_jump = entry.get("MaxJumpRange", 0)
-            if max_jump > 0:
-                _current_max_jump = max_jump
-                logger.info(f"Jump range updated: {max_jump:.2f} ly")
-        
-    except Exception as e:
-        logger.error(f"Error in journal_entry: {e}", exc_info=True)
-    
-    # Always try to update from monitor as backup
-    if not _current_system:
-        _update_current_location_from_monitor()
-        if _root_frame and hasattr(_root_frame, 'current_var'):
-            _root_frame.after(0, lambda: _root_frame.current_var.set(_current_system or "Unknown"))
+def _import_journals(max_files: int = 0) -> None:
+    d = _journal_dir()
+    if not d:
+        _set_status("journal folder not found")
+        logger.warning("journal folder not found")
+        return
+
+    def prog(i, total, fn):
+        _set_status("journals %d/%d" % (i, total))
+
+    with ST.lock:
+        res = ST.db.import_journals(d, max_files=max_files, progress=prog)
+    logger.info("journals replayed: %s", res)
+    _set_status("journals: %d files, %d lines, %d events"
+                % (res["files"], res["lines"], res["events"]))
+    if ST.active:
+        _rebuild_plan()
+
+
+def _first_run_migration() -> None:
+    """
+    Runs once on first start. Replaces calling migrate.py, so no system-wide
+    Python installation is needed - EDMC ships its own interpreter.
+    """
+    logger.info("first-run import starting")
+    _set_status("first-run import: JSON")
+    _import_json()
+    _set_status("first-run import: journals")
+    _import_journals()
+    with ST.lock:
+        st = ST.db.stats()
+        ST.db.set_meta("migrated", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    logger.info("first-run import finished: %s", st)
+    _rebuild_route()
+    _set_status("first-run import done: %d systems, %d bodies"
+                % (st["systems"], st["bodies"]))
+
+
+def _selftest() -> None:
+    """Verify the procgen maths. Result goes to the EDMC log."""
+    import io
+    import contextlib
+    import procgen
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fails = procgen._selftest()
+    for line in buf.getvalue().splitlines():
+        logger.info("selftest | %s", line)
+    with ST.lock:
+        st = ST.db.stats()
+    logger.info("selftest | database: %s", st)
+    _set_status("self test: %s (details in log)"
+                % ("passed" if fails == 0 else "%d failures" % fails))
+
+
+def _import_json() -> None:
+    ok_total = 0
+    for fn, fn2 in (("neareststars.json", "import_neareststars"),
+                    ("survey_state.json", "import_survey_state")):
+        p = os.path.join(_PLUGIN_DIR, fn)
+        if os.path.exists(p):
+            with ST.lock:
+                a, b = getattr(ST.db, fn2)(p)
+            ok_total += a
+            logger.info("%s -> %d / %d", fn, a, b)
+    _set_status("JSON import: %d records" % ok_total)
+
+
+def _export_csv() -> None:
+    if not (ST.center and ST.planner):
+        _set_status("no active survey")
+        return
+    p = filedialog.asksaveasfilename(defaultextension=".csv",
+                                     initialfile="shboxsearch_plan.csv")
+    if not p:
+        return
+    with ST.lock:
+        plan = ST.planner.build(ST.center, ST.radius, masscodes=get_masscodes(),
+                                probe_depth=cfg_int(CFG["probe_depth"], 2),
+                                include_empty=cfg_bool(CFG["include_empty"], True))
+    n = Planner.export_csv(plan, p)
+    _set_status("%d targets written to %s" % (n, os.path.basename(p)))
+
+
+def _export_prefixes() -> None:
+    if not (ST.center and ST.planner):
+        _set_status("no active survey")
+        return
+    p = filedialog.asksaveasfilename(defaultextension=".txt",
+                                     initialfile="boxel_praefixe.txt")
+    if not p:
+        return
+    with ST.lock:
+        plan = ST.planner.build(ST.center, ST.radius, masscodes=get_masscodes(),
+                                probe_depth=cfg_int(CFG["probe_depth"], 2),
+                                include_empty=cfg_bool(CFG["include_empty"], True))
+    rows = Planner.boxel_prefixes(plan, limit=100000)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("# One prefix per boxel. Paste into the galaxy map search;\n"
+                "# the result list shows every system of that boxel.\n")
+        for pref, d, n in rows:
+            f.write("%-32s  %7.1f ly  open %d\n" % (pref, d, n))
+    _set_status("%d prefixes written to %s" % (len(rows), os.path.basename(p)))
