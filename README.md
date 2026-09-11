@@ -426,23 +426,104 @@ route | no bodies stored for Synuefe TH-J b42-4, replaying recent journals
 route | Synuefe TH-J b42-4: 17 stops, 55821 LS, about 114 min
 ```
 
+### What counts as needing a visit
+
+"Work it" means different things on different runs, so it is a set of ticks in
+the preferences. Any one of them is enough to put a body on the route:
+
+| Option | Meaning |
+|---|---|
+| every body | always fly the lot |
+| not discovered by anyone yet | `WasDiscovered: false` - the actual prize |
+| not surface-scanned by anyone yet | `WasMapped: false` |
+| has bio or geo signals | anything the FSS flagged |
+| landable | you can set down on it |
+| high value | ELW, water world, ammonia, terraformable |
+| has rings | |
+| DSS or bio still open | what our own records say is unfinished |
+
+On a 46-body system the difference is the whole trip:
+
+```
+every body   32 stops   97390 LS   182 min
+landable     17 stops   86264 LS   119 min
+high value    1 stop         8 LS     5 min
+still open    1 stop         8 LS     5 min
+```
+
+Your two criteria for "valuable" — no external database entry, and never
+surface-scanned — are the first two ticks. They come straight from the
+journal's own `WasDiscovered` and `WasMapped` flags, which the game sets
+against Frontier's records, so they are authoritative in a way an EDSM lookup
+can never be.
+
 ### About the minutes
 
-The time model is `entry + k * sqrt(distance)`, because supercruise time is
-dominated by acceleration, not cruise speed. It is calibrated against your own
-clean `SupercruiseEntry` → `SupercruiseExit` segments, refitted every eight
-measurements, and the panel says how many runs back it: `(model from 24 of
-your own runs)`.
+The estimate is now two separate things, because they behave differently:
 
-Be honest about what that number is worth. Measurements taken from real
-journals scatter by more than a factor of five for the same distance, because
-scanning, mapping and landing time is mixed into the same interval — 2961 LS
-appeared once as 193 seconds and once as 1999 seconds. The calibration
-therefore fits the **lower envelope**, on the reasoning that noise only ever
-inflates a measurement. Treat the minutes as a rough budget, not a promise.
+* **Travel** — `entry + k * sqrt(distance)`, since supercruise is dominated by
+  acceleration rather than cruise speed.
+* **On station** — what you do once you arrive. A detailed surface scan and a
+  biological sample take very different times, and both are measured.
 
-The **order**, though, barely depends on those constants. It depends on the
-geometry, and the geometry is accurate to about one percent.
+Both are calibrated from your own journals, and the panel says how many
+measurements back them.
+
+**Measuring travel honestly is hard; measuring work is not.** Of eleven
+`SupercruiseEntry` → `SupercruiseExit` pairs in the test journals, exactly one
+had nothing else happening inside it — the rest contain scans, approaches and
+mapping, which is why the same 2961 LS shows up as both 37 and 393 seconds.
+Work intervals have no such problem: a sample is bracketed by its own `Log` and
+`Analyse` events, and mapping by consecutive `SAAScanComplete` events in one
+system, which covers the transfer plus the probe run and is exactly the
+per-body rate the estimate needs.
+
+Measured on the test journals:
+
+```
+work model from 195 DSS and 12 bio measurements:
+  dss 194 s, bio 193 s, approach 45 s
+```
+
+Both land near three minutes, which matches the feel of it. The defaults were
+150 and 205 seconds, so the calibration moved them by a sensible amount rather
+than wildly — a good sign that the brackets are measuring what they claim to.
+
+Timings are filtered with a **trimmed median**, not a mean: journal intervals
+are contaminated in one direction only, since the commander can walk away mid-
+scan but cannot finish faster than the game allows. The upper tail is noise,
+the lower tail is real.
+
+The route summary splits the two so the balance is visible:
+
+```
+Synuefe AH-X b20-0: 32 stops in 16 planetary systems, 97390 LS,
+about 182 min (178 travel + 4 on station)
+```
+
+In a spread-out system almost all of it is transit. The statistics block adds
+the other half of the picture — how big the systems around here actually are:
+
+```
+systems: 7.5 bodies each on average (2 measured)
+```
+
+### Route quality
+
+The optimiser was checked against brute force on every system small enough to
+enumerate exhaustively:
+
+| System | Clusters | 2-opt | Optimal | Gap |
+|---|---|---|---|---|
+| Synuefe TH-J b42-5 | 6 | 2010 s | 2010 s | 0.0% |
+| Synuefe VC-J b42-3 | 6 | 2859 s | 2859 s | 0.0% |
+| Synuefe TH-J b42-1 | 6 | 1721 s | 1721 s | 0.0% |
+| Synuefe TH-J b42-2 | 8 | 3185 s | 3185 s | 0.0% |
+
+Exactly optimal in each case, in under a millisecond. Clustering moons with
+their planet is what makes this work: it collapses a 46-body tour into 16
+decisions, which is small enough that 2-opt reliably finds the best answer.
+There is no gain to be had from a smarter solver here.
 
 ## 9. Interface
 
@@ -648,3 +729,83 @@ needed for normal operation.
   them they are real systems, and their boxels need no probing at all.
 * **No durable knowledge store.** `neareststars.json` was rewritten on every
   run and `survey_state.json` was throwaway state.
+
+
+---
+
+## 15. Deep space operations
+
+Three things decide how far out you can work, and all three are measured from
+the journal rather than assumed.
+
+### Ship fuel
+
+Consumption is strongly non-linear — the drive burns roughly `dist ** 2.7`, so
+a 64 ly jump costs hundreds of times what a 6 ly hop does. Averaging the last
+few jumps is therefore useless on its own: after a run of short hops it claims
+thousands of jumps of range, which is how the first version of this got it
+wrong by a factor of 400.
+
+Instead a curve `used = a * dist ** b` is fitted to your own
+(`JumpDist`, `FuelUsed`) pairs in log space. On the test journals that gives
+**b = 2.75**, which matches the drive's documented fuel power of 2.6 to 2.8 —
+strong evidence the fit is measuring the real thing rather than noise.
+
+Range is then quoted for both cases that matter:
+
+```
+fuel 171/176t (97%) | 12 jumps at max 64 ly | 7449 at your usual 7 ly
+  | burn ~dist^2.8 (15 jumps)
+```
+
+Twelve jumps if you range out, effectively unlimited if you keep hopping short.
+The panel switches to a warning when it gets tight:
+
+```
+FUEL CRITICAL - 1 full-range jumps left, scoop now
+fuel low - 4 full-range jumps left, find a KGBFOAM star
+```
+
+### Tritium
+
+Tritium is mined from **icy rings**, so an icy ring is what makes a carrier
+staging point viable. Ring classes come straight from the `Scan` event and are
+stored per body, with the icy ring mass carried through — a bigger ring means a
+longer usable seam, which matters if the carrier is going to sit there a while.
+
+The statistics block reports what is available where you are:
+
+```
+tritium: 1 system with icy rings here (nearest Synuefe AH-X b20-0 at 0 ly)
+```
+
+Measured on the test journals: 29 bodies with rings, 15 of them icy, the
+largest at 2.4 × 10¹⁶ MT.
+
+### Where the carrier goes next
+
+**carrier spot** answers the question the `AREA COMPLETE` message raises. It
+scores every known tritium system in a volume three spheres wide against three
+things that pull against each other:
+
+* overlap with ground already surveyed — wasted effort
+* unexplored boxels in the new sphere — the reason to go at all
+* tritium on site
+
+Tritium is a **hard gate**, not a weighting: a staging point you cannot refuel
+at is not a staging point.
+
+```
+next carrier position (tritium on site):
+  Synuefe QT-K b41-2    112 ly | 2 icy rings | overlap  3% |
+                        847 boxels unexplored | score 3.21
+```
+
+It only ever proposes somewhere an icy ring has been seen with our own eyes.
+Guessing at unvisited systems would risk sending the carrier somewhere it
+cannot refuel — so when nothing qualifies yet it says so plainly:
+`no tritium system known far enough out yet - scan icy rings as you go`.
+
+That is also the practical argument for keeping the **has rings** filter on
+while working a sphere: every icy ring you scan becomes a candidate for the
+next hop.

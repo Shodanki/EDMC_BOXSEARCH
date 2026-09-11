@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS bodies (
     arrival_ls  REAL,
     parent_id   INTEGER,
     sma REAL, ecc REAL, inc REAL, peri REAL, node REAL, mean_anom REAL, period REAL,
+    ring_classes TEXT, ring_mass REAL, star_type TEXT,
     organics    INTEGER NOT NULL DEFAULT 0,
     genuses     TEXT,
     updated     TEXT,
@@ -173,7 +174,9 @@ class SystemDB:
         for col, typ in (("arrival_ls", "REAL"), ("parent_id", "INTEGER"),
                          ("sma", "REAL"), ("ecc", "REAL"), ("inc", "REAL"),
                          ("peri", "REAL"), ("node", "REAL"),
-                         ("mean_anom", "REAL"), ("period", "REAL")):
+                         ("mean_anom", "REAL"), ("period", "REAL"),
+                         ("ring_classes", "TEXT"), ("ring_mass", "REAL"),
+                         ("star_type", "TEXT")):
             if col not in bhave:
                 self.cx.execute("ALTER TABLE bodies ADD COLUMN %s %s" % (col, typ))
         self.cx.commit()
@@ -546,8 +549,17 @@ class SystemDB:
                         if isinstance(pr, dict) and pr:
                             parent = list(pr.values())[0]
                             break
+                    rings = entry.get("Rings") or []
+                    ring_cls = ",".join(sorted({r.get("RingClass") for r in rings
+                                                if r.get("RingClass")})) or None
+                    ring_mass = sum(float(r.get("MassMT") or 0.0)
+                                    for r in rings
+                                    if r.get("RingClass") == "eRingClass_Icy")
                     self._body_upsert(
                         a, entry.get("BodyID"),
+                        ring_classes=ring_cls,
+                        ring_mass=ring_mass or None,
+                        star_type=entry.get("StarType"),
                         arrival_ls=entry.get("DistanceFromArrivalLS"),
                         parent_id=parent,
                         sma=entry.get("SemiMajorAxis"),

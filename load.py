@@ -36,9 +36,12 @@ if _PLUGIN_DIR not in sys.path:
 from procgen import MASSCODES, parse_name                      # noqa: E402
 from sysdb import SystemDB, Q_JOURNAL, Q_UNKNOWN               # noqa: E402
 from sources import SourceManager                              # noqa: E402
-from sysroute import (DEFAULT_MODEL, bodies_from_rows,        # noqa: E402
-                      calibrate_from_journal, plan_route,
-                      resolve_positions, shorten)
+from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
+                       staging_lines, tritium_systems)
+from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
+                      F_ALL, F_OUTSTANDING, bodies_from_rows,
+                      calibrate_from_journal, calibrate_work_from_journal,
+                      plan_route, resolve_positions, shorten)
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
                        set_origin)
@@ -71,6 +74,7 @@ CFG = {
     "route_all": "%s_route_all" % PLUGIN_NAME,
     "route_top": "%s_route_top" % PLUGIN_NAME,
     "route_map": "%s_route_map" % PLUGIN_NAME,
+    "filters": "%s_filters" % PLUGIN_NAME,
 }
 RADIUS_CHOICES = ["50", "100", "150"]
 
@@ -118,6 +122,14 @@ class State:
         self.route_started: Optional[float] = None
         self.cost_model = DEFAULT_MODEL
         self.sc_segments: List[Tuple[float, float]] = []
+        self.work_dss: List[float] = []
+        self.work_bio: List[float] = []
+        self.work_approach: List[float] = []
+        self._arrive: Dict[str, float] = {}
+        self._bio_log: Dict[Tuple, float] = {}
+        self.sys_times: List[Tuple[str, float, int]] = []
+        self.fuel = FuelState()
+        self.staging: List[Dict[str, Any]] = []
         self._sc_start: Optional[Tuple[float, float]] = None
         self.finished_announced = False
 
@@ -144,6 +156,7 @@ _btn_next: Optional[tk.Button] = None
 _lbl_stats = None
 _v_stats: Optional[tk.StringVar] = None
 _v_route: Optional[tk.StringVar] = None
+_v_fuel: Optional[tk.StringVar] = None
 _lbl_route = None
 _btn_route: Optional[tk.Button] = None
 _carrier_var: Optional[tk.IntVar] = None
@@ -191,6 +204,13 @@ def cfg_set(key: str, value) -> None:
         logger.warning("config.set(%s) fehlgeschlagen: %s", key, e)
 
 
+def get_filters() -> List[str]:
+    """Which bodies count as needing a visit. Empty means 'still outstanding'."""
+    raw = cfg_str(CFG["filters"], F_OUTSTANDING)
+    out = [f.strip() for f in raw.split(",") if f.strip() in ALL_FILTERS]
+    return out or [F_OUTSTANDING]
+
+
 def get_masscodes() -> List[int]:
     raw = cfg_str(CFG["masscodes"], "0,1,2,3")
     out = []
@@ -232,7 +252,7 @@ def plugin_start3(plugin_dir: str) -> str:
         logger.info("restored running survey: %s r=%.0f ly",
                     ST.start_system, ST.radius)
         _run_async(_rebuild_plan, label="loading plan")
-    _run_async(_rebuild_route, label="in-system route")
+    _request_route()
     return "SHBOXSEARCH"
 
 
@@ -316,6 +336,20 @@ def _rebuild_plan() -> None:
     ST.plan_counts = plan["counts"]
     ST.plan_info = Planner.summary(plan)
     ST.stats_lines = Planner.stats_lines(ST.stats)
+    try:
+        with ST.lock:
+            tri = tritium_systems(ST.db, ST.center, ST.radius)
+        if tri:
+            ST.stats_lines.append(
+                "tritium: %d system%s with icy rings here (nearest %s at %.0f ly)"
+                % (len(tri), "" if len(tri) == 1 else "s",
+                   tri[0]["name"], min(t["dist"] for t in tri)))
+        else:
+            ST.stats_lines.append("tritium: none found in this sphere yet")
+    except Exception:
+        logger.exception("tritium summary failed")
+    if ST.fuel.capacity:
+        ST.stats_lines.append(ST.fuel.summary())
     for line in ST.stats_lines:
         logger.info("stats | %s", line)
     if ST.stats.get("finished") and not ST.finished_announced:
@@ -392,6 +426,44 @@ def _resolve_current_system() -> None:
         logger.info("current system assumed from history: %s", ST.cur_system)
 
 
+_route_lock = threading.Lock()
+_route_last: List[float] = [0.0]
+_route_pending = [False]
+
+
+def _request_route(delay: float = 1.5) -> None:
+    """
+    Ask for a route rebuild, at most one at a time.
+
+    A single arrival fires several events in quick succession - Location, the
+    FSS sweep, then every SAAScanComplete - and each one used to trigger its
+    own rebuild. The log showed four identical runs for one system. This
+    collapses a burst into a single run shortly after it ends.
+    """
+    with _route_lock:
+        if _route_pending[0]:
+            _route_last[0] = time.time()
+            return
+        _route_pending[0] = True
+        _route_last[0] = time.time()
+
+    def waiter():
+        while True:
+            with _route_lock:
+                quiet = time.time() - _route_last[0]
+            if quiet >= delay:
+                break
+            time.sleep(0.25)
+        with _route_lock:
+            _route_pending[0] = False
+        try:
+            _rebuild_route()
+        except Exception:
+            logger.exception("route rebuild failed")
+
+    threading.Thread(target=waiter, daemon=True, name="SHBOX-route").start()
+
+
 def _rebuild_route() -> None:
     """Order the bodies of the current system into a short in-system route."""
     ST.route = None
@@ -423,16 +495,16 @@ def _rebuild_route() -> None:
     bodies = bodies_from_rows(rows)
     for b in bodies.values():
         b.short = shorten(b.name, ST.cur_system or "")
-    want_all = cfg_bool(CFG["route_all"], False)
+    filters = [F_ALL] if cfg_bool(CFG["route_all"], False) else get_filters()
     route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
-                       only_work=not want_all)
+                       filters=filters)
     ST.route_full = False
-    if not route.stops and not want_all:
+    if not route.stops and F_ALL not in filters:
         # Nothing outstanding - show the complete tour anyway rather than an
         # empty window. Useful when revisiting a system, and it makes clear
         # that the system really is finished rather than unknown.
         route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
-                           only_work=False)
+                           filters=[F_ALL])
         ST.route_full = True
     ST.route = route
     ST.route_lines = route.lines(limit=12)
@@ -471,61 +543,138 @@ _MAP_W, _MAP_H = 340, 340
 
 def _theme_colours() -> Dict[str, str]:
     """
-    Take the colours straight off the main panel.
+    Work out the host application's colours.
 
     EDMC's theme module registers widgets it created itself; a Toplevel a
-    plugin opens is not part of that. Reading the live values from the plugin
-    frame therefore matches whatever theme is active - default, dark or the
-    user's own transparent setup - without depending on theme internals.
+    plugin opens is not part of that, and Tk gives new widgets its own
+    defaults - black text on a light grey button, which is unreadable on the
+    dark theme. So the colours are read live from the plugin frame, which does
+    follow whatever theme is active.
+
+    EDMC's own config is consulted first, because the frame can report an
+    empty string before it has been mapped; the frame is the fallback, and a
+    dark default the last resort.
     """
-    bg = fg = None
-    for widget in (_frame, _frame.master if _frame else None):
-        if widget is None:
-            continue
+    bg = fg = ""
+
+    # 1. EDMC's theme setting, if it exposes one
+    try:
+        idx = config.get_int("theme")
+    except Exception:
+        idx = None
+    if idx is not None:
         try:
-            bg = bg or str(widget.cget("background"))
+            bg = cfg_str("dark_background") if idx else ""
+            fg = cfg_str("dark_text") if idx else ""
         except Exception:
-            pass
-        if bg:
-            break
-    for widget in (_frame,):
-        if widget is None:
-            continue
+            bg = fg = ""
+
+    # 2. live values off the plugin frame
+    if not bg and _frame is not None:
+        for widget in (_frame, getattr(_frame, "master", None)):
+            if widget is None:
+                continue
+            try:
+                v = str(widget.cget("background"))
+            except Exception:
+                continue
+            if v:
+                bg = v
+                break
+    if not fg and _frame is not None:
         try:
-            for child in widget.winfo_children():
+            for child in _frame.winfo_children():
                 try:
-                    fg = str(child.cget("foreground"))
-                    if fg:
-                        break
+                    v = str(child.cget("foreground"))
                 except Exception:
                     continue
+                if v:
+                    fg = v
+                    break
         except Exception:
             pass
+
+    # 3. a readable pair rather than Tk's defaults
+    if not bg:
+        bg = "#000000"
+    if not fg or fg == bg:
+        fg = "#ffffff" if _is_dark(bg) else "#000000"
+    return {"bg": bg, "fg": fg}
+
+
+def _is_dark(colour: str) -> bool:
+    """Rough luminance test, so a fallback foreground is at least readable."""
     try:
-        font = _frame.cget("font") if _frame else None
+        c = colour.strip()
+        if c.startswith("#") and len(c) == 7:
+            r, g, b = (int(c[i:i + 2], 16) for i in (1, 3, 5))
+            return (0.299 * r + 0.587 * g + 0.114 * b) < 128
     except Exception:
-        font = None
-    return {"bg": bg or "", "fg": fg or "", "font": font or ""}
+        pass
+    return True
 
 
-def _apply_theme(widget, colours: Dict[str, str], is_text: bool = False) -> None:
-    """Paint one widget in the host application's colours."""
+def _dim(colour: str, factor: float = 0.45) -> str:
+    """A muted version of a colour, for disabled controls and finished stops."""
+    try:
+        c = colour.strip()
+        if c.startswith("#") and len(c) == 7:
+            r, g, b = (int(c[i:i + 2], 16) for i in (1, 3, 5))
+            return "#%02x%02x%02x" % (int(r * factor), int(g * factor),
+                                      int(b * factor))
+    except Exception:
+        pass
+    return "#7a7a7a"
+
+
+def _apply_theme(widget, colours: Dict[str, str], is_text: bool = False,
+                 is_button: bool = False) -> None:
+    """
+    Paint one widget in the host application's colours.
+
+    Buttons need more than background and foreground. Tk keeps separate
+    colours for the pressed and the disabled state, and on Windows a button
+    left at its defaults draws black text on whatever background it was given
+    - which is exactly the unreadable combination on a dark theme. All four
+    are therefore set together.
+    """
+    bg, fg = colours.get("bg"), colours.get("fg")
     opts = {}
-    if colours.get("bg"):
-        opts["background"] = colours["bg"]
-    if is_text and colours.get("fg"):
-        opts["foreground"] = colours["fg"]
-    if opts:
+    if bg:
+        opts["background"] = bg
+    if (is_text or is_button) and fg:
+        opts["foreground"] = fg
+    if is_button:
+        if bg:
+            opts["activebackground"] = bg
+            opts["highlightbackground"] = bg
+        if fg:
+            opts["activeforeground"] = fg
+            opts["disabledforeground"] = _dim(fg)
+        opts["relief"] = tk.FLAT
+        opts["borderwidth"] = 1
+        opts["highlightthickness"] = 1
+    if not opts:
+        return
+    try:
+        widget.configure(**opts)
+        return
+    except Exception:
+        pass
+    # some option combinations are rejected per widget class - set them singly
+    for key, value in opts.items():
         try:
-            widget.configure(**opts)
+            widget.configure(**{key: value})
         except Exception:
-            pass
+            continue
 
 
 def _theme_tree(widget, colours: Dict[str, str]) -> None:
     """Apply the colours to a widget and everything below it."""
     cls = widget.__class__.__name__
-    _apply_theme(widget, colours, is_text=cls in ("Label", "Checkbutton"))
+    _apply_theme(widget, colours,
+                 is_text=cls in ("Label", "Checkbutton", "Entry"),
+                 is_button=cls in ("Button", "Menubutton"))
     try:
         children = widget.winfo_children()
     except Exception:
@@ -864,6 +1013,30 @@ def _route_window_refresh() -> None:
     for label, stops in route.groups():
         n += 1
         transfer = stops[0].leg_ls
+        moons_here = len(stops) - 1
+        # A planet with no moons needs no heading of its own - it would just
+        # repeat the single row underneath. The log showed "4 stops in 4
+        # planetary systems", four headings for four lone planets.
+        if moons_here == 0:
+            st = stops[0]
+            done = st.body.body_id in ST.route_done
+            row = tk.Frame(_route_body)
+            row.grid(row=row_i, column=0, sticky=tk.EW, pady=(6 if row_i else 0, 0))
+            row_i += 1
+            var = tk.IntVar(value=1 if done else 0)
+            cb = tk.Checkbutton(row, variable=var,
+                                command=lambda b=st.body.body_id: _route_tick(b))
+            cb.pack(side=tk.LEFT)
+            text = "%s %-24s %7.0f LS %4.0f min  %s" % (
+                _MARK_PLANET, st.body.short[:24], st.leg_ls,
+                st.leg_s / 60.0, st.work)
+            lone = tk.Label(row, text=text, anchor=tk.W, font=_FONT_GROUP)
+            lone.pack(side=tk.LEFT)
+            _apply_theme(row, col)
+            _apply_theme(cb, col, is_text=True)
+            _apply_theme(lone, col, is_text=True)
+            _route_rows.append({"body_id": st.body.body_id, "var": var})
+            continue
         # --- planet heading -------------------------------------------------
         hdr = tk.Frame(_route_body)
         hdr.grid(row=row_i, column=0, sticky=tk.EW, pady=(8 if row_i else 0, 1))
@@ -904,6 +1077,162 @@ def _route_window_refresh() -> None:
             _route_rows.append({"body_id": st.body.body_id, "var": var})
 
     _route_theme()
+
+
+def _measure_work(ev: str, entry: Dict[str, Any]) -> None:
+    """
+    Time the work at a body as it happens.
+
+    These intervals are clean in a way supercruise timings are not: a surface
+    scan is bracketed by arrival and SAAScanComplete, a sample by its own Log
+    and Analyse events. Nothing can stretch them except the commander pausing,
+    which the trimmed median then discards.
+    """
+    try:
+        now = time.time()
+        if ev == "SAAScanComplete":
+            b = entry.get("BodyName")
+            t0 = ST._arrive.pop(b, None) if b else None
+            if t0 and 10 < now - t0 < 1800:
+                ST.work_dss.append(now - t0)
+        elif ev == "ScanOrganic":
+            key = (entry.get("SystemAddress"), entry.get("Body"),
+                   entry.get("Species"))
+            kind = entry.get("ScanType")
+            if kind in ("Log", "Sample"):
+                ST._bio_log.setdefault(key, now)
+            elif kind == "Analyse":
+                t0 = ST._bio_log.pop(key, None)
+                if t0 and 20 < now - t0 < 3600:
+                    ST.work_bio.append(now - t0)
+        total = len(ST.work_dss) + len(ST.work_bio)
+        if total and total % 5 == 0:
+            ST.cost_model = calibrate_work_from_journal(
+                ST.work_dss, ST.work_bio, ST.work_approach, ST.cost_model)
+            logger.info("work model recalibrated: %s", ST.cost_model.as_dict())
+    except Exception:
+        logger.exception("work measurement failed")
+
+
+def _bootstrap_work_model() -> None:
+    """Measure the work constants once from the existing journals."""
+    import glob
+    import calendar
+    d = _journal_dir()
+    if not d:
+        return
+    files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
+                   + glob.glob(os.path.join(d, "Journal_*.log")))[-30:]
+    dss: List[float] = []
+    bio: List[float] = []
+    arrive: Dict[str, float] = {}
+    blog: Dict[Tuple, float] = {}
+    last_saa: Dict[int, float] = {}
+    for fn in files:
+        try:
+            with open(fn, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                        ts = calendar.timegm(time.strptime(
+                            e["timestamp"], "%Y-%m-%dT%H:%M:%SZ"))
+                    except (ValueError, KeyError):
+                        continue
+                    v = e.get("event")
+                    if v in ("ApproachBody", "SupercruiseExit"):
+                        if e.get("Body"):
+                            arrive[e["Body"]] = ts
+                    elif v == "SAAScanComplete":
+                        # Most mapping is done straight from supercruise with
+                        # no ApproachBody at all, so the honest bracket is the
+                        # gap between consecutive mappings in one system: it
+                        # covers the transfer plus the probe run, which is
+                        # exactly the per-body rate the estimate needs.
+                        t0 = arrive.pop(e.get("BodyName"), None)
+                        prev = last_saa.get(e.get("SystemAddress"))
+                        if t0 and 10 < ts - t0 < 1800:
+                            dss.append(ts - t0)
+                        elif prev and 20 < ts - prev < 1800:
+                            dss.append(ts - prev)
+                        last_saa[e.get("SystemAddress")] = ts
+                    elif v == "ScanOrganic":
+                        key = (e.get("SystemAddress"), e.get("Body"),
+                               e.get("Species"))
+                        if e.get("ScanType") in ("Log", "Sample"):
+                            blog.setdefault(key, ts)
+                        elif e.get("ScanType") == "Analyse":
+                            t0 = blog.pop(key, None)
+                            if t0 and 20 < ts - t0 < 3600:
+                                bio.append(ts - t0)
+        except OSError:
+            continue
+    ST.work_dss, ST.work_bio = dss, bio
+    before = ST.cost_model.as_dict()
+    ST.cost_model = calibrate_work_from_journal(dss, bio, [], ST.cost_model)
+    logger.info("work model from %d DSS and %d bio measurements: %s",
+                len(dss), len(bio), ST.cost_model.as_dict())
+    if before == ST.cost_model.as_dict():
+        logger.info("work model unchanged - too few measurements yet")
+
+
+def _bootstrap_fuel() -> None:
+    """Read ship fuel figures out of the recent journals."""
+    import glob
+    d = _journal_dir()
+    if not d:
+        return
+    files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
+                   + glob.glob(os.path.join(d, "Journal_*.log")))[-6:]
+    used: List[Tuple[float, float]] = []
+    for fn in files:
+        try:
+            with open(fn, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    v = e.get("event")
+                    if v == "Loadout":
+                        if e.get("MaxJumpRange"):
+                            ST.fuel.max_jump = float(e["MaxJumpRange"])
+                        cap = (e.get("FuelCapacity") or {}).get("Main")
+                        if cap:
+                            ST.fuel.capacity = float(cap)
+                    elif v == "FSDJump":
+                        if e.get("FuelUsed") is not None:
+                            used.append((float(e.get("JumpDist") or 0.0),
+                                         float(e["FuelUsed"])))
+                        if e.get("FuelLevel") is not None:
+                            ST.fuel.level = float(e["FuelLevel"])
+        except (OSError, TypeError, ValueError):
+            continue
+    ST.fuel.jumps = [(d, u) for d, u in used if d > 0.1 and u > 0.0]
+    logger.info("fuel | %s", ST.fuel.summary())
+
+
+def _plan_staging() -> None:
+    """Work out where the carrier should go next, tritium permitting."""
+    if not (ST.db and ST.planner and ST.center):
+        _set_status("no active sphere")
+        return
+    with ST.lock:
+        rows = best_staging(ST.db, ST.planner, ST.center, ST.radius,
+                            get_masscodes())
+    ST.staging = rows
+    for line in staging_lines(rows):
+        logger.info("carrier | %s", line)
+    if rows:
+        _set_status("next carrier spot: %s (%.0f ly, %d icy rings)"
+                    % (rows[0]["name"], rows[0]["dist"], rows[0]["icy_rings"]))
+    else:
+        _set_status("no tritium system known far enough out yet")
 
 
 def _route_review() -> None:
@@ -1308,6 +1637,18 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                                     ST.cost_model.as_dict())
             ST._sc_start = None
 
+        if ev == "FSDJump" and entry.get("FuelUsed") is not None:
+            try:
+                ST.fuel.add_jump(entry.get("JumpDist"),
+                                 entry.get("FuelUsed"))
+                if entry.get("FuelLevel") is not None:
+                    ST.fuel.level = float(entry["FuelLevel"])
+                w = ST.fuel.warning()
+                if w:
+                    logger.info("fuel | %s", w)
+            except (TypeError, ValueError):
+                pass
+
         if ev in ("FSDJump", "Location", "CarrierJump"):
             if entry.get("SystemAddress") != ST.cur_id64:
                 ST.route_done.clear()
@@ -1322,7 +1663,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 _prune_queues()
                 _resort_queues()
                 _ui(_copy_flight)
-            _run_async(_rebuild_route, label="in-system route")
+            _request_route()
             _ui(_refresh)
 
         elif ev in ("CarrierJump", "CarrierLocation", "CarrierStats") or (
@@ -1342,6 +1683,10 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
             mj = entry.get("MaxJumpRange")
             if mj:
                 ST.max_jump = float(mj)
+                ST.fuel.max_jump = float(mj)
+            cap = (entry.get("FuelCapacity") or {}).get("Main")
+            if cap:
+                ST.fuel.capacity = float(cap)
 
         elif ev == "StartUp":
             if entry.get("StarSystem"):
@@ -1350,15 +1695,20 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 pos = entry.get("StarPos")
                 if pos and len(pos) >= 3:
                     ST.cur_pos = (pos[0], pos[1], pos[2])
-            _run_async(_rebuild_route, label="in-system route")
+            _request_route()
             route = state.get("NavRoute") if state else None
             if route and cfg_bool(CFG["harvest_navroute"], True):
                 with ST.lock:
                     ST.db.ingest_journal_event({"event": "NavRoute",
                                                 "Route": route.get("Route", [])})
 
+        elif ev == "ApproachBody":
+            if entry.get("Body"):
+                ST._arrive[entry["Body"]] = time.time()
+
         elif ev in ("Scan", "SAAScanComplete", "SAASignalsFound", "FSSBodySignals",
                     "FSSDiscoveryScan", "FSSAllBodiesFound", "ScanOrganic"):
+            _measure_work(ev, entry)
             if not ST.cur_id64 and entry.get("SystemAddress"):
                 ST.cur_id64 = entry["SystemAddress"]
                 ST.cur_system = (entry.get("StarSystem") or entry.get("SystemName")
@@ -1370,7 +1720,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                                  "mapped" if ev == "SAAScanComplete" else "sampled")
             if ev in ("FSSAllBodiesFound", "SAAScanComplete", "ScanOrganic",
                       "FSSBodySignals", "SAASignalsFound"):
-                _run_async(_rebuild_route, label="in-system route")
+                _request_route()
             _ui(_refresh)
 
         elif ev == "FSDTarget":
@@ -1391,6 +1741,12 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
     if not ST.db or not cfg_bool(CFG["harvest_destination"], True):
         return
     try:
+        fuel = entry.get("Fuel") or {}
+        if fuel.get("FuelMain") is not None:
+            try:
+                ST.fuel.level = float(fuel["FuelMain"])
+            except (TypeError, ValueError):
+                pass
         dest = entry.get("Destination")
         if not dest:
             return
@@ -1433,6 +1789,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     global _btn_start, _btn_absent, _btn_skip, _radius_var
     global _btn_fc, _btn_stats, _lbl_stats, _v_stats, _carrier_var
     global _btn_boxel, _btn_prefix, _btn_next, _v_route, _lbl_route, _btn_route
+    global _v_fuel
 
     _frame = tk.Frame(parent)
     _frame.columnconfigure(1, weight=1)
@@ -1445,6 +1802,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     _v_queue = tk.StringVar(value="")
     _v_stats = tk.StringVar(value="")
     _v_route = tk.StringVar(value="")
+    _v_fuel = tk.StringVar(value="")
     _radius_var = tk.StringVar(value=str(cfg_int(CFG["radius"], 50)))
     _carrier_var = tk.IntVar(value=1 if cfg_bool(CFG["carrier_start"], False) else 0)
 
@@ -1504,12 +1862,17 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     _btn_route = tk.Button(bar3, text="route", width=6,
                            command=_toggle_route_window)
     _btn_route.pack(side=tk.LEFT, padx=(3, 0))
+    tk.Button(bar3, text="carrier spot", width=12,
+              command=lambda: _run_async(_plan_staging, label="staging")).pack(
+        side=tk.LEFT, padx=(3, 0))
     tk.Checkbutton(bar3, text="carrier start", variable=_carrier_var,
                    command=_on_carrier_toggle).pack(side=tk.LEFT, padx=(6, 0))
 
     # 7/8/9  counters, optional statistics block, status
-    tk.Label(_frame, textvariable=_v_queue, anchor=tk.W).grid(
+    tk.Label(_frame, textvariable=_v_fuel, anchor=tk.W).grid(
         row=7, column=0, columnspan=2, sticky=tk.EW)
+    tk.Label(_frame, textvariable=_v_queue, anchor=tk.W).grid(
+        row=11, column=0, columnspan=2, sticky=tk.EW)
     _lbl_route = tk.Label(_frame, textvariable=_v_route, anchor=tk.W,
                           justify=tk.LEFT)
     _lbl_route.grid(row=8, column=0, columnspan=2, sticky=tk.EW)
@@ -1600,6 +1963,10 @@ def _refresh() -> None:
                              % ST.carrier["system"])
             else:
                 _v_queue.set("Start sets the sphere centre to your current position")
+
+        if _v_fuel is not None:
+            warn = ST.fuel.warning()
+            _v_fuel.set(warn or ST.fuel.summary())
 
         # one compact line here; the full list lives in the route window
         if cfg_bool(CFG["show_route"], True) and ST.route and ST.route.stops:
@@ -1746,6 +2113,20 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     field("", nb.Checkbutton(f, text="draw the top-down map in the route window",
                              variable=_p["route_map"]))
 
+    head("What counts as needing a visit")
+    nb.Label(f, text="   Any ticked reason is enough. \"every body\" overrides "
+                     "the rest.").grid(
+        row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(14, 0))
+    state["row"] += 1
+    active = set(get_filters())
+    _p["filters"] = {}
+    for key in ALL_FILTERS:
+        v = tk.IntVar(value=1 if key in active else 0)
+        _p["filters"][key] = v
+        nb.Checkbutton(f, text=FILTER_LABEL[key], variable=v).grid(
+            row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(28, 0))
+        state["row"] += 1
+
     car = ST.db.get_carrier() if ST.db else None
     nb.Label(f, text="   carrier: %s" % (
         "%s%s, last seen %s" % (car["system"],
@@ -1887,6 +2268,9 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["route_all"], bool(_p["route_all"].get()))
         cfg_set(CFG["route_top"], bool(_p["route_top"].get()))
         cfg_set(CFG["route_map"], bool(_p["route_map"].get()))
+        picked = [k for k, v in _p.get("filters", {}).items() if v.get()]
+        cfg_set(CFG["filters"], ",".join(picked) if picked else F_OUTSTANDING)
+        _request_route(delay=0.2)
         if _carrier_var:
             _carrier_var.set(_p["carrier_start"].get())
         cfg_set(CFG["debug"], bool(_p["debug"].get()))

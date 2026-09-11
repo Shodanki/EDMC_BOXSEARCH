@@ -60,16 +60,34 @@ VALUABLE = {
 
 
 class CostModel:
-    """Supercruise cost model. All times in seconds."""
+    """
+    What a stop actually costs, in seconds.
+
+    Two parts, because they behave completely differently:
+
+    * TRAVEL - supercruise, dominated by acceleration, so entry + k*sqrt(d).
+    * WORK - what you do once you arrive. A drive-by scan is seconds; a
+      detailed surface scan is a couple of minutes; taking three biological
+      samples is the better part of ten.
+
+    Every constant can be measured from the commander's own journals rather
+    than guessed, and each carries the sample count that backs it, so the
+    panel can say how much the estimate is worth.
+    """
 
     def __init__(self, entry: float = 40.0, k: float = 11.0,
                  dropout: float = 25.0, floor: float = 15.0,
-                 samples: int = 0):
-        self.entry = entry        # spin-up before the ship really moves
-        self.k = k                # seconds per sqrt(light second)
-        self.dropout = dropout    # cost of dropping out at the target
-        self.floor = floor        # nothing is ever faster than this
-        self.samples = samples    # how many measurements back this up
+                 samples: int = 0, dss: float = 150.0, bio: float = 205.0,
+                 approach: float = 45.0, work_samples: int = 0):
+        self.entry = entry            # spin-up before the ship really moves
+        self.k = k                    # seconds per sqrt(light second)
+        self.dropout = dropout        # cost of dropping out at the target
+        self.floor = floor            # nothing is ever faster than this
+        self.samples = samples        # measurements behind the travel model
+        self.dss = dss                # one detailed surface scan
+        self.bio = bio                # one biological sample, log to analyse
+        self.approach = approach      # lining up and dropping to a body
+        self.work_samples = work_samples
 
     def travel(self, distance_ls: float) -> float:
         if distance_ls <= 0.05:
@@ -79,9 +97,23 @@ class CostModel:
     def hop(self, distance_ls: float) -> float:
         return self.travel(distance_ls) + self.dropout
 
+    def work(self, body: "Body") -> float:
+        """Time on station at one body, from what it still needs."""
+        t = 0.0
+        if body.wants_dss:
+            t += self.dss + self.approach
+        if body.wants_bio:
+            outstanding = max(1, body.sig_bio - body.organics)
+            t += self.bio * outstanding + self.approach
+        return t
+
     def as_dict(self) -> Dict[str, float]:
-        return {"entry": self.entry, "k": self.k, "dropout": self.dropout,
-                "floor": self.floor, "samples": self.samples}
+        return {"entry": round(self.entry, 1), "k": round(self.k, 2),
+                "dropout": self.dropout, "floor": self.floor,
+                "travel_samples": self.samples,
+                "dss": round(self.dss), "bio": round(self.bio),
+                "approach": round(self.approach),
+                "work_samples": self.work_samples}
 
 
 DEFAULT_MODEL = CostModel()
@@ -331,11 +363,12 @@ def is_moon(body: Body) -> bool:
 
 class Stop:
     __slots__ = ("body", "leg_ls", "leg_s", "cum_s", "work",
-                 "group", "group_start", "is_moon")
+                 "group", "group_start", "is_moon", "work_s")
 
     def __init__(self, body: Body, leg_ls: float, leg_s: float, cum_s: float,
                  group: str = "", group_start: bool = False,
-                 is_moon: bool = False):
+                 is_moon: bool = False, work_s: float = 0.0):
+        self.work_s = work_s        # time spent at the body, not travelling
         self.body = body
         self.leg_ls = leg_ls
         self.leg_s = leg_s
@@ -361,6 +394,14 @@ class SystemRoute:
     @property
     def total_ls(self) -> float:
         return sum(s.leg_ls for s in self.stops)
+
+    @property
+    def travel_s(self) -> float:
+        return sum(s.leg_s for s in self.stops)
+
+    @property
+    def work_s(self) -> float:
+        return sum(s.work_s for s in self.stops)
 
     @property
     def group_switches(self) -> int:
@@ -397,17 +438,67 @@ class SystemRoute:
     def summary(self) -> str:
         if not self.stops:
             return "%s: nothing left to do here" % self.system
-        return ("%s: %d stops in %d planetary systems, %.0f LS, about %.0f min%s"
+        return ("%s: %d stops in %d planetary systems, %.0f LS, about %.0f min "
+                "(%.0f travel + %.0f on station)%s"
                 % (self.system, len(self.stops), self.group_switches + 1,
                    self.total_ls, self.total_s / 60.0,
-                   " (%d bodies need nothing)" % self.skipped if self.skipped else ""))
+                   self.travel_s / 60.0, self.work_s / 60.0,
+                   " | %d bodies need nothing" % self.skipped if self.skipped else ""))
+
+
+# What counts as "needs doing". Any combination can be active at once.
+F_ALL = "all"            # every body, always
+F_UNDISCOVERED = "new"   # nobody has scanned it before - the real prize
+F_UNMAPPED = "unmapped"  # never surface-scanned by anyone
+F_SIGNALS = "signals"    # carries biological or geological signals
+F_LANDABLE = "landable"  # you can set down on it
+F_VALUABLE = "valuable"  # ELW, water world, ammonia, terraformable
+F_RINGS = "rings"        # has rings
+F_OUTSTANDING = "todo"   # DSS or bio still open by our own records
+
+ALL_FILTERS = (F_ALL, F_UNDISCOVERED, F_UNMAPPED, F_SIGNALS, F_LANDABLE,
+               F_VALUABLE, F_RINGS, F_OUTSTANDING)
+
+FILTER_LABEL = {
+    F_ALL: "every body",
+    F_UNDISCOVERED: "not discovered by anyone yet",
+    F_UNMAPPED: "not surface-scanned by anyone yet",
+    F_SIGNALS: "has bio or geo signals",
+    F_LANDABLE: "landable",
+    F_VALUABLE: "high value (ELW, water, ammonia, terraformable)",
+    F_RINGS: "has rings",
+    F_OUTSTANDING: "DSS or bio still open",
+}
+
+
+def body_matches(b: Body, filters: Sequence[str]) -> bool:
+    """Does this body qualify under the active filters?"""
+    if not filters or F_ALL in filters:
+        return b.kind in ("Planet", "Star")
+    if F_UNDISCOVERED in filters and b.was_discovered is False:
+        return True
+    if F_UNMAPPED in filters and b.kind == "Planet" and b.was_mapped is False:
+        return True
+    if F_SIGNALS in filters and (b.sig_bio > 0 or b.sig_geo > 0):
+        return True
+    if F_LANDABLE in filters and b.landable:
+        return True
+    if F_VALUABLE in filters and (b.planet_class in VALUABLE
+                                  or (b.terraform or "") == "Terraformable"):
+        return True
+    if F_RINGS in filters and b.rings:
+        return True
+    if F_OUTSTANDING in filters and b.has_work:
+        return True
+    return False
 
 
 def plan_route(system: str, bodies: Dict[int, Body],
                model: CostModel = DEFAULT_MODEL,
                start: Sequence[float] = (0.0, 0.0, 0.0),
                only_work: bool = True,
-               group_moons: bool = True) -> SystemRoute:
+               group_moons: bool = True,
+               filters: Optional[Sequence[str]] = None) -> SystemRoute:
     """
     Order the bodies into a short route.
 
@@ -422,8 +513,11 @@ def plan_route(system: str, bodies: Dict[int, Body],
     """
     resolve_positions(bodies)
 
-    targets = [b for b in bodies.values()
-               if (b.has_work if only_work else b.kind in ("Planet", "Star"))]
+    if filters:
+        targets = [b for b in bodies.values() if body_matches(b, filters)]
+    else:
+        targets = [b for b in bodies.values()
+                   if (b.has_work if only_work else b.kind in ("Planet", "Star"))]
     skipped = len(bodies) - len(targets)
     if not targets:
         return SystemRoute(system, [], skipped, model)
@@ -492,11 +586,12 @@ def plan_route(system: str, bodies: Dict[int, Body],
         for b in g:
             d = _dist(cur, b.pos)
             sec = model.hop(d)
-            cum += sec
+            work_s = model.work(b)
+            cum += sec + work_s
             grp = group_label(b)
             stops.append(Stop(b, d, sec, cum, group=grp,
                               group_start=(grp != last_group),
-                              is_moon=is_moon(b)))
+                              is_moon=is_moon(b), work_s=work_s))
             last_group = grp
             cur = b.pos
     return SystemRoute(system, stops, skipped, model)
@@ -505,6 +600,53 @@ def plan_route(system: str, bodies: Dict[int, Body],
 # ---------------------------------------------------------------------------
 # Calibration from the commander's own journals
 # ---------------------------------------------------------------------------
+
+def _median(xs: List[float]) -> float:
+    xs = sorted(xs)
+    n = len(xs)
+    if not n:
+        return 0.0
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
+
+
+def _trimmed(xs: List[float], lo: float = 0.1, hi: float = 0.9) -> List[float]:
+    """
+    Drop the tails before averaging.
+
+    Journal timings are contaminated in one direction only - the commander
+    walks away, takes a screenshot, fights an interdiction - so the upper tail
+    is noise while the lower tail is real. Trimming both and taking the median
+    of what remains is far more stable than a mean.
+    """
+    xs = sorted(xs)
+    n = len(xs)
+    if n < 5:
+        return xs
+    return xs[int(n * lo):max(int(n * hi), int(n * lo) + 1)]
+
+
+def calibrate_work_from_journal(dss: List[float], bio: List[float],
+                                approach: List[float],
+                                base: "CostModel") -> "CostModel":
+    """
+    Measure how long the work at a body actually takes.
+
+    Unlike supercruise timings these are clean: a detailed surface scan is
+    bracketed by arrival and SAAScanComplete, and a biological sample by its
+    own Log and Analyse events, with nothing else that can stretch them except
+    the commander pausing.
+    """
+    n = len(dss) + len(bio) + len(approach)
+    if n < 4:
+        return base
+    return CostModel(
+        entry=base.entry, k=base.k, dropout=base.dropout, floor=base.floor,
+        samples=base.samples,
+        dss=_median(_trimmed(dss)) or base.dss,
+        bio=_median(_trimmed(bio)) or base.bio,
+        approach=_median(_trimmed(approach)) or base.approach,
+        work_samples=n)
+
 
 def calibrate_from_journal(segments: Iterable[Tuple[float, float]],
                            base: CostModel = DEFAULT_MODEL) -> CostModel:
@@ -533,7 +675,9 @@ def calibrate_from_journal(segments: Iterable[Tuple[float, float]],
                 best = (rss, k, entry)
     _, k, entry = best
     return CostModel(entry=float(entry), k=float(k), dropout=base.dropout,
-                     floor=base.floor, samples=len(keep))
+                     floor=base.floor, samples=len(keep),
+                     dss=base.dss, bio=base.bio, approach=base.approach,
+                     work_samples=base.work_samples)
 
 
 # ---------------------------------------------------------------------------

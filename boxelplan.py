@@ -420,6 +420,16 @@ class Planner:
         finished = (open_flight == 0 and open_probes == 0
                     and not plan["sectors_missing"])
 
+        # How long a system actually takes, from the bodies we have on record.
+        per_sys = []
+        for r in rows:
+            if not r["visited"] or not r["id64"]:
+                continue
+            n = len(db.bodies_of(r["id64"]))
+            if n:
+                per_sys.append(n)
+        avg_bodies = (sum(per_sys) / len(per_sys)) if per_sys else 0.0
+
         cov = db.source_coverage(center, radius)
         scores = sorted((plan.get("boxel_score") or {}).items(),
                         key=lambda kv: -kv[1])
@@ -429,6 +439,8 @@ class Planner:
             "source_coverage": cov,
             "hot_boxels": hot[:10],
             "hot_count": len(hot),
+            "avg_bodies": avg_bodies,
+            "systems_measured": len(per_sys),
             "known": known,
             "visited": visited,
             "surveyed": surveyed,
@@ -486,6 +498,9 @@ class Planner:
                      % (cov["by_count"].get(1, 0), cov["disagreement_pct"]))
             if cov["disagreement_pct"] >= 15:
                 L.append("thin reporting here - good odds for undiscovered systems")
+        if st.get("systems_measured"):
+            L.append("systems: %.1f bodies each on average (%d measured)"
+                     % (st["avg_bodies"], st["systems_measured"]))
         if st.get("hot_count"):
             top = ", ".join("%s %.1f" % (k, v) for k, v in st["hot_boxels"][:3])
             L.append("promising boxels: %d  (top: %s)" % (st["hot_count"], top))
