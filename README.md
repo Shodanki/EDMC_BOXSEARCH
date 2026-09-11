@@ -922,3 +922,38 @@ Two columns instead of one stack, because the full set ran off the bottom of a
 1080p window. Left holds everything about the survey itself (sphere, mass
 codes, what counts as needing a visit); right holds sources, harvesting and
 window behaviour; maintenance buttons run full width in a 3x2 grid underneath.
+
+
+---
+
+## 20. What the survey actually pays
+
+Sales are recorded from `MultiSellExplorationData`, `SellExplorationData` and
+`SellOrganicData`, and reported in the info window:
+
+```
+Earnings
+  Exploration data      11.8 M cr from 556 bodies
+    per body            21 255 cr
+  Biological data      228.7 M cr from 31 samples
+    per sample       7 376 423 cr
+  Total earned         240.5 M cr over 5 sales
+  Bio vs mapping           347x more per unit
+```
+
+**That ratio is the most useful number the plugin produces.** Scanning and
+mapping 556 bodies earned 11.8 M; thirty-one biological samples earned 228.7 M.
+Per unit of effort, bio is over three hundred times ahead - and the bonus is
+where it comes from: 164 M of the 228 M was first-discovery bonus, paid only
+because nobody had logged those species before.
+
+Two practical consequences:
+
+* Keep **has bio or geo signals** ticked in the visit filters. On the numbers
+  above, one sample is worth more than a whole system of mapping.
+* First-discovery bonus is the whole game. It is paid for being first, which
+  is exactly what the boxel gap hunting is for - a system no database knows
+  has never had its organics logged either.
+
+The figures are yours, not estimates: they come from what the game actually
+paid at the counter.

@@ -1740,6 +1740,10 @@ def _stats_window_open() -> None:
     _refresh()
 
 
+def _thousands(n: int) -> str:
+    return "{:,}".format(int(n)).replace(",", " ")
+
+
 def _stats_window_refresh() -> None:
     """Draw the statistics tables."""
     if _stats_win is None or _stats_body is None:
@@ -1791,6 +1795,35 @@ def _stats_window_refresh() -> None:
         sphere_rows.append(("Fuel", ST.fuel.summary()))
     if sphere_rows:
         table("This sphere", sphere_rows)
+
+    # what it paid
+    try:
+        with ST.lock:
+            e = ST.db.earnings()
+        if e["sales"]:
+            rows = []
+            ex, bi = e.get("exploration"), e.get("organic")
+            if ex:
+                rows.append(("Exploration data", "%.1f M cr from %d bodies"
+                             % (ex["total"] / 1e6, ex["units"])))
+                if ex["units"]:
+                    rows.append(("  per body", "%s cr"
+                                 % _thousands(ex["total"] // ex["units"])))
+            if bi:
+                rows.append(("Biological data", "%.1f M cr from %d samples"
+                             % (bi["total"] / 1e6, bi["units"])))
+                if bi["units"]:
+                    rows.append(("  per sample", "%s cr"
+                                 % _thousands(bi["total"] // bi["units"])))
+            rows.append(("Total earned", "%.1f M cr over %d sales"
+                         % (e["total"] / 1e6, e["sales"])))
+            if ex and bi and ex["units"] and bi["units"]:
+                ratio = (bi["total"] / bi["units"]) / max(
+                    1.0, ex["total"] / ex["units"])
+                rows.append(("Bio vs mapping", "%.0fx more per unit" % ratio))
+            table("Earnings", rows)
+    except Exception:
+        logger.exception("earnings summary failed")
 
     # everything ever
     try:
@@ -2169,13 +2202,22 @@ def _toggle_probe_window() -> None:
 
 
 def _probe_window_close() -> None:
-    global _probe_win
+    """
+    Close the probe window and drop the widget references.
+
+    The buttons live inside this window, so once it is destroyed the globals
+    point at widgets Tk no longer knows about. Leaving them set makes every
+    later _refresh raise `invalid command name ...!button2`, which is exactly
+    what the log showed.
+    """
+    global _probe_win, _btn_prefix, _btn_absent, _btn_boxel, _btn_skip
     if _probe_win is not None:
         try:
             _probe_win.destroy()
         except Exception:
             pass
     _probe_win = None
+    _btn_prefix = _btn_absent = _btn_boxel = _btn_skip = None
     _refresh()
 
 
@@ -2384,9 +2426,15 @@ def _refresh() -> None:
             _btn_start.config(text="Stop" if ST.active else "Start")
         if _btn_fc:
             _btn_fc.config(state=tk.NORMAL if ST.carrier else tk.DISABLED)
+        # These live in the probe window and vanish when it closes.
+        state = tk.NORMAL if (ST.active and ST.probe) else tk.DISABLED
         for b in (_btn_absent, _btn_skip, _btn_boxel, _btn_prefix):
-            if b:
-                b.config(state=tk.NORMAL if (ST.active and ST.probe) else tk.DISABLED)
+            if b is None:
+                continue
+            try:
+                b.config(state=state)
+            except tk.TclError:
+                pass
         if _btn_next:
             _btn_next.config(state=tk.NORMAL if ST.flight else tk.DISABLED)
         if _btn_route:

@@ -141,6 +141,18 @@ CREATE TABLE IF NOT EXISTS spheres (
     closed   TEXT
 );
 
+CREATE TABLE IF NOT EXISTS earnings (
+    ts       TEXT,
+    kind     TEXT,              -- 'exploration' or 'organic'
+    base     INTEGER,
+    bonus    INTEGER,
+    total    INTEGER,
+    systems  INTEGER,
+    bodies   INTEGER,
+    detail   TEXT,
+    PRIMARY KEY (ts, kind)
+);
+
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 """
 
@@ -654,6 +666,34 @@ class SystemDB:
                                      callsign=entry.get("StationName"))
                     n += 1
 
+            elif ev in ("SellExplorationData", "MultiSellExplorationData"):
+                disc = entry.get("Discovered") or []
+                base = int(entry.get("BaseValue") or 0)
+                bonus = int(entry.get("Bonus") or 0)
+                total = int(entry.get("TotalEarnings") or (base + bonus))
+                bodies = sum(int(d.get("NumBodies") or 0) for d in disc)
+                self.cx.execute(
+                    "INSERT OR REPLACE INTO earnings(ts,kind,base,bonus,total,"
+                    "systems,bodies,detail) VALUES (?,?,?,?,?,?,?,?)",
+                    (entry.get("timestamp"), "exploration", base, bonus, total,
+                     len(disc) or len(entry.get("Systems") or []), bodies, None))
+                self.cx.commit()
+                n += 1
+
+            elif ev == "SellOrganicData":
+                bio = entry.get("BioData") or []
+                base = sum(int(b.get("Value") or 0) for b in bio)
+                bonus = sum(int(b.get("Bonus") or 0) for b in bio)
+                top = max(bio, key=lambda b: int(b.get("Value") or 0)) if bio else {}
+                self.cx.execute(
+                    "INSERT OR REPLACE INTO earnings(ts,kind,base,bonus,total,"
+                    "systems,bodies,detail) VALUES (?,?,?,?,?,?,?,?)",
+                    (entry.get("timestamp"), "organic", base, bonus, base + bonus,
+                     0, len(bio),
+                     top.get("Species_Localised") or top.get("Species")))
+                self.cx.commit()
+                n += 1
+
             elif ev == "CodexEntry":
                 self.upsert(entry.get("System"), id64=entry.get("SystemAddress"),
                             quality=Q_CONFIRMED, source="codex")
@@ -860,6 +900,29 @@ class SystemDB:
         }
 
     # ---------------------------------------------------------------- reports
+    def earnings(self) -> Dict[str, object]:
+        """
+        What the survey has actually paid, split by what earned it.
+
+        Worth knowing because the two are nowhere near equal: on the test
+        data 142 bodies of exploration data sold for 4.5 M, while 14
+        biological samples from the same trip made 114 M. Per unit of effort
+        bio is an order of magnitude ahead, which is a strong argument for
+        keeping the "has bio or geo signals" filter on.
+        """
+        rows = self.cx.execute(
+            "SELECT kind, SUM(base) b, SUM(bonus) o, SUM(total) t, "
+            "SUM(bodies) n, COUNT(*) c FROM earnings GROUP BY kind").fetchall()
+        out: Dict[str, object] = {"exploration": None, "organic": None,
+                                  "total": 0, "sales": 0}
+        for r in rows:
+            out[r["kind"]] = {"base": r["b"] or 0, "bonus": r["o"] or 0,
+                              "total": r["t"] or 0, "units": r["n"] or 0,
+                              "sales": r["c"]}
+            out["total"] += r["t"] or 0
+            out["sales"] += r["c"]
+        return out
+
     def lifetime(self) -> Dict[str, object]:
         """
         Totals across everything the plugin has ever recorded.
