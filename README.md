@@ -809,3 +809,113 @@ cannot refuel — so when nothing qualifies yet it says so plainly:
 That is also the practical argument for keeping the **has rings** filter on
 while working a sphere: every icy ring you scan becomes a candidate for the
 next hop.
+
+
+---
+
+## 16. Orbital drift, and when the route goes stale
+
+Bodies keep orbiting while the game is paused, while you sit landed, and while
+it is shut down. The orbital elements in a `Scan` event are a snapshot taken at
+that moment, so every body is now advanced along its orbit by the time elapsed
+since - the scan timestamp is stored per body for exactly that.
+
+**How much does it actually matter?** Measured across every body on record:
+
+| Elapsed | Worst drift | Body |
+|---|---|---|
+| 20 min | 0.53 LS | a moon with a 32 h period |
+| 2 h | 3.19 LS | same |
+| 12 h | 15.24 LS | same |
+
+Small over a coffee break, real overnight. On a tight cluster where moons sit
+2 LS apart, 15 LS is enough to genuinely reorder them.
+
+So rather than rebuild blindly, the plugin **compares and only replaces when
+the order actually changed**:
+
+```
+route | lift-off: order still optimal (8 LS)
+route | game restart: order changed, 11412 LS -> 11208 LS (-204)
+```
+
+It triggers on `Liftoff` - which is what ends a surface pause - and on the
+synthesised `StartUp` after a game restart, whenever tasks are still open.
+
+## 17. The map
+
+Three sizes via the **size** button (340 / 480 / 640 px), because a dense
+system needs the room. The default is now medium rather than small.
+
+The **last body you approached** is drawn as a blue ring with a filled centre
+and a `last here` label. The live position is in no journal event, so this is
+the closest thing to "you are here" that the data allows - and it is deliberately
+a colour that never appears in the theme, so it cannot be confused with a route
+marker.
+
+## 18. Statistics window
+
+**stats** now opens its own window, in the host's colours, as labelled tables
+rather than a wall of text. Only figures that inform the next decision are
+included.
+
+```
+Progress in this sphere
+  Systems known           146
+  Visited                 41  (28.1%)
+  Fully surveyed          17  (11.6%)
+  Still to fly            109
+  Still to check          811
+
+Undiscovered systems
+  Certain (boxel gaps)    27
+  Estimated further       412
+  Estimated total here    ~585
+  Boxels closed           7 of 984  (0.7%)
+  Boxels never probed     585
+
+What we contributed
+  Bodies scanned          164
+  Bodies mapped           104
+  First discoveries       7
+
+Database coverage
+  EDDiscovery             412
+  Spansh                  425
+  EDSM                    422
+  Only one source knows it  11  (9.0%)
+
+This sphere
+  Centre                  Synuefe TH-J b42-4  r=50 ly
+  Bodies per system       7.5 average over 12 systems
+  Time per system         14 min average (9 measured)
+  Time in this sphere     2.1 h over 9 systems
+  Fuel                    fuel 171/176t (97%) | 12 jumps at max 64 ly
+
+All time
+  Systems visited         38
+  Distance flown          973 ly
+  Bodies scanned          462
+  Bodies mapped           231
+  First discoveries       13
+  First to map            192
+  Bio sampled             11
+  Boxels closed           14
+  Names ruled out         31
+  Spheres surveyed        3
+```
+
+**Percentages are clamped to 100.** Coverage is measured against an estimate,
+and an estimate that turns out low must never produce "112% explored" - that
+would destroy confidence in every other number on the page.
+
+Time per system comes from measured intervals between jumps, discarding
+anything under 30 seconds or over three hours so that pauses and instant hops
+do not distort it.
+
+## 19. Preferences layout
+
+Two columns instead of one stack, because the full set ran off the bottom of a
+1080p window. Left holds everything about the survey itself (sphere, mass
+codes, what counts as needing a visit); right holds sources, harvesting and
+window behaviour; maintenance buttons run full width in a 3x2 grid underneath.

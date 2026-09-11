@@ -75,6 +75,9 @@ CFG = {
     "route_top": "%s_route_top" % PLUGIN_NAME,
     "route_map": "%s_route_map" % PLUGIN_NAME,
     "filters": "%s_filters" % PLUGIN_NAME,
+    "map_size": "%s_map_size" % PLUGIN_NAME,
+    "panel_fuel": "%s_panel_fuel" % PLUGIN_NAME,
+    "panel_queue": "%s_panel_queue" % PLUGIN_NAME,
 }
 RADIUS_CHOICES = ["50", "100", "150"]
 
@@ -130,6 +133,10 @@ class State:
         self.sys_times: List[Tuple[str, float, int]] = []
         self.fuel = FuelState()
         self.staging: List[Dict[str, Any]] = []
+        self.last_body_id: Optional[int] = None
+        self.last_body_name: str = ""
+        self.sys_minutes: List[float] = []
+        self._sys_enter: Optional[float] = None
         self._sc_start: Optional[Tuple[float, float]] = None
         self.finished_announced = False
 
@@ -157,6 +164,8 @@ _lbl_stats = None
 _v_stats: Optional[tk.StringVar] = None
 _v_route: Optional[tk.StringVar] = None
 _v_fuel: Optional[tk.StringVar] = None
+_lbl_fuel = None
+_lbl_queue = None
 _lbl_route = None
 _btn_route: Optional[tk.Button] = None
 _carrier_var: Optional[tk.IntVar] = None
@@ -226,7 +235,9 @@ def get_masscodes() -> List[int]:
 # ============================================================================
 
 def plugin_start3(plugin_dir: str) -> str:
+    global _MAP_W, _MAP_H
     logger.info("SHBOXSEARCH v%s starting", VERSION)
+    _MAP_W = _MAP_H = _MAP_SIZES.get(cfg_str(CFG["map_size"], "medium"), 480)
     try:
         ST.db = SystemDB(DB_FILE)
         ST.planner = Planner(ST.db)
@@ -252,12 +263,18 @@ def plugin_start3(plugin_dir: str) -> str:
         logger.info("restored running survey: %s r=%.0f ly",
                     ST.start_system, ST.radius)
         _run_async(_rebuild_plan, label="loading plan")
-    _request_route()
+    # These read the journals to establish fuel, the work-time model and where
+    # we last were. Without them the panel shows "fuel: unknown" and the map
+    # has no "last here" marker until the first jump of the session.
+    _run_async(_bootstrap_session, label="reading journals")
+    _request_route(delay=2.5)
     return "SHBOXSEARCH"
 
 
 def plugin_stop() -> None:
     _route_window_close()
+    _stats_window_close()
+    _probe_window_close()
     with ST.lock:
         if ST.db:
             ST.db.close()
@@ -336,6 +353,7 @@ def _rebuild_plan() -> None:
     ST.plan_counts = plan["counts"]
     ST.plan_info = Planner.summary(plan)
     ST.stats_lines = Planner.stats_lines(ST.stats)
+    _ui(_stats_window_refresh)
     try:
         with ST.lock:
             tri = tritium_systems(ST.db, ST.center, ST.radius)
@@ -492,7 +510,7 @@ def _rebuild_route() -> None:
                     ST.cur_system)
         _ui(_route_window_refresh)
         return
-    bodies = bodies_from_rows(rows)
+    bodies = bodies_from_rows(rows, now=time.time())
     for b in bodies.values():
         b.short = shorten(b.name, ST.cur_system or "")
     filters = [F_ALL] if cfg_bool(CFG["route_all"], False) else get_filters()
@@ -538,7 +556,9 @@ _route_rows: List[Dict[str, Any]] = []
 _route_head: Optional[tk.StringVar] = None
 _route_body: Optional[tk.Frame] = None
 _route_map: Optional[tk.Canvas] = None
-_MAP_W, _MAP_H = 340, 340
+_MAP_SIZES = {"small": 340, "medium": 480, "large": 640}
+_MAP_W, _MAP_H = 480, 480
+_MAP_LAST = "#4ea3ff"      # where you were last - blue, distinct from the theme
 
 
 def _theme_colours() -> Dict[str, str]:
@@ -753,6 +773,8 @@ def _route_window_open() -> None:
         side=tk.LEFT, padx=(4, 0))
     tk.Button(bar, text="map", command=_toggle_map).pack(
         side=tk.LEFT, padx=(4, 0))
+    tk.Button(bar, text="size", command=_cycle_map_size).pack(
+        side=tk.LEFT, padx=(4, 0))
     tk.Button(bar, text="review", command=_route_review).pack(
         side=tk.LEFT, padx=(4, 0))
     tk.Button(bar, text="close", command=_route_window_close).pack(
@@ -855,6 +877,16 @@ def _route_map_draw() -> None:
     # the arrival star
     _route_map.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, fill=fg, outline=fg)
 
+    # where we were last, if known. The live position is not in any journal
+    # event, so the last body approached is the closest thing to a "you are
+    # here" - drawn in blue so it never blends into the route.
+    last_pos = None
+    if ST.last_body_id is not None:
+        for st in route.stops:
+            if st.body.body_id == ST.last_body_id and st.body.pos:
+                last_pos = project(st.body.pos)
+                break
+
     # route legs
     prev = (cx, cy)
     for i, st in enumerate(route.stops):
@@ -885,11 +917,33 @@ def _route_map_draw() -> None:
                                    font=_FONT_GROUP if st.group_start
                                    else _FONT_SMALL)
 
+    if last_pos is not None:
+        lx, ly = last_pos
+        _route_map.create_oval(lx - 7, ly - 7, lx + 7, ly + 7,
+                               outline=_MAP_LAST, width=2)
+        _route_map.create_oval(lx - 3, ly - 3, lx + 3, ly + 3,
+                               fill=_MAP_LAST, outline=_MAP_LAST)
+        _route_map.create_text(lx, ly + 12, text="last here", fill=_MAP_LAST,
+                               font=_FONT_SMALL)
+
 
 def _toggle_map() -> None:
     cfg_set(CFG["route_map"], not cfg_bool(CFG["route_map"], True))
     _route_window_close()
     _route_window_open()
+
+
+def _cycle_map_size() -> None:
+    """Step through the map sizes - dense systems need the room."""
+    global _MAP_W, _MAP_H
+    order = ["small", "medium", "large"]
+    cur = cfg_str(CFG["map_size"], "medium")
+    nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "medium"
+    cfg_set(CFG["map_size"], nxt)
+    _MAP_W = _MAP_H = _MAP_SIZES[nxt]
+    _route_window_close()
+    _route_window_open()
+    _set_status("map size: %s" % nxt)
 
 
 def _route_reset() -> None:
@@ -1178,6 +1232,62 @@ def _bootstrap_work_model() -> None:
         logger.info("work model unchanged - too few measurements yet")
 
 
+def _bootstrap_session() -> None:
+    """Establish fuel, work timings and last position from the journals."""
+    try:
+        _bootstrap_fuel()
+    except Exception:
+        logger.exception("fuel bootstrap failed")
+    try:
+        _bootstrap_work_model()
+    except Exception:
+        logger.exception("work model bootstrap failed")
+    try:
+        _bootstrap_last_body()
+    except Exception:
+        logger.exception("last position bootstrap failed")
+    _ui(_refresh)
+
+
+def _bootstrap_last_body() -> None:
+    """
+    Recover the last body we were at.
+
+    The live position appears in no journal event, so the newest
+    ApproachBody / SupercruiseExit / Touchdown is the closest thing to it.
+    Read backwards so the first hit wins.
+    """
+    import glob
+    d = _journal_dir()
+    if not d:
+        return
+    files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
+                   + glob.glob(os.path.join(d, "Journal_*.log")))
+    for fn in reversed(files[-3:]):
+        try:
+            with open(fn, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            line = line.strip()
+            if not line or '"BodyID"' not in line:
+                continue
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("event") in ("ApproachBody", "SupercruiseExit",
+                                  "Touchdown", "Liftoff",
+                                  "SAAScanComplete") and e.get("BodyID") is not None:
+                ST.last_body_id = e["BodyID"]
+                ST.last_body_name = e.get("Body") or e.get("BodyName") or ""
+                logger.info("last known position: %s (body %d)",
+                            ST.last_body_name or "?", ST.last_body_id)
+                return
+    logger.info("last position unknown - no body approach in recent journals")
+
+
 def _bootstrap_fuel() -> None:
     """Read ship fuel figures out of the recent journals."""
     import glob
@@ -1233,6 +1343,37 @@ def _plan_staging() -> None:
                     % (rows[0]["name"], rows[0]["dist"], rows[0]["icy_rings"]))
     else:
         _set_status("no tritium system known far enough out yet")
+
+
+def _recheck_route(reason: str) -> None:
+    """
+    After a pause, ask whether the planned order still holds.
+
+    Bodies keep orbiting while the game is paused, landed or shut down. The
+    effect is small over minutes - the worst case in the test data is 0.53 LS
+    after 20 minutes - but it compounds: 3.2 LS after two hours and 15.2 LS
+    after twelve, on a moon with a 32 hour period. Over an overnight break the
+    near bodies of a tight system can genuinely reorder.
+
+    So rather than rebuild blindly, the old and the new order are compared and
+    the route is only replaced when it actually changed.
+    """
+    if not (ST.db and ST.cur_id64):
+        return
+    before = [s.body.body_id for s in ST.route.stops] if ST.route else []
+    before_ls = ST.route.total_ls if ST.route else 0.0
+    _rebuild_route()
+    after = [s.body.body_id for s in ST.route.stops] if ST.route else []
+    if not before or not after:
+        return
+    if before == after:
+        logger.info("route | %s: order still optimal (%.0f LS)",
+                    reason, before_ls)
+        return
+    delta = (ST.route.total_ls - before_ls)
+    logger.info("route | %s: order changed, %.0f LS -> %.0f LS (%+.0f)",
+                reason, before_ls, ST.route.total_ls, delta)
+    _set_status("route re-ordered after %s (%+.0f LS)" % (reason, delta))
 
 
 def _route_review() -> None:
@@ -1550,6 +1691,129 @@ def _copy_carrier() -> None:
         _set_status("no carrier system remembered yet")
 
 
+_stats_win: Optional[tk.Toplevel] = None
+_stats_body: Optional[tk.Frame] = None
+
+
+def _toggle_stats_window() -> None:
+    global _stats_win
+    if _stats_win is not None:
+        _stats_window_close()
+        return
+    _stats_window_open()
+
+
+def _stats_window_close() -> None:
+    global _stats_win, _stats_body
+    if _stats_win is not None:
+        try:
+            _stats_win.destroy()
+        except Exception:
+            pass
+    _stats_win = None
+    _stats_body = None
+    _refresh()
+
+
+def _stats_window_open() -> None:
+    """Statistics in their own window, as tables, in the host's colours."""
+    global _stats_win, _stats_body
+    if _frame is None:
+        return
+    _stats_win = tk.Toplevel(_frame)
+    _stats_win.title("SHBOXSEARCH - survey statistics")
+    _stats_win.protocol("WM_DELETE_WINDOW", _stats_window_close)
+    try:
+        _stats_win.attributes("-topmost", cfg_bool(CFG["route_top"], True))
+    except Exception:
+        pass
+    _stats_body = tk.Frame(_stats_win)
+    _stats_body.grid(row=0, column=0, sticky=tk.NSEW, padx=10, pady=8)
+    bar = tk.Frame(_stats_win)
+    bar.grid(row=1, column=0, sticky=tk.EW, padx=10, pady=(0, 8))
+    tk.Button(bar, text="refresh",
+              command=lambda: _run_async(_rebuild_plan, label="stats")).pack(
+        side=tk.LEFT)
+    tk.Button(bar, text="close", command=_stats_window_close).pack(
+        side=tk.LEFT, padx=(4, 0))
+    _stats_window_refresh()
+    _refresh()
+
+
+def _stats_window_refresh() -> None:
+    """Draw the statistics tables."""
+    if _stats_win is None or _stats_body is None:
+        return
+    try:
+        for w in _stats_body.winfo_children():
+            w.destroy()
+    except Exception:
+        pass
+    col = _theme_colours()
+    row_i = 0
+
+    def table(title: str, rows: List[Tuple[str, str]]) -> None:
+        nonlocal row_i
+        head = tk.Label(_stats_body, text=title, anchor=tk.W, font=_FONT_GROUP)
+        head.grid(row=row_i, column=0, columnspan=2, sticky=tk.W,
+                  pady=(10 if row_i else 0, 2))
+        _apply_theme(head, col, is_text=True)
+        row_i += 1
+        for label, value in rows:
+            a = tk.Label(_stats_body, text="  " + label, anchor=tk.W, font=_MONO)
+            b = tk.Label(_stats_body, text=value, anchor=tk.W, font=_MONO)
+            a.grid(row=row_i, column=0, sticky=tk.W, padx=(8, 16))
+            b.grid(row=row_i, column=1, sticky=tk.W)
+            _apply_theme(a, col, is_text=True)
+            _apply_theme(b, col, is_text=True)
+            row_i += 1
+
+    if ST.stats:
+        for title, rows in Planner.stats_table(ST.stats):
+            table(title, rows)
+
+    # this sphere, in time
+    sphere_rows = []
+    if ST.start_system:
+        sphere_rows.append(("Centre", "%s  r=%.0f ly"
+                            % (ST.start_system, ST.radius)))
+    if ST.stats.get("systems_measured"):
+        sphere_rows.append(("Bodies per system", "%.1f average over %d systems"
+                            % (ST.stats["avg_bodies"],
+                               ST.stats["systems_measured"])))
+    if ST.sys_minutes:
+        avg = sum(ST.sys_minutes) / len(ST.sys_minutes)
+        sphere_rows.append(("Time per system", "%.0f min average (%d measured)"
+                            % (avg, len(ST.sys_minutes))))
+        sphere_rows.append(("Time in this sphere", "%.1f h over %d systems"
+                            % (sum(ST.sys_minutes) / 60.0, len(ST.sys_minutes))))
+    if ST.fuel.capacity:
+        sphere_rows.append(("Fuel", ST.fuel.summary()))
+    if sphere_rows:
+        table("This sphere", sphere_rows)
+
+    # everything ever
+    try:
+        with ST.lock:
+            lt = ST.db.lifetime()
+        table("All time", [
+            ("Systems visited", "%d" % lt["systems_visited"]),
+            ("Distance flown", "%.0f ly" % lt["jumps_ly"]),
+            ("Bodies scanned", "%d" % lt["bodies"]),
+            ("Bodies mapped", "%d" % lt["mapped"]),
+            ("First discoveries", "%d" % lt["first_discoveries"]),
+            ("First to map", "%d" % lt["first_mapped"]),
+            ("Bio sampled", "%d" % lt["bio_sampled"]),
+            ("Boxels closed", "%d" % lt["boxels_closed"]),
+            ("Names ruled out", "%d" % lt["not_there"]),
+            ("Spheres surveyed", "%d" % lt["spheres"]),
+        ])
+    except Exception:
+        logger.exception("lifetime statistics failed")
+
+    _theme_tree(_stats_win, col)
+
+
 def _toggle_stats() -> None:
     show = not cfg_bool(CFG["show_stats"], False)
     cfg_set(CFG["show_stats"], show)
@@ -1637,6 +1901,14 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                                     ST.cost_model.as_dict())
             ST._sc_start = None
 
+        if ev in ("FSDJump", "CarrierJump"):
+            if ST._sys_enter is not None:
+                spent = (time.time() - ST._sys_enter) / 60.0
+                if 0.5 < spent < 180.0:      # ignore pauses and instant hops
+                    ST.sys_minutes.append(spent)
+                    del ST.sys_minutes[:-60]
+            ST._sys_enter = time.time()
+
         if ev == "FSDJump" and entry.get("FuelUsed") is not None:
             try:
                 ST.fuel.add_jump(entry.get("JumpDist"),
@@ -1695,16 +1967,24 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 pos = entry.get("StarPos")
                 if pos and len(pos) >= 3:
                     ST.cur_pos = (pos[0], pos[1], pos[2])
-            _request_route()
+            _run_async(_recheck_route, "game restart", label="route recheck")
             route = state.get("NavRoute") if state else None
             if route and cfg_bool(CFG["harvest_navroute"], True):
                 with ST.lock:
                     ST.db.ingest_journal_event({"event": "NavRoute",
                                                 "Route": route.get("Route", [])})
 
+        elif ev == "Liftoff":
+            # Lifting off usually ends a pause spent on the surface.
+            _run_async(_recheck_route, "lift-off", label="route recheck")
+
         elif ev == "ApproachBody":
             if entry.get("Body"):
                 ST._arrive[entry["Body"]] = time.time()
+            if entry.get("BodyID") is not None:
+                ST.last_body_id = entry["BodyID"]
+                ST.last_body_name = entry.get("Body") or ""
+                _ui(_route_window_refresh)
 
         elif ev in ("Scan", "SAAScanComplete", "SAASignalsFound", "FSSBodySignals",
                     "FSSDiscoveryScan", "FSSAllBodiesFound", "ScanOrganic"):
@@ -1785,11 +2065,19 @@ def _set_status(txt: str) -> None:
 
 
 def plugin_app(parent: tk.Frame) -> tk.Frame:
+    """
+    The main panel, kept deliberately small.
+
+    EDMC's window is shared with every other plugin, so this shows only what
+    you act on between jumps: the next flight target, the next name to check,
+    and where you are. Counters, fuel, statistics and the route list all live
+    in their own windows, reachable from one row of buttons.
+    """
     global _frame, _v_status, _v_target, _v_kind, _v_sys, _v_queue, _v_probe
     global _btn_start, _btn_absent, _btn_skip, _radius_var
     global _btn_fc, _btn_stats, _lbl_stats, _v_stats, _carrier_var
     global _btn_boxel, _btn_prefix, _btn_next, _v_route, _lbl_route, _btn_route
-    global _v_fuel
+    global _v_fuel, _lbl_queue, _lbl_fuel
 
     _frame = tk.Frame(parent)
     _frame.columnconfigure(1, weight=1)
@@ -1827,64 +2115,137 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     tk.Label(_frame, textvariable=_v_sys, anchor=tk.W).grid(
         row=3, column=1, sticky=tk.EW)
 
-    # 4  survey bar
+    # 4  one row of buttons - everything else opens a window
     bar = tk.Frame(_frame)
     bar.grid(row=4, column=0, columnspan=2, sticky=tk.EW, pady=(3, 0))
     _btn_start = tk.Button(bar, text="Start", width=6, command=_on_start)
     _btn_start.pack(side=tk.LEFT)
     ttk.OptionMenu(bar, _radius_var, _radius_var.get(), *RADIUS_CHOICES).pack(
         side=tk.LEFT, padx=(3, 4))
-    tk.Button(bar, text="replan", width=7,
-              command=lambda: _run_async(_rebuild_plan, label="replanning")).pack(
-        side=tk.LEFT)
-    _btn_stats = tk.Button(bar, text="stats", width=6, command=_toggle_stats)
-    _btn_stats.pack(side=tk.LEFT, padx=(3, 0))
-
-    # 5  probe bar - everything that answers the galaxy map
-    bar2 = tk.Frame(_frame)
-    bar2.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
-    _btn_prefix = tk.Button(bar2, text="prefix", width=7, command=_copy_prefix)
-    _btn_prefix.pack(side=tk.LEFT)
-    _btn_absent = tk.Button(bar2, text="not there", width=9, command=_probe_absent)
-    _btn_absent.pack(side=tk.LEFT, padx=(3, 0))
-    _btn_boxel = tk.Button(bar2, text="boxel done", width=10, command=_boxel_done)
-    _btn_boxel.pack(side=tk.LEFT, padx=(3, 0))
-    _btn_skip = tk.Button(bar2, text="later", width=6, command=_probe_skip)
-    _btn_skip.pack(side=tk.LEFT, padx=(3, 0))
-
-    # 6  navigation bar
-    bar3 = tk.Frame(_frame)
-    bar3.grid(row=6, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
-    _btn_next = tk.Button(bar3, text="copy next", width=10, command=_copy_flight_click)
+    _btn_next = tk.Button(bar, text="copy", width=6, command=_copy_flight_click)
     _btn_next.pack(side=tk.LEFT)
-    _btn_fc = tk.Button(bar3, text="copy FC", width=8, command=_copy_carrier)
-    _btn_fc.pack(side=tk.LEFT, padx=(3, 0))
-    _btn_route = tk.Button(bar3, text="route", width=6,
+    _btn_route = tk.Button(bar, text="route", width=6,
                            command=_toggle_route_window)
     _btn_route.pack(side=tk.LEFT, padx=(3, 0))
-    tk.Button(bar3, text="carrier spot", width=12,
-              command=lambda: _run_async(_plan_staging, label="staging")).pack(
-        side=tk.LEFT, padx=(3, 0))
-    tk.Checkbutton(bar3, text="carrier start", variable=_carrier_var,
-                   command=_on_carrier_toggle).pack(side=tk.LEFT, padx=(6, 0))
+    _btn_stats = tk.Button(bar, text="info", width=6,
+                           command=_toggle_stats_window)
+    _btn_stats.pack(side=tk.LEFT, padx=(3, 0))
+    tk.Button(bar, text="probe", width=6,
+              command=_toggle_probe_window).pack(side=tk.LEFT, padx=(3, 0))
 
-    # 7/8/9  counters, optional statistics block, status
-    tk.Label(_frame, textvariable=_v_fuel, anchor=tk.W).grid(
-        row=7, column=0, columnspan=2, sticky=tk.EW)
-    tk.Label(_frame, textvariable=_v_queue, anchor=tk.W).grid(
-        row=11, column=0, columnspan=2, sticky=tk.EW)
+    # 5-7  optional lines, hidden unless switched on
     _lbl_route = tk.Label(_frame, textvariable=_v_route, anchor=tk.W,
                           justify=tk.LEFT)
-    _lbl_route.grid(row=8, column=0, columnspan=2, sticky=tk.EW)
+    _lbl_route.grid(row=5, column=0, columnspan=2, sticky=tk.EW)
+    _lbl_fuel = tk.Label(_frame, textvariable=_v_fuel, anchor=tk.W)
+    _lbl_fuel.grid(row=6, column=0, columnspan=2, sticky=tk.EW)
+    _lbl_queue = tk.Label(_frame, textvariable=_v_queue, anchor=tk.W)
+    _lbl_queue.grid(row=7, column=0, columnspan=2, sticky=tk.EW)
     _lbl_stats = tk.Label(_frame, textvariable=_v_stats, anchor=tk.W,
                           justify=tk.LEFT)
-    _lbl_stats.grid(row=9, column=0, columnspan=2, sticky=tk.EW)
+    _lbl_stats.grid(row=8, column=0, columnspan=2, sticky=tk.EW)
     tk.Label(_frame, textvariable=_v_status, anchor=tk.W).grid(
-        row=10, column=0, columnspan=2, sticky=tk.EW)
+        row=9, column=0, columnspan=2, sticky=tk.EW)
 
     _refresh()
     theme.update(_frame)
     return _frame
+
+
+# ---------------------------------------------------------------------------
+# Probe window - the galaxy map checking controls, out of the main panel
+# ---------------------------------------------------------------------------
+
+_probe_win: Optional[tk.Toplevel] = None
+_probe_head: Optional[tk.StringVar] = None
+
+
+def _toggle_probe_window() -> None:
+    global _probe_win
+    if _probe_win is not None:
+        _probe_window_close()
+        return
+    _probe_window_open()
+
+
+def _probe_window_close() -> None:
+    global _probe_win
+    if _probe_win is not None:
+        try:
+            _probe_win.destroy()
+        except Exception:
+            pass
+    _probe_win = None
+    _refresh()
+
+
+def _probe_window_open() -> None:
+    global _probe_win, _probe_head
+    if _frame is None:
+        return
+    _probe_win = tk.Toplevel(_frame)
+    _probe_win.title("SHBOXSEARCH - galaxy map check")
+    _probe_win.protocol("WM_DELETE_WINDOW", _probe_window_close)
+    try:
+        _probe_win.attributes("-topmost", cfg_bool(CFG["route_top"], True))
+    except Exception:
+        pass
+    _probe_head = tk.StringVar(value="")
+    tk.Label(_probe_win, textvariable=_probe_head, anchor=tk.W,
+             justify=tk.LEFT, font=_MONO).grid(row=0, column=0, sticky=tk.EW,
+                                               padx=10, pady=(8, 6))
+    bar = tk.Frame(_probe_win)
+    bar.grid(row=1, column=0, sticky=tk.EW, padx=10, pady=(0, 4))
+    global _btn_prefix, _btn_absent, _btn_boxel, _btn_skip
+    _btn_prefix = tk.Button(bar, text="copy prefix", command=_copy_prefix)
+    _btn_prefix.pack(side=tk.LEFT)
+    _btn_absent = tk.Button(bar, text="not there", command=_probe_absent)
+    _btn_absent.pack(side=tk.LEFT, padx=(4, 0))
+    _btn_boxel = tk.Button(bar, text="boxel done", command=_boxel_done)
+    _btn_boxel.pack(side=tk.LEFT, padx=(4, 0))
+    _btn_skip = tk.Button(bar, text="later", command=_probe_skip)
+    _btn_skip.pack(side=tk.LEFT, padx=(4, 0))
+
+    bar2 = tk.Frame(_probe_win)
+    bar2.grid(row=2, column=0, sticky=tk.EW, padx=10, pady=(0, 8))
+    tk.Button(bar2, text="replan",
+              command=lambda: _run_async(_rebuild_plan, label="replanning")).pack(
+        side=tk.LEFT)
+    tk.Button(bar2, text="copy FC", command=_copy_carrier).pack(
+        side=tk.LEFT, padx=(4, 0))
+    tk.Button(bar2, text="carrier spot",
+              command=lambda: _run_async(_plan_staging, label="staging")).pack(
+        side=tk.LEFT, padx=(4, 0))
+    tk.Checkbutton(bar2, text="carrier start", variable=_carrier_var,
+                   command=_on_carrier_toggle).pack(side=tk.LEFT, padx=(8, 0))
+
+    _probe_window_refresh()
+    _theme_tree(_probe_win, _theme_colours())
+    _refresh()
+
+
+def _probe_window_refresh() -> None:
+    if _probe_win is None or _probe_head is None:
+        return
+    p = current_probe()
+    if not p:
+        _probe_head.set("no candidates to check\n"
+                        "press Start to begin a sphere survey")
+    else:
+        same = sum(1 for q in ST.probe if q.boxel_key == p.boxel_key)
+        odds = ("high" if p.score >= 3.0 else "fair" if p.score >= 1.5
+                else "low" if p.score > 0 else "void")
+        c = ST.plan_counts
+        _probe_head.set(
+            "check this name in the galaxy map:\n"
+            "    %s\n"
+            "prefix       %s-\n"
+            "distance     %.1f ly   uncertainty +-%.0f ly\n"
+            "this boxel   %d candidate%s   odds %s\n"
+            "queue        %d probes (gap %d, probe %d, empty %d)"
+            % (p.name, p.boxel_key or "?", p.dist_origin, p.uncertainty,
+               same, "" if same == 1 else "s", odds, len(ST.probe),
+               c.get(K_GAP, 0), c.get(K_PROBE, 0), c.get(K_EMPTY, 0)))
 
 
 def _on_carrier_toggle() -> None:
@@ -1917,6 +2278,8 @@ def _refresh() -> None:
         else:
             _v_target.set("-")
             _v_kind.set("no flight targets left" if ST.active else "survey inactive")
+
+        _probe_window_refresh()
 
         p = current_probe()
         if p:
@@ -1964,9 +2327,18 @@ def _refresh() -> None:
             else:
                 _v_queue.set("Start sets the sphere centre to your current position")
 
+        # Fuel: the warning always shows, the full line only if switched on.
+        warn = ST.fuel.warning()
         if _v_fuel is not None:
-            warn = ST.fuel.warning()
-            _v_fuel.set(warn or ST.fuel.summary())
+            if warn:
+                _v_fuel.set(warn)
+            elif cfg_bool(CFG["panel_fuel"], False):
+                _v_fuel.set(ST.fuel.summary())
+            else:
+                _v_fuel.set("")
+        if _lbl_fuel is not None:
+            (_lbl_fuel.grid() if (warn or cfg_bool(CFG["panel_fuel"], False))
+             else _lbl_fuel.grid_remove())
 
         # one compact line here; the full list lives in the route window
         if cfg_bool(CFG["show_route"], True) and ST.route and ST.route.stops:
@@ -1987,6 +2359,10 @@ def _refresh() -> None:
             _v_route.set("")
             if _lbl_route:
                 _lbl_route.grid_remove()
+
+        if _lbl_queue is not None:
+            (_lbl_queue.grid() if cfg_bool(CFG["panel_queue"], False)
+             else _lbl_queue.grid_remove())
 
         if cfg_bool(CFG["show_stats"], False):
             lines = list(ST.stats_lines)
@@ -2015,6 +2391,8 @@ def _refresh() -> None:
             _btn_next.config(state=tk.NORMAL if ST.flight else tk.DISABLED)
         if _btn_route:
             _btn_route.config(text="route x" if _route_win is not None else "route")
+        if _btn_stats:
+            _btn_stats.config(text="info x" if _stats_win is not None else "info")
     except Exception:
         logger.exception("UI refresh failed")
 
@@ -2028,214 +2406,201 @@ _p: Dict[str, Any] = {}
 
 def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.Frame]:
     """
-    Preferences tab. Everything is laid out with grid() - EDMC's notebook
-    frames already use the grid manager, and mixing in pack() raises
-    TclError: cannot use geometry manager pack inside ... managed by grid.
+    Preferences, laid out in two columns.
+
+    Everything is grid() - EDMC's notebook frames already use the grid
+    manager, and mixing in pack() raises TclError. The two columns exist
+    because a single stack of every option runs off the bottom of the window
+    on a 1080p screen.
     """
     f = nb.Frame(parent)
-    f.columnconfigure(1, weight=1)
-    state = {"row": 0}
-
-    def head(text: str) -> None:
-        nb.Label(f, text=text).grid(row=state["row"], column=0, columnspan=9,
-                                    sticky=tk.W, pady=(10, 2))
-        state["row"] += 1
-
-    def field(label: str, widget, span: int = 8) -> None:
-        if label:
-            nb.Label(f, text=label).grid(row=state["row"], column=0,
-                                         sticky=tk.W, padx=(14, 8))
-        widget.grid(row=state["row"], column=1, columnspan=span, sticky=tk.W)
-        state["row"] += 1
+    f.columnconfigure(0, weight=1, uniform="cols")
+    f.columnconfigure(1, weight=1, uniform="cols")
 
     nb.Label(f, text="SHBOXSEARCH v%s" % VERSION).grid(
-        row=state["row"], column=0, columnspan=9, sticky=tk.W)
-    state["row"] += 1
+        row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 4))
 
-    # ---------------------------------------------------------------- survey
-    head("Survey")
+    left = nb.Frame(f)
+    left.grid(row=1, column=0, sticky=tk.NW, padx=(0, 14))
+    right = nb.Frame(f)
+    right.grid(row=1, column=1, sticky=tk.NW)
+
+    state = {"left": 0, "right": 0}
+
+    def head(parent_frame, side: str, text: str) -> None:
+        nb.Label(parent_frame, text=text).grid(
+            row=state[side], column=0, columnspan=4, sticky=tk.W,
+            pady=(10 if state[side] else 0, 2))
+        state[side] += 1
+
+    def field(parent_frame, side: str, label: str, widget) -> None:
+        if label:
+            nb.Label(parent_frame, text=label).grid(
+                row=state[side], column=0, sticky=tk.W, padx=(12, 6))
+            widget.grid(row=state[side], column=1, columnspan=3, sticky=tk.W)
+        else:
+            widget.grid(row=state[side], column=0, columnspan=4, sticky=tk.W,
+                        padx=(12, 0))
+        state[side] += 1
+
+    def note(parent_frame, side: str, text: str) -> None:
+        nb.Label(parent_frame, text=text).grid(
+            row=state[side], column=0, columnspan=4, sticky=tk.W, padx=(12, 0))
+        state[side] += 1
+
+    # ======================= left column: the survey =======================
+    head(left, "left", "Sphere")
 
     _p["radius"] = tk.StringVar(value=str(cfg_int(CFG["radius"], 50)))
-    field("Radius (ly)", ttk.OptionMenu(f, _p["radius"], _p["radius"].get(),
-                                        *RADIUS_CHOICES))
+    field(left, "left", "Radius (ly)",
+          ttk.OptionMenu(left, _p["radius"], _p["radius"].get(), *RADIUS_CHOICES))
 
-    nb.Label(f, text="Mass codes").grid(row=state["row"], column=0,
-                                        sticky=tk.W, padx=(14, 8))
+    nb.Label(left, text="Mass codes").grid(row=state["left"], column=0,
+                                           sticky=tk.W, padx=(12, 6))
+    mcf = nb.Frame(left)
+    mcf.grid(row=state["left"], column=1, columnspan=3, sticky=tk.W)
     _p["mc"] = {}
-    active = set(get_masscodes())
+    active_mc = set(get_masscodes())
     for i in range(8):
-        v = tk.IntVar(value=1 if i in active else 0)
+        v = tk.IntVar(value=1 if i in active_mc else 0)
         _p["mc"][i] = v
-        nb.Checkbutton(f, text=MASSCODES[i], variable=v).grid(
-            row=state["row"], column=1 + i, sticky=tk.W)
-    state["row"] += 1
+        nb.Checkbutton(mcf, text=MASSCODES[i], variable=v).grid(
+            row=0, column=i, sticky=tk.W)
+    state["left"] += 1
 
     _p["probe"] = tk.StringVar(value=str(cfg_int(CFG["probe_depth"], 2)))
-    field("Probes above boxel maximum",
-          nb.EntryMenu(f, textvariable=_p["probe"], width=6))
+    field(left, "left", "Probes above max",
+          nb.EntryMenu(left, textvariable=_p["probe"], width=5))
 
     _p["empty"] = tk.IntVar(value=1 if cfg_bool(CFG["include_empty"], True) else 0)
-    field("", nb.Checkbutton(f, text="probe unexplored boxels with -0",
-                             variable=_p["empty"]))
+    field(left, "left", "", nb.Checkbutton(
+        left, text="probe unexplored boxels", variable=_p["empty"]))
 
     _p["tasks"] = tk.IntVar(value=1 if cfg_bool(CFG["include_tasks"], True) else 0)
-    field("", nb.Checkbutton(f, text="queue outstanding scans and mappings",
-                             variable=_p["tasks"]))
-
-    _p["jump"] = tk.StringVar(value=str(cfg_int(CFG["jump_range"], 0) or ""))
-    field("Jump range (ly, 0 = auto)",
-          nb.EntryMenu(f, textvariable=_p["jump"], width=8))
+    field(left, "left", "", nb.Checkbutton(
+        left, text="queue outstanding scans", variable=_p["tasks"]))
 
     _p["carrier_start"] = tk.IntVar(
         value=1 if cfg_bool(CFG["carrier_start"], False) else 0)
-    field("", nb.Checkbutton(
-        f, text="carrier start: centre the sphere on the fleet carrier "
-                "instead of the current system", variable=_p["carrier_start"]))
+    field(left, "left", "", nb.Checkbutton(
+        left, text="carrier start (centre on the carrier)",
+        variable=_p["carrier_start"]))
 
-    _p["show_stats"] = tk.IntVar(value=1 if cfg_bool(CFG["show_stats"], False) else 0)
-    field("", nb.Checkbutton(f, text="show the statistics block in the panel",
-                             variable=_p["show_stats"]))
-
-    _p["show_route"] = tk.IntVar(value=1 if cfg_bool(CFG["show_route"], True) else 0)
-    field("", nb.Checkbutton(f, text="show the in-system route in the panel",
-                             variable=_p["show_route"]))
-
-    _p["route_all"] = tk.IntVar(value=1 if cfg_bool(CFG["route_all"], False) else 0)
-    field("", nb.Checkbutton(
-        f, text="route every body, not only the ones with work left",
-        variable=_p["route_all"]))
-
-    _p["route_top"] = tk.IntVar(value=1 if cfg_bool(CFG["route_top"], True) else 0)
-    field("", nb.Checkbutton(f, text="keep the route window above other windows",
-                             variable=_p["route_top"]))
-
-    _p["route_map"] = tk.IntVar(value=1 if cfg_bool(CFG["route_map"], True) else 0)
-    field("", nb.Checkbutton(f, text="draw the top-down map in the route window",
-                             variable=_p["route_map"]))
-
-    head("What counts as needing a visit")
-    nb.Label(f, text="   Any ticked reason is enough. \"every body\" overrides "
-                     "the rest.").grid(
-        row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(14, 0))
-    state["row"] += 1
-    active = set(get_filters())
+    head(left, "left", "What counts as needing a visit")
+    note(left, "left", "Any ticked reason is enough.")
+    active_f = set(get_filters())
     _p["filters"] = {}
     for key in ALL_FILTERS:
-        v = tk.IntVar(value=1 if key in active else 0)
+        v = tk.IntVar(value=1 if key in active_f else 0)
         _p["filters"][key] = v
-        nb.Checkbutton(f, text=FILTER_LABEL[key], variable=v).grid(
-            row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(28, 0))
-        state["row"] += 1
+        field(left, "left", "", nb.Checkbutton(
+            left, text=FILTER_LABEL[key], variable=v))
 
-    car = ST.db.get_carrier() if ST.db else None
-    nb.Label(f, text="   carrier: %s" % (
-        "%s%s, last seen %s" % (car["system"],
-                                "  (%s)" % car["callsign"] if car.get("callsign") else "",
-                                car.get("updated") or "?")
-        if car else "not known yet - dock at it once")).grid(
-        row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(14, 0))
-    state["row"] += 1
-
-    if ST.db:
-        with ST.lock:
-            hist = ST.db.list_spheres()
-        if hist:
-            nb.Label(f, text="   surveyed spheres: %d" % len(hist)).grid(
-                row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(14, 0))
-            state["row"] += 1
-            for r in hist[-6:]:
-                nb.Label(f, text="     %-28s r=%-4.0f %s %s"
-                         % (r["label"] or "-", r["radius"], r["origin"] or "",
-                            "closed" if r["closed"] else "open")).grid(
-                    row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(14, 0))
-                state["row"] += 1
-
-    # ----------------------------------------------------------- data sources
-    head("Data sources")
+    # ================= right column: sources, display, tools ===============
+    head(right, "right", "Data sources")
 
     _p["edd"] = tk.IntVar(value=1 if cfg_bool(CFG["src_edd"], True) else 0)
     _p["spansh"] = tk.IntVar(value=1 if cfg_bool(CFG["src_spansh"], True) else 0)
     _p["edsm"] = tk.IntVar(value=1 if cfg_bool(CFG["src_edsm"], True) else 0)
-    field("", nb.Checkbutton(f, text="EDDiscovery (local database)", variable=_p["edd"]))
-    field("", nb.Checkbutton(f, text="Spansh", variable=_p["spansh"]))
-    field("", nb.Checkbutton(f, text="EDSM", variable=_p["edsm"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="EDDiscovery (local)", variable=_p["edd"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="Spansh", variable=_p["spansh"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="EDSM", variable=_p["edsm"]))
 
     _p["eddpath"] = tk.StringVar(value=cfg_str(CFG["edd_path"]))
-    nb.Label(f, text="EDDSystem.sqlite").grid(row=state["row"], column=0,
-                                              sticky=tk.W, padx=(14, 8))
-    nb.EntryMenu(f, textvariable=_p["eddpath"], width=44).grid(
-        row=state["row"], column=1, columnspan=6, sticky=tk.EW)
-    tk.Button(f, text="...", width=3, command=_pick_edd).grid(
-        row=state["row"], column=7, sticky=tk.W, padx=4)
-    state["row"] += 1
+    nb.Label(right, text="EDDSystem.sqlite").grid(
+        row=state["right"], column=0, sticky=tk.W, padx=(12, 6))
+    nb.EntryMenu(right, textvariable=_p["eddpath"], width=30).grid(
+        row=state["right"], column=1, columnspan=2, sticky=tk.W)
+    tk.Button(right, text="...", width=3, command=_pick_edd).grid(
+        row=state["right"], column=3, sticky=tk.W, padx=4)
+    state["right"] += 1
 
     for name, ok, why in ST.sources.status():
-        nb.Label(f, text="   %-12s %-4s %s" % (name, "ok" if ok else "no", why)).grid(
-            row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=(14, 0))
-        state["row"] += 1
+        note(right, "right", "  %-12s %-4s %s" % (name, "ok" if ok else "no",
+                                                  why[:40]))
 
-    # -------------------------------------------------------------- harvesting
-    head("Automatic harvesting")
-
+    head(right, "right", "Harvesting")
     _p["navroute"] = tk.IntVar(value=1 if cfg_bool(CFG["harvest_navroute"], True) else 0)
-    field("", nb.Checkbutton(
-        f, text="read NavRoute (exact coordinates of every plotted hop)",
-        variable=_p["navroute"]))
-
     _p["dest"] = tk.IntVar(value=1 if cfg_bool(CFG["harvest_destination"], True) else 0)
-    field("", nb.Checkbutton(
-        f, text="read target selection (Status.json Destination)", variable=_p["dest"]))
-
     _p["autocopy"] = tk.IntVar(value=1 if cfg_bool(CFG["autocopy"], True) else 0)
-    field("", nb.Checkbutton(f, text="copy next flight target to clipboard",
-                             variable=_p["autocopy"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="read NavRoute", variable=_p["navroute"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="read target selection", variable=_p["dest"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="copy next target to clipboard", variable=_p["autocopy"]))
 
-    # ------------------------------------------------------------- maintenance
-    head("Maintenance")
+    head(right, "right", "Windows")
+    _p["route_top"] = tk.IntVar(value=1 if cfg_bool(CFG["route_top"], True) else 0)
+    _p["route_map"] = tk.IntVar(value=1 if cfg_bool(CFG["route_map"], True) else 0)
+    _p["route_all"] = tk.IntVar(value=1 if cfg_bool(CFG["route_all"], False) else 0)
+    _p["show_route"] = tk.IntVar(value=1 if cfg_bool(CFG["show_route"], True) else 0)
+    field(right, "right", "", nb.Checkbutton(
+        right, text="keep windows on top", variable=_p["route_top"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="draw the system map", variable=_p["route_map"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="route every body", variable=_p["route_all"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="show the route line in the panel", variable=_p["show_route"]))
 
+    _p["panel_fuel"] = tk.IntVar(value=1 if cfg_bool(CFG["panel_fuel"], False) else 0)
+    _p["panel_queue"] = tk.IntVar(value=1 if cfg_bool(CFG["panel_queue"], False) else 0)
+    field(right, "right", "", nb.Checkbutton(
+        right, text="show fuel in the panel (warnings always show)",
+        variable=_p["panel_fuel"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="show queue counters in the panel", variable=_p["panel_queue"]))
+
+    _p["map_size"] = tk.StringVar(value=cfg_str(CFG["map_size"], "medium"))
+    field(right, "right", "Map size",
+          ttk.OptionMenu(right, _p["map_size"], _p["map_size"].get(),
+                         "small", "medium", "large"))
+
+    _p["jump"] = tk.StringVar(value=str(cfg_int(CFG["jump_range"], 0) or ""))
+    field(right, "right", "Jump range (0=auto)",
+          nb.EntryMenu(right, textvariable=_p["jump"], width=6))
+
+    # ========================= full width: tools ===========================
+    tools = nb.Frame(f)
+    tools.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(12, 0))
+    nb.Label(tools, text="Maintenance").grid(row=0, column=0, columnspan=6,
+                                             sticky=tk.W)
     buttons = [
         ("Run first import", lambda: _run_async(_first_run_migration,
                                                 label="first-run import")),
         ("Replay journals", lambda: _run_async(_import_journals, label="journals")),
         ("Import JSON", lambda: _run_async(_import_json, label="JSON import")),
-    ]
-    for col, (text, cmd) in enumerate(buttons):
-        tk.Button(f, text=text, command=cmd).grid(
-            row=state["row"], column=col, sticky=tk.W, padx=(14 if col == 0 else 4, 0))
-    state["row"] += 1
-
-    buttons2 = [
         ("Export plan (CSV)", _export_csv),
-        ("Export boxel prefixes", _export_prefixes),
+        ("Boxel prefixes", _export_prefixes),
         ("Self test", lambda: _run_async(_selftest, label="self test")),
     ]
-    for col, (text, cmd) in enumerate(buttons2):
-        tk.Button(f, text=text, command=cmd).grid(
-            row=state["row"], column=col, sticky=tk.W,
-            padx=(14 if col == 0 else 4, 0), pady=(4, 0))
-    state["row"] += 1
+    for i, (text, cmd) in enumerate(buttons):
+        tk.Button(tools, text=text, command=cmd).grid(
+            row=1 + i // 3, column=i % 3, sticky=tk.W, padx=(0, 6), pady=2)
 
+    info = nb.Frame(f)
+    info.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(10, 0))
     jd = _journal_dir()
-    nb.Label(f, text="Journal folder: %s" % (jd or "NOT FOUND")).grid(
-        row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=14, pady=(8, 0))
-    state["row"] += 1
-
-    if ST.db:
-        nb.Label(f, text="First import: %s"
-                 % (ST.db.get_meta("migrated") or "not run yet")).grid(
-            row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=14)
-        state["row"] += 1
-        with ST.lock:
-            stats = ST.db.stats()
-        nb.Label(f, text="   ".join("%s %d" % (k, v) for k, v in stats.items())).grid(
-            row=state["row"], column=0, columnspan=9, sticky=tk.W, padx=14)
-        state["row"] += 1
+    car = ST.db.get_carrier() if ST.db else None
+    lines = [
+        "Journal folder: %s" % (jd or "NOT FOUND"),
+        "First import: %s" % ((ST.db.get_meta("migrated") if ST.db else None)
+                              or "not run yet"),
+        "Carrier: %s" % ("%s%s" % (car["system"],
+                                   "  (%s)" % car["callsign"]
+                                   if car.get("callsign") else "")
+                         if car else "not known yet - dock at it once"),
+    ]
+    for i, line in enumerate(lines):
+        nb.Label(info, text=line).grid(row=i, column=0, sticky=tk.W)
 
     _p["debug"] = tk.IntVar(value=1 if cfg_bool(CFG["debug"], False) else 0)
     nb.Checkbutton(f, text="verbose logging", variable=_p["debug"]).grid(
-        row=state["row"], column=0, columnspan=9, sticky=tk.W, pady=(10, 0))
-    state["row"] += 1
-
+        row=4, column=0, columnspan=2, sticky=tk.W, pady=(10, 0))
     return f
 
 
@@ -2263,11 +2628,15 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["harvest_destination"], bool(_p["dest"].get()))
         cfg_set(CFG["autocopy"], bool(_p["autocopy"].get()))
         cfg_set(CFG["carrier_start"], bool(_p["carrier_start"].get()))
-        cfg_set(CFG["show_stats"], bool(_p["show_stats"].get()))
         cfg_set(CFG["show_route"], bool(_p["show_route"].get()))
         cfg_set(CFG["route_all"], bool(_p["route_all"].get()))
         cfg_set(CFG["route_top"], bool(_p["route_top"].get()))
         cfg_set(CFG["route_map"], bool(_p["route_map"].get()))
+        cfg_set(CFG["map_size"], _p["map_size"].get())
+        cfg_set(CFG["panel_fuel"], bool(_p["panel_fuel"].get()))
+        cfg_set(CFG["panel_queue"], bool(_p["panel_queue"].get()))
+        global _MAP_W, _MAP_H
+        _MAP_W = _MAP_H = _MAP_SIZES.get(_p["map_size"].get(), 480)
         picked = [k for k, v in _p.get("filters", {}).items() if v.get()]
         cfg_set(CFG["filters"], ",".join(picked) if picked else F_OUTSTANDING)
         _request_route(delay=0.2)

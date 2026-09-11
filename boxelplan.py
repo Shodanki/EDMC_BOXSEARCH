@@ -467,6 +467,59 @@ class Planner:
         }
 
     @staticmethod
+    def stats_table(st: Dict[str, object]) -> List[Tuple[str, List[Tuple[str, str]]]]:
+        """
+        The statistics as titled tables of (label, value).
+
+        Only what actually informs the next decision is here. Percentages are
+        clamped to 100: coverage is measured against an estimate, and an
+        estimate that turns out low must not produce "112% explored".
+        """
+        def pct(v: float) -> str:
+            return "%.1f%%" % max(0.0, min(100.0, v))
+
+        cov = st.get("source_coverage") or {}
+        out = []
+
+        out.append(("Progress in this sphere", [
+            ("Systems known", "%d" % st["known"]),
+            ("Visited", "%d  (%s)" % (st["visited"], pct(st["coverage_pct"]))),
+            ("Fully surveyed", "%d  (%s)" % (st["surveyed"], pct(st["survey_pct"]))),
+            ("Still to fly", "%d" % st["open_flight"]),
+            ("Still to check", "%d" % st["open_probes"]),
+        ]))
+
+        est = ("%.0f" % st["estimated_unknown"]) if st["estimate_valid"] else "?"
+        total = ("~%.0f" % st["total_estimate"] if st["estimate_valid"]
+                 else ">=%.0f" % st["total_estimate"])
+        out.append(("Undiscovered systems", [
+            ("Certain (boxel gaps)", "%d" % st["certain_unknown"]),
+            ("Estimated further", est),
+            ("Estimated total here", total),
+            ("Boxels closed", "%d of %d  (%s)"
+             % (st["boxel_closed"], st["boxel_total"], pct(st["boxel_pct"]))),
+            ("Boxels never probed", "%d" % st["boxel_untested"]),
+        ]))
+
+        out.append(("What we contributed", [
+            ("Bodies scanned", "%d" % st["bodies_scanned"]),
+            ("Bodies mapped", "%d" % st["bodies_mapped"]),
+            ("First discoveries", "%d" % st["first_discoveries"]),
+        ]))
+
+        if cov.get("total"):
+            per = cov["per_source"]
+            rows = [(k, "%d" % v) for k, v in per.items()]
+            rows.append(("Only one source knows it",
+                         "%d  (%s)" % (cov["by_count"].get(1, 0),
+                                       pct(cov["disagreement_pct"]))))
+            if cov["disagreement_pct"] >= 15:
+                rows.append(("Verdict", "thin reporting - good odds here"))
+            out.append(("Database coverage", rows))
+
+        return out
+
+    @staticmethod
     def stats_lines(st: Dict[str, object]) -> List[str]:
         """Compact rendering for the panel."""
         if st["estimate_valid"]:

@@ -684,16 +684,29 @@ def calibrate_from_journal(segments: Iterable[Tuple[float, float]],
 # Building bodies from the database
 # ---------------------------------------------------------------------------
 
-def bodies_from_rows(rows: Iterable) -> Dict[int, Body]:
-    """Build the body map from sysdb `bodies` rows."""
+def bodies_from_rows(rows: Iterable, now: Optional[float] = None
+                     ) -> Dict[int, Body]:
+    """
+    Build the body map from sysdb `bodies` rows.
+
+    The orbital elements are a snapshot taken when the body was scanned, so
+    every body is advanced along its orbit by the time elapsed since. Pass
+    now=None to skip that (useful for comparing against the original layout).
+    """
     out: Dict[int, Body] = {}
     for r in rows:
         rel = (0.0, 0.0, 0.0)
         try:
             if r["sma"]:
+                elapsed = 0.0
+                if now is not None:
+                    ts = _get(r, "scan_ts")
+                    if ts:
+                        elapsed = max(0.0, now - float(ts))
                 rel = orbital_position(r["sma"], r["ecc"] or 0.0,
                                        r["inc"] or 0.0, r["peri"] or 0.0,
-                                       r["node"] or 0.0, r["mean_anom"] or 0.0)
+                                       r["node"] or 0.0, r["mean_anom"] or 0.0,
+                                       r["period"], elapsed)
         except (KeyError, IndexError, TypeError):
             pass
         b = Body(r["body_id"], r["name"] or "",

@@ -23,6 +23,7 @@ Standard library only.
 
 from __future__ import annotations
 
+import calendar
 import json
 import math
 import os
@@ -88,7 +89,7 @@ CREATE TABLE IF NOT EXISTS bodies (
     arrival_ls  REAL,
     parent_id   INTEGER,
     sma REAL, ecc REAL, inc REAL, peri REAL, node REAL, mean_anom REAL, period REAL,
-    ring_classes TEXT, ring_mass REAL, star_type TEXT,
+    ring_classes TEXT, ring_mass REAL, star_type TEXT, scan_ts REAL,
     organics    INTEGER NOT NULL DEFAULT 0,
     genuses     TEXT,
     updated     TEXT,
@@ -144,6 +145,16 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 """
 
 
+def _epoch(stamp: Optional[str]) -> Optional[float]:
+    """Journal timestamp to unix seconds - the epoch of the orbital elements."""
+    if not stamp:
+        return None
+    try:
+        return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    except (ValueError, TypeError):
+        return None
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -176,7 +187,7 @@ class SystemDB:
                          ("peri", "REAL"), ("node", "REAL"),
                          ("mean_anom", "REAL"), ("period", "REAL"),
                          ("ring_classes", "TEXT"), ("ring_mass", "REAL"),
-                         ("star_type", "TEXT")):
+                         ("star_type", "TEXT"), ("scan_ts", "REAL")):
             if col not in bhave:
                 self.cx.execute("ALTER TABLE bodies ADD COLUMN %s %s" % (col, typ))
         self.cx.commit()
@@ -557,6 +568,7 @@ class SystemDB:
                                     if r.get("RingClass") == "eRingClass_Icy")
                     self._body_upsert(
                         a, entry.get("BodyID"),
+                        scan_ts=_epoch(entry.get("timestamp")),
                         ring_classes=ring_cls,
                         ring_mass=ring_mass or None,
                         star_type=entry.get("StarType"),
@@ -848,6 +860,43 @@ class SystemDB:
         }
 
     # ---------------------------------------------------------------- reports
+    def lifetime(self) -> Dict[str, object]:
+        """
+        Totals across everything the plugin has ever recorded.
+
+        Distance flown is summed over consecutive visited systems ordered by
+        when they were first visited - an approximation, but it is the only
+        figure available without keeping a separate flight log, and it is
+        right to within the odd out-of-order jump.
+        """
+        q = lambda s, *a: self.cx.execute(s, a).fetchone()[0]
+        rows = self.cx.execute(
+            "SELECT x, y, z FROM systems WHERE visited=1 AND x IS NOT NULL "
+            "ORDER BY visited_ts").fetchall()
+        ly = 0.0
+        for a, b in zip(rows, rows[1:]):
+            d = math.dist((a["x"], a["y"], a["z"]), (b["x"], b["y"], b["z"]))
+            if d < 500.0:            # ignore carrier hops and session gaps
+                ly += d
+        first = self.cx.execute(
+            "SELECT MIN(first_seen) FROM systems").fetchone()[0]
+        return {
+            "systems_visited": q("SELECT COUNT(*) FROM systems WHERE visited=1"),
+            "systems_known": q("SELECT COUNT(*) FROM systems"),
+            "jumps_ly": ly,
+            "bodies": q("SELECT COUNT(*) FROM bodies"),
+            "mapped": q("SELECT COUNT(*) FROM bodies WHERE mapped=1"),
+            "first_discoveries": q(
+                "SELECT COUNT(*) FROM bodies WHERE was_discovered=0"),
+            "first_mapped": q("SELECT COUNT(*) FROM bodies WHERE was_mapped=0 "
+                              "AND mapped=1"),
+            "bio_sampled": q("SELECT COUNT(*) FROM bodies WHERE organics>0"),
+            "boxels_closed": q("SELECT COUNT(*) FROM boxels WHERE complete=1"),
+            "not_there": q("SELECT COUNT(*) FROM absent"),
+            "spheres": q("SELECT COUNT(*) FROM spheres"),
+            "since": first or "?",
+        }
+
     def stats(self) -> Dict[str, int]:
         q = lambda s, *a: self.cx.execute(s, a).fetchone()[0]
         return {
