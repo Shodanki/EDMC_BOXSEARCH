@@ -2,6 +2,53 @@
 
 Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
 
+## Install
+
+1. Download this repository (green **Code** button -> **Download ZIP**, or
+   `git clone`).
+2. Copy the folder into EDMC's plugin directory and name it `SHBOXSEARCH`:
+
+   | OS | Path |
+   |---|---|
+   | Windows | `%LOCALAPPDATA%\EDMarketConnector\plugins\SHBOXSEARCH` |
+   | macOS | `~/Library/Application Support/EDMarketConnector/plugins/SHBOXSEARCH` |
+   | Linux | `$XDG_DATA_HOME/EDMarketConnector/plugins/SHBOXSEARCH` |
+
+   The eight `.py` files must sit directly in that folder, not in a subfolder.
+3. Restart EDMC.
+
+On first start the plugin reads your existing journals and builds its database.
+That takes a few minutes with a long flight history; EDMC stays usable. Watch
+the plugin's status line, or the EDMC log for `first-run import finished`.
+
+No Python installation is needed - EDMC ships its own interpreter. There are no
+third-party dependencies.
+
+## Update
+
+1. Close EDMC.
+2. Replace the `.py` files with the new ones. **Leave `shboxsearch.sqlite`
+   alone** - that is your survey data.
+3. Start EDMC.
+
+The database migrates itself: new columns are added in place, nothing is
+dropped. After an update that adds new per-body data, run
+*Preferences -> SHBOXSEARCH -> Replay journals* once so the new fields are
+filled in from your history.
+
+### Requirements
+
+* EDMC 5.10 or newer (tested against 6.1.2 / Python 3.13)
+* Elite Dangerous: Odyssey journals
+* Optional: EDDiscovery, for a fast local system database
+
+### Uninstall
+
+Delete the folder. `shboxsearch.sqlite` goes with it, so copy it out first if
+you want to keep the survey record.
+
+---
+
 Goal: completely explore a chosen radius (50 / 100 / 150 ly) around a start
 point — find every system, fly there, scan it and map it, with particular
 weight on systems that appear in no public database.
@@ -527,87 +574,43 @@ There is no gain to be had from a smarter solver here.
 
 ## 9. Interface
 
+EDMC's window is shared with every other plugin, so the main panel shows only
+what you act on between jumps:
+
 ```
 Fly     Synuefe QM-N a6-0        7.3 ly
         NEW known, not yet visited
-Probe   Synuefe SH-N a6-2   5.0 ly  +-9   [2 in this boxel]
-Here    Synuefe SH-N a6-0    FSS 11/11 | DSS 1 | Bio 1
-[Start] [50 v] [replan] [stats]
-[prefix] [not there] [boxel done] [later]
-[copy next] [copy FC] [route] [x] carrier start
-r=50 ly | fly 109 (new 105, tasks 4) | probes 811 (gap 27, probe 192, empty 592)
-ready
+Probe   Synuefe SH-N a6-2   5.0 ly  +-9   [2 in boxel]  odds fair
+Here    Synuefe SH-N a6-0   FSS 11/11 | DSS 1 | Bio 1
+[Start] [50 v] [copy] [route] [info] [probe]
 ```
 
-* Clicking **Fly** or **Probe** copies that name to the clipboard.
-* Distances are measured **from your ship**, not from the sphere centre, and
-  are re-ranked after every jump. If you drift outside the sphere the queue
-  automatically leads you back in by the shortest hop.
-* **copy next** puts the flight target on the clipboard, **copy FC** the fleet
-  carrier's system - the way home.
-* **stats** folds the statistics block in and out.
+Everything else opens in its own window. A fuel **warning** always appears in
+the panel; the full fuel line and the queue counters are off by default and
+switchable in the preferences.
 
-### Statistics block
-
-```
-known 146 | visited 41 | fully surveyed 17
-certain unknown 27 | estimated 412 more (sample 34 boxels) | total ~585
-coverage 23.7% visited | 9.8% surveyed
-boxels 7 closed / 96 open / 585 never probed  (of 984, 1% done)
-bodies 164 scanned, 104 mapped | first discoveries 7
-open: 109 flight, 811 probes
-carrier: Synuefe CC-G b3-0  (V2L-07J)
-sphere: Synuefe SH-N a6-0  r=50 ly
-```
-
-| Line | Meaning |
+| Button | Opens |
 |---|---|
-| **known** | systems in the database inside the sphere |
-| **visited** | of those, actually flown to |
-| **fully surveyed** | visited, FSS complete, nothing left to map or sample |
-| **certain unknown** | boxel gaps - they exist, no database has them |
-| **estimated** | statistical guess for boxels nobody has probed |
-| **boxels closed** | end of the boxel proven, nothing left there |
-| **boxels open** | systems known, but the upper end not yet found |
-| **never probed** | completely unknown, one lookup each decides |
+| **copy** | puts the flight target on the clipboard |
+| **route** | the in-system route with map and checklist |
+| **info** | statistics, fuel, all-time totals |
+| **probe** | the galaxy map checking controls |
 
-**The estimate is honest about its own basis.** It is computed only from
-boxels *you* probed to the end, never from database contents — a boxel appears
-in EDSM or Spansh precisely because somebody found a system in it, which makes
-it a biased sample that would inflate the number badly. Below 20 probed boxels
-the plugin refuses to guess and shows `estimate needs N more probed boxels`
-with a lower bound instead.
-
-**AREA COMPLETE** appears once the flight queue and the probe queue are both
-empty and no sector is unresolved. That is the signal that the sphere holds
-nothing more and you can move on.
-
-### Two ways to start
-
-| Mode | Sphere centre |
-|---|---|
-| **free start** (checkbox off) | your current system |
-| **carrier start** (checkbox on) | the remembered fleet carrier |
-
-Carrier start gives you a fixed anchor: the sphere stays put while you range
-around it, replanning always measures from the carrier, and the way home is
-one click away. The carrier position is picked up automatically from
-`CarrierJump`, `CarrierLocation` and from docking at it.
-
-### Sphere history and overlap
-
-Every sphere you start is recorded. When you start a new one the plugin
-computes how much it repeats earlier work, before you fly a single jump:
+### The probe window
 
 ```
-overlap 43% | 13 systems already visited | move 100 ly for none
+check this name in the galaxy map:
+    Synuefe DZ-S a42-0
+prefix       Synuefe DZ-S a42-
+distance     4.2 ly   uncertainty +-9 ly
+this boxel   1 candidate   odds void
+queue        973 probes (gap 0, probe 2, empty 971)
+
+[copy prefix] [not there] [boxel done] [later]
+[replan] [copy FC] [carrier spot] [x] carrier start
 ```
 
-The volume share comes from the exact lens formula for two intersecting
-spheres; the system count comes from your own database. Already-visited
-systems never enter the flight queue again in any case, so overlap costs you
-planning clarity rather than duplicated flying - but the number tells you how
-far to move for a genuinely fresh area.
+Clicking **Fly** or **Probe** in the main panel copies that name.
 
 ## 10. Preferences
 
