@@ -1035,3 +1035,47 @@ Two ways a stop gets ticked:
 **reset ticks** clears them for the current system only, and says how many it
 removed. The database also tracks which systems are part-worked, which is the
 list you want when deciding where to go back to.
+
+
+---
+
+## 23. Why the map was a straight line
+
+Early versions projected every system onto the X/Z plane, on the assumption
+that orbits sit near the galactic plane. Measured across real systems, that is
+wrong most of the time:
+
+| System | spread X | spread Y | spread Z |
+|---|---|---|---|
+| Synuefe ZB-J d10-61 | 662 | 668 | 615 |
+| Synuefe VC-J b42-3 | 1457 | 1276 | **8** |
+| Synuefe TH-J b42-1 | 571 | 761 | **3** |
+| Synuefe OB-L b41-3 | 1623 | 1280 | **13** |
+| Synuefe AH-X b20-0 | 22350 | **10255** | 20161 |
+
+In five of six systems Z is within a few light seconds of zero while X and Y
+span thousands - so an X/Z projection collapsed the whole system onto one
+horizontal line, which is exactly what it looked like. The one binary in the
+set is the other way round, so no fixed plane works either.
+
+The plane is now picked per system by dropping whichever axis varies least.
+Every system then spreads across both dimensions:
+
+```
+Synuefe AH-X b20-0   plane X/Z   spread u=25332 v=22867  (dropped Y, 11661)
+Synuefe ZB-J d10-61  plane X/Y   spread u=  705 v=  662  (dropped Z,   660)
+Synuefe VC-J b42-3   plane X/Y   spread u= 1341 v= 1278  (dropped Z,     8)
+```
+
+### Labels
+
+Two changes on top of that:
+
+* **Only planets are named.** Moons sit a few light seconds from their planet
+  and their labels only piled more text into the same spot.
+* **Labels are nudged apart.** They are drawn after all the bodies and each
+  one looks for a free slot - right, left, above, below - rather than
+  overprinting a neighbour.
+
+On the 29-stop system that takes the map from 29 overlapping labels to 17
+readable ones.

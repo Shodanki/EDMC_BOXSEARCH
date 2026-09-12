@@ -932,16 +932,34 @@ def _route_map_draw() -> None:
     pts = [s.body.pos for s in route.stops if s.body.pos]
     if not pts:
         return
-    rmax = max(math.sqrt(p[0] ** 2 + p[2] ** 2) for p in pts) or 1.0
+
+    # Pick the projection plane from the data instead of assuming one.
+    #
+    # Orbits in a system are close to coplanar, but that plane is not the same
+    # one in every system: measured over real systems, five of six have z
+    # within a few light seconds of zero while x and y span thousands, and one
+    # binary is the other way round. Projecting on a fixed X/Z therefore
+    # collapsed most systems onto a single horizontal line. Dropping whichever
+    # axis varies least keeps the spread in every case.
+    def _spread(idx: int) -> float:
+        vals = [p[idx] for p in pts]
+        m = sum(vals) / len(vals)
+        return math.sqrt(sum((v - m) ** 2 for v in vals) / len(vals))
+
+    spreads = [(_spread(i), i) for i in range(3)]
+    flattest = min(spreads)[1]
+    ax, ay = [i for i in range(3) if i != flattest][:2]
+
+    rmax = max(math.sqrt(p[ax] ** 2 + p[ay] ** 2) for p in pts) or 1.0
 
     def project(p) -> Tuple[float, float]:
-        x, z = p[0], p[2]
-        r = math.sqrt(x * x + z * z)
+        u, v = p[ax], p[ay]
+        r = math.sqrt(u * u + v * v)
         if r < 1e-9:
             return (cx, cy)
         # log radial scale so moons and outer giants both stay visible
         rr = math.log10(1.0 + r) / math.log10(1.0 + rmax)
-        return (cx + (x / r) * rr * span, cy + (z / r) * rr * span)
+        return (cx + (u / r) * rr * span, cy + (v / r) * rr * span)
 
     col = _theme_colours()
     fg = col.get("fg") or "#ff8000"
@@ -982,7 +1000,24 @@ def _route_map_draw() -> None:
         prev = p
 
     # bodies
-    for i, st in enumerate(route.stops, 1):
+    # Bodies, then labels. Labels are placed last and nudged apart, because a
+    # tight inner system otherwise draws six names on top of each other and
+    # none of them can be read.
+    placed: List[Tuple[float, float]] = []
+
+    def free_spot(x: float, y: float, r: float) -> Tuple[float, float, str]:
+        """Find a nearby slot no other label has taken."""
+        for dx, dy, anchor in ((r + 4, 0, tk.W), (-(r + 4), 0, tk.E),
+                               (r + 4, -11, tk.W), (-(r + 4), -11, tk.E),
+                               (r + 4, 11, tk.W), (-(r + 4), 11, tk.E),
+                               (0, -(r + 10), tk.CENTER), (0, r + 10, tk.CENTER)):
+            px, py = x + dx, y + dy
+            if all(abs(px - qx) > 46 or abs(py - qy) > 10 for qx, qy in placed):
+                placed.append((px, py))
+                return px, py, anchor
+        return x + r + 4, y, tk.W
+
+    for st in route.stops:
         if not st.body.pos:
             continue
         x, y = project(st.body.pos)
@@ -993,11 +1028,16 @@ def _route_map_draw() -> None:
         else:
             _route_map.create_oval(x - r, y - r, x + r, y + r, fill=fg,
                                    outline=fg)
-        if st.group_start or not st.is_moon:
-            _route_map.create_text(x + r + 3, y, text=st.body.short[:10],
-                                   fill=fg, anchor=tk.W,
-                                   font=_FONT_GROUP if st.group_start
-                                   else _FONT_SMALL)
+
+    for st in route.stops:
+        # Only planets get a name. Moons sit within a few light seconds of
+        # their planet and would just pile more text into the same spot.
+        if not st.body.pos or st.is_moon:
+            continue
+        x, y = project(st.body.pos)
+        px, py, anchor = free_spot(x, y, 4.0)
+        _route_map.create_text(px, py, text=st.body.short[:10], fill=fg,
+                               anchor=anchor, font=_FONT_SMALL)
 
     if last_pos is not None:
         lx, ly = last_pos
