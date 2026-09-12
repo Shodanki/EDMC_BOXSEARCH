@@ -957,3 +957,81 @@ Two practical consequences:
 
 The figures are yours, not estimates: they come from what the game actually
 paid at the counter.
+
+
+---
+
+## 21. Fitting on a 1080p screen
+
+A 29-body system produces a route taller than the monitor. Three changes:
+
+* **The stop list scrolls.** It sits in a canvas with a scrollbar and a mouse
+  wheel binding, capped at 360 px. Without it the bottom of a long route -
+  including the buttons under it - was simply unreachable.
+* **Windows are capped to the screen.** `_fit_to_screen` measures the monitor
+  and clamps width and height, leaving a margin. Tk will otherwise place a
+  window whose bottom edge is off-screen with no way to get at it.
+* **The map got smaller**: 260 / 340 / 460 px instead of 340 / 480 / 640,
+  since it now shares the height with a scrolling list. The **size** button
+  still cycles it.
+
+### The blank map
+
+The map stopped drawing in large systems. The cause was a one-character class
+of bug:
+
+```python
+w = int(_route_map.winfo_width()) or _MAP_W
+```
+
+Tk reports a width of **1** for a widget it has not laid out yet, and `1` is
+truthy - so `w` became 1 instead of the fallback, `span` went negative, and
+the function returned without drawing anything. It looked intermittent because
+it depended on whether the window happened to be mapped before the first draw.
+
+Fixed by testing the value rather than its truthiness, plus a retry once the
+window is mapped:
+
+```python
+if w < 40 or h < 40:
+    w, h = _MAP_W, _MAP_H
+    _route_win.after(150, _route_map_draw)
+```
+
+Verified by forcing `winfo_width()` to return 1: the map now draws 3479
+elements where it previously drew none.
+
+### The main panel
+
+The statistics block is gone from the panel entirely. It was twelve lines in a
+window shared with every other plugin, and every one of those lines is in the
+info window already. What remains is four lines and one row of buttons; the
+fuel line and queue counters stay off unless switched on, and a fuel **warning**
+always shows regardless.
+
+
+---
+
+## 22. Ticks are remembered
+
+Working a 30-body system takes longer than one sitting. The ticks are therefore
+stored per body in the database, not in a session list - fly out, come back
+days later, and they are still there.
+
+```
+Synuefe ZB-J d10-61   24 of 29 stops left in 16 planetary systems
+10820 LS remaining, roughly 89 min
+5 ticked off - kept across restarts
+```
+
+Two ways a stop gets ticked:
+
+* **Automatically**, when the journal says you were there - `ApproachBody`,
+  `SAAScanComplete`, `Touchdown` and `ScanOrganic` all name the body, so
+  normal flying needs no clicking at all.
+* **By hand**, for what the journal cannot see: a body you looked at and
+  decided to skip.
+
+**reset ticks** clears them for the current system only, and says how many it
+removed. The database also tracks which systems are part-worked, which is the
+list you want when deciding where to go back to.

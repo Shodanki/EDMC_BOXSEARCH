@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS bodies (
     parent_id   INTEGER,
     sma REAL, ecc REAL, inc REAL, peri REAL, node REAL, mean_anom REAL, period REAL,
     ring_classes TEXT, ring_mass REAL, star_type TEXT, scan_ts REAL,
+    route_done INTEGER NOT NULL DEFAULT 0, route_done_ts TEXT,
     organics    INTEGER NOT NULL DEFAULT 0,
     genuses     TEXT,
     updated     TEXT,
@@ -199,7 +200,9 @@ class SystemDB:
                          ("peri", "REAL"), ("node", "REAL"),
                          ("mean_anom", "REAL"), ("period", "REAL"),
                          ("ring_classes", "TEXT"), ("ring_mass", "REAL"),
-                         ("star_type", "TEXT"), ("scan_ts", "REAL")):
+                         ("star_type", "TEXT"), ("scan_ts", "REAL"),
+                         ("route_done", "INTEGER"),
+                         ("route_done_ts", "TEXT")):
             if col not in bhave:
                 self.cx.execute("ALTER TABLE bodies ADD COLUMN %s %s" % (col, typ))
         self.cx.commit()
@@ -859,6 +862,41 @@ class SystemDB:
             "visited": visited,
             "clear_distance": radius * 2.0,
         }
+
+    # ------------------------------------------------------------ route ticks
+    def set_route_done(self, sys_id64: int, body_id: int, done: bool) -> None:
+        """
+        Remember that a body has been worked, so ticks survive a restart.
+
+        Kept per body rather than as a session list: you often leave a system
+        half finished, fly elsewhere and come back days later, and the ticks
+        have to still be there when you do.
+        """
+        self.cx.execute(
+            "UPDATE bodies SET route_done=?, route_done_ts=? "
+            "WHERE sys_id64=? AND body_id=?",
+            (1 if done else 0, _now() if done else None, sys_id64, body_id))
+        self.cx.commit()
+
+    def route_done_of(self, sys_id64: int) -> Set[int]:
+        return {r[0] for r in self.cx.execute(
+            "SELECT body_id FROM bodies WHERE sys_id64=? AND route_done=1",
+            (sys_id64,))}
+
+    def clear_route_done(self, sys_id64: int) -> int:
+        cur = self.cx.execute(
+            "UPDATE bodies SET route_done=0, route_done_ts=NULL "
+            "WHERE sys_id64=? AND route_done=1", (sys_id64,))
+        self.cx.commit()
+        return cur.rowcount or 0
+
+    def systems_part_done(self) -> List[sqlite3.Row]:
+        """Systems left part-worked - useful when deciding where to go back to."""
+        return self.cx.execute(
+            "SELECT s.name, s.id64, COUNT(*) done FROM bodies b "
+            "JOIN systems s ON s.id64 = b.sys_id64 "
+            "WHERE b.route_done=1 GROUP BY b.sys_id64 ORDER BY done DESC"
+        ).fetchall()
 
     def bodies_of(self, sys_id64: int) -> List[sqlite3.Row]:
         return self.cx.execute("SELECT * FROM bodies WHERE sys_id64=?",

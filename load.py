@@ -525,6 +525,13 @@ def _rebuild_route() -> None:
                            filters=[F_ALL])
         ST.route_full = True
     ST.route = route
+    # Restore the ticks for this system, then drop any that no longer refer to
+    # a stop on the current route.
+    try:
+        with ST.lock:
+            ST.route_done = ST.db.route_done_of(ST.cur_id64)
+    except Exception:
+        logger.exception("could not load route ticks")
     ST.route_lines = route.lines(limit=12)
     valid = {st.body.body_id for st in route.stops}
     ST.route_done = {b for b in ST.route_done if b in valid}
@@ -556,7 +563,12 @@ _route_rows: List[Dict[str, Any]] = []
 _route_head: Optional[tk.StringVar] = None
 _route_body: Optional[tk.Frame] = None
 _route_map: Optional[tk.Canvas] = None
-_MAP_SIZES = {"small": 340, "medium": 480, "large": 640}
+_route_scroll: Optional[tk.Canvas] = None
+_route_scroll_win = None
+_MAP_SIZES = {"small": 260, "medium": 340, "large": 460}
+# How tall the scrolling stop list is allowed to get. Together with the map
+# and the button rows this has to stay inside a 1080p screen.
+_LIST_H = 360
 _MAP_W, _MAP_H = 480, 480
 _MAP_LAST = "#4ea3ff"      # where you were last - blue, distinct from the theme
 
@@ -713,7 +725,7 @@ def _toggle_route_window() -> None:
 
 
 def _route_window_close() -> None:
-    global _route_win, _route_body, _route_rows, _route_map
+    global _route_win, _route_body, _route_rows, _route_map, _route_scroll
     if _route_win is not None:
         try:
             _route_win.destroy()
@@ -722,6 +734,7 @@ def _route_window_close() -> None:
     _route_win = None
     _route_body = None
     _route_map = None
+    _route_scroll = None
     _route_rows = []
     _refresh()
 
@@ -748,7 +761,7 @@ def _route_window_open() -> None:
 
     _route_head = tk.StringVar(value="")
     tk.Label(_route_win, textvariable=_route_head, anchor=tk.W,
-             justify=tk.LEFT).grid(row=0, column=0, sticky=tk.EW,
+             justify=tk.LEFT).grid(row=0, column=0, columnspan=2, sticky=tk.EW,
                                    padx=8, pady=(8, 4))
 
     global _route_map
@@ -757,13 +770,48 @@ def _route_window_open() -> None:
     if cfg_bool(CFG["route_map"], True):
         _route_map.grid(row=1, column=0, sticky=tk.EW, padx=8, pady=(2, 4))
 
-    _route_body = tk.Frame(_route_win)
-    _route_body.grid(row=2, column=0, sticky=tk.NSEW, padx=8)
+    # The stop list is put inside a scrolling canvas. A 29-body system needs
+    # more vertical space than a 1080p screen has once the map is above it, so
+    # without this the bottom of the route is simply unreachable.
+    global _route_scroll, _route_scroll_win
+    _route_scroll = tk.Canvas(_route_win, highlightthickness=0,
+                              width=_MAP_W + 190, height=_LIST_H)
+    _route_scroll.grid(row=2, column=0, sticky=tk.NSEW, padx=(8, 0))
+    sb = tk.Scrollbar(_route_win, orient=tk.VERTICAL,
+                      command=_route_scroll.yview)
+    sb.grid(row=2, column=1, sticky=tk.NS)
+    _route_scroll.configure(yscrollcommand=sb.set)
+
+    _route_body = tk.Frame(_route_scroll)
+    _route_scroll_win = _route_scroll.create_window(
+        (0, 0), window=_route_body, anchor=tk.NW)
+
+    def _on_body_resize(_event=None):
+        try:
+            _route_scroll.configure(scrollregion=_route_scroll.bbox("all"))
+        except Exception:
+            pass
+
+    _route_body.bind("<Configure>", _on_body_resize)
+
+    def _on_wheel(event):
+        try:
+            delta = -1 if getattr(event, "delta", 0) > 0 else 1
+            _route_scroll.yview_scroll(delta, "units")
+        except Exception:
+            pass
+
+    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        try:
+            _route_win.bind_all(seq, _on_wheel)
+        except Exception:
+            pass
+
     _route_win.columnconfigure(0, weight=1)
     _route_win.rowconfigure(2, weight=1)
 
     bar = tk.Frame(_route_win)
-    bar.grid(row=3, column=0, sticky=tk.EW, padx=8, pady=(4, 8))
+    bar.grid(row=3, column=0, columnspan=2, sticky=tk.EW, padx=8, pady=(4, 8))
     tk.Button(bar, text="refresh",
               command=lambda: _run_async(_rebuild_route, label="route")).pack(
         side=tk.LEFT)
@@ -782,7 +830,30 @@ def _route_window_open() -> None:
 
     _route_theme()
     _route_window_refresh()
+    _fit_to_screen(_route_win)
     _refresh()
+
+
+def _fit_to_screen(win, margin: int = 80) -> None:
+    """
+    Keep a window inside the monitor.
+
+    A 29-body route plus the map is taller than 1080p, and Tk will happily
+    place a window whose bottom is off-screen with no way to reach the
+    buttons. Capping the height is the difference between usable and not.
+    """
+    if win is None:
+        return
+    try:
+        win.update_idletasks()
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        w = min(w, max(400, sw - margin))
+        h = min(h, max(400, sh - margin))
+        win.geometry("%dx%d" % (w, h))
+        win.maxsize(sw - 20, sh - 40)
+    except Exception:
+        pass
 
 
 def _route_theme() -> None:
@@ -836,14 +907,25 @@ def _route_map_draw() -> None:
     if route is None or not route.stops:
         return
 
+    # Tk reports a width of 1 for a widget it has not laid out yet, and
+    # `int(1) or _MAP_W` is 1, not _MAP_W - which silently produced a negative
+    # span and a blank map. Anything implausibly small falls back to the
+    # configured size, and the draw is retried once the window is mapped.
+    w = h = 0
     try:
-        w = int(_route_map.winfo_width()) or _MAP_W
-        h = int(_route_map.winfo_height()) or _MAP_H
+        w = int(_route_map.winfo_width())
+        h = int(_route_map.winfo_height())
     except Exception:
+        pass
+    if w < 40 or h < 40:
         w, h = _MAP_W, _MAP_H
+        if _route_win is not None:
+            try:
+                _route_win.after(150, _route_map_draw)
+            except Exception:
+                pass
     cx, cy = w / 2.0, h / 2.0
-    margin = 14.0
-    span = min(cx, cy) - margin
+    span = min(cx, cy) - 14.0
     if span <= 10:
         return
 
@@ -947,7 +1029,16 @@ def _cycle_map_size() -> None:
 
 
 def _route_reset() -> None:
+    n = 0
+    if ST.db and ST.cur_id64:
+        try:
+            with ST.lock:
+                n = ST.db.clear_route_done(ST.cur_id64)
+        except Exception:
+            logger.exception("could not clear route ticks")
     ST.route_done.clear()
+    logger.info("route | ticks cleared for %s (%d)", ST.cur_system, n)
+    _set_status("ticks cleared (%d)" % n)
     _route_window_refresh()
     _refresh()
 
@@ -966,6 +1057,12 @@ def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
     for st in ST.route.stops:
         if st.body.name == body_name and st.body.body_id not in ST.route_done:
             ST.route_done.add(st.body.body_id)
+            if ST.db and ST.cur_id64:
+                try:
+                    with ST.lock:
+                        ST.db.set_route_done(ST.cur_id64, st.body.body_id, True)
+                except Exception:
+                    logger.exception("could not store automatic tick")
             logger.info("route | reached %s (%s), %d of %d done",
                         st.body.short, reason, len(ST.route_done),
                         len(ST.route.stops))
@@ -1009,11 +1106,25 @@ def _route_progress_feedback() -> None:
 
 
 def _route_tick(body_id: int) -> None:
-    if body_id in ST.route_done:
-        ST.route_done.discard(body_id)
-    else:
+    """
+    Tick a stop off by hand, and remember it.
+
+    Stored per body in the database rather than in a session list, because a
+    system is often left half worked: you fly out, come back days later, and
+    the ticks have to still be there.
+    """
+    done = body_id not in ST.route_done
+    if done:
         ST.route_done.add(body_id)
         _route_progress_feedback()
+    else:
+        ST.route_done.discard(body_id)
+    if ST.db and ST.cur_id64:
+        try:
+            with ST.lock:
+                ST.db.set_route_done(ST.cur_id64, body_id, done)
+        except Exception:
+            logger.exception("could not store route tick")
     _route_window_refresh()
     _refresh()
 
@@ -1058,6 +1169,8 @@ def _route_window_refresh() -> None:
                if ST.cost_model.samples else "")]
     if ST.route_full:
         head.append("nothing outstanding here - showing the full tour")
+    if ST.route_done:
+        head.append("%d ticked off - kept across restarts" % len(ST.route_done))
     _route_head.set("\n".join(head))
 
     _route_map_draw()
@@ -1693,6 +1806,7 @@ def _copy_carrier() -> None:
 
 _stats_win: Optional[tk.Toplevel] = None
 _stats_body: Optional[tk.Frame] = None
+_stats_scroll: Optional[tk.Canvas] = None
 
 
 def _toggle_stats_window() -> None:
@@ -1727,16 +1841,29 @@ def _stats_window_open() -> None:
         _stats_win.attributes("-topmost", cfg_bool(CFG["route_top"], True))
     except Exception:
         pass
-    _stats_body = tk.Frame(_stats_win)
-    _stats_body.grid(row=0, column=0, sticky=tk.NSEW, padx=10, pady=8)
+    global _stats_scroll
+    _stats_scroll = tk.Canvas(_stats_win, highlightthickness=0,
+                              width=430, height=520)
+    _stats_scroll.grid(row=0, column=0, sticky=tk.NSEW, padx=(10, 0), pady=8)
+    sb = tk.Scrollbar(_stats_win, orient=tk.VERTICAL,
+                      command=_stats_scroll.yview)
+    sb.grid(row=0, column=1, sticky=tk.NS, pady=8)
+    _stats_scroll.configure(yscrollcommand=sb.set)
+    _stats_body = tk.Frame(_stats_scroll)
+    _stats_scroll.create_window((0, 0), window=_stats_body, anchor=tk.NW)
+    _stats_body.bind("<Configure>", lambda e: _stats_scroll.configure(
+        scrollregion=_stats_scroll.bbox("all")))
+    _stats_win.columnconfigure(0, weight=1)
+    _stats_win.rowconfigure(0, weight=1)
     bar = tk.Frame(_stats_win)
-    bar.grid(row=1, column=0, sticky=tk.EW, padx=10, pady=(0, 8))
+    bar.grid(row=1, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=(0, 8))
     tk.Button(bar, text="refresh",
               command=lambda: _run_async(_rebuild_plan, label="stats")).pack(
         side=tk.LEFT)
     tk.Button(bar, text="close", command=_stats_window_close).pack(
         side=tk.LEFT, padx=(4, 0))
     _stats_window_refresh()
+    _fit_to_screen(_stats_win)
     _refresh()
 
 
@@ -2406,21 +2533,12 @@ def _refresh() -> None:
             (_lbl_queue.grid() if cfg_bool(CFG["panel_queue"], False)
              else _lbl_queue.grid_remove())
 
-        if cfg_bool(CFG["show_stats"], False):
-            lines = list(ST.stats_lines)
-            if ST.carrier:
-                lines.append("carrier: %s%s" % (
-                    ST.carrier["system"],
-                    "  (%s)" % ST.carrier["callsign"] if ST.carrier.get("callsign") else ""))
-            if ST.start_system:
-                lines.append("sphere: %s  r=%.0f ly" % (ST.start_system, ST.radius))
-            _v_stats.set("\n".join(lines) if lines else "no statistics yet")
-            if _lbl_stats:
-                _lbl_stats.grid()
-        else:
+        # The statistics block is gone from the panel - it is 12 lines in a
+        # window shared with every other plugin. The info window holds it all.
+        if _v_stats is not None:
             _v_stats.set("")
-            if _lbl_stats:
-                _lbl_stats.grid_remove()
+        if _lbl_stats is not None:
+            _lbl_stats.grid_remove()
 
         if _btn_start:
             _btn_start.config(text="Stop" if ST.active else "Start")
