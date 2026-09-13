@@ -36,6 +36,40 @@ dropped. After an update that adds new per-body data, run
 *Preferences -> SHBOXSEARCH -> Replay journals* once so the new fields are
 filled in from your history.
 
+
+## Files
+
+All eight `.py` files go in the plugin folder. `shboxsearch.sqlite` is created
+on first run and is **your data** - never overwrite it on an update.
+
+| File | Lines | What it does | Depends on |
+|---|---|---|---|
+| `load.py` | 3204 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 1173 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `sysroute.py` | 735 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
+| `boxelplan.py` | 619 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
+| `sources.py` | 443 | External data: EDDiscovery, Spansh, EDSM | — |
+| `procgen.py` | 410 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
+| `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
+| `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
+
+Only `load.py` touches tkinter or the EDMC API; everything else is plain
+Python with no third-party dependencies and can be run and tested on its own.
+`python procgen.py` runs the maths self test and should print `failures: 0`.
+
+### Suggested `.gitignore`
+
+```
+shboxsearch.sqlite*
+__pycache__/
+*.pyc
+neareststars.json
+survey_state.json
+```
+
+The last two are legacy import sources and personal data - they belong on your
+disk, not in the repository.
+
 ### Requirements
 
 * EDMC 5.10 or newer (tested against 6.1.2 / Python 3.13)
@@ -1150,3 +1184,36 @@ and that no database has. The negative cache is still empty because none have
 been checked yet, which is consistent: nothing has been ruled out because
 nothing has been looked at. The logic is doing what it should; it just needs
 the galaxy map work to convert candidates into finds.
+
+
+---
+
+## 27. Two fixes
+
+### "last here" stopped moving
+
+The marker was updated only on `ApproachBody`. In a real session that fires 11
+times while `Touchdown`, `Liftoff` and `SAAScanComplete` together fire 180 -
+so it usually pointed at wherever it had last happened to be set.
+
+Worse, the update sat inside the event dispatch chain, where an earlier
+`elif ev in ("ApproachBody", "Touchdown")` branch matched first and swallowed
+it. Adding more branches further down could never have worked.
+
+Position tracking now runs **before** the chain, for every event that carries
+a `BodyID`, and is cleared on jumping to a different system:
+
+```
+FSDJump          -> body=None  (new system, marker cleared)
+SupercruiseExit  -> body=4     sys=11673049507177
+ApproachBody     -> body=7     sys=84724781754
+SAAScanComplete  -> body=16    sys=84724781754
+```
+
+### Black on black in the mining dropdown
+
+An `OptionMenu` popup is a separate Tk `Menu` hanging off the button, not a
+child in the widget tree - so walking children to apply the theme never
+reached it, and it kept Tk's defaults. It is now fetched through the widget's
+`menu` option and configured directly, including the highlight colours. The
+radius picker in the main panel got the same treatment.

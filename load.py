@@ -82,6 +82,13 @@ CFG = {
 }
 RADIUS_CHOICES = ["50", "100", "150"]
 
+# Events that tell us which body the ship is at. ApproachBody alone is far too
+# rare - in a typical session it fires 11 times against 180 for the others.
+POSITION_EVENTS = frozenset((
+    "ApproachBody", "Touchdown", "Liftoff", "SupercruiseExit",
+    "SAAScanComplete", "ScanOrganic", "SAASignalsFound",
+))
+
 KIND_SHORT = {K_SCAN: "FSS", K_DSS: "DSS", K_BIO: "BIO", K_NEW: "NEW",
               K_GAP: "GAP", K_PROBE: "PROBE", K_EMPTY: "EMPTY",
               K_CHECK: "CHECK"}
@@ -704,9 +711,44 @@ def _apply_theme(widget, colours: Dict[str, str], is_text: bool = False,
             continue
 
 
+def _theme_menu(widget, colours: Dict[str, str]) -> None:
+    """
+    Colour the dropdown of an OptionMenu.
+
+    The popup is a separate Tk Menu hanging off the button, not a child in the
+    widget tree, so walking the children never reaches it - which is how it
+    ended up black text on a black background. It has to be fetched via the
+    widget's "menu" option and configured on its own.
+    """
+    bg, fg = colours.get("bg"), colours.get("fg")
+    if not (bg and fg):
+        return
+    try:
+        name = widget.cget("menu")
+    except Exception:
+        return
+    if not name:
+        return
+    try:
+        menu = widget.nametowidget(name)
+    except Exception:
+        return
+    for opts in ({"background": bg, "foreground": fg,
+                  "activebackground": fg, "activeforeground": bg,
+                  "selectcolor": fg, "borderwidth": 1},
+                 {"background": bg, "foreground": fg}):
+        try:
+            menu.configure(**opts)
+            return
+        except Exception:
+            continue
+
+
 def _theme_tree(widget, colours: Dict[str, str]) -> None:
     """Apply the colours to a widget and everything below it."""
     cls = widget.__class__.__name__
+    if cls in ("OptionMenu", "Menubutton"):
+        _theme_menu(widget, colours)
     _apply_theme(widget, colours,
                  is_text=cls in ("Label", "Checkbutton", "Entry"),
                  is_button=cls in ("Button", "Menubutton"))
@@ -1089,6 +1131,29 @@ def _route_reset() -> None:
     _set_status("ticks cleared (%d)" % n)
     _route_window_refresh()
     _refresh()
+
+
+def _note_position(entry: Dict[str, Any]) -> None:
+    """
+    Record which body we are at.
+
+    Every event that names a body counts, not just ApproachBody: in a typical
+    session that fires 11 times while Touchdown, Liftoff and SAAScanComplete
+    together fire 180. Relying on the rare one left the marker stuck wherever
+    it was last set.
+    """
+    bid = entry.get("BodyID")
+    if bid is None:
+        return
+    sysa = entry.get("SystemAddress") or ST.cur_id64
+    name = entry.get("Body") or entry.get("BodyName") or ""
+    if (bid, sysa) == (ST.last_body_id, ST.last_body_sys):
+        return
+    ST.last_body_id = bid
+    ST.last_body_sys = sysa
+    ST.last_body_name = name
+    logger.debug("position | %s (body %s in %s)", name, bid, sysa)
+    _ui(_route_window_refresh)
 
 
 def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
@@ -2086,6 +2151,12 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         return
     ev = entry.get("event")
     try:
+        # Before the dispatch chain: any event naming a body updates where we
+        # are. Putting this inside the chain meant whichever branch matched
+        # first swallowed it, and the marker stopped moving.
+        if entry.get("BodyID") is not None and ev in POSITION_EVENTS:
+            _note_position(entry)
+
         # EDMC enriches NavRoute with the full Route array
         if ev == "NavRoute" and not cfg_bool(CFG["harvest_navroute"], True):
             return
@@ -2135,6 +2206,10 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 ST.route_done.clear()
                 ST.route_started = None
                 ST.route_feedback = ""
+            if entry.get("SystemAddress") != ST.last_body_sys:
+                ST.last_body_id = None
+                ST.last_body_sys = None
+                ST.last_body_name = ""
             ST.cur_system = entry.get("StarSystem")
             ST.cur_id64 = entry.get("SystemAddress")
             pos = entry.get("StarPos")
@@ -2190,11 +2265,6 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         elif ev == "ApproachBody":
             if entry.get("Body"):
                 ST._arrive[entry["Body"]] = time.time()
-            if entry.get("BodyID") is not None:
-                ST.last_body_id = entry["BodyID"]
-                ST.last_body_name = entry.get("Body") or ""
-                ST.last_body_sys = entry.get("SystemAddress") or ST.cur_id64
-                _ui(_route_window_refresh)
 
         elif ev in ("Scan", "SAAScanComplete", "SAASignalsFound", "FSSBodySignals",
                     "FSSDiscoveryScan", "FSSAllBodiesFound", "ScanOrganic"):
@@ -2330,8 +2400,10 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     bar.grid(row=4, column=0, columnspan=2, sticky=tk.EW, pady=(3, 0))
     _btn_start = tk.Button(bar, text="Start", width=6, command=_on_start)
     _btn_start.pack(side=tk.LEFT)
-    ttk.OptionMenu(bar, _radius_var, _radius_var.get(), *RADIUS_CHOICES).pack(
-        side=tk.LEFT, padx=(3, 4))
+    radius_pick = ttk.OptionMenu(bar, _radius_var, _radius_var.get(),
+                                 *RADIUS_CHOICES)
+    radius_pick.pack(side=tk.LEFT, padx=(3, 4))
+    _theme_menu(radius_pick, _theme_colours())
     _btn_next = tk.Button(bar, text="copy", width=6, command=_copy_flight_click)
     _btn_next.pack(side=tk.LEFT)
     _btn_route = tk.Button(bar, text="route", width=6,
@@ -2431,9 +2503,10 @@ def _mining_window_open() -> None:
     bar = tk.Frame(_mine_win)
     bar.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(8, 4))
     tk.Label(bar, text="material").pack(side=tk.LEFT)
-    ttk.OptionMenu(bar, _mine_mat, _mine_mat.get(), *names,
-                   command=lambda *_: _mining_refresh()).pack(
-        side=tk.LEFT, padx=(6, 0))
+    picker = ttk.OptionMenu(bar, _mine_mat, _mine_mat.get(), *names,
+                            command=lambda *_: _mining_refresh())
+    picker.pack(side=tk.LEFT, padx=(6, 0))
+    _theme_menu(picker, _theme_colours())
     tk.Button(bar, text="refresh", command=_mining_refresh).pack(
         side=tk.LEFT, padx=(6, 0))
     tk.Button(bar, text="close", command=_mining_window_close).pack(
