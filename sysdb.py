@@ -142,6 +142,19 @@ CREATE TABLE IF NOT EXISTS spheres (
     closed   TEXT
 );
 
+CREATE TABLE IF NOT EXISTS hotspots (
+    sys_id64  INTEGER NOT NULL,
+    body_id   INTEGER NOT NULL,
+    body_name TEXT,
+    material  TEXT NOT NULL,     -- 'Platinum', 'LowTemperatureDiamond', ...
+    label     TEXT,              -- localised name where the game gives one
+    count     INTEGER NOT NULL,  -- number of hotspots in that ring
+    ring_class TEXT,
+    found     TEXT,
+    PRIMARY KEY (sys_id64, body_id, material)
+);
+CREATE INDEX IF NOT EXISTS ix_hot_mat ON hotspots(material);
+
 CREATE TABLE IF NOT EXISTS earnings (
     ts       TEXT,
     kind     TEXT,              -- 'exploration' or 'organic'
@@ -617,6 +630,7 @@ class SystemDB:
             elif ev in ("SAASignalsFound", "FSSBodySignals"):
                 a = entry.get("SystemAddress")
                 if a:
+                    self._store_hotspots(a, entry)
                     bio = geo = 0
                     for sig in entry.get("Signals") or []:
                         t = (sig.get("Type") or "")
@@ -897,6 +911,72 @@ class SystemDB:
             "JOIN systems s ON s.id64 = b.sys_id64 "
             "WHERE b.route_done=1 GROUP BY b.sys_id64 ORDER BY done DESC"
         ).fetchall()
+
+    # --------------------------------------------------------------- mining
+    # Signal types that are neither biological nor geological are mining
+    # materials: a ring scan reports "Platinum x3", "Low Temp. Diamonds x5"
+    # and so on. Worth keeping - finding a good ring again months later is
+    # otherwise a matter of remembering where you were.
+    def _store_hotspots(self, sys_id64: int, entry: dict) -> None:
+        body_id = entry.get("BodyID")
+        name = entry.get("BodyName") or ""
+        if body_id is None or "Ring" not in name:
+            return
+        ring_class = None
+        row = self.cx.execute(
+            "SELECT ring_classes FROM bodies WHERE sys_id64=? AND body_id=?",
+            (sys_id64, body_id)).fetchone()
+        if row:
+            ring_class = row["ring_classes"]
+        for sig in entry.get("Signals") or []:
+            t = sig.get("Type") or ""
+            if not t or "Biological" in t or "Geological" in t:
+                continue
+            self.cx.execute(
+                "INSERT OR REPLACE INTO hotspots(sys_id64,body_id,body_name,"
+                "material,label,count,ring_class,found) VALUES (?,?,?,?,?,?,?,?)",
+                (sys_id64, body_id, name, t, sig.get("Type_Localised") or t,
+                 int(sig.get("Count") or 0), ring_class, _now()))
+        self.cx.commit()
+
+    def hotspot_materials(self) -> List[sqlite3.Row]:
+        """Every material seen, with how many rings carry it."""
+        return self.cx.execute(
+            "SELECT material, label, COUNT(*) rings, SUM(count) spots "
+            "FROM hotspots GROUP BY material ORDER BY spots DESC").fetchall()
+
+    def find_hotspots(self, material: Optional[str] = None,
+                      near: Optional[Sequence[float]] = None,
+                      limit: int = 40) -> List[Dict[str, object]]:
+        """
+        Rings carrying a material, nearest first.
+
+        Distance is from the given point when the system's coordinates are
+        known; rings in systems we have no position for still come back, just
+        without one, rather than being dropped.
+        """
+        sql = ("SELECT h.*, s.name sys_name, s.x, s.y, s.z FROM hotspots h "
+               "LEFT JOIN systems s ON s.id64 = h.sys_id64")
+        args: List[object] = []
+        if material:
+            sql += " WHERE h.material = ?"
+            args.append(material)
+        out: List[Dict[str, object]] = []
+        for r in self.cx.execute(sql, args):
+            d = None
+            if near is not None and r["x"] is not None:
+                d = math.dist((r["x"], r["y"], r["z"]), tuple(near))
+            out.append({
+                "system": r["sys_name"] or str(r["sys_id64"]),
+                "body": r["body_name"],
+                "material": r["label"] or r["material"],
+                "count": r["count"],
+                "ring_class": (r["ring_class"] or "").replace("eRingClass_", ""),
+                "dist": d,
+            })
+        out.sort(key=lambda h: (h["dist"] if h["dist"] is not None else 1e9,
+                                -h["count"]))
+        return out[:limit]
 
     def bodies_of(self, sys_id64: int) -> List[sqlite3.Row]:
         return self.cx.execute("SELECT * FROM bodies WHERE sys_id64=?",

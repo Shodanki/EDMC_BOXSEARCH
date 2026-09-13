@@ -1079,3 +1079,74 @@ Two changes on top of that:
 
 On the 29-stop system that takes the map from 29 overlapping labels to 17
 readable ones.
+
+
+---
+
+## 24. Mining hotspots
+
+Ring scans report their mining materials in `SAASignalsFound`, right next to
+the biological ones:
+
+```json
+{"BodyName": "Synuefe CC-G b3-0 5 A Ring",
+ "Signals": [{"Type": "Rhodplumsite", "Count": 2}, {"Type": "Monazite", "Count": 3},
+             {"Type": "Platinum", "Count": 3}, {"Type": "Painite", "Count": 1}]}
+```
+
+Those were being discarded - the ingest only looked for Biological and
+Geological. Keeping them turns the survey into a mining atlas of your own
+making. From the test journals alone:
+
+```
+Monazite              7 rings, 17 hotspots
+Low Temp. Diamonds    5 rings, 14 hotspots
+Rhodplumsite          3 rings, 13 hotspots
+Platinum              4 rings,  8 hotspots
+Tritium               3 rings,  3 hotspots
+```
+
+**mining** opens a searchable list, nearest first:
+
+```
+material [Platinum v] [refresh] [close]
+
+system                     ring                        x  ring type  distance
+Synuefe ZB-J d10-61        13 A Ring                   3  Icy             12 ly
+Synuefe ZB-J d10-61        13 B Ring                   1  Icy             12 ly
+Synuefe TH-J b42-2         D 4 A Ring                  1  MetalRich       21 ly
+Synuefe CC-G b3-0          5 A Ring                    3  MetalRich      981 ly
+```
+
+Clicking a row copies the system name. Choose `(all)` to see everything with
+the material named in the last column. The point is the months-later case:
+when the carrier needs tritium or you want a platinum run, the answer is
+already in your own data rather than a forum search.
+
+## 25. "last here" pointed at the wrong body
+
+`BodyID` is only unique **within a system**. The marker recorded the id but
+not which system it came from, so on arriving somewhere new it happily pointed
+at whatever body happened to share that number - which is why it stuck to a
+plausible-looking but wrong planet.
+
+The system address is now stored alongside, and the marker is drawn only when
+the two agree.
+
+## 26. Gap logic, re-checked
+
+Verified against the current database:
+
+```
+boxels total: 44 | contiguous: 18 | with gaps: 26 | missing n2 values: 231
+
+Synuefe KV-M b40   missing [0, 1, 2, 3, 4]  (highest known 5)
+Synuefe MG-L b41   missing [0, 1, 2, 3, 4]  (highest known 5)
+Synuefe OB-L b41   missing [2]              (highest known 4)
+```
+
+Those 231 names are systems that must exist - `n2` runs contiguously from 0 -
+and that no database has. The negative cache is still empty because none have
+been checked yet, which is consistent: nothing has been ruled out because
+nothing has been looked at. The logic is doing what it should; it just needs
+the galaxy map work to convert candidates into finds.

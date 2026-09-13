@@ -78,6 +78,7 @@ CFG = {
     "map_size": "%s_map_size" % PLUGIN_NAME,
     "panel_fuel": "%s_panel_fuel" % PLUGIN_NAME,
     "panel_queue": "%s_panel_queue" % PLUGIN_NAME,
+    "mine_mat": "%s_mine_mat" % PLUGIN_NAME,
 }
 RADIUS_CHOICES = ["50", "100", "150"]
 
@@ -135,6 +136,7 @@ class State:
         self.staging: List[Dict[str, Any]] = []
         self.last_body_id: Optional[int] = None
         self.last_body_name: str = ""
+        self.last_body_sys: Optional[int] = None
         self.sys_minutes: List[float] = []
         self._sys_enter: Optional[float] = None
         self._sc_start: Optional[Tuple[float, float]] = None
@@ -275,6 +277,7 @@ def plugin_stop() -> None:
     _route_window_close()
     _stats_window_close()
     _probe_window_close()
+    _mining_window_close()
     with ST.lock:
         if ST.db:
             ST.db.close()
@@ -980,8 +983,13 @@ def _route_map_draw() -> None:
     # where we were last, if known. The live position is not in any journal
     # event, so the last body approached is the closest thing to a "you are
     # here" - drawn in blue so it never blends into the route.
+    # BodyID is only unique within a system, so the marker is drawn only when
+    # the recorded body belongs to the system on screen. Without that check it
+    # silently pointed at whatever body happened to share the number here.
     last_pos = None
-    if ST.last_body_id is not None:
+    if (ST.last_body_id is not None
+            and ST.last_body_sys is not None
+            and ST.last_body_sys == ST.cur_id64):
         for st in route.stops:
             if st.body.body_id == ST.last_body_id and st.body.pos:
                 last_pos = project(st.body.pos)
@@ -1435,6 +1443,7 @@ def _bootstrap_last_body() -> None:
                                   "SAAScanComplete") and e.get("BodyID") is not None:
                 ST.last_body_id = e["BodyID"]
                 ST.last_body_name = e.get("Body") or e.get("BodyName") or ""
+                ST.last_body_sys = e.get("SystemAddress")
                 logger.info("last known position: %s (body %d)",
                             ST.last_body_name or "?", ST.last_body_id)
                 return
@@ -2184,6 +2193,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
             if entry.get("BodyID") is not None:
                 ST.last_body_id = entry["BodyID"]
                 ST.last_body_name = entry.get("Body") or ""
+                ST.last_body_sys = entry.get("SystemAddress") or ST.cur_id64
                 _ui(_route_window_refresh)
 
         elif ev in ("Scan", "SAAScanComplete", "SAASignalsFound", "FSSBodySignals",
@@ -2332,6 +2342,8 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     _btn_stats.pack(side=tk.LEFT, padx=(3, 0))
     tk.Button(bar, text="probe", width=6,
               command=_toggle_probe_window).pack(side=tk.LEFT, padx=(3, 0))
+    tk.Button(bar, text="mining", width=7,
+              command=_toggle_mining_window).pack(side=tk.LEFT, padx=(3, 0))
 
     # 5-7  optional lines, hidden unless switched on
     _lbl_route = tk.Label(_frame, textvariable=_v_route, anchor=tk.W,
@@ -2358,6 +2370,131 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
 
 _probe_win: Optional[tk.Toplevel] = None
 _probe_head: Optional[tk.StringVar] = None
+
+
+# ---------------------------------------------------------------------------
+# Mining window - find a ring again, months later
+# ---------------------------------------------------------------------------
+
+_mine_win: Optional[tk.Toplevel] = None
+_mine_body: Optional[tk.Frame] = None
+_mine_mat: Optional[tk.StringVar] = None
+
+
+def _toggle_mining_window() -> None:
+    global _mine_win
+    if _mine_win is not None:
+        _mining_window_close()
+        return
+    _mining_window_open()
+
+
+def _mining_window_close() -> None:
+    global _mine_win, _mine_body
+    if _mine_win is not None:
+        try:
+            _mine_win.destroy()
+        except Exception:
+            pass
+    _mine_win = None
+    _mine_body = None
+
+
+def _mining_window_open() -> None:
+    """
+    Every ring hotspot we have ever scanned, searchable by material.
+
+    Ring scans report their mining materials in SAASignalsFound alongside the
+    biological ones - "Platinum x3", "Low Temp. Diamonds x5". Those were being
+    discarded. Keeping them turns the survey into a mining atlas: when the
+    carrier needs tritium or you want a platinum run, the answer is already in
+    your own data.
+    """
+    global _mine_win, _mine_body, _mine_mat
+    if _frame is None or ST.db is None:
+        return
+    _mine_win = tk.Toplevel(_frame)
+    _mine_win.title("SHBOXSEARCH - mining hotspots")
+    _mine_win.protocol("WM_DELETE_WINDOW", _mining_window_close)
+    try:
+        _mine_win.attributes("-topmost", cfg_bool(CFG["route_top"], True))
+    except Exception:
+        pass
+
+    with ST.lock:
+        mats = ST.db.hotspot_materials()
+    names = ["(all)"] + [(m["label"] or m["material"]) for m in mats]
+    _mine_mat = tk.StringVar(value=cfg_str(CFG["mine_mat"], names[0]))
+    if _mine_mat.get() not in names:
+        _mine_mat.set(names[0])
+
+    bar = tk.Frame(_mine_win)
+    bar.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(8, 4))
+    tk.Label(bar, text="material").pack(side=tk.LEFT)
+    ttk.OptionMenu(bar, _mine_mat, _mine_mat.get(), *names,
+                   command=lambda *_: _mining_refresh()).pack(
+        side=tk.LEFT, padx=(6, 0))
+    tk.Button(bar, text="refresh", command=_mining_refresh).pack(
+        side=tk.LEFT, padx=(6, 0))
+    tk.Button(bar, text="close", command=_mining_window_close).pack(
+        side=tk.LEFT, padx=(4, 0))
+
+    _mine_body = tk.Frame(_mine_win)
+    _mine_body.grid(row=1, column=0, sticky=tk.NSEW, padx=10, pady=(0, 8))
+    _mining_refresh()
+    _theme_tree(_mine_win, _theme_colours())
+    _fit_to_screen(_mine_win)
+
+
+def _mining_refresh() -> None:
+    if _mine_win is None or _mine_body is None or ST.db is None:
+        return
+    try:
+        for w in _mine_body.winfo_children():
+            w.destroy()
+    except Exception:
+        pass
+    col = _theme_colours()
+    want = _mine_mat.get() if _mine_mat else "(all)"
+
+    with ST.lock:
+        mats = {(m["label"] or m["material"]): m["material"]
+                for m in ST.db.hotspot_materials()}
+        key = None if want == "(all)" else mats.get(want, want)
+        rows = ST.db.find_hotspots(key, near=ST.cur_pos, limit=40)
+
+    if not rows:
+        lbl = tk.Label(_mine_body, anchor=tk.W, font=_MONO,
+                       text="nothing scanned yet - map a ring with the DSS\n"
+                            "and its materials land here automatically")
+        lbl.grid(row=0, column=0, sticky=tk.W)
+        _apply_theme(lbl, col, is_text=True)
+        return
+
+    head = tk.Label(_mine_body, font=_FONT_GROUP, anchor=tk.W,
+                    text="%-26s %-26s %3s  %-10s %s"
+                         % ("system", "ring", "x", "ring type", "distance"))
+    head.grid(row=0, column=0, sticky=tk.W)
+    _apply_theme(head, col, is_text=True)
+
+    for i, h in enumerate(rows, 1):
+        ring = str(h["body"] or "")
+        sysname = str(h["system"])
+        if ring.startswith(sysname):
+            ring = ring[len(sysname):].strip()
+        dist = ("%.0f ly" % h["dist"]) if h["dist"] is not None else "-"
+        text = "%-26s %-26s %3d  %-10s %s" % (
+            sysname[:26], ring[:26], h["count"],
+            (h["ring_class"] or "")[:10], dist)
+        if want == "(all)":
+            text += "   " + str(h["material"])
+        lbl = tk.Label(_mine_body, text=text, anchor=tk.W, font=_MONO)
+        lbl.grid(row=i, column=0, sticky=tk.W)
+        lbl.bind("<Button-1>", lambda e, n=sysname: _copy(n))
+        _apply_theme(lbl, col, is_text=True)
+
+    if _mine_mat:
+        cfg_set(CFG["mine_mat"], want)
 
 
 def _toggle_probe_window() -> None:
