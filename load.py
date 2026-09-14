@@ -79,7 +79,15 @@ CFG = {
     "panel_fuel": "%s_panel_fuel" % PLUGIN_NAME,
     "panel_queue": "%s_panel_queue" % PLUGIN_NAME,
     "mine_mat": "%s_mine_mat" % PLUGIN_NAME,
+    "check_updates": "%s_check_updates" % PLUGIN_NAME,
+    "update_seen": "%s_update_seen" % PLUGIN_NAME,
+    "update_checked": "%s_update_checked" % PLUGIN_NAME,
 }
+
+# Where releases live. A check is a single call to the GitHub releases API.
+REPO_URL = "https://github.com/Shodanki/EDMC_BOXSEARCH"
+RELEASES_API = "https://api.github.com/repos/Shodanki/EDMC_BOXSEARCH/releases/latest"
+RELEASES_URL = REPO_URL + "/releases/latest"
 RADIUS_CHOICES = ["50", "100", "150"]
 
 # Events that tell us which body the ship is at. ApproachBody alone is far too
@@ -141,6 +149,8 @@ class State:
         self.sys_times: List[Tuple[str, float, int]] = []
         self.fuel = FuelState()
         self.staging: List[Dict[str, Any]] = []
+        self.update_version: Optional[str] = None
+        self.update_notes: str = ""
         self.last_body_id: Optional[int] = None
         self.last_body_name: str = ""
         self.last_body_sys: Optional[int] = None
@@ -173,6 +183,8 @@ _lbl_stats = None
 _v_stats: Optional[tk.StringVar] = None
 _v_route: Optional[tk.StringVar] = None
 _v_fuel: Optional[tk.StringVar] = None
+_v_update: Optional[tk.StringVar] = None
+_lbl_update = None
 _lbl_fuel = None
 _lbl_queue = None
 _lbl_route = None
@@ -1458,6 +1470,89 @@ def _bootstrap_work_model() -> None:
         logger.info("work model unchanged - too few measurements yet")
 
 
+def _version_tuple(v: str) -> Tuple[int, ...]:
+    """'v4.1.0' -> (4, 1, 0). Anything unparseable sorts lowest."""
+    parts = []
+    for chunk in (v or "").lstrip("vV").split(".")[:4]:
+        digits = "".join(c for c in chunk if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts) or (0,)
+
+
+def _check_for_update(force: bool = False) -> None:
+    """
+    Ask GitHub whether a newer release exists. Notify only - never touch files.
+
+    The plugin is deliberately not self-updating: its value sits in a database
+    that grows over months, and a half-applied update in the same folder is
+    the one failure that is genuinely painful. Copying eight files by hand a
+    few times a year is the better trade.
+
+    Checked once a day at most. GitHub allows 60 unauthenticated calls per
+    hour per address, and every failure is swallowed - an update check must
+    never be the reason something does not work.
+    """
+    if not force and not cfg_bool(CFG["check_updates"], True):
+        return
+    if not force:
+        last = cfg_str(CFG["update_checked"], "")
+        try:
+            if last and time.time() - float(last) < 86400:
+                return
+        except ValueError:
+            pass
+    try:
+        import requests
+    except ImportError:
+        return
+    try:
+        r = requests.get(RELEASES_API, timeout=10,
+                         headers={"Accept": "application/vnd.github+json",
+                                  "User-Agent": "SHBOXSEARCH/%s" % VERSION})
+        cfg_set(CFG["update_checked"], str(int(time.time())))
+        if r.status_code == 403:
+            logger.debug("update check: rate limited, trying again tomorrow")
+            return
+        if r.status_code == 404:
+            logger.debug("update check: no release published yet")
+            return
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        logger.debug("update check failed: %s", e)
+        return
+
+    tag = (data.get("tag_name") or "").strip()
+    if not tag:
+        return
+    if _version_tuple(tag) <= _version_tuple(VERSION):
+        logger.info("update check: %s is current (latest %s)", VERSION, tag)
+        if force:
+            _set_status("up to date (%s)" % VERSION)
+        return
+
+    ST.update_version = tag
+    ST.update_notes = (data.get("body") or "").strip()
+    logger.info("update available: %s (running %s) - %s", tag, VERSION,
+                RELEASES_URL)
+    for line in ST.update_notes.splitlines()[:8]:
+        logger.info("update | %s", line)
+    _set_status("update %s available - click here" % tag)
+    _ui(_refresh)
+
+
+def _open_release_page() -> None:
+    """Open the release page; the copying stays with the commander."""
+    import webbrowser
+    try:
+        webbrowser.open(RELEASES_URL if ST.update_version else REPO_URL)
+        if ST.update_version:
+            cfg_set(CFG["update_seen"], ST.update_version)
+    except Exception:
+        logger.exception("could not open the browser")
+        _copy(RELEASES_URL)
+
+
 def _bootstrap_session() -> None:
     """Establish fuel, work timings and last position from the journals."""
     try:
@@ -1472,6 +1567,10 @@ def _bootstrap_session() -> None:
         _bootstrap_last_body()
     except Exception:
         logger.exception("last position bootstrap failed")
+    try:
+        _check_for_update()
+    except Exception:
+        logger.exception("update check failed")
     _ui(_refresh)
 
 
@@ -2357,7 +2456,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     global _btn_start, _btn_absent, _btn_skip, _radius_var
     global _btn_fc, _btn_stats, _lbl_stats, _v_stats, _carrier_var
     global _btn_boxel, _btn_prefix, _btn_next, _v_route, _lbl_route, _btn_route
-    global _v_fuel, _lbl_queue, _lbl_fuel
+    global _v_fuel, _lbl_queue, _lbl_fuel, _v_update, _lbl_update
 
     _frame = tk.Frame(parent)
     _frame.columnconfigure(1, weight=1)
@@ -2371,6 +2470,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     _v_stats = tk.StringVar(value="")
     _v_route = tk.StringVar(value="")
     _v_fuel = tk.StringVar(value="")
+    _v_update = tk.StringVar(value="")
     _radius_var = tk.StringVar(value=str(cfg_int(CFG["radius"], 50)))
     _carrier_var = tk.IntVar(value=1 if cfg_bool(CFG["carrier_start"], False) else 0)
 
@@ -2430,6 +2530,14 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     _lbl_stats.grid(row=8, column=0, columnspan=2, sticky=tk.EW)
     tk.Label(_frame, textvariable=_v_status, anchor=tk.W).grid(
         row=9, column=0, columnspan=2, sticky=tk.EW)
+
+    # Only appears when a newer release exists. Clicking opens the page -
+    # the plugin never replaces its own files.
+    _lbl_update = tk.Label(_frame, textvariable=_v_update, anchor=tk.W,
+                           cursor="hand2")
+    _lbl_update.grid(row=10, column=0, columnspan=2, sticky=tk.EW)
+    _lbl_update.bind("<Button-1>", lambda e: _open_release_page())
+    _lbl_update.grid_remove()
 
     _refresh()
     theme.update(_frame)
@@ -2779,6 +2887,15 @@ def _refresh() -> None:
             if _lbl_route:
                 _lbl_route.grid_remove()
 
+        if _v_update is not None and _lbl_update is not None:
+            if ST.update_version:
+                _v_update.set("update %s available - click to open GitHub"
+                              % ST.update_version)
+                _lbl_update.grid()
+            else:
+                _v_update.set("")
+                _lbl_update.grid_remove()
+
         if _lbl_queue is not None:
             (_lbl_queue.grid() if cfg_bool(CFG["panel_queue"], False)
              else _lbl_queue.grid_remove())
@@ -2964,6 +3081,12 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
         right, text="show the route line in the panel", variable=_p["show_route"]))
 
     _p["panel_fuel"] = tk.IntVar(value=1 if cfg_bool(CFG["panel_fuel"], False) else 0)
+    _p["check_updates"] = tk.IntVar(
+        value=1 if cfg_bool(CFG["check_updates"], True) else 0)
+    field(right, "right", "", nb.Checkbutton(
+        right, text="check GitHub for a newer release (once a day, notify only)",
+        variable=_p["check_updates"]))
+
     _p["panel_queue"] = tk.IntVar(value=1 if cfg_bool(CFG["panel_queue"], False) else 0)
     field(right, "right", "", nb.Checkbutton(
         right, text="show fuel in the panel (warnings always show)",
@@ -2993,6 +3116,8 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
         ("Export plan (CSV)", _export_csv),
         ("Boxel prefixes", _export_prefixes),
         ("Self test", lambda: _run_async(_selftest, label="self test")),
+        ("Check for update",
+         lambda: _run_async(_check_for_update, True, label="update check")),
     ]
     for i, (text, cmd) in enumerate(buttons):
         tk.Button(tools, text=text, command=cmd).grid(
@@ -3003,6 +3128,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     jd = _journal_dir()
     car = ST.db.get_carrier() if ST.db else None
     lines = [
+        "Version %s  -  %s" % (VERSION, REPO_URL),
         "Journal folder: %s" % (jd or "NOT FOUND"),
         "First import: %s" % ((ST.db.get_meta("migrated") if ST.db else None)
                               or "not run yet"),
@@ -3051,6 +3177,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["map_size"], _p["map_size"].get())
         cfg_set(CFG["panel_fuel"], bool(_p["panel_fuel"].get()))
         cfg_set(CFG["panel_queue"], bool(_p["panel_queue"].get()))
+        cfg_set(CFG["check_updates"], bool(_p["check_updates"].get()))
         global _MAP_W, _MAP_H
         _MAP_W = _MAP_H = _MAP_SIZES.get(_p["map_size"].get(), 480)
         picked = [k for k, v in _p.get("filters", {}).items() if v.get()]

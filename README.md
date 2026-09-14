@@ -2,6 +2,14 @@
 
 Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
 
+Repository: <https://github.com/Shodanki/EDMC_BOXSEARCH>
+
+Provided **as is**. The plugin checks once a day whether a newer release is
+tagged and says so - it never replaces its own files. Updating stays a
+deliberate act, because the thing worth protecting here is a database that
+grows over months, and a half-applied update in the same folder is the one
+failure that actually hurts.
+
 ## Install
 
 1. Download this repository (green **Code** button -> **Download ZIP**, or
@@ -25,6 +33,14 @@ No Python installation is needed - EDMC ships its own interpreter. There are no
 third-party dependencies.
 
 ## Update
+
+The plugin tells you when a release is newer than the one running:
+
+```
+update v4.1.0 available - click to open GitHub
+```
+
+Clicking opens the release page. Then:
 
 1. Close EDMC.
 2. Replace the `.py` files with the new ones. **Leave `shboxsearch.sqlite`
@@ -1217,3 +1233,67 @@ child in the widget tree - so walking children to apply the theme never
 reached it, and it kept Tk's defaults. It is now fetched through the widget's
 `menu` option and configured directly, including the highlight colours. The
 radius picker in the main panel got the same treatment.
+
+
+---
+
+## 28. Releasing (for whoever maintains this)
+
+The update check compares the running `VERSION` against the newest release
+tag, so the two have to be set together or the notice lies.
+
+### Checklist
+
+1. **Bump `VERSION` in `load.py`.** It is the single source of truth:
+
+   ```python
+   VERSION = "4.1.0"
+   ```
+
+2. **Decide the number by what changed**, since the notice is the only thing
+   the user reads before updating:
+
+   | Change | Bump | Note in the release |
+   |---|---|---|
+   | fix, no new data stored | patch, `4.0.1` | — |
+   | new feature, new database column | minor, `4.1.0` | **say to run *Replay journals*** |
+   | database rebuilt, settings reset | major, `5.0.0` | say what is lost |
+
+   The migration adds columns by itself, but it cannot fill them from history -
+   only the commander can decide to replay. If an update adds per-body data
+   and the note omits that, the new fields silently stay empty.
+
+3. **Run the self test** - `python procgen.py` must print `failures: 0`.
+
+4. **Commit, tag and push.** The tag has to match `VERSION` with a leading `v`:
+
+   ```
+   git add -A
+   git commit -m "4.1.0: <what changed>"
+   git tag -a v4.1.0 -m "4.1.0"
+   git push && git push --tags
+   ```
+
+5. **Create the release on GitHub** from that tag. The description becomes the
+   `body` the plugin writes into the log, so write it for a reader deciding
+   whether to bother - the first eight lines are what get logged.
+
+### How the check behaves
+
+* Once per start, and at most once per 24 hours; the timestamp is remembered.
+* `Preferences -> Check for update` forces one, and reports `up to date` when
+  there is nothing new.
+* Every failure is swallowed and logged at debug level. Rate limiting (GitHub
+  allows 60 unauthenticated calls per hour per address), no network, no
+  release published yet - none of it produces an error the user sees. An
+  update check must never be the reason something appears broken.
+* Version comparison is numeric per component, so `v4.10.0` correctly beats
+  `v4.9.0`. Anything unparseable sorts lowest and therefore never triggers a
+  false notice.
+* Switchable off in the preferences.
+
+### Version numbers so far
+
+| Version | Notes |
+|---|---|
+| 4.0.0 | first release: sphere survey, boxel gaps, in-system routing, deep space, mining atlas |
