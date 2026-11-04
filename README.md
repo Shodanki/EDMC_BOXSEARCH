@@ -1420,6 +1420,12 @@ SHBOX > NEXT TARGETS
   system - `IN NO DATABASE - first discovery likely` in violet when none
   does -, open candidates in its boxel, fuel.
 
+The overlay steps aside while the game shows a full-screen view of its own -
+galaxy map, system map, orrery, FSS, DSS, codex, station services - and comes
+back when you return to the cockpit. Selecting a jump target happens in the
+galaxy map, so its briefing is held back and shown the moment you close the
+map, instead of covering the map's system panel.
+
 *Preferences -> SHBOXSEARCH -> Cockpit overlay*: on/off, briefing on/off,
 position (four corners). The preferences show whether an overlay plugin was
 found. Without one nothing happens. The overlay is a separate transparent

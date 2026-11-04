@@ -25,6 +25,7 @@ No EDMC imports here, so the text builders can be tested on their own.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,13 @@ class CockpitOverlay:
 
     PREFIX = "shbox-"
 
+    # Status.json GuiFocus values where the game shows its own full-screen
+    # UI and the overlay would cover it: 5 station services, 6 galaxy map,
+    # 7 system map, 8 orrery, 9 FSS, 10 SAA (DSS), 11 codex.
+    # 0 cockpit and 1-4 (side panels, comms, role panel) keep it visible.
+    HIDE_FOCUS = frozenset({5, 6, 7, 8, 9, 10, 11})
+    BRIEF_KEEP = 300        # a held-back briefing is shown up to 5 min later
+
     def __init__(self, log: Optional[logging.Logger] = None, client: Any = None):
         self.log = log or logger
         self._client = client
@@ -153,6 +161,35 @@ class CockpitOverlay:
         self.enabled = True
         self.position = "top-left"
         self.size = "small"
+        self.hidden = False                  # a game screen is in front
+        self._last_targets: List[Line] = []
+        self._pending_brief: Optional[Tuple[List[Line], int, float]] = None
+
+    # -- game screens ------------------------------------------------------
+    def set_focus(self, focus: Optional[int]) -> None:
+        """
+        Follow Status.json GuiFocus. Selecting a jump target happens in the
+        galaxy map, so a briefing drawn right away lands on top of the map's
+        own system panel. While such a screen is open everything is held back
+        and drawn again on the way back to the cockpit - the briefing then
+        appears exactly when you look out of the canopy again.
+        """
+        try:
+            hide = int(focus or 0) in self.HIDE_FOCUS
+        except (TypeError, ValueError):
+            hide = False
+        if hide == self.hidden:
+            return
+        self.hidden = hide
+        if hide:
+            self.clear()
+            return
+        if self._last_targets:
+            self.draw("targets", self._last_targets, ttl=900)
+        pb = self._pending_brief
+        self._pending_brief = None
+        if pb and time.time() - pb[2] <= self.BRIEF_KEEP:
+            self.draw("brief", pb[0], ttl=pb[1])
 
     # -- connection --------------------------------------------------------
     def _get(self):
@@ -225,10 +262,19 @@ class CockpitOverlay:
     # -- the two blocks ----------------------------------------------------
     def show_targets(self, route: Any, done: Iterable[int]) -> bool:
         lines = targets_lines(route, done)
+        self._last_targets = lines
         if not lines:
             self.clear("targets")
             return False
+        if self.hidden:
+            return False                     # drawn when the screen closes
         return self.draw("targets", lines, ttl=900)
 
     def show_briefing(self, info: Dict[str, Any], seconds: int = 10) -> bool:
-        return self.draw("brief", briefing_lines(info), ttl=seconds)
+        lines = briefing_lines(info)
+        if self.hidden:
+            # newest wins: picking several targets in the map shows only
+            # the last one once you are back in the cockpit
+            self._pending_brief = (lines, seconds, time.time())
+            return False
+        return self.draw("brief", lines, ttl=seconds)

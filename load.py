@@ -2604,6 +2604,15 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
 
 def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
     """Status.json. The Destination field carries the id64 of any selected target."""
+    # Which game screen is in front - the overlay steps aside for the maps,
+    # FSS, DSS, codex and station services. Before any other check: it must
+    # work even with destination harvesting switched off.
+    ov = getattr(ST, "overlay", None)
+    if ov is not None and "Flags" in entry:
+        try:
+            ov.set_focus(entry.get("GuiFocus", 0))
+        except Exception:
+            logger.debug("overlay focus failed", exc_info=True)
     if not ST.db or not cfg_bool(CFG["harvest_destination"], True):
         return
     try:
