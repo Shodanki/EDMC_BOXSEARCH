@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover
 EDSM_SPHERE = "https://www.edsm.net/api-v1/sphere-systems"
 EDSM_CUBE = "https://www.edsm.net/api-v1/cube-systems"
 SPANSH_SEARCH = "https://spansh.co.uk/api/systems/search"
-USER_AGENT = "SHBOXSEARCH/4.0 (EDMC plugin)"
+USER_AGENT = "SHBOXSEARCH/4.1 (EDMC plugin)"
 
 ProgressCB = Optional[Callable[[str], None]]
 
@@ -206,9 +206,24 @@ class EDDiscoverySource(Source):
     # (scale, offset) - EDD stores x as int((x*scale)+offset)
     TRANSFORMS = [(128.0, 0x1000000), (128.0, 0), (1.0, 0)]
 
+    # Current EDD layout (verified against EDDSystem.sqlite, Nov 2026):
+    #   SystemTable(edsmid, sectorid, nameid, x, y, z, info)   x/y/z = ly * 128
+    #   Sectors(id, gridid, name)    Names(id, Name)
+    # nameid for a procgen name carries the name itself:
+    #   bit 61 set (0x2000...)  standard name:
+    #       n2 bits 0-15, n1 bits 16-23, mass code bits 24-27,
+    #       L3 bits 28-32, L2 bits 33-37, L1 bits 38-42 (letters 1-based)
+    #   bit 60 set (0x1000...)  catalogue number ("HD 43743") - not decoded
+    #   otherwise               id into Names
+    # edsmid is NOT a SystemAddress; the old generic path mistook it for one,
+    # which is why this source returned nothing usable before 4.1.
+    STD_MARKER = 1 << 61
+    NUM_MARKER = 1 << 60
+
     def __init__(self, path: Optional[str] = None):
         self.path = path or self._autodetect()
         self.table: Optional[str] = None
+        self.mode = "generic"
         self.cols: Dict[str, str] = {}
         self.scale = 128.0
         self.offset = 0x1000000
@@ -245,6 +260,19 @@ class EDDiscoverySource(Source):
             return None
 
     def _introspect(self, cx: sqlite3.Connection) -> bool:
+        tables = {r[0].lower(): r[0] for r in cx.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "systemtable" in tables and "sectors" in tables:
+            info = cx.execute("PRAGMA table_info(%s)" % tables["systemtable"]).fetchall()
+            names = {r[1].lower(): r[1] for r in info}
+            if {"x", "y", "z", "nameid", "sectorid"} <= set(names):
+                self.table = tables["systemtable"]
+                self.mode = "edd2"
+                self.cols = {"x": names["x"], "y": names["y"], "z": names["z"],
+                             "id": "", "nameid": names["nameid"],
+                             "sectorid": names["sectorid"]}
+                self.has_names = "names" in tables
+                return True
         for (tbl,) in cx.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'").fetchall():
             try:
@@ -303,41 +331,68 @@ class EDDiscoverySource(Source):
             self.reason = "EDDSystem.sqlite not found"
             return False, self.reason
         try:
-            if not self._introspect(cx):
-                self.reason = "no table with x/y/z columns"
-                return False, self.reason
-
-            candidates = [t for t in self.TRANSFORMS if self._plausible(cx, *t)]
-            if not candidates:
-                self.reason = "no plausible coordinate transform for table %s" % self.table
-                return False, self.reason
-
-            # verification against a system whose exact position we know
-            if known_id64 and known_coords and self.cols.get("id"):
-                row = cx.execute(
-                    "SELECT %s,%s,%s FROM %s WHERE %s=? LIMIT 1"
-                    % (self.cols["x"], self.cols["y"], self.cols["z"],
-                       self.table, self.cols["id"]), (known_id64,)).fetchone()
-                if row:
-                    for scale, off in candidates:
-                        got = [(float(row[i]) - off) / scale for i in range(3)]
-                        if all(abs(got[i] - known_coords[i]) < 0.2 for i in range(3)):
-                            self.scale, self.offset = scale, off
-                            self.calibrated = True
-                            self.reason = ("table %s, scale /%g offset %d (verified)"
-                                           % (self.table, scale, off))
-                            return True, self.reason
-                    self.reason = ("table %s: id64 %d found but no transform matches"
-                                   % (self.table, known_id64))
-                    return False, self.reason
-
-            self.scale, self.offset = candidates[0]
-            self.calibrated = True
-            self.reason = ("table %s, scale /%g offset %d (unverified)"
-                           % (self.table, self.scale, self.offset))
-            return True, self.reason
+            return self._calibrate(cx, known_coords, known_id64)
+        except sqlite3.Error as e:
+            # EDDiscovery running and writing - try again next time
+            self.reason = "EDD database busy (%s)" % e
+            return False, self.reason
         finally:
             cx.close()
+
+    def _calibrate(self, cx, known_coords, known_id64) -> Tuple[bool, str]:
+        if not self._introspect(cx):
+            self.reason = "no table with x/y/z columns"
+            return False, self.reason
+
+        candidates = [t for t in self.TRANSFORMS if self._plausible(cx, *t)]
+        if not candidates:
+            self.reason = "no plausible coordinate transform for table %s" % self.table
+            return False, self.reason
+
+        if self.mode == "edd2":
+            # no SystemAddress column - verify by position instead: the
+            # system we are in must sit at exactly its journal coordinates
+            self.scale, self.offset = candidates[0]
+            self.calibrated = True
+            self.reason = "EDD %s, scale /%g (unverified)" % (self.table, self.scale)
+            if known_coords:
+                q = [int(round(known_coords[i] * self.scale + self.offset))
+                     for i in range(3)]
+                row = cx.execute(
+                    "SELECT COUNT(*) FROM %s WHERE %s BETWEEN ? AND ? AND %s "
+                    "BETWEEN ? AND ? AND %s BETWEEN ? AND ?"
+                    % (self.table, self.cols["x"], self.cols["z"], self.cols["y"]),
+                    (q[0] - 2, q[0] + 2, q[2] - 2, q[2] + 2,
+                     q[1] - 2, q[1] + 2)).fetchone()
+                if row and row[0]:
+                    self.reason = ("EDD %s, scale /%g (verified at current system)"
+                                   % (self.table, self.scale))
+            return True, self.reason
+
+        # verification against a system whose exact position we know
+        if known_id64 and known_coords and self.cols.get("id"):
+            row = cx.execute(
+                "SELECT %s,%s,%s FROM %s WHERE %s=? LIMIT 1"
+                % (self.cols["x"], self.cols["y"], self.cols["z"],
+                   self.table, self.cols["id"]), (known_id64,)).fetchone()
+            if row:
+                for scale, off in candidates:
+                    got = [(float(row[i]) - off) / scale for i in range(3)]
+                    if all(abs(got[i] - known_coords[i]) < 0.2 for i in range(3)):
+                        self.scale, self.offset = scale, off
+                        self.calibrated = True
+                        self.reason = ("table %s, scale /%g offset %d (verified)"
+                                       % (self.table, scale, off))
+                        return True, self.reason
+                self.reason = ("table %s: id64 %d found but no transform matches"
+                               % (self.table, known_id64))
+                return False, self.reason
+
+        self.scale, self.offset = candidates[0]
+        self.calibrated = True
+        self.reason = ("table %s, scale /%g offset %d (unverified)"
+                       % (self.table, self.scale, self.offset))
+        return True, self.reason
 
     def available(self) -> Tuple[bool, str]:
         if not self.path:
@@ -346,12 +401,77 @@ class EDDiscoverySource(Source):
             return self.calibrate(self.ref_coords, self.ref_id64)
         return True, self.reason
 
+    @classmethod
+    def decode_nameid(cls, nameid: int, sector: Optional[str]) -> Optional[str]:
+        """Rebuild a procgen name from EDD's packed nameid, or None."""
+        if not sector or nameid is None or not (nameid & cls.STD_MARKER):
+            return None
+        v = nameid & ~cls.STD_MARKER
+        n2 = v & 0xFFFF
+        n1 = (v >> 16) & 0xFF
+        mc = (v >> 24) & 0xF
+        l3 = (v >> 28) & 0x1F
+        l2 = (v >> 33) & 0x1F
+        l1 = (v >> 38) & 0x1F
+        if mc > 7 or not (1 <= l1 <= 26 and 1 <= l2 <= 26 and 1 <= l3 <= 26):
+            return None
+        core = "%s%s-%s %s" % (chr(64 + l1), chr(64 + l2), chr(64 + l3), "abcdefgh"[mc])
+        if n1:
+            return "%s %s%d-%d" % (sector, core, n1, n2)
+        return "%s %s%d" % (sector, core, n2)
+
+    def _fetch_edd2(self, cx: sqlite3.Connection, center, radius) -> List[Dict]:
+        c = self.cols
+        lo = [int((center[i] - radius) * self.scale + self.offset) for i in range(3)]
+        hi = [int((center[i] + radius) * self.scale + self.offset) for i in range(3)]
+        q = ("SELECT %s,%s,%s,%s,%s FROM %s WHERE %s BETWEEN ? AND ? "
+             "AND %s BETWEEN ? AND ? AND %s BETWEEN ? AND ?"
+             % (c["x"], c["y"], c["z"], c["sectorid"], c["nameid"], self.table,
+                c["x"], c["z"], c["y"]))
+        rows = cx.execute(q, (lo[0], hi[0], lo[2], hi[2], lo[1], hi[1])).fetchall()
+        sector_ids = {r[3] for r in rows}
+        sectors: Dict[int, str] = {}
+        for sid in sector_ids:
+            s = cx.execute("SELECT name FROM Sectors WHERE id=?", (sid,)).fetchone()
+            if s:
+                sectors[sid] = s[0]
+        out = []
+        skipped = 0
+        for r in rows:
+            x = (r[0] - self.offset) / self.scale
+            y = (r[1] - self.offset) / self.scale
+            z = (r[2] - self.offset) / self.scale
+            if _dist((x, y, z), center) > radius:
+                continue
+            nameid = r[4]
+            name = self.decode_nameid(nameid, sectors.get(r[3]))
+            if name is None and getattr(self, "has_names", False) \
+                    and nameid is not None and not (nameid & (self.STD_MARKER
+                                                              | self.NUM_MARKER)):
+                n = cx.execute("SELECT Name FROM Names WHERE id=?", (nameid,)).fetchone()
+                name = n[0] if n else None
+            if not name:
+                skipped += 1
+                continue
+            out.append({"name": name, "x": x, "y": y, "z": z, "id64": None})
+        if skipped:
+            logger.info("EDD: %d systems without a decodable name skipped", skipped)
+        return out
+
     def fetch(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
         cx = self._connect()
         if cx is None or not self.table:
             return []
         if progress:
             progress("EDDiscovery database")
+        if self.mode == "edd2":
+            try:
+                return self._fetch_edd2(cx, center, radius)
+            except Exception as e:
+                logger.warning("EDD query failed: %s", e)
+                return []
+            finally:
+                cx.close()
         try:
             lo = [int((center[i] - radius) * self.scale + self.offset) for i in range(3)]
             hi = [int((center[i] + radius) * self.scale + self.offset) for i in range(3)]

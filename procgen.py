@@ -10,8 +10,15 @@ Verified against:
 
 No external dependencies. Python 3.8+.
 
-Name format:   <Sector> <L1><L2>-<L3> <mc>[<n1>]-<n2>
+Name format:   <Sector> <L1><L2>-<L3> <mc><n1>-<n2>     when n1 > 0
+               <Sector> <L1><L2>-<L3> <mc><n2>          when n1 = 0
   Example:     Synuefe   VA   - I      b  2   - 1
+               Synuefe   XV   - C      d  12          (n1 = 0, n2 = 12)
+  Frontier drops "0-" when the high part of the boxel number is zero. Such a
+  name is NOT a boxel holding a single system - it is system n2 of boxel
+  "XV-C d", and that boxel may hold d0, d1, d2 ... like any other. Verified
+  against the game's own SystemAddress: Synuefe XV-C d12 = id64 422810994947
+  decodes to n2 = 12. Mass code h boxels always have n1 = 0 for that reason.
   boxel id   = n1*26^3 + L3*26^2 + L2*26 + L1
   boxel id   = bx | (by << 7) | (bz << 14)      (7 bits per axis, base 128)
   boxel size = 10 * 2^mc  ly   (a=10, b=20, c=40, d=80, e=160, f=320, g=640, h=1280)
@@ -34,6 +41,7 @@ __all__ = [
     "sector_index_of_coords", "boxel_index_of_coords",
     "boxel_corner", "boxel_center", "boxel_intersects_sphere",
     "boxels_in_sphere", "SectorRegistry", "parse_boxel_only",
+    "boxel_prefix", "name_in_boxel", "parse_boxel_key",
 ]
 
 # Lower corner of sector (0,0,0) in galactic coordinates
@@ -44,41 +52,41 @@ MASSCODES: str = "abcdefgh"
 _NAME_RE = re.compile(
     r"^(?P<sector>.+?)\s+"
     r"(?P<l1>[A-Za-z])(?P<l2>[A-Za-z])-(?P<l3>[A-Za-z])\s+"
-    r"(?P<mc>[A-Ha-h])(?P<n1>\d+)?-(?P<n2>\d+)$"
-)
-
-
-_BOXEL_ONLY_RE = re.compile(
-    r"^(?P<sector>.+?)\s+"
-    r"(?P<l1>[A-Za-z])(?P<l2>[A-Za-z])-(?P<l3>[A-Za-z])\s+"
-    r"(?P<mc>[A-Ha-h])(?P<n1>\d+)?$"
+    r"(?P<mc>[A-Ha-h])(?:(?P<n1>\d+)-)?(?P<n2>\d+)$"
 )
 
 
 def parse_boxel_only(name: str):
     """
-    Recognise names of the form "Synuefe XV-C d12" - a boxel designation with
-    no -n2 suffix. Frontier omits the running number when a boxel holds
-    exactly one system, so such a name IS a real, flyable system and the
-    boxel around it is complete: no -0, -1 ... exist there.
+    Kept for backwards compatibility only - always returns None.
 
-    Returns (sector, mass_code, boxel_index, boxel_key) or None.
+    Up to 4.0 a name like "Synuefe XV-C d12" was read as a boxel holding a
+    single system. That was wrong: it is system n2=12 of boxel "XV-C d"
+    (n1 = 0), and parse_name() now handles it like any other procgen name.
     """
-    if not name:
-        return None
-    m = _BOXEL_ONLY_RE.match(name.strip())
-    if not m:
-        return None
-    g = m.groupdict()
-    mc = MASSCODES.index(g["mc"].lower())
-    n1 = int(g["n1"]) if g["n1"] else 0
-    l1, l2, l3 = g["l1"].upper(), g["l2"].upper(), g["l3"].upper()
-    boxel_id = (n1 * 17576 + (ord(l3) - 65) * 676
-                + (ord(l2) - 65) * 26 + (ord(l1) - 65))
-    boxel = (boxel_id & 0x7F, (boxel_id >> 7) & 0x7F, (boxel_id >> 14) & 0x7F)
-    key = "%s %s%s-%s %s%s" % (g["sector"], l1, l2, l3, MASSCODES[mc],
-                               str(n1) if n1 else "")
-    return g["sector"], mc, boxel, key
+    return None
+
+
+def boxel_prefix(key: str) -> str:
+    """
+    Galaxy map search prefix for a boxel key.
+
+    "Synuefe VA-I b2" -> "Synuefe VA-I b2-"   (lists b2-0, b2-1 ...)
+    "Synuefe XV-C d"  -> "Synuefe XV-C d"     (lists d0, d1 ... - and also
+                                               the d1-.., d2-.. boxels, which
+                                               are different boxels)
+    """
+    return key if key[-1:].isalpha() else key + "-"
+
+
+def name_in_boxel(key: str, n2: int) -> str:
+    """Name of system n2 inside the boxel with this key."""
+    return "%s%d" % (boxel_prefix(key), n2)
+
+
+def parse_boxel_key(key: str) -> "Optional[ParsedName]":
+    """Parse a boxel key by parsing its system -0."""
+    return parse_name(name_in_boxel(key, 0))
 
 
 def boxel_size(mc: int) -> float:
@@ -113,6 +121,11 @@ class ParsedName:
             self.sector, self.letters[0], self.letters[1], self.letters[2],
             MASSCODES[self.mc], n1,
         )
+
+    @property
+    def prefix(self) -> str:
+        """Galaxy map search prefix that lists this boxel."""
+        return boxel_prefix(self.boxel_key)
 
     def with_n2(self, n2: int) -> str:
         return make_name(self.sector, self.mc, self.boxel, n2)
@@ -152,8 +165,9 @@ def make_name(sector: str, mc: int, boxel: Sequence[int], n2: int) -> str:
     i2, i1 = divmod(rem, 26)
     core = "%s%s-%s %s" % (chr(65 + i1), chr(65 + i2), chr(65 + i3), MASSCODES[mc])
     if n1:
-        core += str(n1)
-    return "%s %s-%d" % (sector, core, n2)
+        return "%s %s%d-%d" % (sector, core, n1, n2)
+    # n1 = 0: Frontier writes "XV-C d12", not "XV-C d0-12" or "XV-C d-12"
+    return "%s %s%d" % (sector, core, n2)
 
 
 # ---------------------------------------------------------------------------
@@ -388,10 +402,26 @@ def _selftest() -> int:
     check("learn from id64", reg.learn_from_id64("Eol Prou RS-T d3-94", 3238296097059), True)
     check("sector index", reg.index_of("Eol Prou"), (31, 31, 34))
 
-    # Boxel ohne n1 (BoxelID < 26^3)
+    # Boxel with n1 = 0 (boxel id < 26^3): Frontier drops the "0-"
     nm = make_name("Synuefe", 1, (0, 0, 0), 7)
-    check("make_name mc b 0,0,0", nm, "Synuefe AA-A b-7")
+    check("make_name n1=0", nm, "Synuefe AA-A b7")
     check("re-parse", parse_name(nm).boxel, (0, 0, 0))
+    check("boxel key n1=0", parse_name(nm).boxel_key, "Synuefe AA-A b")
+    check("prefix n1=0", parse_name(nm).prefix, "Synuefe AA-A b")
+    check("name_in_boxel n1=0", name_in_boxel("Synuefe AA-A b", 3), "Synuefe AA-A b3")
+    check("name_in_boxel n1>0", name_in_boxel("Synuefe VA-I b2", 3), "Synuefe VA-I b2-3")
+    check("invalid 'b-7' form rejected", parse_name("Synuefe AA-A b-7"), None)
+
+    # Ground truth from the game: SystemAddress values out of real journals
+    for nm, id64, sect in (("Synuefe XV-C d12", 422810994947, (39, 31, 18)),
+                           ("Synuefe WG-J d10-78", 2690637597019, (39, 31, 18))):
+        p = parse_name(nm)
+        d = decode_id64(id64)
+        check("%s n2" % nm, p.n2 if p else None, d["n2"])
+        check("%s boxel" % nm, p.boxel if p else None, d["boxel"])
+        check("%s id64" % nm, id64_from_parts(sect, p.mc, p.boxel, p.n2) if p else None, id64)
+        check("%s round trip" % nm,
+              make_name("Synuefe", d["mc"], d["boxel"], d["n2"]), nm)
 
     for mc in range(8):
         for bx in (0, 1, 63, 127 >> mc):

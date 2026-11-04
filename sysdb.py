@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import logging
 import math
 import os
 import sqlite3
@@ -32,7 +33,9 @@ import time
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from procgen import (MASSCODES, SectorRegistry, decode_id64, make_name,
-                     parse_boxel_only, parse_name)
+                     parse_boxel_key, parse_name)
+
+logger = logging.getLogger(__name__)
 
 Q_UNKNOWN = 0
 Q_ESTIMATE = 10
@@ -40,7 +43,7 @@ Q_CONFIRMED = 20
 Q_EXTERNAL = 30
 Q_JOURNAL = 40
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Body classes that are always worth mapping (DSS)
 VALUABLE_CLASSES = {
@@ -215,10 +218,110 @@ class SystemDB:
                          ("ring_classes", "TEXT"), ("ring_mass", "REAL"),
                          ("star_type", "TEXT"), ("scan_ts", "REAL"),
                          ("route_done", "INTEGER"),
-                         ("route_done_ts", "TEXT")):
+                         ("route_done_ts", "TEXT"),
+                         # 4.1: physical data - bio prediction and body details
+                         ("radius", "REAL"),          # metres
+                         ("mass_em", "REAL"),         # planets, earth masses
+                         ("gravity", "REAL"),         # m/s^2 (journal unit)
+                         ("temp_k", "REAL"),          # surface temperature
+                         ("pressure", "REAL"),        # Pa
+                         ("atmosphere", "TEXT"),
+                         ("atmo_type", "TEXT"),
+                         ("atmo_comp", "TEXT"),       # JSON {name: percent}
+                         ("volcanism", "TEXT"),
+                         ("composition", "TEXT"),     # JSON {Ice, Rock, Metal}
+                         ("materials", "TEXT"),       # JSON {name: percent}
+                         ("tidal_lock", "INTEGER"),
+                         ("axial_tilt", "REAL"),      # radians
+                         ("rotation", "REAL"),        # seconds
+                         ("was_footfalled", "INTEGER"),
+                         ("rings_json", "TEXT"),      # JSON list incl. radii
+                         ("reserve", "TEXT"),
+                         ("stellar_mass", "REAL"),
+                         ("abs_mag", "REAL"),
+                         ("age_my", "REAL"),
+                         ("luminosity", "TEXT"),
+                         ("subclass", "INTEGER"),
+                         ("bio_species", "TEXT")):    # JSON list, ScanOrganic
             if col not in bhave:
                 self.cx.execute("ALTER TABLE bodies ADD COLUMN %s %s" % (col, typ))
         self.cx.commit()
+        if not self.get_meta("fix_n1zero"):
+            try:
+                res = self.repair_n1zero()
+                logger.info("database repair (n1=0 naming rule): %s", res)
+            except Exception:
+                logger.exception("database repair (n1=0 naming rule) failed")
+
+    def repair_n1zero(self) -> Dict[str, int]:
+        """
+        One-time repair for the pre-4.1 naming bug.
+
+        Up to 4.0 "Synuefe XV-C d12" was read as "boxel XV-C d12 holds exactly
+        one system" and that boxel was closed. In truth it is system n2=12 of
+        boxel "XV-C d" (n1 = 0). Two kinds of rows are therefore wrong:
+
+        * boxels with an n1 = 0 key ("... d"): every probe ever generated for
+          them used a name of the form "XV-C d-3" that does not exist in the
+          game, so any closure of such a boxel was based on a search that
+          could never have found anything.
+        * boxels whose key is the name of such a system ("... d12"): closed by
+          the old shortcut, although the real boxel d12 (d12-0, d12-1 ...)
+          was never looked at.
+
+        Both are rebuilt from scratch from the systems we know and from the
+        absent entries that are still valid. Nothing the commander flew for is
+        touched.
+        """
+        sysnames = [r[0] for r in self.cx.execute("SELECT name FROM systems")]
+        n1zero_names = set()
+        for nm in sysnames:
+            p = parse_name(nm)
+            if p and p.n1 == 0:
+                n1zero_names.add(nm)
+        absent_by_key: Dict[str, List[Tuple[str, int]]] = {}
+        bad_absent = []
+        for nm, key in self.cx.execute("SELECT name, boxel FROM absent").fetchall():
+            p = parse_name(nm)
+            if p is None:
+                bad_absent.append(nm)       # e.g. old "XV-C d-3" form
+            else:
+                absent_by_key.setdefault(p.boxel_key, []).append((nm, p.n2))
+
+        reset: List[str] = []
+        for r in self.cx.execute(
+                "SELECT key, n2_max, n2_end FROM boxels").fetchall():
+            key = r["key"]
+            if key[-1:].isalpha():
+                reset.append(key)
+            elif key in n1zero_names and (r["n2_max"] is None or r["n2_max"] < 0) \
+                    and r["n2_end"] == 0 and key not in absent_by_key:
+                reset.append(key)
+            elif key in n1zero_names and r["n2_end"] == 0 \
+                    and not any(n2 == 0 for _, n2 in absent_by_key.get(key, [])):
+                # overwritten later by a real system, but still carries the
+                # bogus end=0 of the old shortcut
+                reset.append(key)
+
+        for nm in bad_absent:
+            self.cx.execute("DELETE FROM absent WHERE name=?", (nm,))
+        for key in reset:
+            self.cx.execute("DELETE FROM boxels WHERE key=?", (key,))
+        reset_set = set(reset)
+        # rebuild what is known about the reset boxels and every n1 = 0 boxel
+        touched = 0
+        for nm in sysnames:
+            p = parse_name(nm)
+            if p and (p.n1 == 0 or p.boxel_key in reset_set):
+                self._touch_boxel(nm)
+                touched += 1
+        for key in reset_set:
+            for nm, n2 in absent_by_key.get(key, []):
+                self._touch_boxel(nm, n2_end=n2)
+        self.set_meta("fix_n1zero", _now())
+        self.cx.commit()
+        return {"boxels_reset": len(reset), "bad_absent_removed": len(bad_absent),
+                "systems_retouched": touched, "n1zero_systems": len(n1zero_names)}
 
     # ------------------------------------------------------------------ util
     def close(self) -> None:
@@ -372,16 +475,6 @@ class SystemDB:
     def _touch_boxel(self, name: str, n2_end: Optional[int] = None) -> None:
         p = parse_name(name)
         if p is None:
-            # "Synuefe XV-C d12" - boxel designation without a running number.
-            # Frontier drops the number when a boxel holds exactly one system,
-            # so the boxel is complete and needs no probing.
-            bo = parse_boxel_only(name)
-            if bo:
-                sector, mc, _boxel, key = bo
-                self.cx.execute(
-                    "INSERT OR REPLACE INTO boxels(key,sector,mc,n2_max,n2_end,"
-                    "complete,updated) VALUES (?,?,?,?,?,?,?)",
-                    (key, sector, mc, -1, 0, 1, _now()))
             return
         row = self.cx.execute("SELECT n2_max,n2_end FROM boxels WHERE key=?",
                               (p.boxel_key,)).fetchone()
@@ -401,8 +494,10 @@ class SystemDB:
     def known_n2(self, boxel_key: str) -> Set[int]:
         """Every n2 known for one boxel."""
         out: Set[int] = set()
+        # "XV-C d" (n1 = 0) holds "XV-C d0", "XV-C d1" ...; "VA-I b2" holds
+        # "VA-I b2-0" ... - one LIKE covers both, the parse below filters.
         for (nm,) in self.cx.execute("SELECT name FROM systems WHERE name LIKE ?",
-                                     (boxel_key + "-%",)):
+                                     (boxel_key + "%",)):
             p = parse_name(nm)
             if p and p.boxel_key == boxel_key:
                 out.add(p.n2)
@@ -421,7 +516,7 @@ class SystemDB:
         sector = row["sector"] if row else None
         mc = row["mc"] if row else None
         if sector is None:
-            p = parse_name(boxel_key + "-0")
+            p = parse_boxel_key(boxel_key)
             if p:
                 sector, mc = p.sector, p.mc
         self.cx.execute(
@@ -594,6 +689,51 @@ class SystemDB:
                     ring_mass = sum(float(r.get("MassMT") or 0.0)
                                     for r in rings
                                     if r.get("RingClass") == "eRingClass_Icy")
+
+                    def _js(v):
+                        return json.dumps(v, separators=(",", ":")) if v else None
+
+                    def _pct(lst, key="Name"):
+                        if not lst:
+                            return None
+                        if isinstance(lst, dict):
+                            return lst
+                        return {d.get(key): d.get("Percent") for d in lst
+                                if isinstance(d, dict) and d.get(key)}
+
+                    ring_list = [{"name": r.get("Name"),
+                                  "cls": (r.get("RingClass") or "").replace("eRingClass_", ""),
+                                  "mass": r.get("MassMT"),
+                                  "inner": r.get("InnerRad"), "outer": r.get("OuterRad")}
+                                 for r in rings]
+                    phys = dict(
+                        radius=entry.get("Radius"),
+                        mass_em=entry.get("MassEM"),
+                        gravity=entry.get("SurfaceGravity"),
+                        temp_k=entry.get("SurfaceTemperature"),
+                        pressure=entry.get("SurfacePressure"),
+                        atmosphere=entry.get("Atmosphere") or None,
+                        atmo_type=entry.get("AtmosphereType") or None,
+                        atmo_comp=_js(_pct(entry.get("AtmosphereComposition"))),
+                        volcanism=entry.get("Volcanism") or None,
+                        composition=_js(entry.get("Composition")),
+                        materials=_js(_pct(entry.get("Materials"))),
+                        tidal_lock=(1 if entry.get("TidalLock") else 0)
+                        if "TidalLock" in entry else None,
+                        axial_tilt=entry.get("AxialTilt"),
+                        rotation=entry.get("RotationPeriod"),
+                        was_footfalled=(1 if entry.get("WasFootfalled") else 0)
+                        if "WasFootfalled" in entry else None,
+                        rings_json=_js(ring_list),
+                        reserve=entry.get("ReserveLevel"),
+                        stellar_mass=entry.get("StellarMass"),
+                        abs_mag=entry.get("AbsoluteMagnitude"),
+                        age_my=entry.get("Age_MY"),
+                        luminosity=entry.get("Luminosity"),
+                        subclass=entry.get("Subclass"),
+                    )
+                    self._body_upsert(
+                        a, entry.get("BodyID"), **phys)
                     self._body_upsert(
                         a, entry.get("BodyID"),
                         scan_ts=_epoch(entry.get("timestamp")),
@@ -652,9 +792,31 @@ class SystemDB:
                 bid = entry.get("Body")
                 if a and bid is not None and entry.get("ScanType") == "Analyse":
                     cur = self.cx.execute(
-                        "SELECT organics FROM bodies WHERE sys_id64=? AND body_id=?",
-                        (a, bid)).fetchone()
-                    self._body_upsert(a, bid, organics=(cur["organics"] if cur else 0) + 1)
+                        "SELECT organics, bio_species FROM bodies "
+                        "WHERE sys_id64=? AND body_id=?", (a, bid)).fetchone()
+                    species = []
+                    try:
+                        species = json.loads(cur["bio_species"]) if cur and \
+                            cur["bio_species"] else []
+                    except ValueError:
+                        species = []
+                    sp = (entry.get("Species_Localised") or entry.get("Species"))
+                    if sp:
+                        if sp not in [s.get("species") for s in species]:
+                            species.append({
+                                "species": sp,
+                                "genus": entry.get("Genus_Localised") or entry.get("Genus"),
+                                "variant": entry.get("Variant_Localised")
+                                or entry.get("Variant"),
+                                "ts": entry.get("timestamp")})
+                        # one per distinct species - replaying the same journal
+                        # (first import, route bootstrap) must not count twice
+                        organics = len(species)
+                    else:
+                        organics = (cur["organics"] if cur else 0) + 1
+                    self._body_upsert(a, bid, organics=organics,
+                                      bio_species=json.dumps(species) if species
+                                      else None)
                     n += 1
 
             elif ev in ("CarrierJump", "CarrierLocation"):

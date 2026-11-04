@@ -1,0 +1,13 @@
+# personal data - never in the repository
+shboxsearch.sqlite*
+neareststars.json
+survey_state.json
+shboxsearch_plan.csv
+boxel_praefixe.txt
+
+# development material (journals, EDMC logs)
+LOGS/
+
+# python
+__pycache__/
+*.pyc

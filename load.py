@@ -33,7 +33,7 @@ _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
     sys.path.append(_PLUGIN_DIR)
 
-from procgen import MASSCODES, parse_name                      # noqa: E402
+from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
 from sysdb import SystemDB, Q_JOURNAL, Q_UNKNOWN               # noqa: E402
 from sources import SourceManager                              # noqa: E402
 from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
@@ -46,7 +46,7 @@ from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
                        set_origin)
 
-VERSION = "4.0.0"
+VERSION = "4.1.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -270,6 +270,8 @@ def plugin_start3(plugin_dir: str) -> str:
 
     if not ST.db.get_meta("migrated"):
         _run_async(_first_run_migration, label="first-run import")
+    elif not ST.db.get_meta("upgrade_41"):
+        _run_async(_upgrade_41, label="4.1 upgrade")
 
     ST.carrier = ST.db.get_carrier()
     if ST.carrier:
@@ -504,6 +506,9 @@ def _request_route(delay: float = 1.5) -> None:
     threading.Thread(target=waiter, daemon=True, name="SHBOX-route").start()
 
 
+_replayed_for: set = set()     # system id64s already replayed this session
+
+
 def _rebuild_route() -> None:
     """Order the bodies of the current system into a short in-system route."""
     ST.route = None
@@ -514,10 +519,13 @@ def _rebuild_route() -> None:
         return
     with ST.lock:
         rows = ST.db.bodies_of(ST.cur_id64)
-    if not rows:
+    if not rows and ST.cur_id64 not in _replayed_for:
         # Nothing stored for this system - the scans may predate the plugin or
         # have happened while it was not running. Replay the recent journals
-        # once and try again.
+        # once per system and session: arriving in a fresh, unscanned system
+        # used to trigger a full replay on every route rebuild, which could
+        # never find anything the live journal feed had not already seen.
+        _replayed_for.add(ST.cur_id64)
         logger.info("route | no bodies stored for %s, replaying recent journals",
                     ST.cur_system)
         d = _journal_dir()
@@ -1492,18 +1500,24 @@ def _check_for_update(force: bool = False) -> None:
     hour per address, and every failure is swallowed - an update check must
     never be the reason something does not work.
     """
+    # Every way out says why, at INFO: in 4.0 the check left no trace at all
+    # in the log, so nobody could tell whether it ran, failed or was off.
     if not force and not cfg_bool(CFG["check_updates"], True):
+        logger.info("update check: switched off in the preferences")
         return
     if not force:
         last = cfg_str(CFG["update_checked"], "")
         try:
             if last and time.time() - float(last) < 86400:
+                logger.info("update check: last run %.1f h ago, next after 24 h",
+                            (time.time() - float(last)) / 3600.0)
                 return
         except ValueError:
             pass
     try:
         import requests
     except ImportError:
+        logger.info("update check: 'requests' not available in this EDMC build")
         return
     try:
         r = requests.get(RELEASES_API, timeout=10,
@@ -1511,15 +1525,15 @@ def _check_for_update(force: bool = False) -> None:
                                   "User-Agent": "SHBOXSEARCH/%s" % VERSION})
         cfg_set(CFG["update_checked"], str(int(time.time())))
         if r.status_code == 403:
-            logger.debug("update check: rate limited, trying again tomorrow")
+            logger.info("update check: rate limited by GitHub, trying again tomorrow")
             return
         if r.status_code == 404:
-            logger.debug("update check: no release published yet")
+            logger.info("update check: no release published yet")
             return
         r.raise_for_status()
         data = r.json()
     except Exception as e:
-        logger.debug("update check failed: %s", e)
+        logger.info("update check failed (ignored): %s", e)
         return
 
     tag = (data.get("tag_name") or "").strip()
@@ -1971,7 +1985,7 @@ def _copy_prefix() -> None:
     """Copy the boxel search prefix - one paste lists the whole boxel."""
     t = current_probe()
     if t and t.boxel_key:
-        _copy(t.boxel_key + "-")
+        _copy(boxel_prefix(t.boxel_key))
     else:
         _set_status("no boxel prefix for this candidate")
 
@@ -2766,11 +2780,16 @@ def _probe_window_refresh() -> None:
         _probe_head.set(
             "check this name in the galaxy map:\n"
             "    %s\n"
-            "prefix       %s-\n"
+            "prefix       %s%s\n"
             "distance     %.1f ly   uncertainty +-%.0f ly\n"
             "this boxel   %d candidate%s   odds %s\n"
             "queue        %d probes (gap %d, probe %d, empty %d)"
-            % (p.name, p.boxel_key or "?", p.dist_origin, p.uncertainty,
+            % (p.name,
+               boxel_prefix(p.boxel_key) if p.boxel_key else "?",
+               # n1 = 0 boxels: the prefix also lists the d1-.., d2-.. boxels
+               "   (count only names without '-')"
+               if p.boxel_key and p.boxel_key[-1:].isalpha() else "",
+               p.dist_origin, p.uncertainty,
                same, "" if same == 1 else "s", odds, len(ST.probe),
                c.get(K_GAP, 0), c.get(K_PROBE, 0), c.get(K_EMPTY, 0)))
 
@@ -3257,11 +3276,33 @@ def _first_run_migration() -> None:
     _import_journals()
     with ST.lock:
         st = ST.db.stats()
-        ST.db.set_meta("migrated", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        ST.db.set_meta("migrated", now)
+        ST.db.set_meta("upgrade_41", now)     # a fresh import already has it all
     logger.info("first-run import finished: %s", st)
     _rebuild_route()
     _set_status("first-run import done: %d systems, %d bodies"
                 % (st["systems"], st["bodies"]))
+
+
+def _upgrade_41() -> None:
+    """
+    One full journal replay after updating to 4.1, done automatically.
+
+    * fills the new per-body columns (gravity, temperature, atmosphere,
+      volcanism, materials, radius, rings ...) from the existing history
+    * corrects the bio sample counter: up to 4.0 every replay - including
+      the automatic one behind the route window - added +1 per sample again,
+      so bodies looked sampled when they were not. It is now written as the
+      number of distinct species analysed, so this replay sets it right.
+    """
+    logger.info("4.1 upgrade: replaying all journals once to fill new fields")
+    _set_status("4.1 upgrade: journals")
+    _import_journals()
+    with ST.lock:
+        ST.db.set_meta("upgrade_41", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    logger.info("4.1 upgrade finished")
+    _rebuild_route()
 
 
 def _selftest() -> None:

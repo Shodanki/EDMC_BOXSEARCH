@@ -1,6 +1,11 @@
-# SHBOXSEARCH v4.0
+# SHBOXSEARCH v4.1
 
 Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
+
+> **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
+> all. On the first start 4.1 repairs boxel records written under a wrong
+> naming rule and replays your journals once in the background to fill the
+> new per-body fields. See [What changed in 4.1](#what-changed-in-41).
 
 Repository: <https://github.com/Shodanki/EDMC_BOXSEARCH>
 
@@ -22,7 +27,7 @@ failure that actually hurts.
    | macOS | `~/Library/Application Support/EDMarketConnector/plugins/SHBOXSEARCH` |
    | Linux | `$XDG_DATA_HOME/EDMarketConnector/plugins/SHBOXSEARCH` |
 
-   The eight `.py` files must sit directly in that folder, not in a subfolder.
+   The `.py` files must sit directly in that folder, not in a subfolder.
 3. Restart EDMC.
 
 On first start the plugin reads your existing journals and builds its database.
@@ -48,26 +53,27 @@ Clicking opens the release page. Then:
 3. Start EDMC.
 
 The database migrates itself: new columns are added in place, nothing is
-dropped. After an update that adds new per-body data, run
-*Preferences -> SHBOXSEARCH -> Replay journals* once so the new fields are
-filled in from your history.
+dropped. When an update adds new per-body data, the plugin replays your
+journals once on its own (4.1 does); *Preferences -> SHBOXSEARCH -> Replay
+journals* repeats that at any time and is safe to run as often as you like.
 
 
 ## Files
 
-All eight `.py` files go in the plugin folder. `shboxsearch.sqlite` is created
+All `.py` files go in the plugin folder. `shboxsearch.sqlite` is created
 on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 3204 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 1173 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `load.py` | 3372 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 1335 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 735 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
-| `boxelplan.py` | 619 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
-| `sources.py` | 443 | External data: EDDiscovery, Spansh, EDSM | — |
-| `procgen.py` | 410 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
+| `boxelplan.py` | 610 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
+| `sources.py` | 563 | External data: EDDiscovery, Spansh, EDSM | — |
+| `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
 | `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
 | `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
+| `diagnostics.py` | 284 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain
 Python with no third-party dependencies and can be run and tested on its own.
@@ -286,7 +292,7 @@ uploaded them. One action, a large haul.
 
 | Source | Priority | Notes |
 |---|---|---|
-| **EDDiscovery** (`EDDSystem.sqlite`) | 10 | local, no rate limit, very complete. The table and the coordinate transform are detected at runtime: candidate transforms are first tested against a sample of rows for plausibility, then verified against the system you are currently in (id64 plus exact position from the journal). The status line reports `verified` or `unverified`. |
+| **EDDiscovery** (`EDDSystem.sqlite`) | 10 | local, no rate limit, very complete. Found automatically under `%LOCALAPPDATA%\EDDiscovery`. The current EDD layout (`SystemTable` + `Sectors` + `Names`, names packed into `nameid`) is decoded directly; older layouts fall back to runtime detection. The coordinate scale is verified against the system you are in; the status line reports `verified` or `unverified`. EDD only needs to have been run once with its system database downloaded; it may be running at the same time. |
 | **Spansh** | 20 | `POST /api/systems/search`, paged at 500. Index is rebuilt daily from the galaxy dump → up to 48 h behind. |
 | **EDSM** | 30 | `sphere-systems`, 100 ly radius cap. Larger radii are split into 100 ly sub-spheres. Leaky-bucket rate limit; HTTP 429 aborts cleanly. |
 
@@ -342,22 +348,35 @@ There are two, because these are two different activities.
 Ordering: distance in 5 ly bands first, priority within a band. That keeps the
 flight path short without letting outstanding work rot.
 
-### Boxel designations without a number
+### Names without a dash: `Synuefe XV-C d12`
 
-Names of the form `Synuefe XV-C d12` carry no running number. Frontier omits it
-when a boxel holds **exactly one** system, so such a name is a real, flyable
-system — and the boxel around it is complete: no `-0`, `-1` … exist there.
+Up to 4.0 this section claimed that such a name means "the boxel holds exactly
+one system". **That was wrong**, and 4.1 fixes it.
 
-Two consequences:
+The boxel number has a high part `n1` and Frontier simply leaves out `0-` when
+`n1` is zero. `Synuefe XV-C d12` is system **n2 = 12** of boxel `XV-C d`, and
+that boxel can hold `d0`, `d1`, `d2` … like any other. The game says so
+itself: the SystemAddress of `Synuefe XV-C d12` (422810994947) decodes to
+n2 = 12, and all 58 such names with a known SystemAddress agree. A plain
+example in the data: `NGC 2232 Sector AQ-Y d10`, `d11`, `d13`, `d14`, `d15`,
+`d16`, `d19` are seven systems in one boxel - and `d12`, `d17`, `d18` and
+`d0` … `d9` are real gap candidates.
 
-* If the entry carries exact coordinates (journal, EDSM, Spansh, EDDiscovery)
-  it goes straight into the flight list. Only unverified entries from legacy
-  JSON or POI lists are held back in a `check` category.
-* Its boxel is marked complete, so no probes are generated for it. On the test
-  data that removed **131 pointless galaxy map lookups** at 50 ly.
+What the old reading broke, and what 4.1 does about it:
 
-Verified on the live data: all 34 such names sit in boxels that contain no
-numbered systems at all.
+| Problem in 4.0 | 4.1 |
+|---|---|
+| Probes for n1 = 0 boxels were written `XV-C d-3`, a name that cannot exist | written `XV-C d3` |
+| Such boxels could be closed by a galaxy map search that never had a chance | records rebuilt once on start |
+| `XV-C d12` closed the unrelated boxel `XV-C d12` (`d12-0`, `d12-1` …) | records rebuilt once on start |
+| Gaps below a dash-less name were never proposed | planned like any other boxel |
+
+The search prefix for an n1 = 0 boxel is `Synuefe XV-C d` (no dash). The
+galaxy map then also lists `XV-C d1-…`, `d2-…` - those belong to other boxels,
+so count only the names without a dash. The probe window says so.
+
+n1 = 0 occurs in the bottom two boxel layers (lowest z) of every sector, and
+always for mass code h.
 
 ---
 
@@ -622,7 +641,7 @@ their planet is what makes this work: it collapses a 46-body tour into 16
 decisions, which is small enough that 2-opt reliably finds the best answer.
 There is no gain to be had from a smarter solver here.
 
-## 9. Interface
+## 9b. Interface
 
 EDMC's window is shared with every other plugin, so the main panel shows only
 what you act on between jumps:
@@ -711,8 +730,12 @@ At 100 and 150 ly the empty-probe list is not workable by hand. Recommended:
 * **Position uncertainty** for unconfirmed candidates is half the boxel space
   diagonal (a ±9 ly, b ±17 ly, c ±35 ly, d ±69 ly). After the first jump the
   position is exact.
-* The EDDiscovery source supplies coordinates and id64; procgen names are
-  rebuilt from those. Catalogue names (HD, HIP …) still come from EDSM/Spansh.
+* The EDDiscovery source supplies names and exact coordinates, but no
+  SystemAddress. Catalogue numbers (HD, HIP …) are packed in a format that is
+  not decoded yet and still come from EDSM/Spansh.
+* Named "... Sector" regions (NGC 2232 Sector, Cephei Sector …) are
+  hand-authored and have their own boxel origin; the planner's grid does not
+  apply to them, so they are flown but never probed.
 
 ---
 
@@ -721,10 +744,11 @@ At 100 and 150 ly the empty-probe list is not workable by hand. Recommended:
 **No Python installation is required.** EDMC ships its own interpreter and the
 migration runs inside the plugin.
 
-1. Copy the six `.py` files into
-   `%LOCALAPPDATA%\EDMarketConnector\plugins\SHBOXSEARCH\`, replacing the old
-   `load.py`. Leave `neareststars.json` and `survey_state.json` in place — they
-   are still needed.
+1. Copy the `.py` files into
+   `%LOCALAPPDATA%\EDMarketConnector\plugins\SHBOXSEARCH\` (see
+   [Install](#install) at the top). If you come from v3 and still have
+   `neareststars.json` and `survey_state.json`, leave them in place for the
+   first import; they are read once and never modified.
 2. Restart EDMC.
 
 On first start the **initial import runs automatically in the background**:
@@ -1265,7 +1289,9 @@ tag, so the two have to be set together or the notice lies.
 
 3. **Run the self test** - `python procgen.py` must print `failures: 0`.
 
-4. **Commit, tag and push.** The tag has to match `VERSION` with a leading `v`:
+4. **Commit, tag and push.** The tag has to match `VERSION`; a leading `v` is
+   optional because the comparison strips it (4.0.0 was tagged `4.0.0`). Stick
+   to one style - `v4.1.0` from now on:
 
    ```
    git add -A
@@ -1283,7 +1309,9 @@ tag, so the two have to be set together or the notice lies.
 * Once per start, and at most once per 24 hours; the timestamp is remembered.
 * `Preferences -> Check for update` forces one, and reports `up to date` when
   there is nothing new.
-* Every failure is swallowed and logged at debug level. Rate limiting (GitHub
+* Every failure is swallowed, and every way out of the check - switched off,
+  checked less than 24 h ago, rate limited, no network - is logged at INFO
+  (from 4.1; 4.0 left no trace at all). Rate limiting (GitHub
   allows 60 unauthenticated calls per hour per address), no network, no
   release published yet - none of it produces an error the user sees. An
   update check must never be the reason something appears broken.
@@ -1297,3 +1325,47 @@ tag, so the two have to be set together or the notice lies.
 | Version | Notes |
 |---|---|
 | 4.0.0 | first release: sphere survey, boxel gaps, in-system routing, deep space, mining atlas |
+| 4.1.0 | n1 = 0 naming rule fixed, EDDiscovery source working again, bio counter fixed, physical body data stored |
+
+
+---
+
+## What changed in 4.1
+
+### Fixes
+
+* **Names without a dash** (`Synuefe XV-C d12`) are now read correctly as
+  system n2 of an n1 = 0 boxel - see
+  [Names without a dash](#names-without-a-dash-synuefe-xv-c-d12). Candidates
+  are generated in the form the game actually uses, and boxel records written
+  under the old rule are rebuilt once on start (logged as
+  `database repair (n1=0 naming rule)`). Closures backed by a real *not there*
+  click are kept.
+* **EDDiscovery returned nothing.** Current EDDiscovery stores names packed
+  into a `nameid` column and has no SystemAddress column; the plugin took
+  `edsmid` for an id64 and every row was dropped. The current layout is now
+  decoded directly - tested on a 19 GB `EDDSystem.sqlite`: 723 systems for a
+  50 ly sphere in 0.4 s, every name identical to Spansh/EDSM, no position
+  differences. A database locked by a running EDDiscovery is reported as
+  `busy` instead of raising.
+* **Bio samples were counted again on every journal replay** - including the
+  automatic one behind the route window. Bodies looked sampled when they were
+  not (79 of 91 bodies had more samples than signals on the test data). The
+  counter is now the number of distinct species analysed, and the one-time
+  replay after the update sets it right.
+* **Route window replayed the journals over and over** when arriving in an
+  unscanned system. Now once per system and session.
+* **Update check** logs why it did or did not run.
+
+### New data per body
+
+Stored from every `Scan` from now on (and from your history by the one-time
+replay): radius, mass, surface gravity, temperature, pressure, atmosphere and
+its composition, volcanism, material composition, tidal lock, axial tilt,
+rotation period, `WasFootfalled`, full ring list with inner and outer radius;
+for stars mass, absolute magnitude, age, luminosity class and subclass. Every
+`ScanOrganic` analysis records species, genus and variant per body.
+
+Nothing is shown with it yet. It is the groundwork for bio predictions
+(which genera are possible on a body before landing) and for features to
+come.

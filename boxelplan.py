@@ -33,8 +33,8 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from procgen import (MASSCODES, boxel_center, boxel_index_of_coords,
                      boxel_intersects_sphere, boxel_size,
-                     boxels_in_sphere, make_name, parse_name)
-from sysdb import Q_EXTERNAL, SystemDB
+                     boxel_prefix, boxels_in_sphere, make_name, parse_name)
+from sysdb import SystemDB
 
 K_NEW = "new"
 K_GAP = "gap"
@@ -55,11 +55,9 @@ PRIORITY = {K_NEW: 0, K_SCAN: 1, K_DSS: 2, K_BIO: 3,
 FLIGHT_KINDS = (K_NEW, K_SCAN, K_DSS, K_BIO)
 PROBE_KINDS = (K_GAP, K_PROBE, K_EMPTY)
 
-# Names of the form "Sector XX-Y d12" without -n2. Frontier omits the running
-# number when a boxel holds exactly one system, so with exact coordinates
-# behind it such a name IS a real system - and that boxel needs no probing.
-import re as _re
-_BOXEL_ONLY = _re.compile(r"^.+?\s+[A-Za-z][A-Za-z]-[A-Za-z]\s+[A-Ha-h]\d*$")
+# Names of the form "Sector XX-Y d12" are ordinary procgen names with n1 = 0
+# (system n2=12 of boxel "XX-Y d") and are planned like any other since 4.1.
+# K_CHECK stays defined so older UI code and exports keep working.
 
 LABEL = {
     K_NEW: "known, not yet visited",
@@ -216,13 +214,6 @@ class Planner:
             d = math.dist((r["x"], r["y"], r["z"]), center)
             p = parse_name(r["name"])
             kind = K_NEW
-            if p is None and _BOXEL_ONLY.match(r["name"]):
-                # A boxel designation without a running number. If the entry
-                # carries exact coordinates from EDSM/Spansh/EDDiscovery or the
-                # journal, somebody has actually been there - it is a real
-                # system and a valid flight target. Only unverified entries
-                # (legacy JSON, POI lists) are held back for checking.
-                kind = K_NEW if (r["quality"] or 0) >= Q_EXTERNAL else K_CHECK
             targets.append(Target(r["name"], kind, d,
                                   mc=p.mc if p else None,
                                   boxel_key=p.boxel_key if p else None,
@@ -597,7 +588,7 @@ class Planner:
             e = agg.setdefault(t.boxel_key, [t.dist, 0])
             e[0] = min(e[0], t.dist)
             e[1] += 1
-        rows = [(k + "-", v[0], int(v[1])) for k, v in agg.items()]
+        rows = [(boxel_prefix(k), v[0], int(v[1])) for k, v in agg.items()]
         rows.sort(key=lambda r: r[1])
         return rows[:limit]
 
