@@ -1,5 +1,12 @@
 # SHBOXSEARCH v4.1
 
+> **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
+> assistant Claude (Anthropic); every change is reviewed and tested in the game
+> by the developer. The plugin itself contains no AI system, sends no data to
+> any AI service, and its output is not AI-generated.
+> Details: [AI_TRANSPARENCY.md](AI_TRANSPARENCY.md) ·
+> machine-readable: [ai-disclosure.json](ai-disclosure.json)
+
 Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
 
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
@@ -1303,6 +1310,13 @@ tag, so the two have to be set together or the notice lies.
 5. **Create the release on GitHub** from that tag. The description becomes the
    `body` the plugin writes into the log, so write it for a reader deciding
    whether to bother - the first eight lines are what get logged.
+
+6. **AI disclosure.** End the release notes with the footer from
+   [AI_TRANSPARENCY.md](AI_TRANSPARENCY.md), section 4, and end every commit
+   the AI assistant took part in with the `Co-Authored-By: Claude …` trailer.
+   If a release adds an AI feature that runs inside the plugin, update
+   `AI_TRANSPARENCY.md` and `ai-disclosure.json` first (section 3 there says
+   what changes).
 
 ### How the check behaves
 

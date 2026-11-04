@@ -1,0 +1,26 @@
+{
+  "ai_generated": "partly",
+  "scope": "source code, documentation and release texts (development time only)",
+  "runtime_ai": false,
+  "output_ai_generated": false,
+  "legal_basis": "Art. 50 Regulation (EU) 2024/1689 (EU AI Act) - voluntary disclosure, no obligation applies",
+  "digital_source_type": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia",
+  "tools": [
+    {
+      "versions": "<=4.0.0",
+      "tool": "Claude Pro",
+      "provider": "Anthropic"
+    },
+    {
+      "versions": ">=4.1.0",
+      "tool": "Claude Code",
+      "model": "claude-opus-5-5",
+      "provider": "Anthropic"
+    }
+  ],
+  "human_review": "every change reviewed, tested in game and released by the developer (CMDR Shodanki)",
+  "provenance": "git commit trailer 'Co-Authored-By: Claude' from 4.1.0 on",
+  "assessment_date": "2026-11-04",
+  "document": "AI_TRANSPARENCY.md",
+  "sha256": "8fbf9c8fc75d069f0dbbedfa4383c96c25a05188239683be13c494b4766d5c26"
+}
