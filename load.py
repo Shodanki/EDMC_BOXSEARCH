@@ -214,12 +214,23 @@ _radius_var: Optional[tk.StringVar] = None
 # ============================================================================
 
 def cfg_bool(key: str, default: bool) -> bool:
+    # The default has to go to EDMC itself: since EDMC 6 (config.toml) a key
+    # that was never saved reads as False, not None, so a "True" default
+    # applied afterwards never took effect. Up to 4.2.0 that silently
+    # switched off the update check and the overlay for everyone who had not
+    # opened and saved the preferences since those options existed.
     try:
-        v = config.get_bool(key)
+        v = config.get_bool(key, default=default)
         return default if v is None else bool(v)
+    except TypeError:
+        pass                                   # very old EDMC: no default=
     except Exception:
+        pass
+    try:
         v = config.get(key)
-        return default if v is None else str(v) not in ("0", "False", "")
+    except Exception:
+        v = None
+    return default if v is None else str(v) not in ("0", "False", "false", "")
 
 
 def cfg_int(key: str, default: int) -> int:
@@ -235,9 +246,12 @@ def cfg_int(key: str, default: int) -> int:
 
 def cfg_str(key: str, default: str = "") -> str:
     try:
-        v = config.get_str(key)
+        v = config.get_str(key, default=default)
     except Exception:
-        v = config.get(key)
+        try:
+            v = config.get(key)
+        except Exception:
+            v = None
     return default if v in (None, "") else str(v)
 
 

@@ -1392,6 +1392,14 @@ come.
 
 ## What changed in 4.2
 
+### Fix: options that were on by default were off
+
+EDMC 6 keeps its settings in `config.toml`, and a switch that was never
+saved there reads as *off*. The plugin applied its own "on" default only
+after asking, so it never took effect: the **update check** has not run since
+4.0 for anyone who had not saved the preferences since then, and the new
+overlay would have stayed dark. The default now goes to EDMC directly.
+
 ### Cockpit overlay
 
 With [EDMCModernOverlay](https://github.com/SweetJonnySauce/EDMCModernOverlay)

@@ -669,7 +669,14 @@ def corridor_targets(origin: Sequence[float], candidates: Sequence[Dict[str, obj
         jumps = max(1, math.ceil(d / jr))
         hit = 0
         value = 0.0
+        # cheap box test first: only boxels inside the segment's bounding box
+        # (plus the corridor width) can be close enough to the line
+        lo = [min(o[k], p[k]) - half for k in range(3)]
+        hi = [max(o[k], p[k]) + half for k in range(3)]
         for e in empties:
+            if not (lo[0] <= e[0] <= hi[0] and lo[1] <= e[1] <= hi[1]
+                    and lo[2] <= e[2] <= hi[2]):
+                continue
             dist, t = _seg_dist(e[:3], o, p)
             if dist <= half and 0.02 < t < 0.98:
                 hit += 1
