@@ -1144,6 +1144,11 @@ class SystemDB:
         return self.cx.execute("SELECT * FROM bodies WHERE sys_id64=?",
                                (sys_id64,)).fetchall()
 
+    def bio_training_rows(self) -> List[sqlite3.Row]:
+        """Every body with analysed species - what biopredict learns from."""
+        return self.cx.execute(
+            "SELECT * FROM bodies WHERE bio_species IS NOT NULL").fetchall()
+
     # --------------------------------------------------------- source coverage
     EXTERNAL_SOURCES = ("EDDiscovery", "Spansh", "EDSM")
 

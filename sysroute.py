@@ -186,7 +186,7 @@ class Body:
     __slots__ = ("body_id", "name", "short", "kind", "planet_class", "terraform",
                  "landable", "arrival_ls", "parent_id", "pos", "rel",
                  "scanned", "mapped", "was_discovered", "was_mapped",
-                 "sig_bio", "sig_geo", "organics", "rings")
+                 "sig_bio", "sig_geo", "organics", "rings", "bio_hint")
 
     def __init__(self, body_id: int, name: str, **kw):
         self.body_id = body_id
@@ -208,6 +208,8 @@ class Body:
         self.sig_geo = int(kw.get("sig_geo") or 0)
         self.organics = int(kw.get("organics") or 0)
         self.rings = bool(kw.get("rings"))
+        # genera expected or known (biopredict.BioModel.hint), set by load.py
+        self.bio_hint = kw.get("bio_hint") or ""
 
     # -- what is still to do here ------------------------------------------
     @property

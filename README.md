@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.1
+# SHBOXSEARCH v4.2
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -72,14 +72,16 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 3372 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 1335 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
-| `sysroute.py` | 735 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
-| `boxelplan.py` | 610 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
+| `load.py` | 3580 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 1369 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `sysroute.py` | 737 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
+| `boxelplan.py` | 698 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
 | `sources.py` | 563 | External data: EDDiscovery, Spansh, EDSM | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
 | `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
 | `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
+| `overlay.py` | 234 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `biopredict.py` | 175 | Genus prediction learned from your own samples | — |
 | `diagnostics.py` | 284 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain
@@ -1340,6 +1342,7 @@ tag, so the two have to be set together or the notice lies.
 |---|---|
 | 4.0.0 | first release: sphere survey, boxel gaps, in-system routing, deep space, mining atlas |
 | 4.1.0 | n1 = 0 naming rule fixed, EDDiscovery source working again, bio counter fixed, physical body data stored |
+| 4.2.0 | cockpit overlay, bio prediction from own finds, route plot targets through unprobed boxels |
 
 
 ---
@@ -1383,3 +1386,81 @@ for stars mass, absolute magnitude, age, luminosity class and subclass. Every
 Nothing is shown with it yet. It is the groundwork for bio predictions
 (which genera are possible on a body before landing) and for features to
 come.
+
+
+---
+
+## What changed in 4.2
+
+### Cockpit overlay
+
+With [EDMCModernOverlay](https://github.com/SweetJonnySauce/EDMCModernOverlay)
+installed (or the older EDMCOverlay), two small blocks appear over the game:
+
+```
+SHBOX > NEXT TARGETS
+1  A 1 d                 1646 LS  BIO 1 Brain Trees
+2  B 1                  74714 LS  DSS
+3 of 4 left  ~95 min
+```
+
+* **NEXT TARGETS** - the next three stops of the in-system route, with the
+  distance and what is to be done there; refreshed on every route change and
+  every tick. Violet = never discovered, amber = biology still open.
+* **BRIEFING** - for twelve seconds after selecting a jump target, and on
+  arrival: star class and whether it can be scooped, which databases know the
+  system - `IN NO DATABASE - first discovery likely` in violet when none
+  does -, open candidates in its boxel, fuel.
+
+*Preferences -> SHBOXSEARCH -> Cockpit overlay*: on/off, briefing on/off,
+position (four corners). The preferences show whether an overlay plugin was
+found. Without one nothing happens. The overlay is a separate transparent
+window drawn by the overlay plugin - it only displays, nothing is sent to the
+game.
+
+### Bio prediction from your own finds
+
+Before a DSS probe the game only says "2 biological signals". 4.2 learns from
+every organism you have analysed which conditions each genus was found under
+(atmosphere type, planet class, gravity, temperature - the data 4.1 started
+storing) and names the likely genera for a body you have not probed yet:
+
+```
+Wregoe GI-A c14-6 A 5    SulphurDioxide 0.51 g 282 K  ->  Bacterium?, Stratum?
+```
+
+The `?` marks a prediction. After the DSS probe the game names the genera
+itself and the plugin shows those instead. Shown in the route list and in the
+overlay; the EDMC log states what it learned from
+(`bio | bio model from 79 sampled bodies, 12 genera ...`).
+
+How good is it? Measured on the test data by hiding one body at a time and
+learning from the rest: the first genus named is right for **89 %** of the
+bodies, and 72 % of all genera actually present are among the three named.
+No rule table from elsewhere is used - it is your own data, so it improves
+with every sample and knows nothing about genera you have never found.
+
+### Route plotting as a probe
+
+Every route plotted in the game writes all its hops - name and exact
+position, straight from the game's galaxy - to `NavRoute.json`, which the
+plugin harvests. That includes systems no database knows. 4.2 picks a plot
+target whose straight line crosses the most unprobed, promising boxels:
+
+```
+plot route   Synuefe PG-L b41-4  79 ly, 68 unprobed boxels on the way
+             (economical route = more hops = more systems)
+```
+
+**copy route target** in the probe window puts the name on the clipboard;
+paste it into the galaxy map and plot. Plotting as an *economical* route makes
+more, shorter jumps and therefore lands more systems in the database. The
+suggestion is recomputed after every jump. You do not have to fly the route -
+the plot alone harvests it.
+
+### AI disclosure
+
+The bio prediction compares value ranges and counts from your own samples -
+simple statistics, no trained model. Like the rest of the plugin it is not an
+AI system under the EU AI Act; see [AI_TRANSPARENCY.md](AI_TRANSPARENCY.md).
+

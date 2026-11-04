@@ -608,3 +608,91 @@ class Planner:
                             t.z if t.z is not None else "",
                             round(t.uncertainty, 1), t.detail])
         return len(plan["targets"])
+
+
+# ---------------------------------------------------------------------------
+# Route plotting as a probe: where to plot a NavRoute to
+# ---------------------------------------------------------------------------
+#
+# Every route plotted in the game writes NavRoute.json with every hop - name,
+# SystemAddress and exact position, straight from the game's own galaxy, also
+# for systems that are in no database. The plugin harvests those hops. So
+# the direction of a plot decides what it finds: a route whose straight line
+# runs through boxels nobody has probed turns each hop into a fair chance of
+# an unknown system - without a single galaxy map search.
+#
+# The commander plots the route himself (one action, nothing automated); this
+# only picks a target worth plotting to.
+
+def _seg_dist(p, a, b) -> Tuple[float, float]:
+    """Distance of point p from segment a-b, and the position along it (0..1)."""
+    ab = [b[i] - a[i] for i in range(3)]
+    ap = [p[i] - a[i] for i in range(3)]
+    L2 = sum(v * v for v in ab)
+    if L2 <= 0:
+        return math.dist(p, a), 0.0
+    t = max(0.0, min(1.0, sum(ap[i] * ab[i] for i in range(3)) / L2))
+    q = [a[i] + t * ab[i] for i in range(3)]
+    return math.dist(p, q), t
+
+
+def corridor_targets(origin: Sequence[float], candidates: Sequence[Dict[str, object]],
+                     empties: Sequence[Tuple[float, float, float, float]],
+                     jump_range: float, limit: int = 3,
+                     min_dist: float = 30.0, max_dist: float = 250.0
+                     ) -> List[Dict[str, object]]:
+    """
+    Rank plot targets by unprobed boxels along the way.
+
+    origin      current position
+    candidates  [{"name", "x", "y", "z"}] - systems with exact coordinates
+    empties     [(x, y, z, prospect_score)] - centres of boxels never probed
+    jump_range  laden max jump, ly
+
+    Score = sum over the boxels in a narrow corridor (at most 20 ly either
+    side of the straight line) of (1 + prospect). A route that runs a long
+    way through promising, unprobed ground wins; void boxels count little.
+
+    How many systems a plot yields is set by the hops, not by the corridor:
+    a route plotted as "economical" makes more, shorter jumps and therefore
+    harvests more systems than a "fastest" one. The UI says so.
+    """
+    jr = max(10.0, float(jump_range or 0.0))
+    half = min(20.0, max(10.0, jr * 0.5))
+    o = tuple(origin)
+    out = []
+    for c in candidates:
+        p = (float(c["x"]), float(c["y"]), float(c["z"]))
+        d = math.dist(o, p)
+        if d < min_dist or d > max_dist:
+            continue
+        jumps = max(1, math.ceil(d / jr))
+        hit = 0
+        value = 0.0
+        for e in empties:
+            dist, t = _seg_dist(e[:3], o, p)
+            if dist <= half and 0.02 < t < 0.98:
+                hit += 1
+                value += 1.0 + float(e[3] or 0.0)
+        if not hit:
+            continue
+        out.append({"name": c["name"], "dist": d, "jumps": jumps,
+                    "boxels": hit, "score": value, "pos": p})
+    out.sort(key=lambda r: -r["score"])
+    # do not offer three targets in the same direction
+    picked: List[Dict[str, object]] = []
+    for r in out:
+        if all(_angle(o, r["pos"], q["pos"]) > 25.0 for q in picked):
+            picked.append(r)
+        if len(picked) >= limit:
+            break
+    return picked
+
+
+def _angle(o, a, b) -> float:
+    va = [a[i] - o[i] for i in range(3)]
+    vb = [b[i] - o[i] for i in range(3)]
+    na = math.sqrt(sum(v * v for v in va)) or 1.0
+    nb = math.sqrt(sum(v * v for v in vb)) or 1.0
+    cos = max(-1.0, min(1.0, sum(va[i] * vb[i] for i in range(3)) / (na * nb)))
+    return math.degrees(math.acos(cos))

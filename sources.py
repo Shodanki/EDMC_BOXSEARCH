@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover
 EDSM_SPHERE = "https://www.edsm.net/api-v1/sphere-systems"
 EDSM_CUBE = "https://www.edsm.net/api-v1/cube-systems"
 SPANSH_SEARCH = "https://spansh.co.uk/api/systems/search"
-USER_AGENT = "SHBOXSEARCH/4.1 (EDMC plugin)"
+USER_AGENT = "SHBOXSEARCH/4.2 (EDMC plugin)"
 
 ProgressCB = Optional[Callable[[str], None]]
 

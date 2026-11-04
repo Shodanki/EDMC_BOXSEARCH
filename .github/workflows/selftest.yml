@@ -1,0 +1,23 @@
+# Runs on every push and pull request: every module must compile, the
+# procgen maths self test must report 0 failures, and the overlay and bio
+# modules must import without EDMC. load.py needs EDMC and is only compiled.
+name: selftest
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"     # the interpreter EDMC 6.x ships
+      - name: compile every module
+        run: python -m py_compile *.py
+      - name: procgen self test
+        run: python procgen.py
+      - name: plain-python modules import without EDMC
+        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict; print('imports ok')"

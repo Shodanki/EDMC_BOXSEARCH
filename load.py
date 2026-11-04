@@ -34,7 +34,7 @@ if _PLUGIN_DIR not in sys.path:
     sys.path.append(_PLUGIN_DIR)
 
 from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
-from sysdb import SystemDB, Q_JOURNAL, Q_UNKNOWN               # noqa: E402
+from sysdb import SystemDB, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
 from sources import SourceManager                              # noqa: E402
 from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
                        staging_lines, tritium_systems)
@@ -44,9 +44,11 @@ from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       plan_route, resolve_positions, shorten)
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
-                       set_origin)
+                       corridor_targets, set_origin)
+from overlay import CockpitOverlay, POSITIONS as OVERLAY_POSITIONS  # noqa: E402
+from biopredict import BioModel                                    # noqa: E402
 
-VERSION = "4.1.0"
+VERSION = "4.2.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -90,6 +92,9 @@ CFG = {
     "check_updates": "%s_check_updates" % PLUGIN_NAME,
     "update_seen": "%s_update_seen" % PLUGIN_NAME,
     "update_checked": "%s_update_checked" % PLUGIN_NAME,
+    "overlay": "%s_overlay" % PLUGIN_NAME,
+    "overlay_pos": "%s_overlay_pos" % PLUGIN_NAME,
+    "overlay_brief": "%s_overlay_brief" % PLUGIN_NAME,
 }
 
 # Where releases live. A check is a single call to the GitHub releases API.
@@ -135,6 +140,7 @@ class State:
         self.cur_id64: Optional[int] = None
         self.cur_pos: Optional[Tuple[float, float, float]] = None
         self.max_jump: Optional[float] = None
+        self.route_targets: List[Dict[str, Any]] = []   # NavRoute plot suggestions
         self.last_dest_id64: Optional[int] = None
 
         self.sphere_id: Optional[int] = None
@@ -275,6 +281,8 @@ def plugin_start3(plugin_dir: str) -> str:
         return "SHBOXSEARCH"
 
     ST.sources = SourceManager(cfg_str(CFG["edd_path"]) or None)
+    ST.overlay = CockpitOverlay(logger)
+    _overlay_apply_settings()
 
     if not ST.db.get_meta("migrated"):
         _run_async(_first_run_migration, label="first-run import")
@@ -303,6 +311,9 @@ def plugin_start3(plugin_dir: str) -> str:
 
 
 def plugin_stop() -> None:
+    ov = getattr(ST, "overlay", None)
+    if ov is not None:
+        ov.clear()
     _route_window_close()
     _stats_window_close()
     _probe_window_close()
@@ -368,6 +379,46 @@ def _fetch_sources() -> None:
     _set_status("%d new systems from %s" % (n, ", ".join(used) or "no source"))
 
 
+def _update_route_targets() -> None:
+    """
+    Suggest where to plot a NavRoute so its hops cross unprobed boxels.
+
+    The game's route plotter knows the real galaxy; every hop of a plotted
+    route lands in the database with exact coordinates, also when no public
+    database has the system. Plotting is the commander's own action.
+    """
+    try:
+        origin = ST.cur_pos or ST.center
+        if not (origin and ST.center):
+            ST.route_targets = []
+            return
+        jr = ST.max_jump or ST.fuel.max_jump or 40.0
+        empties = [(t.x, t.y, t.z, t.score) for t in ST.probe
+                   if t.kind == K_EMPTY and t.x is not None]
+        with ST.lock:
+            rows = ST.db.sphere(ST.center, ST.radius * 1.5, min_quality=Q_EXTERNAL)
+        cands = [{"name": r["name"], "x": r["x"], "y": r["y"], "z": r["z"]}
+                 for r in rows if not r["name"].startswith("#")]
+        ST.route_targets = corridor_targets(origin, cands, empties, jr)
+        for r in ST.route_targets:
+            logger.info("navroute | plot to %s: %.0f ly, ~%d jumps, %d unprobed "
+                        "boxels on the way", r["name"], r["dist"], r["jumps"],
+                        r["boxels"])
+        _ui(_probe_window_refresh)
+    except Exception:
+        logger.exception("route target suggestion failed")
+
+
+def _copy_route_target() -> None:
+    if ST.route_targets:
+        t = ST.route_targets[0]
+        _copy(t["name"])
+        _set_status("plot an ECONOMICAL route to %s - %d unprobed boxels on "
+                    "the way, every hop lands in the database" % (t["name"], t["boxels"]))
+    else:
+        _set_status("no route target yet - start a survey first")
+
+
 def _rebuild_plan() -> None:
     if not (ST.center and ST.planner):
         return
@@ -410,6 +461,7 @@ def _rebuild_plan() -> None:
                     % (ST.radius * 2.0))
     logger.info("plan rebuilt: %d flight targets, %d probes | %s",
                 len(ST.flight), len(ST.probe), ST.plan_counts)
+    _update_route_targets()
 
 
 def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, float, float]]]:
@@ -514,6 +566,102 @@ def _request_route(delay: float = 1.5) -> None:
     threading.Thread(target=waiter, daemon=True, name="SHBOX-route").start()
 
 
+# ---------------------------------------------------------------------------
+# Cockpit overlay (EDMCModernOverlay) - display only, never required
+# ---------------------------------------------------------------------------
+
+_EXTERNAL_DBS = ("EDDiscovery", "Spansh", "EDSM")
+
+
+def _overlay_apply_settings() -> None:
+    ov = getattr(ST, "overlay", None)
+    if ov is None:
+        return
+    ov.enabled = cfg_bool(CFG["overlay"], True)
+    pos = cfg_str(CFG["overlay_pos"], "top-left")
+    ov.position = pos if pos in OVERLAY_POSITIONS else "top-left"
+    if not ov.enabled:
+        ov.clear()
+
+
+def _overlay_targets() -> None:
+    ov = getattr(ST, "overlay", None)
+    if ov is None or not ov.enabled:
+        return
+    try:
+        ov.show_targets(ST.route, ST.route_done)
+    except Exception:
+        logger.debug("overlay targets failed", exc_info=True)
+
+
+def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
+                   star_class: Optional[str]) -> Dict[str, Any]:
+    """What the briefing knows about a system, from our own database only."""
+    info: Dict[str, Any] = {"kind": kind, "name": name, "star_class": star_class}
+    if star_class:
+        info["scoopable"] = is_scoopable(star_class)
+    row = None
+    with ST.lock:
+        if id64:
+            row = ST.db.system_by_id64(id64)
+        if row is None and name:
+            row = ST.db.system(name)
+        if kind == "arrival" and id64:
+            p = ST.db.system_progress(id64)
+            if p.get("body_count"):
+                info["bodies"] = p["body_count"]
+            info["bodies_new"] = p.get("new_discoveries") or 0
+    if not star_class and row is not None and row["star_class"]:
+        # FSDJump carries no star class; StartJump/FSDTarget stored it earlier
+        info["star_class"] = row["star_class"]
+        info["scoopable"] = is_scoopable(row["star_class"])
+    srcs = set((row["sources"] or "").split(",")) if row is not None else set()
+    info["known_sources"] = [s for s in _EXTERNAL_DBS if s in srcs]
+    if row is not None and row["visited"] and kind == "target":
+        info["visited"] = True
+    pn = parse_name(name or "")
+    if pn and ST.probe:
+        info["boxel_open"] = sum(1 for q in ST.probe if q.boxel_key == pn.boxel_key)
+    w = ST.fuel.warning() if ST.fuel else None
+    if w:
+        info["fuel_warning"] = w
+    elif ST.fuel and ST.fuel.jumps_left is not None:
+        info["jumps_left"] = ST.fuel.jumps_left
+    return info
+
+
+def _overlay_briefing(kind: str, name: Optional[str], id64: Optional[int],
+                      star_class: Optional[str]) -> None:
+    ov = getattr(ST, "overlay", None)
+    if ov is None or not ov.enabled or not cfg_bool(CFG["overlay_brief"], True):
+        return
+    try:
+        info = _briefing_info(kind, name, id64, star_class)
+        ov.show_briefing(info, seconds=12 if kind == "target" else 10)
+        if info.get("known_sources") == [] and kind == "target":
+            logger.info("briefing | %s is in no database - first discovery likely", name)
+    except Exception:
+        logger.debug("overlay briefing failed", exc_info=True)
+
+
+_bio_model: Optional[BioModel] = None    # relearned after each new analysis
+
+
+def _bio_model_reset() -> None:
+    global _bio_model
+    _bio_model = None
+
+
+def _get_bio_model() -> BioModel:
+    global _bio_model
+    if _bio_model is None:
+        with ST.lock:
+            rows = ST.db.bio_training_rows()
+        _bio_model = BioModel.learn(rows)
+        logger.info("bio | %s", _bio_model.summary())
+    return _bio_model
+
+
 _replayed_for: set = set()     # system id64s already replayed this session
 
 
@@ -550,6 +698,14 @@ def _rebuild_route() -> None:
     bodies = bodies_from_rows(rows, now=time.time())
     for b in bodies.values():
         b.short = shorten(b.name, ST.cur_system or "")
+    try:
+        model = _get_bio_model()
+        by_id = {r["body_id"]: r for r in rows}
+        for b in bodies.values():
+            r = by_id.get(b.body_id)
+            b.bio_hint = model.hint(r) if r is not None else ""
+    except Exception:
+        logger.debug("bio hints failed", exc_info=True)
     filters = [F_ALL] if cfg_bool(CFG["route_all"], False) else get_filters()
     route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
                        filters=filters)
@@ -561,6 +717,9 @@ def _rebuild_route() -> None:
         route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
                            filters=[F_ALL])
         ST.route_full = True
+    for s in route.stops:
+        if s.body.bio_hint and s.body.wants_bio:
+            s.work = (s.work + " | " if s.work else "") + s.body.bio_hint
     ST.route = route
     # Restore the ticks for this system, then drop any that no longer refer to
     # a stop on the current route.
@@ -1280,6 +1439,9 @@ def _route_window_refresh() -> None:
     the heading so a long haul is obvious before you start it.
     """
     global _route_rows
+    # every route change and every tick passes through here - also when the
+    # route window itself is closed
+    _overlay_targets()
     if _route_win is None or _route_body is None:
         return
     try:
@@ -2339,6 +2501,12 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 _prune_queues()
                 _resort_queues()
                 _ui(_copy_flight)
+            if ev == "FSDJump":
+                _overlay_briefing("arrival", ST.cur_system, ST.cur_id64,
+                                  entry.get("StarClass") or None)
+                if ST.active:
+                    threading.Thread(target=_update_route_targets, daemon=True,
+                                     name="SHBOX-navroute").start()
             _request_route()
             _ui(_refresh)
 
@@ -2395,6 +2563,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                                  or ST.cur_system)
             if ST.active:
                 _prune_queues()
+            if ev == "ScanOrganic" and entry.get("ScanType") == "Analyse":
+                _bio_model_reset()          # one more find to learn from
             if ev in ("SAAScanComplete", "ScanOrganic"):
                 _route_auto_tick(entry.get("BodyName") or entry.get("Body"),
                                  "mapped" if ev == "SAAScanComplete" else "sampled")
@@ -2405,6 +2575,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
 
         elif ev == "FSDTarget":
             nm = entry.get("Name")
+            _overlay_briefing("target", nm, entry.get("SystemAddress"),
+                              entry.get("StarClass"))
             t = current_probe()
             if t and nm == t.name:
                 _set_status("confirmed: %s" % nm)
@@ -2759,6 +2931,8 @@ def _probe_window_open() -> None:
     tk.Button(bar2, text="replan",
               command=lambda: _run_async(_rebuild_plan, label="replanning")).pack(
         side=tk.LEFT)
+    tk.Button(bar2, text="copy route target", command=_copy_route_target).pack(
+        side=tk.LEFT, padx=(0, 4))
     tk.Button(bar2, text="copy FC", command=_copy_carrier).pack(
         side=tk.LEFT, padx=(4, 0))
     tk.Button(bar2, text="carrier spot",
@@ -2790,7 +2964,7 @@ def _probe_window_refresh() -> None:
             "prefix       %s%s\n"
             "distance     %.1f ly   uncertainty +-%.0f ly\n"
             "this boxel   %d candidate%s   odds %s\n"
-            "queue        %d probes (gap %d, probe %d, empty %d)"
+            "queue        %d probes (gap %d, probe %d, empty %d)%s"
             % (p.name,
                boxel_prefix(p.boxel_key) if p.boxel_key else "?",
                # n1 = 0 boxels: the prefix also lists the d1-.., d2-.. boxels
@@ -2798,7 +2972,11 @@ def _probe_window_refresh() -> None:
                if p.boxel_key and p.boxel_key[-1:].isalpha() else "",
                p.dist_origin, p.uncertainty,
                same, "" if same == 1 else "s", odds, len(ST.probe),
-               c.get(K_GAP, 0), c.get(K_PROBE, 0), c.get(K_EMPTY, 0)))
+               c.get(K_GAP, 0), c.get(K_PROBE, 0), c.get(K_EMPTY, 0),
+               ("\nplot route   %s  %.0f ly, %d unprobed boxels on the way"
+                "\n             (economical route = more hops = more systems)"
+                % (ST.route_targets[0]["name"], ST.route_targets[0]["dist"],
+                   ST.route_targets[0]["boxels"])) if ST.route_targets else ""))
 
 
 def _on_carrier_toggle() -> None:
@@ -3106,6 +3284,22 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     field(right, "right", "", nb.Checkbutton(
         right, text="show the route line in the panel", variable=_p["show_route"]))
 
+    head(right, "right", "Cockpit overlay (needs EDMCModernOverlay)")
+    _p["overlay"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay"], True) else 0)
+    _p["overlay_brief"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_brief"], True) else 0)
+    _p["overlay_pos"] = tk.StringVar(value=cfg_str(CFG["overlay_pos"], "top-left"))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="show the next route targets in the game", variable=_p["overlay"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="briefing on target selection and arrival",
+        variable=_p["overlay_brief"]))
+    field(right, "right", "Position",
+          ttk.OptionMenu(right, _p["overlay_pos"], _p["overlay_pos"].get(),
+                         *OVERLAY_POSITIONS))
+    ov = getattr(ST, "overlay", None)
+    note(right, "right", "  overlay: %s" % (
+        "connected" if ov is not None and ov.available() else "not installed"))
+
     _p["panel_fuel"] = tk.IntVar(value=1 if cfg_bool(CFG["panel_fuel"], False) else 0)
     _p["check_updates"] = tk.IntVar(
         value=1 if cfg_bool(CFG["check_updates"], True) else 0)
@@ -3204,6 +3398,11 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["panel_fuel"], bool(_p["panel_fuel"].get()))
         cfg_set(CFG["panel_queue"], bool(_p["panel_queue"].get()))
         cfg_set(CFG["check_updates"], bool(_p["check_updates"].get()))
+        cfg_set(CFG["overlay"], bool(_p["overlay"].get()))
+        cfg_set(CFG["overlay_brief"], bool(_p["overlay_brief"].get()))
+        cfg_set(CFG["overlay_pos"], _p["overlay_pos"].get())
+        _overlay_apply_settings()
+        _overlay_targets()
         global _MAP_W, _MAP_H
         _MAP_W = _MAP_H = _MAP_SIZES.get(_p["map_size"].get(), 480)
         picked = [k for k, v in _p.get("filters", {}).items() if v.get()]
