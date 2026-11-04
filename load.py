@@ -50,6 +50,14 @@ VERSION = "4.1.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
+# sysdb and sources log through logging.getLogger(__name__), which sits
+# outside EDMC's logger tree - their messages (database repair, EDD status,
+# source warnings) never reached the EDMC log. Route them through ours.
+import sysdb as _sysdb_mod      # noqa: E402
+import sources as _sources_mod  # noqa: E402
+_sysdb_mod.logger = logger
+_sources_mod.logger = logger
+
 DB_FILE = os.path.join(_PLUGIN_DIR, "shboxsearch.sqlite")
 
 # ------------------------------------------------------------------- settings
@@ -530,8 +538,7 @@ def _rebuild_route() -> None:
                     ST.cur_system)
         d = _journal_dir()
         if d:
-            with ST.lock:
-                res = ST.db.import_journals(d, max_files=6)
+            res = ST.db.import_journals(d, max_files=6, lock=ST.lock)
             logger.info("route | replayed %s", res)
             with ST.lock:
                 rows = ST.db.bodies_of(ST.cur_id64)
@@ -3255,8 +3262,8 @@ def _import_journals(max_files: int = 0) -> None:
     def prog(i, total, fn):
         _set_status("journals %d/%d" % (i, total))
 
-    with ST.lock:
-        res = ST.db.import_journals(d, max_files=max_files, progress=prog)
+    # the lock is taken per chunk inside, never for the whole replay
+    res = ST.db.import_journals(d, max_files=max_files, progress=prog, lock=ST.lock)
     logger.info("journals replayed: %s", res)
     _set_status("journals: %d files, %d lines, %d events"
                 % (res["files"], res["lines"], res["events"]))
@@ -3296,6 +3303,8 @@ def _upgrade_41() -> None:
       so bodies looked sampled when they were not. It is now written as the
       number of distinct species analysed, so this replay sets it right.
     """
+    # let EDMC finish its own start-up (journal monitor, commander, cAPI) first
+    time.sleep(15)
     logger.info("4.1 upgrade: replaying all journals once to fill new fields")
     _set_status("4.1 upgrade: journals")
     _import_journals()

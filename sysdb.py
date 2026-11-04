@@ -197,7 +197,7 @@ class SystemDB:
         self.cx.row_factory = sqlite3.Row
         self.cx.executescript(SCHEMA)
         self._migrate()
-        self.cx.execute("INSERT OR IGNORE INTO meta(k,v) VALUES ('schema',?)",
+        self.cx.execute("INSERT OR REPLACE INTO meta(k,v) VALUES ('schema',?)",
                         (str(SCHEMA_VERSION),))
         self.cx.commit()
         self.sectors = SectorRegistry()
@@ -1299,13 +1299,27 @@ class SystemDB:
         self.cx.commit()
         return ok, vis
 
+    # Lines processed per lock acquisition during a replay. Small enough that
+    # anything else waiting for the database (EDMC's main thread delivering a
+    # live journal event, the UI refresh) gets in within a few milliseconds.
+    REPLAY_CHUNK = 200
+    REPLAY_SLICE = 0.04     # seconds of work per lock hold
+    REPLAY_PAUSE = 0.003    # seconds the lock is left free in between
+
     def import_journals(self, journal_dir: str, max_files: int = 0,
-                        progress=None) -> Dict[str, int]:
+                        progress=None, lock=None) -> Dict[str, int]:
         """
         Replay existing journal files. Purely additive; the files are never
         modified. progress(done, total, filename) is called once per file.
+
+        lock: the lock that guards this connection. When given, it is taken
+        per chunk of REPLAY_CHUNK lines and released in between - never for
+        the whole replay. A full replay takes about a minute, and in 4.1.0
+        holding the lock that long froze EDMC's start-up for the same time.
         """
+        import contextlib
         import glob
+        guard = lock if lock is not None else contextlib.nullcontext()
         files = sorted(set(glob.glob(os.path.join(journal_dir, "Journal.*.log"))
                            + glob.glob(os.path.join(journal_dir, "Journal_*.log"))))
         if max_files:
@@ -1318,18 +1332,33 @@ class SystemDB:
                 except Exception:
                     pass
             try:
+                # file I/O outside the lock
                 with open(fn, "r", encoding="utf-8", errors="replace") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        res["lines"] += 1
-                        try:
-                            res["events"] += self.ingest_journal_event(json.loads(line))
-                        except Exception:
-                            res["errors"] += 1
+                    lines = [ln.strip() for ln in f]
             except OSError:
                 res["errors"] += 1
-            self.cx.commit()
-        self.cx.commit()
+                continue
+            lines = [ln for ln in lines if ln]
+            pos = 0
+            while pos < len(lines):
+                with guard:
+                    # at most REPLAY_CHUNK lines and at most REPLAY_SLICE seconds
+                    t_end = time.perf_counter() + self.REPLAY_SLICE
+                    stop = min(pos + self.REPLAY_CHUNK, len(lines))
+                    while pos < stop:
+                        res["lines"] += 1
+                        try:
+                            res["events"] += self.ingest_journal_event(
+                                json.loads(lines[pos]))
+                        except Exception:
+                            res["errors"] += 1
+                        pos += 1
+                        if time.perf_counter() > t_end:
+                            break
+                    self.cx.commit()
+                if lock is not None:
+                    # Python locks are not fair: without a real pause this
+                    # thread takes the lock straight back and a waiting
+                    # thread can starve for seconds.
+                    time.sleep(self.REPLAY_PAUSE)
         return res
