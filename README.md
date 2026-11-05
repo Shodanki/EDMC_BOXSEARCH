@@ -1,13 +1,17 @@
-# SHBOXSEARCH v4.3
+# SHBOXSEARCH v4.4
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
-> by the developer. The plugin itself contains no AI system, sends no data to
-> any AI service, and its output is not AI-generated.
+> by the developer. The plugin and its FIS companion contain no AI system, send
+> no data to any AI service, and their output is not AI-generated.
 > Details: [AI_TRANSPARENCY.md](AI_TRANSPARENCY.md) ·
 > machine-readable: [ai-disclosure.json](ai-disclosure.json)
 
 Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
+
+**New in 4.4: SHBOX FIS**, a flight information system for a second screen,
+tablet or phone - ship status, tactical view, surface map, atlas, carrier and
+galaxy map - in the `FIS` folder of this plugin. See [FIS/README.md](FIS/README.md).
 
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
 > all. On the first start 4.1 repairs boxel records written under a wrong
@@ -72,17 +76,19 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 3788 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 1638 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `load.py` | 3880 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 1831 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 784 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
 | `sources.py` | 563 | External data: EDDiscovery, Spansh, EDSM | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
 | `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
 | `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
-| `overlay.py` | 280 | Cockpit overlay through EDMCModernOverlay (optional) | — |
-| `biopredict.py` | 175 | Genus prediction learned from your own samples | — |
+| `overlay.py` | 286 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `biopredict.py` | 196 | Genus prediction learned from your own samples | — |
 | `diagnostics.py` | 284 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
+| `surfacenav.py` | 260 | Surface compass: parked SRV, open samples, known points | — |
+| `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain
 Python with no third-party dependencies and can be run and tested on its own.
@@ -106,6 +112,7 @@ disk, not in the repository.
 * EDMC 5.10 or newer (tested against 6.1.2 / Python 3.13)
 * Elite Dangerous: Odyssey journals
 * Optional: EDDiscovery, for a fast local system database
+* Optional, for the FIS: Python 3.11 or newer
 
 ### Uninstall
 
@@ -1344,6 +1351,7 @@ tag, so the two have to be set together or the notice lies.
 | 4.1.0 | n1 = 0 naming rule fixed, EDDiscovery source working again, bio counter fixed, physical body data stored |
 | 4.2.0 | cockpit overlay, bio prediction from own finds, route plot targets through unprobed boxels |
 | 4.3.0 | discovery filters fixed, supercruise timing on real legs, atlas for body signals and materials, 30 s briefing |
+| 4.4.0 | surface track and finds on bodies, exobiology sample distance in the overlay |
 
 
 ---
@@ -1552,4 +1560,121 @@ the update (logged as `upgrade finished - atlas: N signal kinds, M materials`).
   (`database repair (destination phantoms)`).
 * **not discovered by anyone yet** no longer routes to rings as separate
   stops - they are discovered together with their planet.
+
+
+---
+
+## What changed in 4.4
+
+### Surface track and finds
+
+On or near a body the game writes latitude, longitude, altitude and heading
+to `Status.json`. 4.4 keeps them as a **track per body** - a point every 25 m,
+or every 10 s once you have moved a little, split into ship, SRV and on foot.
+No journal holds this, so the track only exists from now on and only while
+the plugin runs.
+
+Every place where something happened on a body is kept as a **mark**:
+touchdown and lift-off, SRV out and in, leaving the ship on foot, each
+biological log / sample / analysis with its species, materials picked up,
+codex finds, settlements and screenshots. Touchdown, lift-off, codex,
+settlement and screenshot carry their own position and are also read back
+from your journals (on the test journals: 341 landings, 221 codex finds, 30
+settlements on 96 bodies). Samples and pickups have no position in the
+journal; they take the last `Status.json` position - only when it belongs to
+the same body and the same moment, so replaying an old journal never stamps
+today's position on an old sample.
+
+### Exobiology: distance to the last sample
+
+While you sample a species, the cockpit overlay shows the distance to the
+previous samples of that species against the minimum distance of its genus:
+
+```
+BIO > Bacterium Cerbrus  2/3
+580 m / 500 m  OK - sample here
+```
+
+The minimum distances are community values (Bacterium 500 m, Osseus 800 m,
+Tussock 200 m ...), not published by Frontier - the measured distance is
+shown next to them so a wrong value is easy to spot. Brain Trees can be
+sampled since the Nomad arrived; their range is 100 m (community value; in
+our own samples the game accepted the next sample at 102 m).
+
+### Surface compass in the overlay
+
+On a body - and already in orbital cruise, where `Status.json` reports the
+position too - the overlay lists what you may want to get back to, with the
+distance and the direction relative to your heading:
+
+```
+NAV  bio 2 done, 1 open
+NOMAD PARKED                359 m  ^ ahead
+Lividum Brain Tree 1/3       46 m  v behind
+Gypseeum Brain Tree         903 m  < 13
+```
+
+* **the parked SRV** - where you left it on foot, until you get back in
+* **the parked ship** - where it touched down, until it lifts off or is sent away
+* **species not finished yet**, with the samples taken (a new Log restarts the
+  count, as in the game)
+* **earlier finds on this body** - codex entries, settlements, screenshots;
+  take a screenshot to keep any spot as a waypoint
+* genera the detailed surface scan named that you have not started yet
+
+Switch it off under "surface compass" in the settings.
+
+### The Nomad
+
+The flying SRV is launched with `LaunchVessel` and lands with its own
+`Touchdown` / `Liftoff`. 4.4 records its launch, tells its landings apart from
+the ship's and marks where it is parked. Marks recorded before are repaired
+once: leaving the SRV becomes "SRV parked", and landings get their vehicle
+from the track.
+
+### SHBOX FIS - flight information system
+
+A companion in your browser, shipped in the `FIS` folder: eight views (briefing,
+tactical, planet, surface, atlas, ship, carrier, galaxy), English and German,
+for a desktop, a 10" tablet or a phone, each view also in a window of its own.
+It reads the plugin database and the game's files only. Start it with
+`FIS\start_fis.bat` (Python 3.11+); the first start asks a few questions and
+remembers them. In EDMC's settings (section SHBOX FIS) you can start it, open it
+in the browser, or tick **start the FIS together with EDMC**. Everything else:
+[FIS/README.md](FIS/README.md).
+
+### Atlas: tabs and finds on the ground
+
+The atlas window now has one **tab** per kind - **rings**, **signals**,
+**materials** and the new **finds**: codex entries, analysed species,
+settlements and screenshots, each with the body and the latitude / longitude
+where it was, nearest system first. The same thing logged several times on
+one body (the codex writes an entry per sighting) is one row with a count.
+A screenshot is the simplest way to keep any spot as a waypoint.
+
+Rings in a system known under two names (a catalogue name and a procedural
+one) no longer show up twice.
+
+A **distance** picker (25 ly ... 2000 ly, or any distance) keeps the list to
+what is around you - far from the bubble, finds thousands of light years back
+would otherwise fill it.
+
+### Route: no detours to other stars
+
+Stars other than the one you arrive at are no longer route stops, whatever
+the filter: the FSS from the arrival point already discovers them, flying out
+to them only made the route longer. On the test systems with "every body"
+this saves one stop and 4-5 minutes each; more where a companion star sits
+far out.
+
+### Fix: binary moons drawn thousands of LS from their planet
+
+Two moons that circle each other orbit a common barycentre, which orbits the
+planet. The journal reports that barycentre (`ScanBaryCentre`) with its orbit
+but without saying what it orbits, so the plugin placed it around the
+system's origin - in the route map the pair ended up far out in the system.
+The parent is now taken from the moons' own `Parents` chain. On the test data
+164 barycentres were affected; a pair like "3 d / 3 e" moves from 2141 LS to
+4.7 LS from its planet. Existing data is repaired by one automatic journal
+replay after the update.
 

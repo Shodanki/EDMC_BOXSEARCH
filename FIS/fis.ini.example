@@ -1,0 +1,40 @@
+; SHBOX FIS - example settings. Normally you do not need this file:
+; the first start asks and writes fis.ini (change later: fis_settings.bat).
+
+[fis]
+; en or de - the browser can switch at any time (footer EN | DE)
+language = en
+
+; port of the local server
+port = 8770
+
+; true = also reachable from the home network (binds 0.0.0.0, every request
+; needs the token). The token is created on the first LAN start.
+lan = false
+; token =
+
+; open the browser when the FIS starts
+open_browser = true
+
+; set by the first-start dialogue; false = ask again on the next start
+setup_done = false
+
+; LAN firewall rule: empty = offer it, ok = created, declined = do not ask again
+firewall =
+
+; plugin database (opened read-only)
+; db_path = %LOCALAPPDATA%\EDMarketConnector\plugins\SHBOXSEARCH\shboxsearch.sqlite
+
+; game journal folder (read only). For a second PC: a network share.
+; journal_dir = %USERPROFILE%\Saved Games\Frontier Developments\Elite Dangerous
+
+; plugin source the maths is loaded from (sysroute/biopredict/deepspace/procgen)
+; plugin_dir = ..\SHBOXSEARCH
+
+; where the route filters come from: plugin = the same as set in the plugin
+; (read from EDMC's settings), ini = route_filters below
+route_source = plugin
+
+; bodies in the course line when route_source = ini:
+; todo, all, new, unmapped, signals, landable, valuable, rings - comma separated
+route_filters = todo

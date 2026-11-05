@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- iPad / iPhone: "Add to Home Screen" opens the FIS without browser bars -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SHBOX FIS">
+<meta name="theme-color" content="#050b0c">
+<title>SHBOX FIS</title>
+<meta name="description" content="SHBOX FIS – flight information system. Reads game files only, no AI at runtime.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 5 5 2h9v9l-3 3H2z' fill='none' stroke='%233EF2E0' stroke-width='1.5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/css/fis.css">
+<!-- Three.js is loaded by the browser from the CDN at runtime; without
+     internet the tactical view falls back to a 2D canvas. -->
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body class="scanlines">
+<header id="top">
+  <div class="brand"><span class="brand-mark">◢</span> SHBOX <b>FIS</b></div>
+  <nav id="tabs" role="tablist">
+    <button role="tab" data-view="briefing">BRIEFING</button>
+    <button role="tab" data-view="tactical" data-i18n="TACTICAL">TACTICAL</button>
+    <button role="tab" data-view="planet">PLANET</button>
+    <button role="tab" data-view="surface" data-i18n="SURFACE">SURFACE</button>
+    <button role="tab" data-view="atlas">ATLAS</button>
+    <button role="tab" data-view="ship" data-i18n="SHIP">SHIP</button>
+    <button role="tab" data-view="carrier" data-i18n="CARRIER">CARRIER</button>
+    <button role="tab" data-view="galaxy" data-i18n="GALAXY">GALAXY</button>
+  </nav>
+  <div id="shipbar" class="shipbar" aria-live="polite">
+    <div class="sb-cell sb-system"><span class="k">SYS</span><span class="v" id="sb-system">–</span></div>
+    <div class="sb-cell sb-fuel">
+      <span class="k" data-i18n="FUEL">FUEL</span>
+      <div class="bar"><i id="sb-fuel-bar"></i></div>
+      <span class="v" id="sb-fuel">–</span>
+    </div>
+    <div class="sb-cell sb-target"><span class="k" data-i18n="TARGET">TARGET</span><span class="v" id="sb-target">–</span></div>
+    <div class="sb-cell sb-focus"><span class="k" data-i18n="FOCUS">FOCUS</span><span class="v" id="sb-focus">–</span></div>
+    <div class="sb-cell sb-link"><span id="sb-led" class="led off" title="connection to the FIS service" data-i18n-title="connection to the FIS service"></span><span class="v" id="sb-clock">--:--</span></div>
+  </div>
+</header>
+
+<main id="views">
+  <section id="view-briefing" class="view" data-view="briefing" hidden></section>
+  <section id="view-tactical" class="view" data-view="tactical" hidden></section>
+  <section id="view-planet" class="view" data-view="planet" hidden></section>
+  <section id="view-surface" class="view" data-view="surface" hidden></section>
+  <section id="view-atlas" class="view" data-view="atlas" hidden></section>
+  <section id="view-ship" class="view" data-view="ship" hidden></section>
+  <section id="view-carrier" class="view" data-view="carrier" hidden></section>
+  <section id="view-galaxy" class="view" data-view="galaxy" hidden></section>
+</main>
+
+<footer id="foot">
+  <span id="foot-msg" data-i18n="Reads game files only · no input to the game · no AI at runtime">Reads game files only · no input to the game · no AI at runtime</span>
+  <span id="foot-lan" class="c-cyan"></span>
+  <span class="foot-opts">
+    <label><input type="checkbox" id="opt-scan" checked> Scanlines</label>
+    <label><input type="checkbox" id="opt-motion" checked> <span data-i18n="Animation">Animation</span></label>
+    <label><input type="checkbox" id="opt-autoview" checked> <span data-i18n="Auto view">Auto view</span></label>
+    <span id="lang" class="lang" role="group" aria-label="Language"><button data-lang="en">EN</button><button data-lang="de">DE</button></span>
+  </span>
+</footer>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

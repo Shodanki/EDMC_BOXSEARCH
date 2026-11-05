@@ -47,9 +47,10 @@ from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
                        corridor_targets, set_origin)
 from overlay import CockpitOverlay, POSITIONS as OVERLAY_POSITIONS  # noqa: E402
-from biopredict import BioModel                                    # noqa: E402
+from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E402
+import surfacenav  # noqa: E402
 
-VERSION = "4.3.0"
+VERSION = "4.4.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -93,12 +94,16 @@ CFG = {
     "atlas_mode": "%s_atlas_mode" % PLUGIN_NAME,
     "atlas_sig": "%s_atlas_sig" % PLUGIN_NAME,
     "atlas_mat": "%s_atlas_mat" % PLUGIN_NAME,
+    "atlas_find": "%s_atlas_find" % PLUGIN_NAME,
+    "atlas_range": "%s_atlas_range" % PLUGIN_NAME,
     "check_updates": "%s_check_updates" % PLUGIN_NAME,
     "update_seen": "%s_update_seen" % PLUGIN_NAME,
     "update_checked": "%s_update_checked" % PLUGIN_NAME,
     "overlay": "%s_overlay" % PLUGIN_NAME,
     "overlay_pos": "%s_overlay_pos" % PLUGIN_NAME,
     "overlay_brief": "%s_overlay_brief" % PLUGIN_NAME,
+    "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
+    "fis_autostart": "%s_fis_autostart" % PLUGIN_NAME,
 }
 
 # Where releases live. A check is a single call to the GitHub releases API.
@@ -145,6 +150,12 @@ class State:
         self.cur_pos: Optional[Tuple[float, float, float]] = None
         self.max_jump: Optional[float] = None
         self.route_targets: List[Dict[str, Any]] = []   # NavRoute plot suggestions
+        self.last_track: Optional[Dict[str, Any]] = None  # last stored surface point
+        # species being sampled: {"body", "species", "genus", "points": [(lat, lon)]}
+        self.bio_active: Optional[Dict[str, Any]] = None
+        self._bio_shown = 0.0
+        self._nav_shown = 0.0
+        self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera)
         self.last_dest_id64: Optional[int] = None
 
         self.sphere_id: Optional[int] = None
@@ -956,7 +967,14 @@ def _theme_tree(widget, colours: Dict[str, str]) -> None:
         _theme_menu(widget, colours)
     _apply_theme(widget, colours,
                  is_text=cls in ("Label", "Checkbutton", "Entry"),
-                 is_button=cls in ("Button", "Menubutton"))
+                 is_button=cls in ("Button", "Menubutton", "Radiobutton"))
+    if cls == "Radiobutton" and colours.get("bg"):
+        # tab buttons: the chosen one keeps the background (its text says
+        # which one it is) - Tk would paint it white otherwise
+        try:
+            widget.configure(selectcolor=colours["bg"], offrelief=tk.FLAT)
+        except Exception:
+            pass
     try:
         children = widget.winfo_children()
     except Exception:
@@ -1791,6 +1809,117 @@ def _check_for_update(force: bool = False) -> None:
         logger.info("update | %s", line)
     _set_status("update %s available - click here" % tag)
     _ui(_refresh)
+
+
+# ---------------------------------------------------------------------------
+# SHBOX FIS - the flight information system in the FIS folder. It runs as its
+# own Python process (EDMC's built-in Python cannot host it); the plugin only
+# starts it and opens it in the browser.
+# ---------------------------------------------------------------------------
+
+FIS_DIR = os.path.join(_PLUGIN_DIR, "FIS")
+FIS_BAT = os.path.join(FIS_DIR, "start_fis.bat")
+
+
+def _fis_settings() -> Dict[str, str]:
+    """Port, LAN and token from FIS/fis.ini (written by the FIS's first start)."""
+    import configparser
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        cp.read(os.path.join(FIS_DIR, "fis.ini"), encoding="utf-8")
+    except Exception:
+        pass
+    s = cp["fis"] if cp.has_section("fis") else {}
+    return {"port": str(s.get("port", "8770") or "8770"), "lan": str(s.get("lan", "false")),
+            "token": str(s.get("token", "") or "")}
+
+
+def _fis_python() -> Optional[str]:
+    """A Python the start script will find (same order as start_fis.bat)."""
+    import glob
+    import shutil
+    local = os.environ.get("LOCALAPPDATA", "")
+    found = sorted(glob.glob(os.path.join(local, "Programs", "Python", "Python3*", "python.exe")),
+                   reverse=True)
+    return found[0] if found else (shutil.which("py") or shutil.which("python"))
+
+
+def _fis_running(port: str) -> bool:
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=0.3):
+            return True
+    except (OSError, ValueError):
+        return False
+
+
+def _fis_status() -> str:
+    if not os.path.exists(FIS_BAT):
+        return "FIS folder not found (download the full release)"
+    st = _fis_settings()
+    if _fis_running(st["port"]):
+        return "running on port %s%s" % (st["port"], " (home network)" if st["lan"].lower() == "true" else "")
+    py = _fis_python()
+    return ("not running - Python found: %s" % py) if py else \
+        "not running - needs Python 3.11+ (python.org), EDMC's Python cannot run it"
+
+
+def _fis_setup_done() -> bool:
+    import configparser
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        cp.read(os.path.join(FIS_DIR, "fis.ini"), encoding="utf-8")
+        return cp.get("fis", "setup_done", fallback="false").strip().lower() == "true"
+    except Exception:
+        return False
+
+
+def _fis_start(minimized: bool = False, open_if_running: bool = True) -> None:
+    """
+    Start the FIS in its own console window - independent of EDMC, it keeps
+    running when EDMC closes. Minimised only once the first-start questions
+    have been answered (they need the window).
+    """
+    if not os.path.exists(FIS_BAT):
+        return
+    st = _fis_settings()
+    if _fis_running(st["port"]):
+        if open_if_running:
+            _fis_open()
+        return
+    try:
+        if minimized and _fis_setup_done():
+            import subprocess
+            subprocess.Popen('start "SHBOX FIS" /min "%s"' % FIS_BAT, shell=True, cwd=FIS_DIR)
+        else:
+            os.startfile(FIS_BAT)
+        logger.info("FIS | started %s%s", FIS_BAT, " (minimised)" if minimized else "")
+    except Exception:
+        logger.exception("FIS | could not start %s", FIS_BAT)
+
+
+FIS_AUTOSTART_DELAY_MS = 4000      # let EDMC finish starting first
+
+
+def _fis_autostart() -> None:
+    """Start the FIS with EDMC when the commander asked for it (settings)."""
+    if not cfg_bool(CFG["fis_autostart"], False) or not os.path.exists(FIS_BAT):
+        return
+    threading.Thread(target=lambda: _fis_start(minimized=True, open_if_running=False),
+                     name="shbox-fis-autostart", daemon=True).start()
+
+
+def _fis_open() -> None:
+    """Open the running FIS in the browser of this PC."""
+    import webbrowser
+    st = _fis_settings()
+    url = "http://127.0.0.1:%s/" % st["port"]
+    if st["lan"].lower() == "true" and st["token"]:
+        url += "?token=" + st["token"]
+    try:
+        webbrowser.open(url)
+    except Exception:
+        logger.exception("FIS | could not open the browser")
 
 
 def _open_release_page() -> None:
@@ -2651,6 +2780,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                                  or ST.cur_system)
             if ST.active:
                 _prune_queues()
+            if ev == "ScanOrganic":
+                _bio_event(entry)
             if ev == "ScanOrganic" and entry.get("ScanType") == "Analyse":
                 _bio_model_reset()          # one more find to learn from
             if ev in ("SAAScanComplete", "ScanOrganic"):
@@ -2676,8 +2807,138 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         logger.exception("journal_entry(%s) failed", ev)
 
 
+TRACK_STEP_M = 25.0       # store a point after this much movement ...
+TRACK_MIN_S = 10.0        # ... or after this long when moved at least 3 m
+TRACK_MAX_ALT = 25000.0   # metres: higher than this is flying, not exploring
+
+
+def _surface_status(entry: Dict[str, Any]) -> None:
+    """
+    Status.json on or near a body: extend the surface track and update the
+    exobiology distance line. The track exists nowhere else - the journal
+    has no position stream - so it only grows while the plugin runs.
+    """
+    if not ST.db or "Flags" not in entry:
+        return
+    with ST.lock:
+        pos = ST.db.note_status(entry)
+    if not pos or not ST.cur_id64:
+        ST.last_track = None
+        return
+    radius = float(pos.get("radius") or 0.0)
+    alt = pos.get("alt")
+    low = pos["landed"] or pos["mode"] != "ship" or (alt is not None and alt < TRACK_MAX_ALT)
+    now = time.time()
+    if low and radius > 0:
+        last = ST.last_track
+        moved = (surface_distance_m(last["lat"], last["lon"], pos["lat"], pos["lon"], radius)
+                 if last and last["body"] == pos["body"] else None)
+        if (moved is None or moved >= TRACK_STEP_M or last["mode"] != pos["mode"]
+                or (now - last["t"] >= TRACK_MIN_S and moved >= 3.0)):
+            with ST.lock:
+                ST.db.add_track_point(ST.cur_id64, pos, now)
+            ST.last_track = dict(pos, t=now)
+    _nav_overlay(pos, radius, now, low)
+    _bio_distance_line(pos, radius, now)
+
+
+NAV_EVERY_S = 1.0         # compass refresh while a position is reported
+
+
+def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> None:
+    """
+    Overlay compass: direction and distance to the parked SRV, the parked
+    ship, unfinished species and earlier finds on this body. Status.json
+    reports the position in orbital cruise as well, so on the way down the
+    same block lists what is known on the body ("KNOWN POINTS").
+    """
+    ov = getattr(ST, "overlay", None)
+    if (ov is None or not ov.enabled or radius <= 0 or not ST.cur_id64
+            or not cfg_bool(CFG["overlay_nav"], True) or now - ST._nav_shown < NAV_EVERY_S):
+        return
+    ST._nav_shown = now
+    key = (ST.cur_id64, pos["body"], ST.db.marks_rev)
+    c = ST._nav_cache
+    if c is None or c[0] != key:
+        with ST.lock:
+            marks = [dict(m) for m in ST.db.marks_of(ST.cur_id64, pos["body"])]
+            r = ST.db.cx.execute("SELECT sig_bio, genuses FROM bodies WHERE sys_id64=? "
+                                 "AND name=?", (ST.cur_id64, pos["body"])).fetchone()
+        genera = [g for g in ((r["genuses"] if r else None) or "").split(",") if g]
+        c = ST._nav_cache = (key, marks, r["sig_bio"] if r else None, genera)
+        _bio_resume(pos["body"], marks)
+    from overlay import COL
+    lines = surfacenav.compass_lines(pos, c[1], radius, sig_bio=c[2], genera=c[3],
+                                     colours=COL, orbit=not low)
+    if lines:
+        ov.show_nav(lines, seconds=4)
+
+
+def _bio_resume(body: str, marks: List[Dict[str, Any]]) -> None:
+    """After an EDMC restart mid-sampling: pick up the species in progress."""
+    if ST.bio_active is not None:
+        return
+    todo = [s for s in surfacenav.body_state(marks)["species"]
+            if not s["analysed"] and s["points"] and s["samples"] < 3]
+    if todo:
+        s = max(todo, key=lambda x: x["last"] or "")
+        ST.bio_active = {"body": body, "species": s["species"], "genus": s["genus"],
+                         "points": list(s["points"])}
+
+
+def _bio_distance_line(pos: Dict[str, Any], radius: float, now: float) -> None:
+    """Overlay: distance to the previous samples of the species in progress."""
+    b = ST.bio_active
+    if not b or b["body"] != pos["body"] or radius <= 0 or not b["points"]:
+        return
+    if now - ST._bio_shown < 1.0:
+        return
+    ST._bio_shown = now
+    rng = COLONY_RANGE_M.get(b["genus"] or "")
+    near = min(surface_distance_m(la, lo, pos["lat"], pos["lon"], radius)
+               for la, lo in b["points"])
+    ok = rng is not None and near >= rng
+    from overlay import COL
+    head = "BIO > %s  %d/3" % ((b["species"] or "?")[:30], len(b["points"]) + 1)
+    if rng is None:
+        line = ("%.0f m from nearest sample (range unknown)" % near, COL["dim"])
+    else:
+        line = ("%.0f m / %d m  %s" % (near, rng, "OK - sample here" if ok else "too close"),
+                COL["data"] if ok else COL["warn"])
+    ov = getattr(ST, "overlay", None)
+    if ov is not None and ov.enabled:
+        ov.show_bio([(head, COL["head"]), line], seconds=6)
+
+
+def _bio_event(entry: Dict[str, Any]) -> None:
+    """Follow Log -> Sample -> Analyse of one species for the distance line."""
+    kind = entry.get("ScanType")
+    pos = ST.db._pos if ST.db else None
+    body = pos["body"] if pos else None
+    species = entry.get("Species_Localised") or entry.get("Species")
+    genus = entry.get("Genus_Localised") or entry.get("Genus")
+    if kind == "Analyse":
+        ST.bio_active = None
+        ov = getattr(ST, "overlay", None)
+        if ov is not None:
+            from overlay import COL
+            ov.show_bio([("BIO > %s analysed" % (species or "?")[:30], COL["data"])],
+                        seconds=6)
+        return
+    if kind not in ("Log", "Sample") or not pos:
+        return
+    b = ST.bio_active
+    if kind == "Log" or not b or b["species"] != species or b["body"] != body:
+        b = ST.bio_active = {"body": body, "species": species, "genus": genus, "points": []}
+    b["points"].append((pos["lat"], pos["lon"]))
+
+
 def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
     """Status.json. The Destination field carries the id64 of any selected target."""
+    try:
+        _surface_status(entry)
+    except Exception:
+        logger.debug("surface status failed", exc_info=True)
     # Which game screen is in front - the overlay steps aside for the maps,
     # FSS, DSS, codex and station services. Before any other check: it must
     # work even with destination harvesting switched off.
@@ -2831,6 +3092,8 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
 
     _refresh()
     theme.update(_frame)
+    # SHBOX FIS along with EDMC, when ticked in the settings
+    _frame.after(FIS_AUTOSTART_DELAY_MS, _fis_autostart)
     return _frame
 
 
@@ -2870,9 +3133,27 @@ def _mining_window_close() -> None:
     _mine_body = None
 
 
-ATLAS_MODES = ("ring hotspots", "body signals", "materials picked up")
+ATLAS_MODES = ("ring hotspots", "body signals", "materials picked up", "finds on the ground")
+# tab captions, and which setting remembers each tab's picker
+ATLAS_TABS = {ATLAS_MODES[0]: "rings", ATLAS_MODES[1]: "signals",
+              ATLAS_MODES[2]: "materials", ATLAS_MODES[3]: "finds"}
+_ATLAS_KEY = {ATLAS_MODES[0]: "mine_mat", ATLAS_MODES[1]: "atlas_sig",
+              ATLAS_MODES[2]: "atlas_mat", ATLAS_MODES[3]: "atlas_find"}
 _atlas_mode: Optional[tk.StringVar] = None
 _atlas_pick_frame: Optional[tk.Frame] = None
+_atlas_tabs: Dict[str, Any] = {}
+_atlas_range: Optional[tk.StringVar] = None
+# far from the bubble, finds 2000 ly back would fill the list - limit by distance
+ATLAS_RANGES = ("any distance", "25 ly", "50 ly", "100 ly", "250 ly", "500 ly",
+                "1000 ly", "2000 ly")
+
+
+def _atlas_max_ly() -> Optional[float]:
+    v = _atlas_range.get() if _atlas_range is not None else ATLAS_RANGES[0]
+    try:
+        return float(v.split()[0])
+    except (ValueError, IndexError):
+        return None
 # signal kinds shown first, in this order; everything else follows by count
 _SIG_FIRST = ("mining_location", "geological", "biological", "genus:Brain Trees",
               "site:nonhuman", "site:guardian", "thargoid", "guardian", "human",
@@ -2897,6 +3178,8 @@ def _atlas_choices(mode: str) -> List[Tuple[str, Optional[str]]]:
             kinds = ST.db.signal_kinds()
         elif mode == ATLAS_MODES[2]:
             kinds = ST.db.material_kinds()
+        elif mode == ATLAS_MODES[3]:
+            kinds = ST.db.find_kinds()
         else:
             kinds = ST.db.hotspot_materials()
     if mode == ATLAS_MODES[1]:
@@ -2906,6 +3189,9 @@ def _atlas_choices(mode: str) -> List[Tuple[str, Optional[str]]]:
     if mode == ATLAS_MODES[2]:
         return [("(all)", None)] + [("%s: %s" % ((k["category"] or "?")[:5], k["label"]),
                                      k["material"]) for k in kinds]
+    if mode == ATLAS_MODES[3]:
+        return [("(all)", None)] + [("%s (%d)" % (k["label"], k["places"]), k["kind"])
+                                    for k in kinds]
     return [("(all)", None)] + [((m["label"] or m["material"]), m["material"])
                                 for m in kinds]
 
@@ -2920,10 +3206,12 @@ def _mining_window_open() -> None:
       Trees), codex sites, and non-human or Guardian sites marked from what
       you picked up there (the journal reports those sites themselves never)
     * materials picked up - every MaterialCollected with the body you were at
+    * finds on the ground - codex finds, analysed species, settlements and
+      screenshots with the body and the latitude/longitude where they were
 
-    Clicking a row copies the system name.
+    One tab per kind; clicking a row copies the system name.
     """
-    global _mine_win, _mine_body, _mine_mat, _atlas_mode, _atlas_pick_frame
+    global _mine_win, _mine_body, _mine_mat, _atlas_mode, _atlas_pick_frame, _atlas_range
     if _frame is None or ST.db is None:
         return
     _mine_win = tk.Toplevel(_frame)
@@ -2937,21 +3225,34 @@ def _mining_window_open() -> None:
     mode = cfg_str(CFG["atlas_mode"], ATLAS_MODES[0])
     _atlas_mode = tk.StringVar(value=mode if mode in ATLAS_MODES else ATLAS_MODES[0])
 
+    tabs = tk.Frame(_mine_win)
+    tabs.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(8, 0))
+    _atlas_tabs.clear()
+    for m in ATLAS_MODES:
+        # radio buttons drawn as buttons: one tab per kind of find
+        rb = tk.Radiobutton(tabs, text=ATLAS_TABS[m], value=m, variable=_atlas_mode,
+                            indicatoron=False, width=12, padx=4, pady=2,
+                            command=_atlas_build_picker)
+        rb.pack(side=tk.LEFT, padx=(0, 2))
+        _atlas_tabs[m] = rb
     bar = tk.Frame(_mine_win)
-    bar.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(8, 4))
-    mode_pick = ttk.OptionMenu(bar, _atlas_mode, _atlas_mode.get(), *ATLAS_MODES,
-                               command=lambda *_: _atlas_build_picker())
-    mode_pick.pack(side=tk.LEFT)
-    _theme_menu(mode_pick, _theme_colours())
+    bar.grid(row=1, column=0, sticky=tk.EW, padx=10, pady=(4, 4))
     _atlas_pick_frame = tk.Frame(bar)
     _atlas_pick_frame.pack(side=tk.LEFT, padx=(6, 0))
+    rng = cfg_str(CFG["atlas_range"], ATLAS_RANGES[0])
+    _atlas_range = tk.StringVar(value=rng if rng in ATLAS_RANGES else ATLAS_RANGES[0])
+    rng_pick = ttk.OptionMenu(bar, _atlas_range, _atlas_range.get(), *ATLAS_RANGES,
+                              command=lambda *_: (cfg_set(CFG["atlas_range"], _atlas_range.get()),
+                                                  _mining_refresh()))
+    rng_pick.pack(side=tk.LEFT, padx=(6, 0))
+    _theme_menu(rng_pick, _theme_colours())
     tk.Button(bar, text="refresh", command=_atlas_build_picker).pack(
         side=tk.LEFT, padx=(6, 0))
     tk.Button(bar, text="close", command=_mining_window_close).pack(
         side=tk.LEFT, padx=(4, 0))
 
     _mine_body = tk.Frame(_mine_win)
-    _mine_body.grid(row=1, column=0, sticky=tk.NSEW, padx=10, pady=(0, 8))
+    _mine_body.grid(row=2, column=0, sticky=tk.NSEW, padx=10, pady=(0, 8))
     _atlas_build_picker()
     _theme_tree(_mine_win, _theme_colours())
     _fit_to_screen(_mine_win)
@@ -2966,10 +3267,13 @@ def _atlas_build_picker() -> None:
         w.destroy()
     mode = _atlas_mode.get()
     cfg_set(CFG["atlas_mode"], mode)
+    for m, rb in _atlas_tabs.items():
+        try:
+            rb.configure(text=("[ %s ]" % ATLAS_TABS[m]) if m == mode else ATLAS_TABS[m])
+        except Exception:
+            pass
     names = [c[0] for c in _atlas_choices(mode)]
-    key = {ATLAS_MODES[0]: "mine_mat", ATLAS_MODES[1]: "atlas_sig",
-           ATLAS_MODES[2]: "atlas_mat"}[mode]
-    _mine_mat = tk.StringVar(value=cfg_str(CFG[key], names[0]))
+    _mine_mat = tk.StringVar(value=cfg_str(CFG[_ATLAS_KEY[mode]], names[0]))
     if _mine_mat.get() not in names:
         _mine_mat.set(names[0])
     picker = ttk.OptionMenu(_atlas_pick_frame, _mine_mat, _mine_mat.get(), *names,
@@ -3007,18 +3311,27 @@ def _mining_refresh() -> None:
 
     with ST.lock:
         if mode == ATLAS_MODES[1]:
-            rows = ST.db.find_signals(key, near=ST.cur_pos, limit=40)
+            rows = ST.db.find_signals(key, near=ST.cur_pos, limit=100000)
         elif mode == ATLAS_MODES[2]:
-            rows = ST.db.find_materials(key, near=ST.cur_pos, limit=40)
+            rows = ST.db.find_materials(key, near=ST.cur_pos, limit=100000)
+        elif mode == ATLAS_MODES[3]:
+            rows = ST.db.find_marks(key, near=ST.cur_pos, limit=100000)
         else:
-            rows = ST.db.find_hotspots(key, near=ST.cur_pos, limit=40)
+            rows = ST.db.find_hotspots(key, near=ST.cur_pos, limit=100000)
+    max_ly = _atlas_max_ly()
+    if max_ly and ST.cur_pos is not None:
+        rows = [r for r in rows if r.get("dist") is not None and r["dist"] <= max_ly]
+    rows = rows[:40]
 
     if not rows:
         hint = {ATLAS_MODES[0]: "map a ring with the DSS and its materials land here",
                 ATLAS_MODES[1]: "FSS / DSS a body and its signals land here",
-                ATLAS_MODES[2]: "pick up a material and where you were lands here"}
+                ATLAS_MODES[2]: "pick up a material and where you were lands here",
+                ATLAS_MODES[3]: "land, log a codex entry, sample or take a screenshot"}
+        max_ly = _atlas_max_ly()
         lbl = tk.Label(_mine_body, anchor=tk.W, font=_MONO,
-                       text="nothing yet - " + hint.get(mode, ""))
+                       text=("nothing within %.0f ly - pick a larger distance" % max_ly)
+                       if max_ly and ST.cur_pos is not None else "nothing yet - " + hint.get(mode, ""))
         lbl.grid(row=0, column=0, sticky=tk.W)
         _apply_theme(lbl, col, is_text=True)
         return
@@ -3030,6 +3343,8 @@ def _mining_refresh() -> None:
         head = "%-26s %-22s %4s  %s" % ("system", "body", "x", "distance")
     elif mode == ATLAS_MODES[2]:
         head = "%-26s %-22s %5s  %-10s %s" % ("system", "where", "got", "last", "distance")
+    elif mode == ATLAS_MODES[3]:
+        head = "%-26s %-10s %-28s %-17s %s" % ("system", "body", "what", "lat / lon", "distance")
     else:
         head = "%-26s %-26s %3s  %-10s %s" % ("system", "ring", "x", "ring type", "distance")
     h = tk.Label(_mine_body, font=_FONT_GROUP, anchor=tk.W, text=head)
@@ -3043,6 +3358,11 @@ def _mining_refresh() -> None:
             text = "%-26s %-22s %4d  %s" % (sysname[:26], body[:22], r["count"] or 1, dist(r))
             if key is None:
                 text += "   " + _sig_label({"kind": r["kind"], "label": r["label"]})
+        elif mode == ATLAS_MODES[3]:
+            body = _short_body(r.get("body_name"), sysname)
+            where = ("%+.4f %+.4f" % (r["lat"], r["lon"])) if r.get("lat") is not None else "-"
+            text = "%-26s %-10s %-28s %-17s %s" % (
+                sysname[:26], body[:10], str(r.get("label") or "")[:28], where, dist(r))
         elif mode == ATLAS_MODES[2]:
             body = _short_body(r.get("body_name"), sysname) or "(in space)"
             text = "%-26s %-22s %5d  %-10s %s" % (
@@ -3058,8 +3378,7 @@ def _mining_refresh() -> None:
         _atlas_row(_mine_body, i, text, sysname, col)
 
     if _mine_mat:
-        cfg_set(CFG[{ATLAS_MODES[0]: "mine_mat", ATLAS_MODES[1]: "atlas_sig",
-                     ATLAS_MODES[2]: "atlas_mat"}[mode]], want)
+        cfg_set(CFG[_ATLAS_KEY[mode]], want)
 
 
 def _toggle_probe_window() -> None:
@@ -3479,17 +3798,39 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     _p["overlay"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay"], True) else 0)
     _p["overlay_brief"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_brief"], True) else 0)
     _p["overlay_pos"] = tk.StringVar(value=cfg_str(CFG["overlay_pos"], "top-left"))
+    _p["overlay_nav"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_nav"], True) else 0)
     field(right, "right", "", nb.Checkbutton(
         right, text="show the next route targets in the game", variable=_p["overlay"]))
     field(right, "right", "", nb.Checkbutton(
         right, text="briefing on target selection and arrival",
         variable=_p["overlay_brief"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="surface compass: parked SRV, open samples, known points",
+        variable=_p["overlay_nav"]))
     field(right, "right", "Position",
           ttk.OptionMenu(right, _p["overlay_pos"], _p["overlay_pos"].get(),
                          *OVERLAY_POSITIONS))
     ov = getattr(ST, "overlay", None)
     note(right, "right", "  overlay: %s" % (
         "connected" if ov is not None and ov.available() else "not installed"))
+
+    head(right, "right", "SHBOX FIS - flight information system")
+    fis_row = tk.Frame(right)
+    tk.Button(fis_row, text="start FIS", command=_fis_start).pack(side=tk.LEFT)
+    tk.Button(fis_row, text="open in browser", command=_fis_open).pack(side=tk.LEFT, padx=(6, 0))
+    fis_state = tk.StringVar(value=_fis_status())
+    tk.Button(fis_row, text="check", command=lambda: fis_state.set(_fis_status())).pack(
+        side=tk.LEFT, padx=(6, 0))
+    field(right, "right", "", fis_row)
+    _p["fis_autostart"] = tk.IntVar(value=1 if cfg_bool(CFG["fis_autostart"], False) else 0)
+    field(right, "right", "", nb.Checkbutton(
+        right, text="start the FIS together with EDMC (window minimised)",
+        variable=_p["fis_autostart"]))
+    nb.Label(right, textvariable=fis_state).grid(
+        row=state["right"], column=0, columnspan=4, sticky=tk.W, padx=(12, 0))
+    state["right"] += 1
+    note(right, "right", "  or double-click FIS\\start_fis.bat - first start asks, then remembers;")
+    note(right, "right", "  change it later with FIS\\fis_settings.bat. Details: FIS\\README.md")
 
     _p["panel_fuel"] = tk.IntVar(value=1 if cfg_bool(CFG["panel_fuel"], False) else 0)
     _p["check_updates"] = tk.IntVar(
@@ -3591,6 +3932,9 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["check_updates"], bool(_p["check_updates"].get()))
         cfg_set(CFG["overlay"], bool(_p["overlay"].get()))
         cfg_set(CFG["overlay_brief"], bool(_p["overlay_brief"].get()))
+        cfg_set(CFG["overlay_nav"], bool(_p["overlay_nav"].get()))
+        if "fis_autostart" in _p:
+            cfg_set(CFG["fis_autostart"], bool(_p["fis_autostart"].get()))
         cfg_set(CFG["overlay_pos"], _p["overlay_pos"].get())
         _overlay_apply_settings()
         _overlay_targets()
@@ -3684,7 +4028,8 @@ def _first_run_migration() -> None:
 
 
 # Releases that need one full journal replay to fill what they store new.
-REPLAY_TAGS = ("upgrade_41", "upgrade_43")
+# upgrade_44b: barycentre parents (binary moons placed far from their planet)
+REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44", "upgrade_44b")
 
 
 def _upgrade_replay() -> None:

@@ -1,0 +1,263 @@
+# -*- coding: utf-8 -*-
+"""
+surfacenav.py - where things are on a body, seen from where you are
+====================================================================
+Pure functions over the surface marks the plugin records (touchdown,
+vehicle parked, exobiology samples, codex finds, screenshots ...):
+
+  body_state()     what is still open on a body: the parked SRV, the parked
+                   ship, species logged but not analysed (with the number of
+                   samples taken), and points worth coming back to
+  bearing_deg()    initial great-circle bearing from one fix to another
+  compass_lines()  the cockpit-overlay block: direction relative to your
+                   heading and distance for each of those points
+
+Display only. Positions come from the game's own Status.json, which reports
+latitude/longitude on the surface and in orbital cruise alike - so the same
+block also works as "known points" on the way down from orbit.
+
+No EDMC imports, so it can be tested on its own and the FIS can use it too.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+Line = Tuple[str, str]
+
+# kinds worth finding again (sites stay where they are; bio colonies too)
+SITE_KINDS = ("codex", "settlement", "screenshot")
+SITE_MERGE_M = 60.0          # two finds this close count as one point
+
+
+def _g(m: Any, k: str) -> Any:
+    try:
+        return m[k]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def surface_distance_m(lat1: float, lon1: float, lat2: float, lon2: float,
+                       radius_m: float) -> float:
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * radius_m * math.asin(min(1.0, math.sqrt(a)))
+
+
+def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Initial bearing 0..360 (0 = north), as the game's Heading counts it."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dl = math.radians(lon2 - lon1)
+    x = math.sin(dl) * math.cos(p2)
+    y = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
+
+
+def relative_deg(bearing: float, heading: float) -> float:
+    """-180..180: negative = turn left."""
+    return (bearing - heading + 540.0) % 360.0 - 180.0
+
+
+def direction_text(bearing: float, heading: Optional[float]) -> str:
+    """ASCII arrow - overlay fonts differ, plain characters always render."""
+    if heading is None:
+        return "brg %03d" % round(bearing)
+    rel = relative_deg(bearing, float(heading))
+    a = abs(rel)
+    if a <= 8:
+        return "^ ahead"
+    if a >= 165:
+        return "v behind"
+    n = "%d" % round(a)
+    if rel < 0:
+        return ("<< " if a > 90 else "< ") + n
+    return n + (" >>" if a > 90 else " >")
+
+
+def fmt_dist(m: float) -> str:
+    if m < 1000:
+        return "%d m" % round(m)
+    if m < 100000:
+        return "%.1f km" % (m / 1000.0)
+    return "%d km" % round(m / 1000.0)
+
+
+def body_state(marks: Iterable[Any]) -> Dict[str, Any]:
+    """
+    Replay the marks of one body in time order.
+
+    parked   the SRV left standing (Disembark from the SRV, not yet re-entered)
+    ship     the ship standing on the ground (Touchdown by the ship, not yet
+             lifted off or dismissed)
+    species  one entry per species: samples taken since its last Log (the
+             game restarts the count on a new Log), positions, analysed
+    sites    positioned finds worth returning to, close ones merged
+    """
+    parked = ship = None
+    species: Dict[str, Dict[str, Any]] = {}
+    sites: List[Dict[str, Any]] = []
+    for m in sorted(marks, key=lambda r: _g(r, "ts") or ""):
+        kind = _g(m, "kind") or ""
+        lat, lon = _g(m, "lat"), _g(m, "lon")
+        detail = _g(m, "detail")
+        if kind == "srv_parked":
+            parked = m if lat is not None else parked
+        elif kind == "srv_in" or (kind == "embark" and _g(m, "label") == "SRV"):
+            parked = None
+        elif kind == "touchdown" and detail != "srv":
+            ship = m if lat is not None else ship
+        elif kind == "liftoff" and detail != "srv":
+            ship = None
+        elif kind.startswith("bio_"):
+            name = _g(m, "label") or "?"
+            s = species.get(name)
+            if kind == "bio_log" or s is None:
+                s = species[name] = {"species": name, "genus": detail, "samples": 0,
+                                     "points": [], "analysed": False, "last": None}
+            if kind in ("bio_log", "bio_sample"):
+                s["samples"] = min(3, s["samples"] + 1)
+                if lat is not None:
+                    s["points"].append((float(lat), float(lon)))
+                s["last"] = _g(m, "ts")
+            elif kind == "bio_analyse":
+                s["analysed"] = True
+                s["samples"] = 3
+        if kind in SITE_KINDS and lat is not None:
+            sites.append({"kind": kind, "label": _g(m, "label") or kind,
+                          "detail": detail, "lat": float(lat), "lon": float(lon),
+                          "ts": _g(m, "ts")})
+    return {"parked": parked, "ship": ship, "species": list(species.values()),
+            "sites": sites}
+
+
+def _merge_sites(sites: List[Dict[str, Any]], radius: float) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for s in sites:
+        if any(o["label"] == s["label"] and
+               surface_distance_m(o["lat"], o["lon"], s["lat"], s["lon"], radius) < SITE_MERGE_M
+               for o in out):
+            continue
+        out.append(s)
+    return out
+
+
+def bio_summary(state: Dict[str, Any], sig_bio: Optional[int],
+                genera: Sequence[str]) -> Dict[str, Any]:
+    """Analysed species, genera still open (the DSS named them, none analysed)."""
+    sp = state["species"]
+    done_genera = {s["genus"] for s in sp if s["analysed"] and s["genus"]}
+    started = {s["genus"] for s in sp if s["genus"]}
+    return {"analysed": sum(1 for s in sp if s["analysed"]),
+            "in_progress": [s for s in sp if not s["analysed"]],
+            "open_genera": [g for g in genera if g not in done_genera and g not in started],
+            "signals": sig_bio}
+
+
+def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
+                  sig_bio: Optional[int] = None, genera: Sequence[str] = (),
+                  colours: Optional[Dict[str, str]] = None, limit: int = 6,
+                  orbit: bool = False) -> List[Line]:
+    """
+    The NAV block: one line per point, nearest first within its group -
+    parked SRV, parked ship, unfinished species, sites. Empty when the body
+    holds nothing to point at.
+    """
+    col = colours or {}
+    c_head, c_data = col.get("head", "#3EF2E0"), col.get("data", "#7CFF6B")
+    c_warn, c_dim, c_new = col.get("warn", "#FFB23E"), col.get("dim", "#8FA3A6"), \
+        col.get("new", "#B57CFF")
+    if radius <= 0 or pos.get("lat") is None:
+        return []
+    lat, lon, hdg = float(pos["lat"]), float(pos["lon"]), pos.get("heading")
+    st = body_state(marks)
+    summ = bio_summary(st, sig_bio, genera)
+
+    def entry(label: str, plat: float, plon: float, colour: str) -> Tuple[float, Line]:
+        d = surface_distance_m(lat, lon, plat, plon, radius)
+        b = bearing_deg(lat, lon, plat, plon)
+        return d, ("%-24s %8s  %s" % (label[:24], fmt_dist(d), direction_text(b, hdg)), colour)
+
+    rows: List[Line] = []
+    if st["parked"] is not None:
+        p = st["parked"]
+        rows.append(entry("%s PARKED" % (_g(p, "detail") or "SRV").upper(),
+                          float(p["lat"]), float(p["lon"]), c_warn)[1])
+    if st["ship"] is not None:
+        p = st["ship"]
+        rows.append(entry("SHIP", float(p["lat"]), float(p["lon"]), c_warn)[1])
+    bio = []
+    for s in summ["in_progress"]:
+        if s["points"]:
+            plat, plon = s["points"][-1]
+            bio.append(entry("%s %d/3" % (s["species"][:19], s["samples"]), plat, plon, c_new))
+    rows += [l for _d, l in sorted(bio, key=lambda t: t[0])]
+    # a codex entry of a species still being sampled is the same point as
+    # its sample line; one of an analysed species stays (Brain Trees are
+    # worth coming back to for their materials) but steps back in colour
+    busy = {s["species"] for s in summ["in_progress"]}
+    done = {s["species"] for s in st["species"] if s["analysed"]}
+    sites = [entry(s["label"], s["lat"], s["lon"],
+                   c_dim if s["kind"] == "screenshot" or s["label"] in done else c_data)
+             for s in _merge_sites(st["sites"], radius) if s["label"] not in busy]
+    rows += [l for _d, l in sorted(sites, key=lambda t: t[0])]
+
+    bio_txt = ""
+    if summ["analysed"] or summ["in_progress"] or sig_bio:
+        # species, not signals: one Brain Trees signal holds several species
+        bio_txt = "bio %d done" % summ["analysed"]
+        if summ["in_progress"]:
+            bio_txt += ", %d open" % len(summ["in_progress"])
+        if summ["open_genera"]:
+            bio_txt += " | not found: " + ", ".join(summ["open_genera"])[:40]
+        elif sig_bio and not genera:
+            bio_txt += " | %d signal%s" % (sig_bio, "" if sig_bio == 1 else "s")
+    if not rows and not summ["open_genera"]:
+        return []
+    head = "%s  %s" % ("KNOWN POINTS" if orbit else "NAV", bio_txt)
+    out: List[Line] = [(head.rstrip(), c_head)]
+    out += rows[:limit]
+    if len(rows) > limit:
+        out.append(("+%d more" % (len(rows) - limit), c_dim))
+    return out
+
+
+def _selftest() -> None:
+    assert round(bearing_deg(0, 0, 1, 0)) == 0
+    assert round(bearing_deg(0, 0, 0, 1)) == 90
+    assert direction_text(90, 90) == "^ ahead"
+    assert direction_text(60, 90) == "< 30"
+    assert direction_text(200, 90) == "110 >>"
+    assert direction_text(275, 90) == "v behind"
+    marks = [
+        {"ts": "1", "kind": "touchdown", "label": "b", "detail": "srv", "lat": 0.0, "lon": 0.0},
+        {"ts": "2", "kind": "srv_parked", "label": "SRV", "detail": "Nomad", "lat": 0.0, "lon": 0.0},
+        {"ts": "3", "kind": "bio_log", "label": "Roseum Brain Tree", "detail": "Brain Trees",
+         "lat": 0.001, "lon": 0.0},
+        {"ts": "3", "kind": "codex", "label": "Roseum Brain Tree", "detail": "Organic structures",
+         "lat": 0.001, "lon": 0.0},
+        {"ts": "4", "kind": "bio_sample", "label": "Roseum Brain Tree", "detail": "Brain Trees",
+         "lat": 0.002, "lon": 0.0},
+    ]
+    st = body_state(marks)
+    assert st["ship"] is None and st["parked"]["detail"] == "Nomad"
+    assert st["species"][0]["samples"] == 2 and not st["species"][0]["analysed"]
+    lines = compass_lines({"lat": 0.0, "lon": 0.001, "heading": 0}, marks, 400000.0,
+                          sig_bio=2, genera=["Brain Trees", "Bacterium"])
+    assert lines[1][0].startswith("NOMAD PARKED"), lines
+    assert "not found: Bacterium" in lines[0][0], lines
+    assert not any(l[0].startswith("Roseum Brain Tree ") and "/3" not in l[0]
+                   for l in lines), lines
+    marks.append({"ts": "5", "kind": "embark", "label": "SRV", "detail": None,
+                  "lat": 0.0, "lon": 0.0})
+    assert body_state(marks)["parked"] is None
+    # a new Log restarts the count
+    marks.append({"ts": "6", "kind": "bio_log", "label": "Roseum Brain Tree",
+                  "detail": "Brain Trees", "lat": 0.01, "lon": 0.0})
+    assert body_state(marks)["species"][0]["samples"] == 1
+    print("surfacenav selftest ok")
+
+
+if __name__ == "__main__":
+    _selftest()

@@ -1,0 +1,11 @@
+# line endings: Windows batch files need CRLF
+*.bat text eol=crlf
+*.py text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+
+# not part of the download (GitHub "Download ZIP" / release archives)
+FIS/tests export-ignore
+.github export-ignore

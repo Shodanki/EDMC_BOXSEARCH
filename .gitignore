@@ -11,3 +11,8 @@ LOGS/
 # python
 __pycache__/
 *.pyc
+
+# FIS: personal settings (token) and local test data
+FIS/fis.ini
+FIS/tests/data/
+FIS/.run.lock

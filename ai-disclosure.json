@@ -1,6 +1,6 @@
 {
   "ai_generated": "partly",
-  "scope": "source code, documentation and release texts (development time only)",
+  "scope": "source code, documentation and release texts of the plugin and of SHBOX FIS (development time only)",
   "runtime_ai": false,
   "output_ai_generated": false,
   "legal_basis": "Art. 50 Regulation (EU) 2024/1689 (EU AI Act) - voluntary disclosure, no obligation applies",
@@ -20,7 +20,11 @@
   ],
   "human_review": "every change reviewed, tested in game and released by the developer (CMDR Shodanki)",
   "provenance": "git commit trailer 'Co-Authored-By: Claude' from 4.1.0 on",
-  "assessment_date": "2026-11-04",
+  "assessment_date": "2026-11-05",
   "document": "AI_TRANSPARENCY.md",
-  "sha256": "8fbf9c8fc75d069f0dbbedfa4383c96c25a05188239683be13c494b4766d5c26"
+  "sha256": "8eca8b185e9bd9101b654a496777848db40beca2a19af20a3c5e2f2fc2fe48de",
+  "components": [
+    "SHBOXSEARCH plugin",
+    "SHBOX FIS (folder FIS, since 4.4.0)"
+  ]
 }

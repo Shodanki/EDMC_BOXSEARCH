@@ -32,6 +32,30 @@ import json
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 G = 9.80665          # journal SurfaceGravity is m/s^2
+
+# Minimum distance between two samples of one species before the game
+# accepts the next one ("clonal colony range"), in metres. Community-known
+# values, not published by Frontier - check them in game; the overlay shows
+# the measured distance next to them so a wrong value is easy to spot.
+COLONY_RANGE_M = {
+    "Aleoida": 150, "Bacterium": 500, "Cactoida": 300, "Clypeus": 150,
+    "Concha": 150, "Electricae": 1000, "Fonticulua": 500, "Frutexa": 150,
+    "Fumerola": 100, "Fungoida": 300, "Osseus": 800, "Recepta": 150,
+    "Stratum": 500, "Tubus": 800, "Tussock": 200,
+    # sampleable since the Nomad update; 100 m community value, consistent
+    # with own samples 2026-11-05 (accepted at 102 m on HIP 31189 A 1 d)
+    "Brain Trees": 100,
+}
+
+
+def surface_distance_m(lat1: float, lon1: float, lat2: float, lon2: float,
+                       radius_m: float) -> float:
+    """Great-circle distance on a body of the given radius (haversine)."""
+    import math
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * radius_m * math.asin(min(1.0, math.sqrt(a)))
 GRAV_TOL = 0.15      # +-15 % around the observed gravity range
 TEMP_TOL = 15.0      # +-15 K around the observed temperature range
 
