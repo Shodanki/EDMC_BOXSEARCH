@@ -90,6 +90,9 @@ CFG = {
     "panel_fuel": "%s_panel_fuel" % PLUGIN_NAME,
     "panel_queue": "%s_panel_queue" % PLUGIN_NAME,
     "mine_mat": "%s_mine_mat" % PLUGIN_NAME,
+    "atlas_mode": "%s_atlas_mode" % PLUGIN_NAME,
+    "atlas_sig": "%s_atlas_sig" % PLUGIN_NAME,
+    "atlas_mat": "%s_atlas_mat" % PLUGIN_NAME,
     "check_updates": "%s_check_updates" % PLUGIN_NAME,
     "update_seen": "%s_update_seen" % PLUGIN_NAME,
     "update_checked": "%s_update_checked" % PLUGIN_NAME,
@@ -301,8 +304,8 @@ def plugin_start3(plugin_dir: str) -> str:
 
     if not ST.db.get_meta("migrated"):
         _run_async(_first_run_migration, label="first-run import")
-    elif not ST.db.get_meta("upgrade_41"):
-        _run_async(_upgrade_41, label="4.1 upgrade")
+    elif any(not ST.db.get_meta(t) for t in REPLAY_TAGS):
+        _run_async(_upgrade_replay, label="upgrade")
 
     ST.carrier = ST.db.get_carrier()
     if ST.carrier:
@@ -652,7 +655,8 @@ def _overlay_briefing(kind: str, name: Optional[str], id64: Optional[int],
         return
     try:
         info = _briefing_info(kind, name, id64, star_class)
-        ov.show_briefing(info, seconds=12 if kind == "target" else 10)
+        # 30 s: long enough to read while aligning for the jump (user, 05.11.)
+        ov.show_briefing(info, seconds=30)
         if info.get("known_sources") == [] and kind == "target":
             logger.info("briefing | %s is in no database - first discovery likely", name)
     except Exception:
@@ -2800,7 +2804,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     _btn_stats.pack(side=tk.LEFT, padx=(3, 0))
     tk.Button(bar, text="probe", width=6,
               command=_toggle_probe_window).pack(side=tk.LEFT, padx=(3, 0))
-    tk.Button(bar, text="mining", width=7,
+    tk.Button(bar, text="atlas", width=6,
               command=_toggle_mining_window).pack(side=tk.LEFT, padx=(3, 0))
 
     # 5-7  optional lines, hidden unless switched on
@@ -2866,51 +2870,125 @@ def _mining_window_close() -> None:
     _mine_body = None
 
 
+ATLAS_MODES = ("ring hotspots", "body signals", "materials picked up")
+_atlas_mode: Optional[tk.StringVar] = None
+_atlas_pick_frame: Optional[tk.Frame] = None
+# signal kinds shown first, in this order; everything else follows by count
+_SIG_FIRST = ("mining_location", "geological", "biological", "genus:Brain Trees",
+              "site:nonhuman", "site:guardian", "thargoid", "guardian", "human",
+              "uss:nonhuman")
+
+
+def _sig_label(k: Dict[str, Any]) -> str:
+    kind, label = k["kind"], k["label"] or k["kind"]
+    if kind == "genus:Brain Trees":
+        return "Brain Trees"
+    if kind.startswith("genus:"):
+        return "Bio: " + label
+    if kind.startswith("codex:"):
+        return "Codex: " + label
+    return label
+
+
+def _atlas_choices(mode: str) -> List[Tuple[str, Optional[str]]]:
+    """(label shown, key used for the query) for the second picker."""
+    with ST.lock:
+        if mode == ATLAS_MODES[1]:
+            kinds = ST.db.signal_kinds()
+        elif mode == ATLAS_MODES[2]:
+            kinds = ST.db.material_kinds()
+        else:
+            kinds = ST.db.hotspot_materials()
+    if mode == ATLAS_MODES[1]:
+        order = {k: i for i, k in enumerate(_SIG_FIRST)}
+        kinds = sorted(kinds, key=lambda k: (order.get(k["kind"], 99), -k["total"]))
+        return [("(all)", None)] + [(_sig_label(k), k["kind"]) for k in kinds]
+    if mode == ATLAS_MODES[2]:
+        return [("(all)", None)] + [("%s: %s" % ((k["category"] or "?")[:5], k["label"]),
+                                     k["material"]) for k in kinds]
+    return [("(all)", None)] + [((m["label"] or m["material"]), m["material"])
+                                for m in kinds]
+
+
 def _mining_window_open() -> None:
     """
-    Every ring hotspot we have ever scanned, searchable by material.
+    The atlas: what you have found, searchable, nearest first.
 
-    Ring scans report their mining materials in SAASignalsFound alongside the
-    biological ones - "Platinum x3", "Low Temp. Diamonds x5". Those were being
-    discarded. Keeping them turns the survey into a mining atlas: when the
-    carrier needs tritium or you want a platinum run, the answer is already in
-    your own data.
+    * ring hotspots - mining materials from ring scans (since 4.0)
+    * body signals - planetary mining locations, geological / biological /
+      thargoid / guardian / human signals, the genera the DSS names (Brain
+      Trees), codex sites, and non-human or Guardian sites marked from what
+      you picked up there (the journal reports those sites themselves never)
+    * materials picked up - every MaterialCollected with the body you were at
+
+    Clicking a row copies the system name.
     """
-    global _mine_win, _mine_body, _mine_mat
+    global _mine_win, _mine_body, _mine_mat, _atlas_mode, _atlas_pick_frame
     if _frame is None or ST.db is None:
         return
     _mine_win = tk.Toplevel(_frame)
-    _mine_win.title("SHBOXSEARCH - mining hotspots")
+    _mine_win.title("SHBOXSEARCH - atlas")
     _mine_win.protocol("WM_DELETE_WINDOW", _mining_window_close)
     try:
         _mine_win.attributes("-topmost", cfg_bool(CFG["route_top"], True))
     except Exception:
         pass
 
-    with ST.lock:
-        mats = ST.db.hotspot_materials()
-    names = ["(all)"] + [(m["label"] or m["material"]) for m in mats]
-    _mine_mat = tk.StringVar(value=cfg_str(CFG["mine_mat"], names[0]))
-    if _mine_mat.get() not in names:
-        _mine_mat.set(names[0])
+    mode = cfg_str(CFG["atlas_mode"], ATLAS_MODES[0])
+    _atlas_mode = tk.StringVar(value=mode if mode in ATLAS_MODES else ATLAS_MODES[0])
 
     bar = tk.Frame(_mine_win)
     bar.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(8, 4))
-    tk.Label(bar, text="material").pack(side=tk.LEFT)
-    picker = ttk.OptionMenu(bar, _mine_mat, _mine_mat.get(), *names,
-                            command=lambda *_: _mining_refresh())
-    picker.pack(side=tk.LEFT, padx=(6, 0))
-    _theme_menu(picker, _theme_colours())
-    tk.Button(bar, text="refresh", command=_mining_refresh).pack(
+    mode_pick = ttk.OptionMenu(bar, _atlas_mode, _atlas_mode.get(), *ATLAS_MODES,
+                               command=lambda *_: _atlas_build_picker())
+    mode_pick.pack(side=tk.LEFT)
+    _theme_menu(mode_pick, _theme_colours())
+    _atlas_pick_frame = tk.Frame(bar)
+    _atlas_pick_frame.pack(side=tk.LEFT, padx=(6, 0))
+    tk.Button(bar, text="refresh", command=_atlas_build_picker).pack(
         side=tk.LEFT, padx=(6, 0))
     tk.Button(bar, text="close", command=_mining_window_close).pack(
         side=tk.LEFT, padx=(4, 0))
 
     _mine_body = tk.Frame(_mine_win)
     _mine_body.grid(row=1, column=0, sticky=tk.NSEW, padx=10, pady=(0, 8))
-    _mining_refresh()
+    _atlas_build_picker()
     _theme_tree(_mine_win, _theme_colours())
     _fit_to_screen(_mine_win)
+
+
+def _atlas_build_picker() -> None:
+    """(Re)build the second picker for the chosen mode, then the list."""
+    global _mine_mat
+    if _atlas_pick_frame is None or _atlas_mode is None:
+        return
+    for w in _atlas_pick_frame.winfo_children():
+        w.destroy()
+    mode = _atlas_mode.get()
+    cfg_set(CFG["atlas_mode"], mode)
+    names = [c[0] for c in _atlas_choices(mode)]
+    key = {ATLAS_MODES[0]: "mine_mat", ATLAS_MODES[1]: "atlas_sig",
+           ATLAS_MODES[2]: "atlas_mat"}[mode]
+    _mine_mat = tk.StringVar(value=cfg_str(CFG[key], names[0]))
+    if _mine_mat.get() not in names:
+        _mine_mat.set(names[0])
+    picker = ttk.OptionMenu(_atlas_pick_frame, _mine_mat, _mine_mat.get(), *names,
+                            command=lambda *_: _mining_refresh())
+    picker.pack(side=tk.LEFT)
+    _theme_menu(picker, _theme_colours())
+    _mining_refresh()
+
+
+def _atlas_row(parent, row: int, text: str, system: str, col) -> None:
+    lbl = tk.Label(parent, text=text, anchor=tk.W, font=_MONO)
+    lbl.grid(row=row, column=0, sticky=tk.W)
+    lbl.bind("<Button-1>", lambda e, n=system: _copy(n))
+    _apply_theme(lbl, col, is_text=True)
+
+
+def _short_body(body: Optional[str], system: str) -> str:
+    b = str(body or "")
+    return b[len(system):].strip() if system and b.startswith(system) else b
 
 
 def _mining_refresh() -> None:
@@ -2922,46 +3000,66 @@ def _mining_refresh() -> None:
     except Exception:
         pass
     col = _theme_colours()
+    mode = _atlas_mode.get() if _atlas_mode else ATLAS_MODES[0]
     want = _mine_mat.get() if _mine_mat else "(all)"
+    choices = dict(_atlas_choices(mode))
+    key = choices.get(want)
 
     with ST.lock:
-        mats = {(m["label"] or m["material"]): m["material"]
-                for m in ST.db.hotspot_materials()}
-        key = None if want == "(all)" else mats.get(want, want)
-        rows = ST.db.find_hotspots(key, near=ST.cur_pos, limit=40)
+        if mode == ATLAS_MODES[1]:
+            rows = ST.db.find_signals(key, near=ST.cur_pos, limit=40)
+        elif mode == ATLAS_MODES[2]:
+            rows = ST.db.find_materials(key, near=ST.cur_pos, limit=40)
+        else:
+            rows = ST.db.find_hotspots(key, near=ST.cur_pos, limit=40)
 
     if not rows:
+        hint = {ATLAS_MODES[0]: "map a ring with the DSS and its materials land here",
+                ATLAS_MODES[1]: "FSS / DSS a body and its signals land here",
+                ATLAS_MODES[2]: "pick up a material and where you were lands here"}
         lbl = tk.Label(_mine_body, anchor=tk.W, font=_MONO,
-                       text="nothing scanned yet - map a ring with the DSS\n"
-                            "and its materials land here automatically")
+                       text="nothing yet - " + hint.get(mode, ""))
         lbl.grid(row=0, column=0, sticky=tk.W)
         _apply_theme(lbl, col, is_text=True)
         return
 
-    head = tk.Label(_mine_body, font=_FONT_GROUP, anchor=tk.W,
-                    text="%-26s %-26s %3s  %-10s %s"
-                         % ("system", "ring", "x", "ring type", "distance"))
-    head.grid(row=0, column=0, sticky=tk.W)
-    _apply_theme(head, col, is_text=True)
+    def dist(h):
+        return ("%.0f ly" % h["dist"]) if h.get("dist") is not None else "-"
 
-    for i, h in enumerate(rows, 1):
-        ring = str(h["body"] or "")
-        sysname = str(h["system"])
-        if ring.startswith(sysname):
-            ring = ring[len(sysname):].strip()
-        dist = ("%.0f ly" % h["dist"]) if h["dist"] is not None else "-"
-        text = "%-26s %-26s %3d  %-10s %s" % (
-            sysname[:26], ring[:26], h["count"],
-            (h["ring_class"] or "")[:10], dist)
-        if want == "(all)":
-            text += "   " + str(h["material"])
-        lbl = tk.Label(_mine_body, text=text, anchor=tk.W, font=_MONO)
-        lbl.grid(row=i, column=0, sticky=tk.W)
-        lbl.bind("<Button-1>", lambda e, n=sysname: _copy(n))
-        _apply_theme(lbl, col, is_text=True)
+    if mode == ATLAS_MODES[1]:
+        head = "%-26s %-22s %4s  %s" % ("system", "body", "x", "distance")
+    elif mode == ATLAS_MODES[2]:
+        head = "%-26s %-22s %5s  %-10s %s" % ("system", "where", "got", "last", "distance")
+    else:
+        head = "%-26s %-26s %3s  %-10s %s" % ("system", "ring", "x", "ring type", "distance")
+    h = tk.Label(_mine_body, font=_FONT_GROUP, anchor=tk.W, text=head)
+    h.grid(row=0, column=0, sticky=tk.W)
+    _apply_theme(h, col, is_text=True)
+
+    for i, r in enumerate(rows, 1):
+        sysname = str(r["system"])
+        if mode == ATLAS_MODES[1]:
+            body = _short_body(r.get("body_name"), sysname) or "(system)"
+            text = "%-26s %-22s %4d  %s" % (sysname[:26], body[:22], r["count"] or 1, dist(r))
+            if key is None:
+                text += "   " + _sig_label({"kind": r["kind"], "label": r["label"]})
+        elif mode == ATLAS_MODES[2]:
+            body = _short_body(r.get("body_name"), sysname) or "(in space)"
+            text = "%-26s %-22s %5d  %-10s %s" % (
+                sysname[:26], body[:22], r["count"], str(r.get("last") or "")[:10], dist(r))
+            if key is None:
+                text += "   " + str(r.get("label") or r.get("material"))
+        else:
+            ring = _short_body(r["body"], sysname)
+            text = "%-26s %-26s %3d  %-10s %s" % (
+                sysname[:26], ring[:26], r["count"], (r["ring_class"] or "")[:10], dist(r))
+            if key is None:
+                text += "   " + str(r["material"])
+        _atlas_row(_mine_body, i, text, sysname, col)
 
     if _mine_mat:
-        cfg_set(CFG["mine_mat"], want)
+        cfg_set(CFG[{ATLAS_MODES[0]: "mine_mat", ATLAS_MODES[1]: "atlas_sig",
+                     ATLAS_MODES[2]: "atlas_mat"}[mode]], want)
 
 
 def _toggle_probe_window() -> None:
@@ -3577,17 +3675,27 @@ def _first_run_migration() -> None:
         st = ST.db.stats()
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         ST.db.set_meta("migrated", now)
-        ST.db.set_meta("upgrade_41", now)     # a fresh import already has it all
+        for t in REPLAY_TAGS:                 # a fresh import already has it all
+            ST.db.set_meta(t, now)
     logger.info("first-run import finished: %s", st)
     _rebuild_route()
     _set_status("first-run import done: %d systems, %d bodies"
                 % (st["systems"], st["bodies"]))
 
 
-def _upgrade_41() -> None:
-    """
-    One full journal replay after updating to 4.1, done automatically.
+# Releases that need one full journal replay to fill what they store new.
+REPLAY_TAGS = ("upgrade_41", "upgrade_43")
 
+
+def _upgrade_replay() -> None:
+    """
+    One full journal replay after an update that stores something new.
+
+    4.3: the signal atlas (planetary mining locations, geological and
+    biological signals, genera incl. Brain Trees, codex sites) and the
+    material atlas (where each material was picked up).
+
+    4.1:
     * fills the new per-body columns (gravity, temperature, atmosphere,
       volcanism, materials, radius, rings ...) from the existing history
     * corrects the bio sample counter: up to 4.0 every replay - including
@@ -3597,12 +3705,19 @@ def _upgrade_41() -> None:
     """
     # let EDMC finish its own start-up (journal monitor, commander, cAPI) first
     time.sleep(15)
-    logger.info("4.1 upgrade: replaying all journals once to fill new fields")
-    _set_status("4.1 upgrade: journals")
+    todo = [t for t in REPLAY_TAGS if not ST.db.get_meta(t)]
+    logger.info("upgrade (%s): replaying all journals once to fill new data",
+                ", ".join(todo))
+    _set_status("upgrade: journals")
     _import_journals()
     with ST.lock:
-        ST.db.set_meta("upgrade_41", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-    logger.info("4.1 upgrade finished")
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        for t in todo:
+            ST.db.set_meta(t, now)
+        n_sig = len(ST.db.signal_kinds())
+        n_mat = len(ST.db.material_kinds())
+    logger.info("upgrade finished - atlas: %d signal kinds, %d materials",
+                n_sig, n_mat)
     _rebuild_route()
 
 

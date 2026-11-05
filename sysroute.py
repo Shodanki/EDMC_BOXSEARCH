@@ -491,7 +491,9 @@ def body_matches(b: Body, filters: Sequence[str]) -> bool:
     """Does this body qualify under the active filters?"""
     if not filters or F_ALL in filters:
         return b.kind in ("Planet", "Star")
-    if F_UNDISCOVERED in filters and b.was_discovered is False:
+    # rings are discovered together with their planet - routing to a ring as
+    # a stop of its own sent the commander to the same planet twice
+    if F_UNDISCOVERED in filters and b.was_discovered is False             and b.kind in ("Planet", "Star"):
         return True
     if F_UNMAPPED in filters and b.kind == "Planet" and b.was_mapped is False:
         return True

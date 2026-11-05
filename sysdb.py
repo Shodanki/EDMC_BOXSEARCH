@@ -171,6 +171,36 @@ CREATE TABLE IF NOT EXISTS earnings (
 );
 
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+
+-- 4.3: what a body offers besides rings - planetary mining locations,
+-- geological / biological / thargoid / guardian / human signals, the genera
+-- the DSS names (Brain Trees!), codex sites. body_id -1 = whole system.
+CREATE TABLE IF NOT EXISTS signals (
+    sys_id64  INTEGER NOT NULL,
+    body_id   INTEGER NOT NULL,
+    body_name TEXT,
+    kind      TEXT NOT NULL,     -- 'mining_location', 'geological', 'genus:Brain Trees' ...
+    label     TEXT,
+    count     INTEGER NOT NULL DEFAULT 1,
+    found     TEXT,
+    PRIMARY KEY (sys_id64, body_id, kind)
+);
+CREATE INDEX IF NOT EXISTS signals_kind ON signals(kind);
+
+-- 4.3: where engineering materials were actually picked up. One row per
+-- MaterialCollected event (timestamp in the key), so replaying a journal
+-- never counts the same pickup twice.
+CREATE TABLE IF NOT EXISTS material_finds (
+    ts        TEXT NOT NULL,
+    sys_id64  INTEGER NOT NULL,
+    body_name TEXT,              -- NULL = in space, not near a body
+    material  TEXT NOT NULL,
+    label     TEXT,
+    category  TEXT,
+    count     INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (ts, sys_id64, material)
+);
+CREATE INDEX IF NOT EXISTS material_finds_mat ON material_finds(material);
 """
 
 
@@ -202,6 +232,9 @@ class SystemDB:
         self.cx.commit()
         self.sectors = SectorRegistry()
         self._load_sectors()
+        # where the commander is, for MaterialCollected (which names no body)
+        self._here_sys: Optional[int] = None
+        self._here_body: Optional[str] = None
 
     def _migrate(self) -> None:
         """Add columns introduced after the first release, in place."""
@@ -246,6 +279,12 @@ class SystemDB:
             if col not in bhave:
                 self.cx.execute("ALTER TABLE bodies ADD COLUMN %s %s" % (col, typ))
         self.cx.commit()
+        if not self.get_meta("fix_phantoms"):
+            try:
+                n = self.repair_phantoms()
+                logger.info("database repair (destination phantoms): %d removed", n)
+            except Exception:
+                logger.exception("database repair (destination phantoms) failed")
         if not self.get_meta("fix_n1zero"):
             try:
                 res = self.repair_n1zero()
@@ -614,10 +653,26 @@ class SystemDB:
         return out
 
     # -------------------------------------------------------------- ingestion
+    def _track_location(self, ev: str, entry: dict) -> None:
+        """Keep track of the body we are at, for MaterialCollected."""
+        if ev in ("FSDJump", "CarrierJump", "Location", "StartUp"):
+            self._here_sys = entry.get("SystemAddress") or self._here_sys
+            self._here_body = entry.get("Body") if entry.get("BodyType") in (
+                "Planet", "Star") else None
+        elif ev in ("Touchdown", "ApproachBody", "SupercruiseExit", "Disembark",
+                    "ApproachSettlement", "Liftoff"):
+            body = entry.get("Body") or entry.get("BodyName")
+            if body:
+                self._here_sys = entry.get("SystemAddress") or self._here_sys
+                self._here_body = body
+        elif ev in ("LeaveBody", "SupercruiseEntry"):
+            self._here_body = None
+
     def ingest_journal_event(self, entry: dict) -> int:
         """Process one journal event. Returns the number of records touched."""
         ev = entry.get("event")
         n = 0
+        self._track_location(ev, entry)
         try:
             if ev in ("FSDJump", "Location", "CarrierJump"):
                 pos = entry.get("StarPos")
@@ -771,6 +826,7 @@ class SystemDB:
                 a = entry.get("SystemAddress")
                 if a:
                     self._store_hotspots(a, entry)
+                    self._store_signals(a, entry)
                     bio = geo = 0
                     for sig in entry.get("Signals") or []:
                         t = (sig.get("Type") or "")
@@ -876,7 +932,16 @@ class SystemDB:
             elif ev == "CodexEntry":
                 self.upsert(entry.get("System"), id64=entry.get("SystemAddress"),
                             quality=Q_CONFIRMED, source="codex")
+                self._store_codex(entry)
                 n += 1
+
+            elif ev == "FSSSignalDiscovered":
+                if self._store_fss_signal(entry):
+                    n += 1
+
+            elif ev == "MaterialCollected":
+                if self._store_material(entry):
+                    n += 1
         except Exception:
             raise
         return n
@@ -890,12 +955,39 @@ class SystemDB:
         a = dest.get("System")
         if not a:
             return None
-        nm = self.name_from_id64(a)
+        # Already known under its real name: nothing new. Catalogue systems
+        # (HIP, HD ...) sit in a boxel slot too, so rebuilding a procgen
+        # name from their id64 invented a second, unfindable "system" - up
+        # to 4.2 that phantom then showed up as a flight target.
+        if self.system_by_id64(a) is not None:
+            return None
+        nm = None
+        given = dest.get("Name") or ""
+        if not dest.get("Body") and given and not given.startswith("$"):
+            nm = given                       # the game's own name for it
+        if not nm:
+            nm = self.name_from_id64(a)
         if not nm:
             return None
         existed = self.system(nm) is not None
         self.upsert(nm, id64=a, quality=Q_CONFIRMED, source="destination")
         return None if existed else nm
+
+    def repair_phantoms(self) -> int:
+        """
+        Drop systems that were only ever seen as a rebuilt destination name
+        while the same id64 is known under a better name (4.3 one-time fix).
+        The boxel knowledge stays: the slot really is occupied.
+        """
+        rows = self.cx.execute(
+            "SELECT p.name FROM systems p JOIN systems r ON r.id64 = p.id64 "
+            "AND r.name <> p.name AND r.quality > p.quality "
+            "WHERE p.sources = 'destination'").fetchall()
+        for (nm,) in rows:
+            self.cx.execute("DELETE FROM systems WHERE name=?", (nm,))
+        self.set_meta("fix_phantoms", _now())
+        self.cx.commit()
+        return len(rows)
 
     def ingest_external(self, systems: Iterable[dict], source: str) -> int:
         n = 0
@@ -1100,6 +1192,183 @@ class SystemDB:
                 (sys_id64, body_id, name, t, sig.get("Type_Localised") or t,
                  int(sig.get("Count") or 0), ring_class, _now()))
         self.cx.commit()
+
+    # ------------------------------------------------------------ signal atlas
+    @staticmethod
+    def signal_kind(sig_type: str) -> Tuple[str, str]:
+        """Journal signal type -> (kind, readable label)."""
+        t = sig_type or ""
+        if "PlanetaryMiningLocation" in t:
+            return "mining_location", "Planetary mining location"
+        if t.startswith("$SAA_SignalType_"):
+            k = t[len("$SAA_SignalType_"):].rstrip(";")
+            return k.lower(), k
+        return t.strip("$;").lower(), t.strip("$;")
+
+    def _sig_put(self, sys_id64: int, body_id: int, body_name: Optional[str],
+                 kind: str, label: str, count: int) -> None:
+        self.cx.execute(
+            "INSERT OR REPLACE INTO signals(sys_id64,body_id,body_name,kind,label,"
+            "count,found) VALUES (?,?,?,?,?,?,?)",
+            (sys_id64, body_id, body_name, kind, label, max(1, int(count or 1)),
+             _now()))
+
+    def _store_signals(self, sys_id64: int, entry: dict) -> None:
+        """Body signals and DSS genera - everything except ring hotspots."""
+        body_id = entry.get("BodyID")
+        name = entry.get("BodyName") or ""
+        if body_id is None or "Ring" in name:
+            return
+        for sig in entry.get("Signals") or []:
+            t = sig.get("Type") or ""
+            if not t:
+                continue
+            kind, label = self.signal_kind(t)
+            self._sig_put(sys_id64, body_id, name, kind,
+                          sig.get("Type_Localised") or label, sig.get("Count") or 1)
+        for g in entry.get("Genuses") or []:
+            genus = g.get("Genus_Localised") or g.get("Genus") or ""
+            if genus:
+                self._sig_put(sys_id64, body_id, name, "genus:" + genus, genus, 1)
+        self.cx.commit()
+
+    def _store_codex(self, entry: dict) -> None:
+        """Geology/anomaly sites and Brain Trees from the codex."""
+        a = entry.get("SystemAddress")
+        label = entry.get("Name_Localised") or ""
+        sub = entry.get("SubCategory_Localised") or ""
+        if not a or not label:
+            return
+        if "Organic" in sub and "Brain Tree" not in label:
+            return              # ordinary species are covered by ScanOrganic
+        cat = entry.get("Category_Localised") or ""
+        if ("Astronomical" in cat or "Stellar" in cat) and not any(
+                w in label for w in ("Cloud", "Nebula", "Lagrange", "Anomal")):
+            return              # planet and star classes, not sites
+        body_id = entry.get("BodyID")
+        self._sig_put(a, body_id if body_id is not None else -1,
+                      entry.get("BodyName"), "codex:" + label, label, 1)
+        self.cx.commit()
+
+    def _store_fss_signal(self, entry: dict) -> bool:
+        """Non-human signal sources and other rare system signals."""
+        a = entry.get("SystemAddress")
+        uss = entry.get("USSType") or ""
+        st = entry.get("SignalType") or ""
+        name = entry.get("SignalName_Localised") or entry.get("SignalName") or ""
+        if not a:
+            return False
+        if "NonHuman" in uss:
+            label = entry.get("USSType_Localised") or "Non-Human signal source"
+            self._sig_put(a, -1, None, "uss:nonhuman", label, 1)
+        elif st in ("Titan", "Codex"):
+            # not by name: fleet carriers are called "Guardian of ..." too;
+            # Guardian and Thargoid sites report as body signals instead
+            self._sig_put(a, -1, None, "site:" + (name or st), name or st, 1)
+        else:
+            return False
+        self.cx.commit()
+        return True
+
+    # Surface sites the journal never reports: they are found with the SRV
+    # wave scanner and leave no event. The pickup is the only trace, so the
+    # body is marked from what was collected there. Internal names: Thargoid
+    # material is "unknown..." / "tg_..." (Sensor Fragment = unknownenergysource),
+    # Guardian material "guardian_..." / "ancient...".
+    @staticmethod
+    def site_from_material(mat: str) -> Optional[Tuple[str, str]]:
+        m = (mat or "").lower()
+        if m.startswith(("unknown", "tg_")):
+            return "site:nonhuman", "Non-human site (from pickup)"
+        if m.startswith(("guardian_", "ancient")):
+            return "site:guardian", "Guardian site (from pickup)"
+        return None
+
+    def _store_material(self, entry: dict) -> bool:
+        a = self._here_sys or entry.get("SystemAddress")
+        mat = entry.get("Name")
+        if not a or not mat:
+            return False
+        site = self.site_from_material(mat)
+        if site and self._here_body:
+            r = self.cx.execute("SELECT body_id FROM bodies WHERE sys_id64=? AND "
+                                "name=?", (a, self._here_body)).fetchone()
+            self._sig_put(a, r[0] if r else -1, self._here_body, site[0], site[1], 1)
+        self.cx.execute(
+            "INSERT OR IGNORE INTO material_finds(ts,sys_id64,body_name,material,"
+            "label,category,count) VALUES (?,?,?,?,?,?,?)",
+            (entry.get("timestamp") or _now(), a, self._here_body, mat,
+             entry.get("Name_Localised") or mat.capitalize(),
+             entry.get("Category"), int(entry.get("Count") or 1)))
+        self.cx.commit()
+        return True
+
+    def signal_kinds(self) -> List[Dict[str, object]]:
+        """Every signal kind seen, with how many bodies carry it."""
+        out = []
+        for r in self.cx.execute(
+                "SELECT kind, MAX(label) label, COUNT(*) bodies, SUM(count) total "
+                "FROM signals GROUP BY kind ORDER BY total DESC"):
+            out.append({"kind": r["kind"], "label": r["label"],
+                        "bodies": r["bodies"], "total": r["total"]})
+        return out
+
+    def material_kinds(self) -> List[Dict[str, object]]:
+        out = []
+        for r in self.cx.execute(
+                "SELECT material, MAX(label) label, MAX(category) category, "
+                "COUNT(DISTINCT sys_id64 || '/' || IFNULL(body_name,'')) places, "
+                "SUM(count) total FROM material_finds GROUP BY material "
+                "ORDER BY category, label"):
+            out.append({"material": r["material"], "label": r["label"],
+                        "category": r["category"], "places": r["places"],
+                        "total": r["total"]})
+        return out
+
+    def _with_dist(self, rows, near) -> List[Dict[str, object]]:
+        out = []
+        for r in rows:
+            d = None
+            if near is not None and r["x"] is not None:
+                d = math.dist((r["x"], r["y"], r["z"]), tuple(near))
+            out.append(dict(r, dist=d))
+        out.sort(key=lambda h: (h["dist"] if h["dist"] is not None else 1e9,
+                                -(h.get("count") or 0)))
+        return out
+
+    def find_signals(self, kind: Optional[str] = None,
+                     near: Optional[Sequence[float]] = None,
+                     limit: int = 40) -> List[Dict[str, object]]:
+        """Bodies (or systems) carrying a signal kind, nearest first."""
+        sql = ("SELECT g.kind, g.label, g.count, g.body_name, g.body_id, "
+               "s.name sys_name, g.sys_id64, s.x, s.y, s.z FROM signals g "
+               "LEFT JOIN (SELECT id64, name, x, y, z, MAX(quality) q FROM systems GROUP BY id64) s ON s.id64 = g.sys_id64")
+        args: List[object] = []
+        if kind:
+            sql += " WHERE g.kind = ?"
+            args.append(kind)
+        rows = self._with_dist(self.cx.execute(sql, args).fetchall(), near)
+        for r in rows:
+            r["system"] = r["sys_name"] or str(r["sys_id64"])
+        return rows[:limit]
+
+    def find_materials(self, material: Optional[str] = None,
+                       near: Optional[Sequence[float]] = None,
+                       limit: int = 40) -> List[Dict[str, object]]:
+        """Places where a material was picked up, nearest first."""
+        sql = ("SELECT m.material, MAX(m.label) label, MAX(m.category) category, "
+               "m.body_name, m.sys_id64, s.name sys_name, s.x, s.y, s.z, "
+               "SUM(m.count) count, MAX(m.ts) last FROM material_finds m "
+               "LEFT JOIN (SELECT id64, name, x, y, z, MAX(quality) q FROM systems GROUP BY id64) s ON s.id64 = m.sys_id64")
+        args: List[object] = []
+        if material:
+            sql += " WHERE m.material = ?"
+            args.append(material)
+        sql += " GROUP BY m.material, m.sys_id64, m.body_name"
+        rows = self._with_dist(self.cx.execute(sql, args).fetchall(), near)
+        for r in rows:
+            r["system"] = r["sys_name"] or str(r["sys_id64"])
+        return rows[:limit]
 
     def hotspot_materials(self) -> List[sqlite3.Row]:
         """Every material seen, with how many rings carry it."""

@@ -72,9 +72,9 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 3673 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 1369 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
-| `sysroute.py` | 782 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
+| `load.py` | 3788 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 1638 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `sysroute.py` | 784 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
 | `sources.py` | 563 | External data: EDDiscovery, Spansh, EDSM | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
@@ -1343,7 +1343,7 @@ tag, so the two have to be set together or the notice lies.
 | 4.0.0 | first release: sphere survey, boxel gaps, in-system routing, deep space, mining atlas |
 | 4.1.0 | n1 = 0 naming rule fixed, EDDiscovery source working again, bio counter fixed, physical body data stored |
 | 4.2.0 | cockpit overlay, bio prediction from own finds, route plot targets through unprobed boxels |
-| 4.3.0 | discovery filters fixed (never matched before), supercruise timing measured on real legs |
+| 4.3.0 | discovery filters fixed, supercruise timing on real legs, atlas for body signals and materials, 30 s briefing |
 
 
 ---
@@ -1416,7 +1416,7 @@ SHBOX > NEXT TARGETS
 * **NEXT TARGETS** - the next three stops of the in-system route, with the
   distance and what is to be done there; refreshed on every route change and
   every tick. Violet = never discovered, amber = biology still open.
-* **BRIEFING** - for twelve seconds after selecting a jump target, and on
+* **BRIEFING** - for thirty seconds after selecting a jump target, and on
   arrival: star class and whether it can be scooped, which databases know the
   system - `IN NO DATABASE - first discovery likely` in violet when none
   does -, open candidates in its boxel, fuel.
@@ -1517,4 +1517,39 @@ test data 28, not yet enough - so the defaults stay until enough have been
 flown. The EDMC log says which: `supercruise model unchanged: ...` or
 `supercruise model from N body-to-body legs: ...`. The live pace correction
 in the route window (`actual pace 0.4x the estimate`) is unaffected.
+
+### Atlas: body signals and materials, searchable like ring hotspots
+
+The **mining** button is now **atlas**. Its window has three views, each
+searchable, nearest first, a click copies the system name:
+
+* **ring hotspots** - as before.
+* **body signals** - everything FSS and DSS report on a body: planetary
+  mining locations, geological, biological, thargoid, guardian and human
+  signals, the genera the DSS names (**Brain Trees** has its own entry),
+  codex sites such as fumaroles and lava spouts.
+* **materials picked up** - every `MaterialCollected`, with the body you were
+  at (from touchdown / approach; "in space" otherwise). Raw, manufactured and
+  encoded, so "where did I get Sensor Fragments" has an answer.
+
+Non-human and Guardian sites on the surface are found with the SRV wave
+scanner and leave **no journal event** - only the pickup does. So a body is
+also marked as **Non-human site (from pickup)** when Thargoid material
+(`unknown...`, `tg_...`, e.g. Sensor Fragment) is collected there, and as a
+**Guardian site** for `guardian_...` / `ancient...` material.
+
+The atlas is filled from your history by one automatic journal replay after
+the update (logged as `upgrade finished - atlas: N signal kinds, M materials`).
+
+### Smaller fixes
+
+* **Briefing** in the cockpit overlay stays 30 seconds instead of 12.
+* **Phantom systems.** Selecting a catalogue system (HIP, HD ...) in the
+  galaxy map created a second, procedurally named "system" with the same
+  address - one that cannot be found by that name and showed up as a flight
+  target. Known addresses are no longer duplicated, the game's own name is
+  used for a targeted system, and existing phantoms are removed once
+  (`database repair (destination phantoms)`).
+* **not discovered by anyone yet** no longer routes to rings as separate
+  stops - they are discovered together with their planet.
 
