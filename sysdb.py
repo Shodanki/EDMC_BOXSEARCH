@@ -630,6 +630,35 @@ class SystemDB:
         if commit:
             self.cx.commit()
 
+    def _link_parents(self, sys_id64: int, parents) -> None:
+        """
+        Give barycentres their parent, from a body's Parents chain.
+
+        ScanBaryCentre carries orbital elements but no Parents, so a
+        barycentre never learnt what it orbits and was placed around the
+        system origin. Binary moons (two moons around a common barycentre
+        that orbits a planet) then appeared thousands of LS away from their
+        planet. The chain of any body below the barycentre names each link:
+        [{"Null": 35}, {"Planet": 30}, {"Null": 29}, {"Star": 0}] means
+        barycentre 35 orbits planet 30, barycentre 29 orbits star 0.
+        """
+        chain = [list(p.items())[0] for p in (parents or [])
+                 if isinstance(p, dict) and p]
+        for (kind, node), (_k, up) in zip(chain, chain[1:]):
+            if kind != "Null":
+                continue                # real bodies get theirs from their own Scan
+            row = self.cx.execute("SELECT parent_id FROM bodies WHERE sys_id64=? "
+                                  "AND body_id=?", (sys_id64, node)).fetchone()
+            if row is None:
+                # barycentre not scanned (yet): placeholder, orbit unknown -
+                # it then sits on its parent, which is far better than the origin
+                self.cx.execute("INSERT INTO bodies(sys_id64,body_id,kind,parent_id,"
+                                "updated) VALUES (?,?,?,?,?)",
+                                (sys_id64, node, "BaryCentre", up, _now()))
+            elif row["parent_id"] is None:
+                self.cx.execute("UPDATE bodies SET parent_id=? WHERE sys_id64=? AND "
+                                "body_id=?", (up, sys_id64, node))
+
     def system_progress(self, id64: Optional[int]) -> Dict[str, object]:
         """What is still outstanding in this system?"""
         empty = {"body_count": None, "scanned": 0, "mapped": 0, "fss_complete": False,
@@ -976,6 +1005,7 @@ class SystemDB:
                         was_mapped=(1 if entry.get("WasMapped") else 0)
                         if "WasMapped" in entry else None,
                         scanned=1)
+                    self._link_parents(a, entry.get("Parents"))
                     n += 1
 
             elif ev == "SAAScanComplete":

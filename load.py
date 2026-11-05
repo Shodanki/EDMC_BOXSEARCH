@@ -3775,7 +3775,8 @@ def _first_run_migration() -> None:
 
 
 # Releases that need one full journal replay to fill what they store new.
-REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44")
+# upgrade_44b: barycentre parents (binary moons placed far from their planet)
+REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44", "upgrade_44b")
 
 
 def _upgrade_replay() -> None:

@@ -72,8 +72,8 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 3879 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 1801 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `load.py` | 3880 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 1831 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 784 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
 | `sources.py` | 563 | External data: EDDiscovery, Spansh, EDSM | — |
@@ -1591,4 +1591,15 @@ BIO > Bacterium Cerbrus  2/3
 The minimum distances are community values (Bacterium 500 m, Osseus 800 m,
 Tussock 200 m ...), not published by Frontier - the measured distance is
 shown next to them so a wrong value is easy to spot.
+
+### Fix: binary moons drawn thousands of LS from their planet
+
+Two moons that circle each other orbit a common barycentre, which orbits the
+planet. The journal reports that barycentre (`ScanBaryCentre`) with its orbit
+but without saying what it orbits, so the plugin placed it around the
+system's origin - in the route map the pair ended up far out in the system.
+The parent is now taken from the moons' own `Parents` chain. On the test data
+164 barycentres were affected; a pair like "3 d / 3 e" moves from 2141 LS to
+4.7 LS from its planet. Existing data is repaired by one automatic journal
+replay after the update.
 
