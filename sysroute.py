@@ -180,6 +180,15 @@ def orbital_position(sma_m: float, ecc: float, inc_deg: float,
 # Bodies
 # ---------------------------------------------------------------------------
 
+def _tristate(v) -> Optional[bool]:
+    """Journal/DB flag to True, False or None (not reported)."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, str):
+        return v.strip().lower() not in ("0", "false", "no")
+    return bool(v)
+
+
 class Body:
     """One body of a system, placed in 3D space."""
 
@@ -202,8 +211,13 @@ class Body:
         self.pos: Optional[Tuple[float, float, float]] = None
         self.scanned = bool(kw.get("scanned"))
         self.mapped = bool(kw.get("mapped"))
-        self.was_discovered = kw.get("was_discovered")
-        self.was_mapped = kw.get("was_mapped")
+        # True / False / None (unknown). SQLite hands these over as 1 / 0 /
+        # NULL; up to 4.2.0 the 0 was kept as an int, so every
+        # `is False` test below failed and the filters "not discovered by
+        # anyone yet" and "not surface-scanned by anyone yet" and the label
+        # "first" never matched a single body.
+        self.was_discovered = _tristate(kw.get("was_discovered"))
+        self.was_mapped = _tristate(kw.get("was_mapped"))
         self.sig_bio = int(kw.get("sig_bio") or 0)
         self.sig_geo = int(kw.get("sig_geo") or 0)
         self.organics = int(kw.get("organics") or 0)
@@ -650,6 +664,8 @@ def calibrate_work_from_journal(dss: List[float], bio: List[float],
         work_samples=n)
 
 
+MIN_TRAVEL_LEGS = 20     # clean body-to-body legs of 100 LS or more before fitting
+
 def calibrate_from_journal(segments: Iterable[Tuple[float, float]],
                            base: CostModel = DEFAULT_MODEL) -> CostModel:
     """
@@ -661,21 +677,31 @@ def calibrate_from_journal(segments: Iterable[Tuple[float, float]],
     observations are the honest ones. Needs at least 8 segments; below that the
     defaults are kept, because a bad fit is worse than a generic one.
     """
-    pts = [(d, t) for d, t in segments if d > 1.0 and 5.0 < t < 3600.0]
-    if len(pts) < 8:
+    # Legs under 100 LS are dominated by the approach, glide and landing at
+    # the target, not by supercruise speed (measured: 18 LS took 276 s at
+    # best) - the model has its own floor/dropout terms for those.
+    pts = [(d, t) for d, t in segments if d >= 100.0 and 5.0 < t < 3600.0]
+    if len(pts) < MIN_TRAVEL_LEGS:
         return base
 
     # keep the fastest third - those are the ones without side activity
     pts.sort(key=lambda p: p[1] / max(math.sqrt(p[0]), 1e-6))
     keep = pts[:max(8, len(pts) // 3)]
 
+    ks = [x / 2.0 for x in range(2, 60)]               # 1.0 .. 29.5
+    entries = list(range(0, 125, 5))                   # 0 .. 120 s
     best = None
-    for k in [x / 2.0 for x in range(8, 60)]:          # 4.0 .. 30.0
-        for entry in range(0, 90, 5):
+    for k in ks:
+        for entry in entries:
             rss = sum((entry + k * math.sqrt(d) - t) ** 2 for d, t in keep)
             if best is None or rss < best[0]:
                 best = (rss, k, entry)
     _, k, entry = best
+    # A best fit on the edge of the grid means the true value lies outside
+    # it - the data do not pin the model down. Keep what we had rather than
+    # adopt a number the data cannot support (4.2.0 adopted such fits).
+    if k in (ks[0], ks[-1]) or entry in (entries[0], entries[-1]):
+        return base
     return CostModel(entry=float(entry), k=float(k), dropout=base.dropout,
                      floor=base.floor, samples=len(keep),
                      dss=base.dss, bio=base.bio, approach=base.approach,
@@ -720,6 +746,25 @@ def bodies_from_rows(rows: Iterable, now: Optional[float] = None
                  sig_bio=r["sig_bio"], sig_geo=r["sig_geo"], organics=r["organics"])
         out[b.body_id] = b
     return out
+
+
+def leg_distance_ls(rows: Iterable, a: str, b: str,
+                    at: Optional[float] = None) -> Optional[float]:
+    """
+    Straight-line distance in LS between two bodies of one system, from
+    their orbital elements, at unix time `at` (None = scan epoch).
+
+    This is what makes supercruise timing measurable: a SupercruiseEntry at
+    body A followed by a SupercruiseExit at body B is a flight over exactly
+    this distance. None when either body has no usable position.
+    """
+    bodies = bodies_from_rows(rows, now=at)
+    resolve_positions(bodies)
+    pos = {x.name: x.pos for x in bodies.values() if x.pos is not None}
+    pa, pb = pos.get(a), pos.get(b)
+    if pa is None or pb is None:
+        return None
+    return _dist(pa, pb)
 
 
 def _get(row, key, default=None):

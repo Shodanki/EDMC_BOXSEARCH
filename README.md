@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.2
+# SHBOXSEARCH v4.3
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -72,15 +72,15 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 3580 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `load.py` | 3673 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
 | `sysdb.py` | 1369 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
-| `sysroute.py` | 737 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
-| `boxelplan.py` | 698 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
+| `sysroute.py` | 782 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
+| `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
 | `sources.py` | 563 | External data: EDDiscovery, Spansh, EDSM | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
 | `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
 | `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
-| `overlay.py` | 234 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `overlay.py` | 280 | Cockpit overlay through EDMCModernOverlay (optional) | — |
 | `biopredict.py` | 175 | Genus prediction learned from your own samples | — |
 | `diagnostics.py` | 284 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
 
@@ -1343,6 +1343,7 @@ tag, so the two have to be set together or the notice lies.
 | 4.0.0 | first release: sphere survey, boxel gaps, in-system routing, deep space, mining atlas |
 | 4.1.0 | n1 = 0 naming rule fixed, EDDiscovery source working again, bio counter fixed, physical body data stored |
 | 4.2.0 | cockpit overlay, bio prediction from own finds, route plot targets through unprobed boxels |
+| 4.3.0 | discovery filters fixed (never matched before), supercruise timing measured on real legs |
 
 
 ---
@@ -1477,4 +1478,43 @@ the plot alone harvests it.
 The bio prediction compares value ranges and counts from your own samples -
 simple statistics, no trained model. Like the rest of the plugin it is not an
 AI system under the EU AI Act; see [AI_TRANSPARENCY.md](AI_TRANSPARENCY.md).
+
+
+---
+
+## What changed in 4.3
+
+### Fix: "not discovered by anyone yet" never matched
+
+The route filters **not discovered by anyone yet** and **not surface-scanned
+by anyone yet**, and the **first** label in the route list, compared the
+journal flags with `False`. The database hands them over as `0`, so the test
+never succeeded - since 4.0, these filters routed nothing. Measured on the
+test data, in the 15 systems that hold undiscovered bodies:
+
+| | before | after |
+|---|---|---|
+| not discovered by anyone yet | 0 | 207 (all of them) |
+| not surface-scanned by anyone yet | 0 | 135 |
+| "first" label in the route list | 0 | 207 |
+
+Undiscovered bodies are what the survey is for, so this is the most important
+fix since the naming rule in 4.1.
+
+### Fix: supercruise timing measured on the wrong distance
+
+Each supercruise flight was paired with the *arrival distance* of the target
+(its distance from the arrival star) - not the distance flown when you hop
+from one planet to the next. 4.3 measures body-to-body flights, with the
+distance between the two bodies taken from their orbits at the time of the
+flight, and also reads them from your existing journals at start-up.
+
+It is deliberately cautious: only flights of 100 LS or more count (shorter
+ones are mostly approach and landing), at least 20 are needed, and a fit that
+ends on the edge of its range is rejected. Most mapping happens from
+supercruise without dropping out, which leaves few clean flights - on the
+test data 28, not yet enough - so the defaults stay until enough have been
+flown. The EDMC log says which: `supercruise model unchanged: ...` or
+`supercruise model from N body-to-body legs: ...`. The live pace correction
+in the route window (`actual pace 0.4x the estimate`) is unaffected.
 

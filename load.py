@@ -41,6 +41,7 @@ from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
 from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       F_ALL, F_OUTSTANDING, bodies_from_rows,
                       calibrate_from_journal, calibrate_work_from_journal,
+                      leg_distance_ls,
                       plan_route, resolve_positions, shorten)
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
@@ -48,7 +49,7 @@ from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
 from overlay import CockpitOverlay, POSITIONS as OVERLAY_POSITIONS  # noqa: E402
 from biopredict import BioModel                                    # noqa: E402
 
-VERSION = "4.2.0"
+VERSION = "4.3.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -1611,6 +1612,10 @@ def _bootstrap_work_model() -> None:
     arrive: Dict[str, float] = {}
     blog: Dict[Tuple, float] = {}
     last_saa: Dict[int, float] = {}
+    # supercruise legs body A -> body B: (system, A, B, entry time, seconds)
+    here: Dict[str, Any] = {"sys": None, "body": None}
+    sc_from: Optional[Tuple[int, str, float]] = None
+    sc_legs: List[Tuple[int, str, str, float, float]] = []
     for fn in files:
         try:
             with open(fn, "r", encoding="utf-8", errors="replace") as f:
@@ -1625,6 +1630,27 @@ def _bootstrap_work_model() -> None:
                     except (ValueError, KeyError):
                         continue
                     v = e.get("event")
+                    if v in ("FSDJump", "CarrierJump", "Location"):
+                        here = {"sys": e.get("SystemAddress"), "body": None}
+                        sc_from = None
+                    elif v == "SupercruiseEntry":
+                        sc_from = ((here["sys"], here["body"], ts)
+                                   if here["sys"] and here["body"] else None)
+                    elif v == "SupercruiseExit":
+                        b = e.get("Body")
+                        if (sc_from and b and b != sc_from[1]
+                                and e.get("SystemAddress") == sc_from[0]
+                                and 5 < ts - sc_from[2] < 3600):
+                            sc_legs.append((sc_from[0], sc_from[1], b,
+                                            sc_from[2], ts - sc_from[2]))
+                        sc_from = None
+                        if b and e.get("SystemAddress"):
+                            here = {"sys": e["SystemAddress"], "body": b}
+                    elif v in ("ApproachBody", "Touchdown", "Liftoff"):
+                        if e.get("Body") and e.get("SystemAddress"):
+                            here = {"sys": e["SystemAddress"], "body": e["Body"]}
+                    elif v in ("Shutdown", "LoadGame", "Died", "Resurrect"):
+                        sc_from = None
                     if v in ("ApproachBody", "SupercruiseExit"):
                         if e.get("Body"):
                             arrive[e["Body"]] = ts
@@ -1657,6 +1683,31 @@ def _bootstrap_work_model() -> None:
     ST.cost_model = calibrate_work_from_journal(dss, bio, [], ST.cost_model)
     logger.info("work model from %d DSS and %d bio measurements: %s",
                 len(dss), len(bio), ST.cost_model.as_dict())
+    # travel: body -> body legs, distance from the orbits at flight time
+    segs: List[Tuple[float, float]] = []
+    if sc_legs and ST.db:
+        rows_of: Dict[int, List[Any]] = {}
+        for sys_id, a, b, t0, secs in sc_legs:
+            if sys_id not in rows_of:
+                with ST.lock:
+                    rows_of[sys_id] = ST.db.bodies_of(sys_id)
+            d = leg_distance_ls(rows_of[sys_id], a, b, at=t0)
+            if d and d > 1.0:
+                segs.append((d, secs))
+    if segs:
+        ST.sc_segments = segs[-200:]
+        before = ST.cost_model
+        ST.cost_model = calibrate_from_journal(ST.sc_segments, ST.cost_model)
+        if ST.cost_model is before:
+            logger.info("supercruise model unchanged: %d body-to-body legs "
+                        "measured, not enough clean ones to fit yet "
+                        "(%.0f s + %.1f * sqrt(LS) kept)", len(segs),
+                        before.entry, before.k)
+        else:
+            logger.info("supercruise model from %d body-to-body legs: "
+                        "%.0f s + %.1f * sqrt(LS) (%d used)", len(segs),
+                        ST.cost_model.entry, ST.cost_model.k,
+                        ST.cost_model.samples)
     if before == ST.cost_model.as_dict():
         logger.info("work model unchanged - too few measurements yet")
 
@@ -2460,22 +2511,41 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         with ST.lock:
             ST.db.ingest_journal_event(entry)
 
+        # Supercruise timing, measured on the legs the route actually plans:
+        # body A -> body B inside one system. The distance comes from the
+        # orbital positions of both bodies at the moment of the flight.
+        # Up to 4.2.0 every SupercruiseEntry -> Exit was paired with the
+        # *arrival distance* of the target (its distance from the arrival
+        # star), which is not the distance flown, so the fit ended at the
+        # edge of its grid. The first leg after a jump is left out on purpose:
+        # it also holds what you do on arrival (honk, FSS), not just flying.
         if ev == "SupercruiseEntry":
-            ST._sc_start = (time.time(), 0.0)
+            if (ST.last_body_name and ST.cur_id64
+                    and ST.last_body_sys == ST.cur_id64):
+                ST._sc_start = (time.time(), ST.last_body_name)
+            else:
+                ST._sc_start = None
+        elif ev in ("FSDJump", "CarrierJump", "Shutdown", "LoadGame",
+                    "Died", "Resurrect"):
+            ST._sc_start = None
 
         elif ev == "SupercruiseExit":
-            if ST._sc_start and ST.cur_id64:
-                dt = time.time() - ST._sc_start[0]
-                with ST.lock:
-                    rows = {r["name"]: r for r in ST.db.bodies_of(ST.cur_id64)}
-                b = rows.get(entry.get("Body"))
-                if b is not None and b["arrival_ls"] and 5 < dt < 3600:
-                    ST.sc_segments.append((float(b["arrival_ls"]), dt))
-                    if len(ST.sc_segments) % 8 == 0:
-                        ST.cost_model = calibrate_from_journal(ST.sc_segments)
-                        logger.info("supercruise model recalibrated: %s",
-                                    ST.cost_model.as_dict())
+            start = ST._sc_start
             ST._sc_start = None
+            dest = entry.get("Body")
+            if start and ST.cur_id64 and dest and dest != start[1]:
+                dt = time.time() - start[0]
+                if 5 < dt < 3600:
+                    with ST.lock:
+                        rows = ST.db.bodies_of(ST.cur_id64)
+                    d = leg_distance_ls(rows, start[1], dest, at=time.time())
+                    if d and d > 1.0:
+                        ST.sc_segments.append((d, dt))
+                        if len(ST.sc_segments) % 8 == 0:
+                            ST.cost_model = calibrate_from_journal(
+                                ST.sc_segments[-200:], ST.cost_model)
+                            logger.info("supercruise model recalibrated: %s",
+                                        ST.cost_model.as_dict())
 
         if ev in ("FSDJump", "CarrierJump"):
             if ST._sys_enter is not None:
