@@ -94,6 +94,7 @@ CFG = {
     "atlas_mode": "%s_atlas_mode" % PLUGIN_NAME,
     "atlas_sig": "%s_atlas_sig" % PLUGIN_NAME,
     "atlas_mat": "%s_atlas_mat" % PLUGIN_NAME,
+    "atlas_find": "%s_atlas_find" % PLUGIN_NAME,
     "check_updates": "%s_check_updates" % PLUGIN_NAME,
     "update_seen": "%s_update_seen" % PLUGIN_NAME,
     "update_checked": "%s_update_checked" % PLUGIN_NAME,
@@ -964,7 +965,14 @@ def _theme_tree(widget, colours: Dict[str, str]) -> None:
         _theme_menu(widget, colours)
     _apply_theme(widget, colours,
                  is_text=cls in ("Label", "Checkbutton", "Entry"),
-                 is_button=cls in ("Button", "Menubutton"))
+                 is_button=cls in ("Button", "Menubutton", "Radiobutton"))
+    if cls == "Radiobutton" and colours.get("bg"):
+        # tab buttons: the chosen one keeps the background (its text says
+        # which one it is) - Tk would paint it white otherwise
+        try:
+            widget.configure(selectcolor=colours["bg"], offrelief=tk.FLAT)
+        except Exception:
+            pass
     try:
         children = widget.winfo_children()
     except Exception:
@@ -3010,9 +3018,15 @@ def _mining_window_close() -> None:
     _mine_body = None
 
 
-ATLAS_MODES = ("ring hotspots", "body signals", "materials picked up")
+ATLAS_MODES = ("ring hotspots", "body signals", "materials picked up", "finds on the ground")
+# tab captions, and which setting remembers each tab's picker
+ATLAS_TABS = {ATLAS_MODES[0]: "rings", ATLAS_MODES[1]: "signals",
+              ATLAS_MODES[2]: "materials", ATLAS_MODES[3]: "finds"}
+_ATLAS_KEY = {ATLAS_MODES[0]: "mine_mat", ATLAS_MODES[1]: "atlas_sig",
+              ATLAS_MODES[2]: "atlas_mat", ATLAS_MODES[3]: "atlas_find"}
 _atlas_mode: Optional[tk.StringVar] = None
 _atlas_pick_frame: Optional[tk.Frame] = None
+_atlas_tabs: Dict[str, Any] = {}
 # signal kinds shown first, in this order; everything else follows by count
 _SIG_FIRST = ("mining_location", "geological", "biological", "genus:Brain Trees",
               "site:nonhuman", "site:guardian", "thargoid", "guardian", "human",
@@ -3037,6 +3051,8 @@ def _atlas_choices(mode: str) -> List[Tuple[str, Optional[str]]]:
             kinds = ST.db.signal_kinds()
         elif mode == ATLAS_MODES[2]:
             kinds = ST.db.material_kinds()
+        elif mode == ATLAS_MODES[3]:
+            kinds = ST.db.find_kinds()
         else:
             kinds = ST.db.hotspot_materials()
     if mode == ATLAS_MODES[1]:
@@ -3046,6 +3062,9 @@ def _atlas_choices(mode: str) -> List[Tuple[str, Optional[str]]]:
     if mode == ATLAS_MODES[2]:
         return [("(all)", None)] + [("%s: %s" % ((k["category"] or "?")[:5], k["label"]),
                                      k["material"]) for k in kinds]
+    if mode == ATLAS_MODES[3]:
+        return [("(all)", None)] + [("%s (%d)" % (k["label"], k["places"]), k["kind"])
+                                    for k in kinds]
     return [("(all)", None)] + [((m["label"] or m["material"]), m["material"])
                                 for m in kinds]
 
@@ -3060,8 +3079,10 @@ def _mining_window_open() -> None:
       Trees), codex sites, and non-human or Guardian sites marked from what
       you picked up there (the journal reports those sites themselves never)
     * materials picked up - every MaterialCollected with the body you were at
+    * finds on the ground - codex finds, analysed species, settlements and
+      screenshots with the body and the latitude/longitude where they were
 
-    Clicking a row copies the system name.
+    One tab per kind; clicking a row copies the system name.
     """
     global _mine_win, _mine_body, _mine_mat, _atlas_mode, _atlas_pick_frame
     if _frame is None or ST.db is None:
@@ -3077,12 +3098,18 @@ def _mining_window_open() -> None:
     mode = cfg_str(CFG["atlas_mode"], ATLAS_MODES[0])
     _atlas_mode = tk.StringVar(value=mode if mode in ATLAS_MODES else ATLAS_MODES[0])
 
+    tabs = tk.Frame(_mine_win)
+    tabs.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(8, 0))
+    _atlas_tabs.clear()
+    for m in ATLAS_MODES:
+        # radio buttons drawn as buttons: one tab per kind of find
+        rb = tk.Radiobutton(tabs, text=ATLAS_TABS[m], value=m, variable=_atlas_mode,
+                            indicatoron=False, width=12, padx=4, pady=2,
+                            command=_atlas_build_picker)
+        rb.pack(side=tk.LEFT, padx=(0, 2))
+        _atlas_tabs[m] = rb
     bar = tk.Frame(_mine_win)
-    bar.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(8, 4))
-    mode_pick = ttk.OptionMenu(bar, _atlas_mode, _atlas_mode.get(), *ATLAS_MODES,
-                               command=lambda *_: _atlas_build_picker())
-    mode_pick.pack(side=tk.LEFT)
-    _theme_menu(mode_pick, _theme_colours())
+    bar.grid(row=1, column=0, sticky=tk.EW, padx=10, pady=(4, 4))
     _atlas_pick_frame = tk.Frame(bar)
     _atlas_pick_frame.pack(side=tk.LEFT, padx=(6, 0))
     tk.Button(bar, text="refresh", command=_atlas_build_picker).pack(
@@ -3091,7 +3118,7 @@ def _mining_window_open() -> None:
         side=tk.LEFT, padx=(4, 0))
 
     _mine_body = tk.Frame(_mine_win)
-    _mine_body.grid(row=1, column=0, sticky=tk.NSEW, padx=10, pady=(0, 8))
+    _mine_body.grid(row=2, column=0, sticky=tk.NSEW, padx=10, pady=(0, 8))
     _atlas_build_picker()
     _theme_tree(_mine_win, _theme_colours())
     _fit_to_screen(_mine_win)
@@ -3106,10 +3133,13 @@ def _atlas_build_picker() -> None:
         w.destroy()
     mode = _atlas_mode.get()
     cfg_set(CFG["atlas_mode"], mode)
+    for m, rb in _atlas_tabs.items():
+        try:
+            rb.configure(text=("[ %s ]" % ATLAS_TABS[m]) if m == mode else ATLAS_TABS[m])
+        except Exception:
+            pass
     names = [c[0] for c in _atlas_choices(mode)]
-    key = {ATLAS_MODES[0]: "mine_mat", ATLAS_MODES[1]: "atlas_sig",
-           ATLAS_MODES[2]: "atlas_mat"}[mode]
-    _mine_mat = tk.StringVar(value=cfg_str(CFG[key], names[0]))
+    _mine_mat = tk.StringVar(value=cfg_str(CFG[_ATLAS_KEY[mode]], names[0]))
     if _mine_mat.get() not in names:
         _mine_mat.set(names[0])
     picker = ttk.OptionMenu(_atlas_pick_frame, _mine_mat, _mine_mat.get(), *names,
@@ -3150,13 +3180,16 @@ def _mining_refresh() -> None:
             rows = ST.db.find_signals(key, near=ST.cur_pos, limit=40)
         elif mode == ATLAS_MODES[2]:
             rows = ST.db.find_materials(key, near=ST.cur_pos, limit=40)
+        elif mode == ATLAS_MODES[3]:
+            rows = ST.db.find_marks(key, near=ST.cur_pos, limit=40)
         else:
             rows = ST.db.find_hotspots(key, near=ST.cur_pos, limit=40)
 
     if not rows:
         hint = {ATLAS_MODES[0]: "map a ring with the DSS and its materials land here",
                 ATLAS_MODES[1]: "FSS / DSS a body and its signals land here",
-                ATLAS_MODES[2]: "pick up a material and where you were lands here"}
+                ATLAS_MODES[2]: "pick up a material and where you were lands here",
+                ATLAS_MODES[3]: "land, log a codex entry, sample or take a screenshot"}
         lbl = tk.Label(_mine_body, anchor=tk.W, font=_MONO,
                        text="nothing yet - " + hint.get(mode, ""))
         lbl.grid(row=0, column=0, sticky=tk.W)
@@ -3170,6 +3203,8 @@ def _mining_refresh() -> None:
         head = "%-26s %-22s %4s  %s" % ("system", "body", "x", "distance")
     elif mode == ATLAS_MODES[2]:
         head = "%-26s %-22s %5s  %-10s %s" % ("system", "where", "got", "last", "distance")
+    elif mode == ATLAS_MODES[3]:
+        head = "%-26s %-10s %-28s %-17s %s" % ("system", "body", "what", "lat / lon", "distance")
     else:
         head = "%-26s %-26s %3s  %-10s %s" % ("system", "ring", "x", "ring type", "distance")
     h = tk.Label(_mine_body, font=_FONT_GROUP, anchor=tk.W, text=head)
@@ -3183,6 +3218,11 @@ def _mining_refresh() -> None:
             text = "%-26s %-22s %4d  %s" % (sysname[:26], body[:22], r["count"] or 1, dist(r))
             if key is None:
                 text += "   " + _sig_label({"kind": r["kind"], "label": r["label"]})
+        elif mode == ATLAS_MODES[3]:
+            body = _short_body(r.get("body_name"), sysname)
+            where = ("%+.4f %+.4f" % (r["lat"], r["lon"])) if r.get("lat") is not None else "-"
+            text = "%-26s %-10s %-28s %-17s %s" % (
+                sysname[:26], body[:10], str(r.get("label") or "")[:28], where, dist(r))
         elif mode == ATLAS_MODES[2]:
             body = _short_body(r.get("body_name"), sysname) or "(in space)"
             text = "%-26s %-22s %5d  %-10s %s" % (
@@ -3198,8 +3238,7 @@ def _mining_refresh() -> None:
         _atlas_row(_mine_body, i, text, sysname, col)
 
     if _mine_mat:
-        cfg_set(CFG[{ATLAS_MODES[0]: "mine_mat", ATLAS_MODES[1]: "atlas_sig",
-                     ATLAS_MODES[2]: "atlas_mat"}[mode]], want)
+        cfg_set(CFG[_ATLAS_KEY[mode]], want)
 
 
 def _toggle_probe_window() -> None:

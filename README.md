@@ -1625,6 +1625,18 @@ the ship's and marks where it is parked. Marks recorded before are repaired
 once: leaving the SRV becomes "SRV parked", and landings get their vehicle
 from the track.
 
+### Atlas: tabs and finds on the ground
+
+The atlas window now has one **tab** per kind - **rings**, **signals**,
+**materials** and the new **finds**: codex entries, analysed species,
+settlements and screenshots, each with the body and the latitude / longitude
+where it was, nearest system first. The same thing logged several times on
+one body (the codex writes an entry per sighting) is one row with a count.
+A screenshot is the simplest way to keep any spot as a waypoint.
+
+Rings in a system known under two names (a catalogue name and a procedural
+one) no longer show up twice.
+
 ### Fix: binary moons drawn thousands of LS from their planet
 
 Two moons that circle each other orbit a common barycentre, which orbits the

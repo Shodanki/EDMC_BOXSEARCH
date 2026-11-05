@@ -1631,6 +1631,44 @@ class SystemDB:
             r["system"] = r["sys_name"] or str(r["sys_id64"])
         return rows[:limit]
 
+    # finds on the ground worth coming back to (surface marks with a position)
+    FIND_KINDS = (("codex", "codex finds"), ("bio_analyse", "biology analysed"),
+                  ("settlement", "settlements"), ("screenshot", "screenshots / waypoints"))
+
+    def find_kinds(self) -> List[Dict[str, object]]:
+        """How many places of each kind of ground find are recorded."""
+        have = {r[0]: r[1] for r in self.cx.execute(
+            "SELECT kind, COUNT(DISTINCT sys_id64 || '/' || body_name || '/' || label) "
+            "FROM surface_marks WHERE kind IN (%s) GROUP BY kind"
+            % ",".join("?" * len(self.FIND_KINDS)), [k for k, _l in self.FIND_KINDS])}
+        return [{"kind": k, "label": l, "places": have.get(k, 0)}
+                for k, l in self.FIND_KINDS if have.get(k)]
+
+    def find_marks(self, kind: Optional[str] = None,
+                   near: Optional[Sequence[float]] = None,
+                   limit: int = 40, text: Optional[str] = None) -> List[Dict[str, object]]:
+        """
+        Ground finds, one row per thing per body (the latest position), nearest
+        system first. Codex entries of the same thing on the same body - the
+        game logs one per sighting - count as one place with a count.
+        """
+        kinds = [kind] if kind else [k for k, _l in self.FIND_KINDS]
+        sql = ("SELECT m.kind, m.label, MAX(m.detail) detail, m.body_name, m.sys_id64, "
+               "s.name sys_name, s.x, s.y, s.z, COUNT(*) count, MAX(m.ts) last, "
+               "m.lat, m.lon FROM surface_marks m "
+               "LEFT JOIN (SELECT id64, name, x, y, z, MAX(quality) q FROM systems "
+               "GROUP BY id64) s ON s.id64 = m.sys_id64 WHERE m.kind IN (%s)"
+               % ",".join("?" * len(kinds)))
+        args: List[object] = list(kinds)
+        if text:
+            sql += " AND (m.label LIKE ? OR m.body_name LIKE ? OR m.detail LIKE ?)"
+            args += ["%" + text + "%"] * 3
+        sql += " GROUP BY m.kind, m.sys_id64, m.body_name, m.label"
+        rows = self._with_dist(self.cx.execute(sql, args).fetchall(), near)
+        for r in rows:
+            r["system"] = r["sys_name"] or str(r["sys_id64"])
+        return rows[:limit]
+
     def hotspot_materials(self) -> List[sqlite3.Row]:
         """Every material seen, with how many rings carry it."""
         return self.cx.execute(
@@ -1648,7 +1686,8 @@ class SystemDB:
         without one, rather than being dropped.
         """
         sql = ("SELECT h.*, s.name sys_name, s.x, s.y, s.z FROM hotspots h "
-               "LEFT JOIN systems s ON s.id64 = h.sys_id64")
+               "LEFT JOIN (SELECT id64, name, x, y, z, MAX(quality) q FROM systems "
+               "GROUP BY id64) s ON s.id64 = h.sys_id64")
         args: List[object] = []
         if material:
             sql += " WHERE h.material = ?"
