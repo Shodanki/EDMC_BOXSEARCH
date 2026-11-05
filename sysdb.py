@@ -30,7 +30,7 @@ import math
 import os
 import sqlite3
 import time
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from procgen import (MASSCODES, SectorRegistry, decode_id64, make_name,
                      parse_boxel_key, parse_name)
@@ -201,6 +201,30 @@ CREATE TABLE IF NOT EXISTS material_finds (
     PRIMARY KEY (ts, sys_id64, material)
 );
 CREATE INDEX IF NOT EXISTS material_finds_mat ON material_finds(material);
+
+-- 4.4: the way you moved on a body (from Status.json, live only - no journal
+-- holds it) and the places where something happened there.
+CREATE TABLE IF NOT EXISTS surface_track (
+    sys_id64  INTEGER NOT NULL,
+    body_name TEXT NOT NULL,
+    ts        REAL NOT NULL,
+    lat REAL NOT NULL, lon REAL NOT NULL, alt REAL, heading REAL,
+    mode      TEXT,              -- 'ship', 'srv', 'foot'
+    PRIMARY KEY (sys_id64, body_name, ts)
+);
+CREATE TABLE IF NOT EXISTS surface_marks (
+    ts        TEXT NOT NULL,
+    sys_id64  INTEGER NOT NULL,
+    body_name TEXT NOT NULL,
+    kind      TEXT NOT NULL,     -- touchdown, liftoff, srv_out, srv_in, disembark,
+                                 -- embark, bio_log, bio_sample, bio_analyse,
+                                 -- material, codex, settlement, screenshot
+    label     TEXT,
+    detail    TEXT,              -- genus for bio marks, category for materials
+    lat REAL, lon REAL,          -- NULL when the position is unknown
+    PRIMARY KEY (ts, kind, body_name, label)
+);
+CREATE INDEX IF NOT EXISTS surface_marks_body ON surface_marks(sys_id64, body_name);
 """
 
 
@@ -235,6 +259,9 @@ class SystemDB:
         # where the commander is, for MaterialCollected (which names no body)
         self._here_sys: Optional[int] = None
         self._here_body: Optional[str] = None
+        # last Status.json position on a body (live only), for marks whose
+        # journal event carries no position (ScanOrganic, MaterialCollected)
+        self._pos: Optional[Dict[str, Any]] = None
 
     def _migrate(self) -> None:
         """Add columns introduced after the first release, in place."""
@@ -668,11 +695,147 @@ class SystemDB:
         elif ev in ("LeaveBody", "SupercruiseEntry"):
             self._here_body = None
 
+    # ------------------------------------------------------- surface (4.4)
+    POS_MAX_AGE = 120.0      # s: a Status.json fix older than this is stale
+
+    def note_status(self, st: dict, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """
+        Remember the latest position on a body from Status.json. Returns the
+        fix (with mode) or None when not on/near a body.
+        """
+        lat, lon, body = st.get("Latitude"), st.get("Longitude"), st.get("BodyName")
+        if lat is None or lon is None or not body:
+            self._pos = None
+            return None
+        flags = int(st.get("Flags") or 0)
+        flags2 = int(st.get("Flags2") or 0)
+        mode = "foot" if flags2 & 1 else ("srv" if flags & (1 << 26) else "ship")
+        self._pos = {"body": body, "lat": float(lat), "lon": float(lon),
+                     "alt": st.get("Altitude"), "heading": st.get("Heading"),
+                     "radius": st.get("PlanetRadius"), "mode": mode,
+                     "landed": bool(flags & 2), "t": now if now is not None else time.time(),
+                     "gt": _epoch(st.get("timestamp"))}     # game time of the fix
+        return self._pos
+
+    def _fresh_pos(self, body: Optional[str], at: Optional[float] = None
+                   ) -> Optional[Dict[str, Any]]:
+        """
+        The last Status.json fix, if it belongs to this body and to the time
+        of the event. `at` is the event's game time: replaying an old journal
+        while standing on the same body must not stamp today's position on
+        a sample taken months ago.
+        """
+        p = self._pos
+        if not p or (body and p["body"] != body):
+            return None
+        if at is not None:
+            return p if p.get("gt") is not None and abs(at - p["gt"]) <= self.POS_MAX_AGE else None
+        if time.time() - p["t"] > self.POS_MAX_AGE:
+            return None
+        return p
+
+    def add_track_point(self, sys_id64: int, pos: Dict[str, Any], ts: float) -> None:
+        self.cx.execute(
+            "INSERT OR IGNORE INTO surface_track(sys_id64,body_name,ts,lat,lon,alt,"
+            "heading,mode) VALUES (?,?,?,?,?,?,?,?)",
+            (sys_id64, pos["body"], ts, pos["lat"], pos["lon"], pos.get("alt"),
+             pos.get("heading"), pos.get("mode")))
+        self.cx.commit()
+
+    def _mark(self, entry: dict, kind: str, body: Optional[str], label: str = "",
+              detail: Optional[str] = None, lat=None, lon=None) -> bool:
+        a = entry.get("SystemAddress") or self._here_sys
+        body = body or self._here_body or (self._pos or {}).get("body")
+        if not a or not body:
+            return False
+        if lat is None or lon is None:
+            p = self._fresh_pos(body, _epoch(entry.get("timestamp")))
+            if p:
+                lat, lon = p["lat"], p["lon"]
+        self.cx.execute(
+            "INSERT OR IGNORE INTO surface_marks(ts,sys_id64,body_name,kind,label,"
+            "detail,lat,lon) VALUES (?,?,?,?,?,?,?,?)",
+            (entry.get("timestamp") or _now(), a, body, kind, label or "", detail,
+             lat, lon))
+        self.cx.commit()
+        return True
+
+    def _body_name_of(self, sys_id64: Optional[int], body_id: Optional[int]) -> Optional[str]:
+        if sys_id64 is None or body_id is None:
+            return None
+        r = self.cx.execute("SELECT name FROM bodies WHERE sys_id64=? AND body_id=?",
+                            (sys_id64, body_id)).fetchone()
+        return r[0] if r else None
+
+    def _surface_event(self, ev: str, e: dict) -> None:
+        """Turn surface journal events into marks."""
+        if ev in ("Touchdown", "Liftoff"):
+            if e.get("PlayerControlled") is False:
+                return
+            self._mark(e, ev.lower(), e.get("Body"), e.get("Body") or "",
+                       lat=e.get("Latitude"), lon=e.get("Longitude"))
+        elif ev == "LaunchSRV":
+            self._mark(e, "srv_out", None, e.get("SRVType_Localised") or "SRV")
+        elif ev == "DockSRV":
+            self._mark(e, "srv_in", None, e.get("SRVType_Localised") or "SRV")
+        elif ev == "Disembark" and e.get("OnPlanet"):
+            self._mark(e, "disembark", e.get("Body"), "on foot")
+        elif ev == "Embark" and e.get("OnPlanet"):
+            self._mark(e, "embark", e.get("Body"), "SRV" if e.get("SRV") else "ship")
+        elif ev == "ScanOrganic":
+            kind = {"Log": "bio_log", "Sample": "bio_sample",
+                    "Analyse": "bio_analyse"}.get(e.get("ScanType") or "")
+            if kind:
+                body = self._body_name_of(e.get("SystemAddress"), e.get("Body"))
+                self._mark(e, kind, body,
+                           e.get("Species_Localised") or e.get("Species") or "",
+                           detail=e.get("Genus_Localised") or e.get("Genus"))
+        elif ev == "MaterialCollected":
+            if self._here_body and self._fresh_pos(self._here_body,
+                                                   _epoch(e.get("timestamp"))):
+                self._mark(e, "material", self._here_body,
+                           e.get("Name_Localised") or (e.get("Name") or "").capitalize(),
+                           detail=e.get("Category"))
+        elif ev == "CodexEntry" and e.get("Latitude") is not None:
+            body = (e.get("BodyName") or
+                    self._body_name_of(e.get("SystemAddress"), e.get("BodyID")))
+            self._mark(e, "codex", body, e.get("Name_Localised") or "",
+                       detail=e.get("SubCategory_Localised"),
+                       lat=e.get("Latitude"), lon=e.get("Longitude"))
+        elif ev == "ApproachSettlement" and e.get("Latitude") is not None:
+            self._mark(e, "settlement", e.get("BodyName"), e.get("Name_Localised") or
+                       e.get("Name") or "", lat=e.get("Latitude"), lon=e.get("Longitude"))
+        elif ev == "Screenshot" and e.get("Latitude") is not None:
+            self._mark(e, "screenshot", e.get("Body"), e.get("Filename") or "",
+                       lat=e.get("Latitude"), lon=e.get("Longitude"))
+
+    def surface_bodies(self) -> List[sqlite3.Row]:
+        """Bodies with marks or a track, most recent first."""
+        return self.cx.execute(
+            "SELECT sys_id64, body_name, MAX(ts) last, COUNT(*) n FROM ("
+            " SELECT sys_id64, body_name, ts FROM surface_marks"
+            " UNION ALL SELECT sys_id64, body_name, datetime(ts,'unixepoch') FROM surface_track)"
+            " GROUP BY sys_id64, body_name ORDER BY last DESC").fetchall()
+
+    def marks_of(self, sys_id64: int, body_name: str) -> List[sqlite3.Row]:
+        return self.cx.execute(
+            "SELECT * FROM surface_marks WHERE sys_id64=? AND body_name=? ORDER BY ts",
+            (sys_id64, body_name)).fetchall()
+
+    def track_of(self, sys_id64: int, body_name: str) -> List[sqlite3.Row]:
+        return self.cx.execute(
+            "SELECT * FROM surface_track WHERE sys_id64=? AND body_name=? ORDER BY ts",
+            (sys_id64, body_name)).fetchall()
+
     def ingest_journal_event(self, entry: dict) -> int:
         """Process one journal event. Returns the number of records touched."""
         ev = entry.get("event")
         n = 0
         self._track_location(ev, entry)
+        try:
+            self._surface_event(ev, entry)
+        except Exception:
+            logger.debug("surface mark failed for %s", ev, exc_info=True)
         try:
             if ev in ("FSDJump", "Location", "CarrierJump"):
                 pos = entry.get("StarPos")

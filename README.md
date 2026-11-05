@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.3
+# SHBOXSEARCH v4.4
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -72,16 +72,16 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 3788 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 1638 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `load.py` | 3879 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 1801 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 784 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
 | `sources.py` | 563 | External data: EDDiscovery, Spansh, EDSM | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
 | `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
 | `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
-| `overlay.py` | 280 | Cockpit overlay through EDMCModernOverlay (optional) | — |
-| `biopredict.py` | 175 | Genus prediction learned from your own samples | — |
+| `overlay.py` | 286 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `biopredict.py` | 196 | Genus prediction learned from your own samples | — |
 | `diagnostics.py` | 284 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain
@@ -1344,6 +1344,7 @@ tag, so the two have to be set together or the notice lies.
 | 4.1.0 | n1 = 0 naming rule fixed, EDDiscovery source working again, bio counter fixed, physical body data stored |
 | 4.2.0 | cockpit overlay, bio prediction from own finds, route plot targets through unprobed boxels |
 | 4.3.0 | discovery filters fixed, supercruise timing on real legs, atlas for body signals and materials, 30 s briefing |
+| 4.4.0 | surface track and finds on bodies, exobiology sample distance in the overlay |
 
 
 ---
@@ -1552,4 +1553,42 @@ the update (logged as `upgrade finished - atlas: N signal kinds, M materials`).
   (`database repair (destination phantoms)`).
 * **not discovered by anyone yet** no longer routes to rings as separate
   stops - they are discovered together with their planet.
+
+
+---
+
+## What changed in 4.4
+
+### Surface track and finds
+
+On or near a body the game writes latitude, longitude, altitude and heading
+to `Status.json`. 4.4 keeps them as a **track per body** - a point every 25 m,
+or every 10 s once you have moved a little, split into ship, SRV and on foot.
+No journal holds this, so the track only exists from now on and only while
+the plugin runs.
+
+Every place where something happened on a body is kept as a **mark**:
+touchdown and lift-off, SRV out and in, leaving the ship on foot, each
+biological log / sample / analysis with its species, materials picked up,
+codex finds, settlements and screenshots. Touchdown, lift-off, codex,
+settlement and screenshot carry their own position and are also read back
+from your journals (on the test journals: 341 landings, 221 codex finds, 30
+settlements on 96 bodies). Samples and pickups have no position in the
+journal; they take the last `Status.json` position - only when it belongs to
+the same body and the same moment, so replaying an old journal never stamps
+today's position on an old sample.
+
+### Exobiology: distance to the last sample
+
+While you sample a species, the cockpit overlay shows the distance to the
+previous samples of that species against the minimum distance of its genus:
+
+```
+BIO > Bacterium Cerbrus  2/3
+580 m / 500 m  OK - sample here
+```
+
+The minimum distances are community values (Bacterium 500 m, Osseus 800 m,
+Tussock 200 m ...), not published by Frontier - the measured distance is
+shown next to them so a wrong value is easy to spot.
 

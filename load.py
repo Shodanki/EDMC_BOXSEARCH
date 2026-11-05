@@ -47,9 +47,9 @@ from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
                        corridor_targets, set_origin)
 from overlay import CockpitOverlay, POSITIONS as OVERLAY_POSITIONS  # noqa: E402
-from biopredict import BioModel                                    # noqa: E402
+from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E402
 
-VERSION = "4.3.0"
+VERSION = "4.4.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -145,6 +145,10 @@ class State:
         self.cur_pos: Optional[Tuple[float, float, float]] = None
         self.max_jump: Optional[float] = None
         self.route_targets: List[Dict[str, Any]] = []   # NavRoute plot suggestions
+        self.last_track: Optional[Dict[str, Any]] = None  # last stored surface point
+        # species being sampled: {"body", "species", "genus", "points": [(lat, lon)]}
+        self.bio_active: Optional[Dict[str, Any]] = None
+        self._bio_shown = 0.0
         self.last_dest_id64: Optional[int] = None
 
         self.sphere_id: Optional[int] = None
@@ -2651,6 +2655,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                                  or ST.cur_system)
             if ST.active:
                 _prune_queues()
+            if ev == "ScanOrganic":
+                _bio_event(entry)
             if ev == "ScanOrganic" and entry.get("ScanType") == "Analyse":
                 _bio_model_reset()          # one more find to learn from
             if ev in ("SAAScanComplete", "ScanOrganic"):
@@ -2676,8 +2682,93 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         logger.exception("journal_entry(%s) failed", ev)
 
 
+TRACK_STEP_M = 25.0       # store a point after this much movement ...
+TRACK_MIN_S = 10.0        # ... or after this long when moved at least 3 m
+TRACK_MAX_ALT = 25000.0   # metres: higher than this is flying, not exploring
+
+
+def _surface_status(entry: Dict[str, Any]) -> None:
+    """
+    Status.json on or near a body: extend the surface track and update the
+    exobiology distance line. The track exists nowhere else - the journal
+    has no position stream - so it only grows while the plugin runs.
+    """
+    if not ST.db or "Flags" not in entry:
+        return
+    with ST.lock:
+        pos = ST.db.note_status(entry)
+    if not pos or not ST.cur_id64:
+        ST.last_track = None
+        return
+    radius = float(pos.get("radius") or 0.0)
+    alt = pos.get("alt")
+    low = pos["landed"] or pos["mode"] != "ship" or (alt is not None and alt < TRACK_MAX_ALT)
+    now = time.time()
+    if low and radius > 0:
+        last = ST.last_track
+        moved = (surface_distance_m(last["lat"], last["lon"], pos["lat"], pos["lon"], radius)
+                 if last and last["body"] == pos["body"] else None)
+        if (moved is None or moved >= TRACK_STEP_M or last["mode"] != pos["mode"]
+                or (now - last["t"] >= TRACK_MIN_S and moved >= 3.0)):
+            with ST.lock:
+                ST.db.add_track_point(ST.cur_id64, pos, now)
+            ST.last_track = dict(pos, t=now)
+    _bio_distance_line(pos, radius, now)
+
+
+def _bio_distance_line(pos: Dict[str, Any], radius: float, now: float) -> None:
+    """Overlay: distance to the previous samples of the species in progress."""
+    b = ST.bio_active
+    if not b or b["body"] != pos["body"] or radius <= 0 or not b["points"]:
+        return
+    if now - ST._bio_shown < 1.0:
+        return
+    ST._bio_shown = now
+    rng = COLONY_RANGE_M.get(b["genus"] or "")
+    near = min(surface_distance_m(la, lo, pos["lat"], pos["lon"], radius)
+               for la, lo in b["points"])
+    ok = rng is not None and near >= rng
+    from overlay import COL
+    head = "BIO > %s  %d/3" % ((b["species"] or "?")[:30], len(b["points"]) + 1)
+    if rng is None:
+        line = ("%.0f m from nearest sample (range unknown)" % near, COL["dim"])
+    else:
+        line = ("%.0f m / %d m  %s" % (near, rng, "OK - sample here" if ok else "too close"),
+                COL["data"] if ok else COL["warn"])
+    ov = getattr(ST, "overlay", None)
+    if ov is not None and ov.enabled:
+        ov.show_bio([(head, COL["head"]), line], seconds=6)
+
+
+def _bio_event(entry: Dict[str, Any]) -> None:
+    """Follow Log -> Sample -> Analyse of one species for the distance line."""
+    kind = entry.get("ScanType")
+    pos = ST.db._pos if ST.db else None
+    body = pos["body"] if pos else None
+    species = entry.get("Species_Localised") or entry.get("Species")
+    genus = entry.get("Genus_Localised") or entry.get("Genus")
+    if kind == "Analyse":
+        ST.bio_active = None
+        ov = getattr(ST, "overlay", None)
+        if ov is not None:
+            from overlay import COL
+            ov.show_bio([("BIO > %s analysed" % (species or "?")[:30], COL["data"])],
+                        seconds=6)
+        return
+    if kind not in ("Log", "Sample") or not pos:
+        return
+    b = ST.bio_active
+    if kind == "Log" or not b or b["species"] != species or b["body"] != body:
+        b = ST.bio_active = {"body": body, "species": species, "genus": genus, "points": []}
+    b["points"].append((pos["lat"], pos["lon"]))
+
+
 def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
     """Status.json. The Destination field carries the id64 of any selected target."""
+    try:
+        _surface_status(entry)
+    except Exception:
+        logger.debug("surface status failed", exc_info=True)
     # Which game screen is in front - the overlay steps aside for the maps,
     # FSS, DSS, codex and station services. Before any other check: it must
     # work even with destination harvesting switched off.
@@ -3684,7 +3775,7 @@ def _first_run_migration() -> None:
 
 
 # Releases that need one full journal replay to fill what they store new.
-REPLAY_TAGS = ("upgrade_41", "upgrade_43")
+REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44")
 
 
 def _upgrade_replay() -> None:

@@ -214,7 +214,7 @@ class CockpitOverlay:
     # -- drawing -----------------------------------------------------------
     def _origin(self, group: str) -> Tuple[int, int]:
         x, y = ANCHORS.get(self.position, ANCHORS["top-left"])
-        if group == "brief":
+        if group in ("brief", "bio"):
             lh = LINE_H.get(self.size, 16)
             down = (self._drawn.get("targets", 0) + 1) * lh
             if self.position.startswith("bottom"):
@@ -269,6 +269,12 @@ class CockpitOverlay:
         if self.hidden:
             return False                     # drawn when the screen closes
         return self.draw("targets", lines, ttl=900)
+
+    def show_bio(self, lines: Sequence[Line], seconds: int = 8) -> bool:
+        """Exobiology distance line while sampling; held back like a briefing."""
+        if self.hidden:
+            return False
+        return self.draw("bio", list(lines), ttl=seconds)
 
     def show_briefing(self, info: Dict[str, Any], seconds: int = 10) -> bool:
         lines = briefing_lines(info)
