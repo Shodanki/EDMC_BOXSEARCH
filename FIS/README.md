@@ -34,6 +34,12 @@ few questions in the console, once:
 The answers are kept in `fis.ini` next to `start_fis.bat`. Change them with
 **`fis_settings.bat`**. No command-line parameters needed.
 
+Or from EDMC: *File > Settings > SHBOXSEARCH*, section **SHBOX FIS** -
+**start FIS**, **open in browser**, and the tick **start the FIS together with
+EDMC** (off by default; the console window then opens minimised, a few seconds
+after EDMC). The FIS keeps running when EDMC closes; the next EDMC start sees
+it running and leaves it alone.
+
 Updating: replace the plugin folder's files with the new release as usual
 (do not delete the folder) - `fis.ini` and the plugin database stay.
 

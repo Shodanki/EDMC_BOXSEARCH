@@ -1639,7 +1639,9 @@ tactical, planet, surface, atlas, ship, carrier, galaxy), English and German,
 for a desktop, a 10" tablet or a phone, each view also in a window of its own.
 It reads the plugin database and the game's files only. Start it with
 `FIS\start_fis.bat` (Python 3.11+); the first start asks a few questions and
-remembers them. Everything else: [FIS/README.md](FIS/README.md).
+remembers them. In EDMC's settings (section SHBOX FIS) you can start it, open it
+in the browser, or tick **start the FIS together with EDMC**. Everything else:
+[FIS/README.md](FIS/README.md).
 
 ### Atlas: tabs and finds on the ground
 

@@ -103,6 +103,7 @@ CFG = {
     "overlay_pos": "%s_overlay_pos" % PLUGIN_NAME,
     "overlay_brief": "%s_overlay_brief" % PLUGIN_NAME,
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
+    "fis_autostart": "%s_fis_autostart" % PLUGIN_NAME,
 }
 
 # Where releases live. A check is a single call to the GitHub releases API.
@@ -1863,19 +1864,49 @@ def _fis_status() -> str:
         "not running - needs Python 3.11+ (python.org), EDMC's Python cannot run it"
 
 
-def _fis_start() -> None:
-    """Start the FIS in its own console window (the first start asks questions there)."""
+def _fis_setup_done() -> bool:
+    import configparser
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        cp.read(os.path.join(FIS_DIR, "fis.ini"), encoding="utf-8")
+        return cp.get("fis", "setup_done", fallback="false").strip().lower() == "true"
+    except Exception:
+        return False
+
+
+def _fis_start(minimized: bool = False, open_if_running: bool = True) -> None:
+    """
+    Start the FIS in its own console window - independent of EDMC, it keeps
+    running when EDMC closes. Minimised only once the first-start questions
+    have been answered (they need the window).
+    """
     if not os.path.exists(FIS_BAT):
         return
     st = _fis_settings()
     if _fis_running(st["port"]):
-        _fis_open()
+        if open_if_running:
+            _fis_open()
         return
     try:
-        os.startfile(FIS_BAT)                  # its own window, independent of EDMC
-        logger.info("FIS | started %s", FIS_BAT)
+        if minimized and _fis_setup_done():
+            import subprocess
+            subprocess.Popen('start "SHBOX FIS" /min "%s"' % FIS_BAT, shell=True, cwd=FIS_DIR)
+        else:
+            os.startfile(FIS_BAT)
+        logger.info("FIS | started %s%s", FIS_BAT, " (minimised)" if minimized else "")
     except Exception:
         logger.exception("FIS | could not start %s", FIS_BAT)
+
+
+FIS_AUTOSTART_DELAY_MS = 4000      # let EDMC finish starting first
+
+
+def _fis_autostart() -> None:
+    """Start the FIS with EDMC when the commander asked for it (settings)."""
+    if not cfg_bool(CFG["fis_autostart"], False) or not os.path.exists(FIS_BAT):
+        return
+    threading.Thread(target=lambda: _fis_start(minimized=True, open_if_running=False),
+                     name="shbox-fis-autostart", daemon=True).start()
 
 
 def _fis_open() -> None:
@@ -3061,6 +3092,8 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
 
     _refresh()
     theme.update(_frame)
+    # SHBOX FIS along with EDMC, when ticked in the settings
+    _frame.after(FIS_AUTOSTART_DELAY_MS, _fis_autostart)
     return _frame
 
 
@@ -3789,6 +3822,10 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     tk.Button(fis_row, text="check", command=lambda: fis_state.set(_fis_status())).pack(
         side=tk.LEFT, padx=(6, 0))
     field(right, "right", "", fis_row)
+    _p["fis_autostart"] = tk.IntVar(value=1 if cfg_bool(CFG["fis_autostart"], False) else 0)
+    field(right, "right", "", nb.Checkbutton(
+        right, text="start the FIS together with EDMC (window minimised)",
+        variable=_p["fis_autostart"]))
     nb.Label(right, textvariable=fis_state).grid(
         row=state["right"], column=0, columnspan=4, sticky=tk.W, padx=(12, 0))
     state["right"] += 1
@@ -3896,6 +3933,8 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["overlay"], bool(_p["overlay"].get()))
         cfg_set(CFG["overlay_brief"], bool(_p["overlay_brief"].get()))
         cfg_set(CFG["overlay_nav"], bool(_p["overlay_nav"].get()))
+        if "fis_autostart" in _p:
+            cfg_set(CFG["fis_autostart"], bool(_p["fis_autostart"].get()))
         cfg_set(CFG["overlay_pos"], _p["overlay_pos"].get())
         _overlay_apply_settings()
         _overlay_targets()
