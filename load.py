@@ -95,6 +95,7 @@ CFG = {
     "atlas_sig": "%s_atlas_sig" % PLUGIN_NAME,
     "atlas_mat": "%s_atlas_mat" % PLUGIN_NAME,
     "atlas_find": "%s_atlas_find" % PLUGIN_NAME,
+    "atlas_range": "%s_atlas_range" % PLUGIN_NAME,
     "check_updates": "%s_check_updates" % PLUGIN_NAME,
     "update_seen": "%s_update_seen" % PLUGIN_NAME,
     "update_checked": "%s_update_checked" % PLUGIN_NAME,
@@ -3027,6 +3028,18 @@ _ATLAS_KEY = {ATLAS_MODES[0]: "mine_mat", ATLAS_MODES[1]: "atlas_sig",
 _atlas_mode: Optional[tk.StringVar] = None
 _atlas_pick_frame: Optional[tk.Frame] = None
 _atlas_tabs: Dict[str, Any] = {}
+_atlas_range: Optional[tk.StringVar] = None
+# far from the bubble, finds 2000 ly back would fill the list - limit by distance
+ATLAS_RANGES = ("any distance", "25 ly", "50 ly", "100 ly", "250 ly", "500 ly",
+                "1000 ly", "2000 ly")
+
+
+def _atlas_max_ly() -> Optional[float]:
+    v = _atlas_range.get() if _atlas_range is not None else ATLAS_RANGES[0]
+    try:
+        return float(v.split()[0])
+    except (ValueError, IndexError):
+        return None
 # signal kinds shown first, in this order; everything else follows by count
 _SIG_FIRST = ("mining_location", "geological", "biological", "genus:Brain Trees",
               "site:nonhuman", "site:guardian", "thargoid", "guardian", "human",
@@ -3084,7 +3097,7 @@ def _mining_window_open() -> None:
 
     One tab per kind; clicking a row copies the system name.
     """
-    global _mine_win, _mine_body, _mine_mat, _atlas_mode, _atlas_pick_frame
+    global _mine_win, _mine_body, _mine_mat, _atlas_mode, _atlas_pick_frame, _atlas_range
     if _frame is None or ST.db is None:
         return
     _mine_win = tk.Toplevel(_frame)
@@ -3112,6 +3125,13 @@ def _mining_window_open() -> None:
     bar.grid(row=1, column=0, sticky=tk.EW, padx=10, pady=(4, 4))
     _atlas_pick_frame = tk.Frame(bar)
     _atlas_pick_frame.pack(side=tk.LEFT, padx=(6, 0))
+    rng = cfg_str(CFG["atlas_range"], ATLAS_RANGES[0])
+    _atlas_range = tk.StringVar(value=rng if rng in ATLAS_RANGES else ATLAS_RANGES[0])
+    rng_pick = ttk.OptionMenu(bar, _atlas_range, _atlas_range.get(), *ATLAS_RANGES,
+                              command=lambda *_: (cfg_set(CFG["atlas_range"], _atlas_range.get()),
+                                                  _mining_refresh()))
+    rng_pick.pack(side=tk.LEFT, padx=(6, 0))
+    _theme_menu(rng_pick, _theme_colours())
     tk.Button(bar, text="refresh", command=_atlas_build_picker).pack(
         side=tk.LEFT, padx=(6, 0))
     tk.Button(bar, text="close", command=_mining_window_close).pack(
@@ -3177,21 +3197,27 @@ def _mining_refresh() -> None:
 
     with ST.lock:
         if mode == ATLAS_MODES[1]:
-            rows = ST.db.find_signals(key, near=ST.cur_pos, limit=40)
+            rows = ST.db.find_signals(key, near=ST.cur_pos, limit=100000)
         elif mode == ATLAS_MODES[2]:
-            rows = ST.db.find_materials(key, near=ST.cur_pos, limit=40)
+            rows = ST.db.find_materials(key, near=ST.cur_pos, limit=100000)
         elif mode == ATLAS_MODES[3]:
-            rows = ST.db.find_marks(key, near=ST.cur_pos, limit=40)
+            rows = ST.db.find_marks(key, near=ST.cur_pos, limit=100000)
         else:
-            rows = ST.db.find_hotspots(key, near=ST.cur_pos, limit=40)
+            rows = ST.db.find_hotspots(key, near=ST.cur_pos, limit=100000)
+    max_ly = _atlas_max_ly()
+    if max_ly and ST.cur_pos is not None:
+        rows = [r for r in rows if r.get("dist") is not None and r["dist"] <= max_ly]
+    rows = rows[:40]
 
     if not rows:
         hint = {ATLAS_MODES[0]: "map a ring with the DSS and its materials land here",
                 ATLAS_MODES[1]: "FSS / DSS a body and its signals land here",
                 ATLAS_MODES[2]: "pick up a material and where you were lands here",
                 ATLAS_MODES[3]: "land, log a codex entry, sample or take a screenshot"}
+        max_ly = _atlas_max_ly()
         lbl = tk.Label(_mine_body, anchor=tk.W, font=_MONO,
-                       text="nothing yet - " + hint.get(mode, ""))
+                       text=("nothing within %.0f ly - pick a larger distance" % max_ly)
+                       if max_ly and ST.cur_pos is not None else "nothing yet - " + hint.get(mode, ""))
         lbl.grid(row=0, column=0, sticky=tk.W)
         _apply_theme(lbl, col, is_text=True)
         return

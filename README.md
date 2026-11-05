@@ -1637,6 +1637,18 @@ A screenshot is the simplest way to keep any spot as a waypoint.
 Rings in a system known under two names (a catalogue name and a procedural
 one) no longer show up twice.
 
+A **distance** picker (25 ly ... 2000 ly, or any distance) keeps the list to
+what is around you - far from the bubble, finds thousands of light years back
+would otherwise fill it.
+
+### Route: no detours to other stars
+
+Stars other than the one you arrive at are no longer route stops, whatever
+the filter: the FSS from the arrival point already discovers them, flying out
+to them only made the route longer. On the test systems with "every body"
+this saves one stop and 4-5 minutes each; more where a companion star sits
+far out.
+
 ### Fix: binary moons drawn thousands of LS from their planet
 
 Two moons that circle each other orbit a common barycentre, which orbits the

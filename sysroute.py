@@ -487,6 +487,16 @@ FILTER_LABEL = {
 }
 
 
+def is_secondary_star(b: Body) -> bool:
+    """
+    A star other than the one you arrive at. Nothing on it needs a visit -
+    the FSS from the arrival point discovers it - so it is never a stop.
+    Flying out to it only made routes in multi-star systems longer (user,
+    05.11.2026). The arrival star stays: it is where the route starts.
+    """
+    return b.kind == "Star" and not (b.arrival_ls is not None and b.arrival_ls <= 0.01)
+
+
 def body_matches(b: Body, filters: Sequence[str]) -> bool:
     """Does this body qualify under the active filters?"""
     if not filters or F_ALL in filters:
@@ -536,6 +546,7 @@ def plan_route(system: str, bodies: Dict[int, Body],
     else:
         targets = [b for b in bodies.values()
                    if (b.has_work if only_work else b.kind in ("Planet", "Star"))]
+    targets = [b for b in targets if not is_secondary_star(b)]
     skipped = len(bodies) - len(targets)
     if not targets:
         return SystemRoute(system, [], skipped, model)
