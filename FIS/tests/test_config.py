@@ -48,13 +48,15 @@ class TestConfig(unittest.TestCase):
         d = tempfile.mkdtemp()
         ini = os.path.join(d, "fis.ini")
         with open(ini, "w", encoding="utf-8") as fh:
-            fh.write("[fis]\nport = 9001\nlan = yes\nplugin_dir = ..\\SHBOXSEARCH\n"
+            # os.sep: the FIS is made for Windows, the CI runs on Linux
+            fh.write("[fis]\nport = 9001\nlan = yes\nplugin_dir = .." + os.sep + "SHBOXSEARCH\n"
                      "route_source = ini\nroute_filters = new, signals\n")
         c = Config().load(ini)
         self.assertEqual((c.port, c.lan, c.host), (9001, True, "0.0.0.0"))
         self.assertEqual(c.filters, ["new", "signals"])
         self.assertEqual(c.plugin_dir, os.path.normpath(os.path.join(ROOT, "..", "SHBOXSEARCH")))
 
+    @unittest.skipUnless(os.name == "nt", "%VARIABLE% expansion is a Windows feature")
     def test_env_vars_in_paths(self):
         d = tempfile.mkdtemp()
         ini = os.path.join(d, "fis.ini")
