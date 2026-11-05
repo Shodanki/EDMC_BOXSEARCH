@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS surface_marks (
     sys_id64  INTEGER NOT NULL,
     body_name TEXT NOT NULL,
     kind      TEXT NOT NULL,     -- touchdown, liftoff, srv_out, srv_in, disembark,
-                                 -- embark, bio_log, bio_sample, bio_analyse,
+                                 -- srv_parked, embark, bio_log, bio_sample, bio_analyse,
                                  -- material, codex, settlement, screenshot
     label     TEXT,
     detail    TEXT,              -- genus for bio marks, category for materials
@@ -262,6 +262,8 @@ class SystemDB:
         # last Status.json position on a body (live only), for marks whose
         # journal event carries no position (ScanOrganic, MaterialCollected)
         self._pos: Optional[Dict[str, Any]] = None
+        self._vehicle: Optional[str] = None     # SRV type of the last launch
+        self.marks_rev = 0                      # bumped on every new mark
 
     def _migrate(self) -> None:
         """Add columns introduced after the first release, in place."""
@@ -312,6 +314,12 @@ class SystemDB:
                 logger.info("database repair (destination phantoms): %d removed", n)
             except Exception:
                 logger.exception("database repair (destination phantoms) failed")
+        if not self.get_meta("fix_marks45"):
+            try:
+                res = self.repair_marks45()
+                logger.info("database repair (SRV parked / vehicle landings): %s", res)
+            except Exception:
+                logger.exception("database repair (surface marks) failed")
         if not self.get_meta("fix_n1zero"):
             try:
                 res = self.repair_n1zero()
@@ -787,6 +795,7 @@ class SystemDB:
             (entry.get("timestamp") or _now(), a, body, kind, label or "", detail,
              lat, lon))
         self.cx.commit()
+        self.marks_rev += 1
         return True
 
     def _body_name_of(self, sys_id64: Optional[int], body_id: Optional[int]) -> Optional[str]:
@@ -799,16 +808,30 @@ class SystemDB:
     def _surface_event(self, ev: str, e: dict) -> None:
         """Turn surface journal events into marks."""
         if ev in ("Touchdown", "Liftoff"):
+            # who landed: the flying Nomad writes Touchdown/Liftoff too, and a
+            # ship sent away or called back does it without the player
             if e.get("PlayerControlled") is False:
-                return
-            self._mark(e, ev.lower(), e.get("Body"), e.get("Body") or "",
+                who = "auto"
+            else:
+                p = self._fresh_pos(e.get("Body"), _epoch(e.get("timestamp")))
+                who = ("srv" if p["mode"] == "srv" else "ship") if p else None
+            self._mark(e, ev.lower(), e.get("Body"), e.get("Body") or "", detail=who,
                        lat=e.get("Latitude"), lon=e.get("Longitude"))
-        elif ev == "LaunchSRV":
-            self._mark(e, "srv_out", None, e.get("SRVType_Localised") or "SRV")
-        elif ev == "DockSRV":
-            self._mark(e, "srv_in", None, e.get("SRVType_Localised") or "SRV")
+        elif ev in ("LaunchSRV", "LaunchVessel"):
+            # LaunchVessel: the Nomad (flying SRV), dropped from a ship in flight
+            self._vehicle = (e.get("SRVType_Localised") or e.get("VesselType_Localised")
+                             or "SRV")
+            self._mark(e, "srv_out", None, self._vehicle)
+        elif ev in ("DockSRV", "DockVessel"):
+            self._mark(e, "srv_in", None, e.get("SRVType_Localised") or
+                       e.get("VesselType_Localised") or "SRV")
         elif ev == "Disembark" and e.get("OnPlanet"):
-            self._mark(e, "disembark", e.get("Body"), "on foot")
+            if e.get("SRV"):
+                # the vehicle stays here - the point to walk back to
+                self._mark(e, "srv_parked", e.get("Body"), "SRV",
+                           detail=self._vehicle or "SRV")
+            else:
+                self._mark(e, "disembark", e.get("Body"), "on foot")
         elif ev == "Embark" and e.get("OnPlanet"):
             self._mark(e, "embark", e.get("Body"), "SRV" if e.get("SRV") else "ship")
         elif ev == "ScanOrganic":
@@ -1165,6 +1188,51 @@ class SystemDB:
         existed = self.system(nm) is not None
         self.upsert(nm, id64=a, quality=Q_CONFIRMED, source="destination")
         return None if existed else nm
+
+    def repair_marks45(self) -> Dict[str, int]:
+        """
+        4.5 one-time fix of recorded surface marks:
+          * leaving the SRV was stored as a plain 'disembark' - the next
+            'embark' says whether it was the SRV; those become 'srv_parked'
+            (the vehicle you have to walk back to)
+          * Touchdown/Liftoff carry no vehicle; the Nomad lands and lifts off
+            on its own. The track's mode at that moment tells ship from SRV.
+        """
+        parked = vehicle = 0
+        rows = self.cx.execute(
+            "SELECT rowid, ts, sys_id64, body_name, kind, label FROM surface_marks "
+            "WHERE kind IN ('disembark','embark','srv_out') ORDER BY body_name, ts").fetchall()
+        last_srv: Dict[str, str] = {}
+        for i, r in enumerate(rows):
+            if r["kind"] == "srv_out":
+                last_srv[r["body_name"]] = r["label"] or "SRV"
+                continue
+            if r["kind"] != "disembark":
+                continue
+            nxt = next((n for n in rows[i + 1:] if n["body_name"] == r["body_name"]
+                        and n["kind"] in ("embark", "disembark")), None)
+            if nxt is not None and nxt["kind"] == "embark" and nxt["label"] == "SRV":
+                self.cx.execute("UPDATE OR IGNORE surface_marks SET kind='srv_parked', "
+                                "label='SRV', detail=? WHERE rowid=?",
+                                (last_srv.get(r["body_name"], "SRV"), r["rowid"]))
+                parked += 1
+        for r in self.cx.execute(
+                "SELECT rowid, ts, sys_id64, body_name FROM surface_marks "
+                "WHERE kind IN ('touchdown','liftoff') AND detail IS NULL").fetchall():
+            t = _epoch(r["ts"])
+            if t is None:
+                continue
+            tr = self.cx.execute(
+                "SELECT mode FROM surface_track WHERE sys_id64=? AND body_name=? "
+                "AND ts BETWEEN ? AND ? ORDER BY abs(ts-?) LIMIT 1",
+                (r["sys_id64"], r["body_name"], t - 30, t + 30, t)).fetchone()
+            if tr is not None and tr["mode"]:
+                self.cx.execute("UPDATE surface_marks SET detail=? WHERE rowid=?",
+                                ("srv" if tr["mode"] == "srv" else "ship", r["rowid"]))
+                vehicle += 1
+        self.set_meta("fix_marks45", _now())
+        self.cx.commit()
+        return {"srv_parked": parked, "vehicle_set": vehicle}
 
     def repair_phantoms(self) -> int:
         """

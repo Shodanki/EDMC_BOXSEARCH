@@ -19,5 +19,7 @@ jobs:
         run: python -m py_compile *.py
       - name: procgen self test
         run: python procgen.py
+      - name: surface compass self test
+        run: python surfacenav.py
       - name: plain-python modules import without EDMC
-        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict; print('imports ok')"
+        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav; print('imports ok')"

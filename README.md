@@ -1590,7 +1590,40 @@ BIO > Bacterium Cerbrus  2/3
 
 The minimum distances are community values (Bacterium 500 m, Osseus 800 m,
 Tussock 200 m ...), not published by Frontier - the measured distance is
-shown next to them so a wrong value is easy to spot.
+shown next to them so a wrong value is easy to spot. Brain Trees can be
+sampled since the Nomad arrived; their range is 100 m (community value; in
+our own samples the game accepted the next sample at 102 m).
+
+### Surface compass in the overlay
+
+On a body - and already in orbital cruise, where `Status.json` reports the
+position too - the overlay lists what you may want to get back to, with the
+distance and the direction relative to your heading:
+
+```
+NAV  bio 2 done, 1 open
+NOMAD PARKED                359 m  ^ ahead
+Lividum Brain Tree 1/3       46 m  v behind
+Gypseeum Brain Tree         903 m  < 13
+```
+
+* **the parked SRV** - where you left it on foot, until you get back in
+* **the parked ship** - where it touched down, until it lifts off or is sent away
+* **species not finished yet**, with the samples taken (a new Log restarts the
+  count, as in the game)
+* **earlier finds on this body** - codex entries, settlements, screenshots;
+  take a screenshot to keep any spot as a waypoint
+* genera the detailed surface scan named that you have not started yet
+
+Switch it off under "surface compass" in the settings.
+
+### The Nomad
+
+The flying SRV is launched with `LaunchVessel` and lands with its own
+`Touchdown` / `Liftoff`. 4.4 records its launch, tells its landings apart from
+the ship's and marks where it is parked. Marks recorded before are repaired
+once: leaving the SRV becomes "SRV parked", and landings get their vehicle
+from the track.
 
 ### Fix: binary moons drawn thousands of LS from their planet
 

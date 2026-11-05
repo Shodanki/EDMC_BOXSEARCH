@@ -42,6 +42,9 @@ COLONY_RANGE_M = {
     "Concha": 150, "Electricae": 1000, "Fonticulua": 500, "Frutexa": 150,
     "Fumerola": 100, "Fungoida": 300, "Osseus": 800, "Recepta": 150,
     "Stratum": 500, "Tubus": 800, "Tussock": 200,
+    # sampleable since the Nomad update; 100 m community value, consistent
+    # with own samples 2026-11-05 (accepted at 102 m on HIP 31189 A 1 d)
+    "Brain Trees": 100,
 }
 
 

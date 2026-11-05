@@ -48,6 +48,7 @@ from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        corridor_targets, set_origin)
 from overlay import CockpitOverlay, POSITIONS as OVERLAY_POSITIONS  # noqa: E402
 from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E402
+import surfacenav  # noqa: E402
 
 VERSION = "4.4.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
@@ -99,6 +100,7 @@ CFG = {
     "overlay": "%s_overlay" % PLUGIN_NAME,
     "overlay_pos": "%s_overlay_pos" % PLUGIN_NAME,
     "overlay_brief": "%s_overlay_brief" % PLUGIN_NAME,
+    "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
 }
 
 # Where releases live. A check is a single call to the GitHub releases API.
@@ -149,6 +151,8 @@ class State:
         # species being sampled: {"body", "species", "genus", "points": [(lat, lon)]}
         self.bio_active: Optional[Dict[str, Any]] = None
         self._bio_shown = 0.0
+        self._nav_shown = 0.0
+        self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera)
         self.last_dest_id64: Optional[int] = None
 
         self.sphere_id: Optional[int] = None
@@ -2713,7 +2717,52 @@ def _surface_status(entry: Dict[str, Any]) -> None:
             with ST.lock:
                 ST.db.add_track_point(ST.cur_id64, pos, now)
             ST.last_track = dict(pos, t=now)
+    _nav_overlay(pos, radius, now, low)
     _bio_distance_line(pos, radius, now)
+
+
+NAV_EVERY_S = 1.0         # compass refresh while a position is reported
+
+
+def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> None:
+    """
+    Overlay compass: direction and distance to the parked SRV, the parked
+    ship, unfinished species and earlier finds on this body. Status.json
+    reports the position in orbital cruise as well, so on the way down the
+    same block lists what is known on the body ("KNOWN POINTS").
+    """
+    ov = getattr(ST, "overlay", None)
+    if (ov is None or not ov.enabled or radius <= 0 or not ST.cur_id64
+            or not cfg_bool(CFG["overlay_nav"], True) or now - ST._nav_shown < NAV_EVERY_S):
+        return
+    ST._nav_shown = now
+    key = (ST.cur_id64, pos["body"], ST.db.marks_rev)
+    c = ST._nav_cache
+    if c is None or c[0] != key:
+        with ST.lock:
+            marks = [dict(m) for m in ST.db.marks_of(ST.cur_id64, pos["body"])]
+            r = ST.db.cx.execute("SELECT sig_bio, genuses FROM bodies WHERE sys_id64=? "
+                                 "AND name=?", (ST.cur_id64, pos["body"])).fetchone()
+        genera = [g for g in ((r["genuses"] if r else None) or "").split(",") if g]
+        c = ST._nav_cache = (key, marks, r["sig_bio"] if r else None, genera)
+        _bio_resume(pos["body"], marks)
+    from overlay import COL
+    lines = surfacenav.compass_lines(pos, c[1], radius, sig_bio=c[2], genera=c[3],
+                                     colours=COL, orbit=not low)
+    if lines:
+        ov.show_nav(lines, seconds=4)
+
+
+def _bio_resume(body: str, marks: List[Dict[str, Any]]) -> None:
+    """After an EDMC restart mid-sampling: pick up the species in progress."""
+    if ST.bio_active is not None:
+        return
+    todo = [s for s in surfacenav.body_state(marks)["species"]
+            if not s["analysed"] and s["points"] and s["samples"] < 3]
+    if todo:
+        s = max(todo, key=lambda x: x["last"] or "")
+        ST.bio_active = {"body": body, "species": s["species"], "genus": s["genus"],
+                         "points": list(s["points"])}
 
 
 def _bio_distance_line(pos: Dict[str, Any], radius: float, now: float) -> None:
@@ -3570,11 +3619,15 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     _p["overlay"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay"], True) else 0)
     _p["overlay_brief"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_brief"], True) else 0)
     _p["overlay_pos"] = tk.StringVar(value=cfg_str(CFG["overlay_pos"], "top-left"))
+    _p["overlay_nav"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_nav"], True) else 0)
     field(right, "right", "", nb.Checkbutton(
         right, text="show the next route targets in the game", variable=_p["overlay"]))
     field(right, "right", "", nb.Checkbutton(
         right, text="briefing on target selection and arrival",
         variable=_p["overlay_brief"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="surface compass: parked SRV, open samples, known points",
+        variable=_p["overlay_nav"]))
     field(right, "right", "Position",
           ttk.OptionMenu(right, _p["overlay_pos"], _p["overlay_pos"].get(),
                          *OVERLAY_POSITIONS))
@@ -3682,6 +3735,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["check_updates"], bool(_p["check_updates"].get()))
         cfg_set(CFG["overlay"], bool(_p["overlay"].get()))
         cfg_set(CFG["overlay_brief"], bool(_p["overlay_brief"].get()))
+        cfg_set(CFG["overlay_nav"], bool(_p["overlay_nav"].get()))
         cfg_set(CFG["overlay_pos"], _p["overlay_pos"].get())
         _overlay_apply_settings()
         _overlay_targets()
