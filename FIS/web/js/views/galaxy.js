@@ -2,7 +2,7 @@
 // Top view: galactic x to the right, z up (towards the core); y (height)
 // shows in the tooltip. Layers can be switched; the path is coloured by age
 // (old = violet, new = cyan). Wheel zooms at the cursor, drag pans, double
-// click fits everything; a click on a system opens it in TACTICAL (new tab).
+// click fits everything; a click on a system opens it in SYSTEM (new tab).
 
 import { getJSON } from "../api.js";
 import { el, frame, fmt, withPopout } from "../ui.js";

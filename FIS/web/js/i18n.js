@@ -119,7 +119,6 @@ const DE = /*DE*/{
   "Metal": "Metall",
   "Ice": "Eis",
   "NO BODY SELECTED": "KEIN KÖRPER GEWÄHLT",
-  "Click a body in TACTICAL.": "In TAKTIK einen Körper anklicken.",
   "first discovery": "erstentdeckt",
   "never mapped": "nie kartiert",
   "mapped": "kartiert",
@@ -176,7 +175,6 @@ const DE = /*DE*/{
   "Codex": "Codex",
   "Settlement": "Siedlung",
   "Screenshot": "Screenshot",
-  "SURFACE": "OBERFLÄCHE",
   "SHIP": "SCHIFF",
   "no positions for this body": "keine Positionen für diesen Körper",
   "no landing recorded yet": "noch keine Landung aufgezeichnet",
@@ -217,7 +215,6 @@ const DE = /*DE*/{
   "Datasheet": "Datenblatt",
   "Sizes not to scale · positions from Kepler orbits": "Größen nicht maßstäblich · Positionen aus Kepler-Bahnen",
   "Last reference point from the journal – not an exact ship position": "Letzter Bezugspunkt aus dem Journal – keine exakte Schiffsposition",
-  "TACTICAL": "TAKTIK",
   "FOCUS": "FOKUS",
   "Animation": "Animation",
   "Auto view": "Auto-Ansicht",
@@ -440,5 +437,8 @@ const DE = /*DE*/{
   "path: violet = old, cyan = recent · wheel zoom · drag · double click fits": "Weg: violett = alt, cyan = neu · Rad zoomt · ziehen · Doppelklick zeigt alles",
   "open": "offen",
   "only known to us": "nur bei uns",
-  "{c} closed · {o} open · {u} never checked": "{c} geschlossen · {o} offen · {u} nie geprüft"
+  "{c} closed · {o} open · {u} never checked": "{c} geschlossen · {o} offen · {u} nie geprüft",
+  "Click a body in SYSTEM.": "In SYSTEM einen Körper anklicken.",
+  "PLANET · SURFACE": "PLANET · OBERFLÄCHE",
+  "PLANET INFO": "PLANETENINFO"
 }/*END*/;

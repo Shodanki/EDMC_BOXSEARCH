@@ -1,4 +1,4 @@
-// 3D renderer for TAKTIK (Three.js, loaded by the browser from the CDN).
+// 3D renderer for SYSTEM (Three.js, loaded by the browser from the CDN).
 // Expanse-like: thin orbit lines, faint range rings, lines instead of
 // surfaces; labels live on the shared 2D overlay (scene.js).
 

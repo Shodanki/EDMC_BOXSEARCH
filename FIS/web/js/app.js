@@ -110,16 +110,19 @@ function show(name) {
 }
 for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => show(b.dataset.view));
 // hand-edited URL hash / bookmarks (#briefing, #tactical, #planet)
+// the names on the tabs work as addresses too (#system, #planetinfo)
+const ALIAS = { system: "tactical", planetinfo: "planet" };
 window.addEventListener("hashchange", () => {
-  const name = location.hash.slice(1);
+  const name = ALIAS[location.hash.slice(1)] || location.hash.slice(1);
   if (!SOLO && VIEWS[name] && name !== store.view) show(name);
 });
 window.addEventListener("keydown", (e) => {
   if (e.target.matches("input, textarea, select")) return;
   if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey) { fullscreen.toggle(); return; }
   if (SOLO) return;
-  const map = { "1": "briefing", "2": "tactical", "3": "planet", "4": "surface", "5": "atlas",
-    "6": "ship", "7": "carrier", "8": "galaxy" };
+  // keys follow the tab order: briefing, planet, system, galaxy, planet info ...
+  const map = { "1": "briefing", "2": "surface", "3": "tactical", "4": "galaxy", "5": "planet",
+    "6": "atlas", "7": "ship", "8": "carrier" };
   if (map[e.key]) show(map[e.key]);
 });
 
@@ -251,4 +254,4 @@ setInterval(() => {
   if (store.view === "carrier") carrier.update(ctx, "data");
 }, 60000);
 
-show(SOLO || (location.hash || "#tactical").slice(1));
+show(SOLO || ALIAS[location.hash.slice(1)] || (location.hash || "#tactical").slice(1));

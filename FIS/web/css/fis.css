@@ -173,7 +173,7 @@ body.motion .frame.appear > .frame-in { animation: frame-fill var(--t-draw) ease
 .scroll { overflow: auto; min-height: 0; scrollbar-color: var(--faint) transparent; scrollbar-width: thin; }
 
 /* =====================================================================
-   TAKTIK
+   SYSTEM (view id tactical)
    ===================================================================== */
 .tac-view { display: grid; grid-template-columns: 1fr 340px; gap: var(--gap); height: 100%; }
 .tac-main { display: grid; grid-template-rows: auto 1fr; gap: 6px; min-width: 0; min-height: 0; }
@@ -274,7 +274,7 @@ body.motion .blink { animation: pulse 0.9s steps(2) infinite; }
 .sf-row { display: grid; grid-template-columns: 18px 90px 1fr auto; gap: 6px; font-size: 12px; padding: 2px 0; border-bottom: 1px solid rgba(62,242,224,.06); }
 @media (max-width: 1100px) { .sf-wrap { grid-template-columns: 1fr; } .sf-map { height: 55vh; } }
 
-/* TACTICAL bio list, SURFACE parked vehicle */
+/* SYSTEM bio list, PLANET parked vehicle */
 .bio-box { max-height: 34vh; }
 .bio-body { padding: 4px 2px 6px; border-bottom: 1px solid rgba(62,242,224,.08); cursor: pointer; }
 .bio-body:hover { background: rgba(62,242,224,.05); }

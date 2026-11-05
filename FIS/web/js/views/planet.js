@@ -41,8 +41,8 @@ function render(ctx) {
   root.replaceChildren();
   const b = current;
   if (!b) {
-    root.append(frame("PLANET", "", el("div", { class: "empty" }, t("NO BODY SELECTED"), el("br"),
-      el("span", { class: "c-dim", text: t("Click a body in TACTICAL.") }))));
+    root.append(frame(t("PLANET INFO"), "", el("div", { class: "empty" }, t("NO BODY SELECTED"), el("br"),
+      el("span", { class: "c-dim", text: t("Click a body in SYSTEM.") }))));
     return;
   }
   const flags = [];

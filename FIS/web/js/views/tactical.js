@@ -1,4 +1,4 @@
-// TACTICAL – the current system in 3D.
+// SYSTEM – the current system in 3D (view id "tactical").
 // Three.js if the CDN is reachable, otherwise the 2D canvas fallback.
 
 import { el, frame, fmt, chip, ago, classDe, fixLabel } from "../ui.js";
