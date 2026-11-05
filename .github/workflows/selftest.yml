@@ -23,3 +23,6 @@ jobs:
         run: python surfacenav.py
       - name: plain-python modules import without EDMC
         run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav; print('imports ok')"
+      - name: FIS tests (flight information system)
+        working-directory: FIS
+        run: python -m unittest discover -s tests -t .

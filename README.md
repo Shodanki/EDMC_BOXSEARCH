@@ -2,12 +2,16 @@
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
-> by the developer. The plugin itself contains no AI system, sends no data to
-> any AI service, and its output is not AI-generated.
+> by the developer. The plugin and its FIS companion contain no AI system, send
+> no data to any AI service, and their output is not AI-generated.
 > Details: [AI_TRANSPARENCY.md](AI_TRANSPARENCY.md) ·
 > machine-readable: [ai-disclosure.json](ai-disclosure.json)
 
 Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
+
+**New in 4.4: SHBOX FIS**, a flight information system for a second screen,
+tablet or phone - ship status, tactical view, surface map, atlas, carrier and
+galaxy map - in the `FIS` folder of this plugin. See [FIS/README.md](FIS/README.md).
 
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
 > all. On the first start 4.1 repairs boxel records written under a wrong
@@ -83,6 +87,8 @@ on first run and is **your data** - never overwrite it on an update.
 | `overlay.py` | 286 | Cockpit overlay through EDMCModernOverlay (optional) | — |
 | `biopredict.py` | 196 | Genus prediction learned from your own samples | — |
 | `diagnostics.py` | 284 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
+| `surfacenav.py` | 260 | Surface compass: parked SRV, open samples, known points | — |
+| `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain
 Python with no third-party dependencies and can be run and tested on its own.
@@ -106,6 +112,7 @@ disk, not in the repository.
 * EDMC 5.10 or newer (tested against 6.1.2 / Python 3.13)
 * Elite Dangerous: Odyssey journals
 * Optional: EDDiscovery, for a fast local system database
+* Optional, for the FIS: Python 3.11 or newer
 
 ### Uninstall
 
@@ -1624,6 +1631,15 @@ The flying SRV is launched with `LaunchVessel` and lands with its own
 the ship's and marks where it is parked. Marks recorded before are repaired
 once: leaving the SRV becomes "SRV parked", and landings get their vehicle
 from the track.
+
+### SHBOX FIS - flight information system
+
+A companion in your browser, shipped in the `FIS` folder: eight views (briefing,
+tactical, planet, surface, atlas, ship, carrier, galaxy), English and German,
+for a desktop, a 10" tablet or a phone, each view also in a window of its own.
+It reads the plugin database and the game's files only. Start it with
+`FIS\start_fis.bat` (Python 3.11+); the first start asks a few questions and
+remembers them. Everything else: [FIS/README.md](FIS/README.md).
 
 ### Atlas: tabs and finds on the ground
 

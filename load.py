@@ -1810,6 +1810,87 @@ def _check_for_update(force: bool = False) -> None:
     _ui(_refresh)
 
 
+# ---------------------------------------------------------------------------
+# SHBOX FIS - the flight information system in the FIS folder. It runs as its
+# own Python process (EDMC's built-in Python cannot host it); the plugin only
+# starts it and opens it in the browser.
+# ---------------------------------------------------------------------------
+
+FIS_DIR = os.path.join(_PLUGIN_DIR, "FIS")
+FIS_BAT = os.path.join(FIS_DIR, "start_fis.bat")
+
+
+def _fis_settings() -> Dict[str, str]:
+    """Port, LAN and token from FIS/fis.ini (written by the FIS's first start)."""
+    import configparser
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        cp.read(os.path.join(FIS_DIR, "fis.ini"), encoding="utf-8")
+    except Exception:
+        pass
+    s = cp["fis"] if cp.has_section("fis") else {}
+    return {"port": str(s.get("port", "8770") or "8770"), "lan": str(s.get("lan", "false")),
+            "token": str(s.get("token", "") or "")}
+
+
+def _fis_python() -> Optional[str]:
+    """A Python the start script will find (same order as start_fis.bat)."""
+    import glob
+    import shutil
+    local = os.environ.get("LOCALAPPDATA", "")
+    found = sorted(glob.glob(os.path.join(local, "Programs", "Python", "Python3*", "python.exe")),
+                   reverse=True)
+    return found[0] if found else (shutil.which("py") or shutil.which("python"))
+
+
+def _fis_running(port: str) -> bool:
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=0.3):
+            return True
+    except (OSError, ValueError):
+        return False
+
+
+def _fis_status() -> str:
+    if not os.path.exists(FIS_BAT):
+        return "FIS folder not found (download the full release)"
+    st = _fis_settings()
+    if _fis_running(st["port"]):
+        return "running on port %s%s" % (st["port"], " (home network)" if st["lan"].lower() == "true" else "")
+    py = _fis_python()
+    return ("not running - Python found: %s" % py) if py else \
+        "not running - needs Python 3.11+ (python.org), EDMC's Python cannot run it"
+
+
+def _fis_start() -> None:
+    """Start the FIS in its own console window (the first start asks questions there)."""
+    if not os.path.exists(FIS_BAT):
+        return
+    st = _fis_settings()
+    if _fis_running(st["port"]):
+        _fis_open()
+        return
+    try:
+        os.startfile(FIS_BAT)                  # its own window, independent of EDMC
+        logger.info("FIS | started %s", FIS_BAT)
+    except Exception:
+        logger.exception("FIS | could not start %s", FIS_BAT)
+
+
+def _fis_open() -> None:
+    """Open the running FIS in the browser of this PC."""
+    import webbrowser
+    st = _fis_settings()
+    url = "http://127.0.0.1:%s/" % st["port"]
+    if st["lan"].lower() == "true" and st["token"]:
+        url += "?token=" + st["token"]
+    try:
+        webbrowser.open(url)
+    except Exception:
+        logger.exception("FIS | could not open the browser")
+
+
 def _open_release_page() -> None:
     """Open the release page; the copying stays with the commander."""
     import webbrowser
@@ -3699,6 +3780,20 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     ov = getattr(ST, "overlay", None)
     note(right, "right", "  overlay: %s" % (
         "connected" if ov is not None and ov.available() else "not installed"))
+
+    head(right, "right", "SHBOX FIS - flight information system")
+    fis_row = tk.Frame(right)
+    tk.Button(fis_row, text="start FIS", command=_fis_start).pack(side=tk.LEFT)
+    tk.Button(fis_row, text="open in browser", command=_fis_open).pack(side=tk.LEFT, padx=(6, 0))
+    fis_state = tk.StringVar(value=_fis_status())
+    tk.Button(fis_row, text="check", command=lambda: fis_state.set(_fis_status())).pack(
+        side=tk.LEFT, padx=(6, 0))
+    field(right, "right", "", fis_row)
+    nb.Label(right, textvariable=fis_state).grid(
+        row=state["right"], column=0, columnspan=4, sticky=tk.W, padx=(12, 0))
+    state["right"] += 1
+    note(right, "right", "  or double-click FIS\\start_fis.bat - first start asks, then remembers;")
+    note(right, "right", "  change it later with FIS\\fis_settings.bat. Details: FIS\\README.md")
 
     _p["panel_fuel"] = tk.IntVar(value=1 if cfg_bool(CFG["panel_fuel"], False) else 0)
     _p["check_updates"] = tk.IntVar(

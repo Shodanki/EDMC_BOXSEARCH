@@ -5,8 +5,8 @@
 > teilweise mit dem Sprachmodell-Assistenten **Claude** (Anthropic; seit 4.1.0
 > über Claude Code mit dem Modell Claude Opus 5.5, bis 4.0 über Claude Pro).
 > Jede Änderung wird vom Entwickler (CMDR Shodanki) geprüft, im Spiel getestet
-> und unter eigener Verantwortung veröffentlicht. **Das Plugin selbst enthält
-> kein KI-System:** Es arbeitet zur Laufzeit nur mit festen Regeln und
+> und unter eigener Verantwortung veröffentlicht. **Das Plugin und sein
+> Begleitprogramm SHBOX FIS enthalten kein KI-System:** Es arbeitet zur Laufzeit nur mit festen Regeln und
 > Berechnungen, sendet keine Daten an KI-Dienste, und seine Ausgaben – Routen,
 > Kandidaten, Statistiken, Exporte – sind nicht von einer KI erzeugt.
 
@@ -15,9 +15,11 @@
 > language-model assistant **Claude** (Anthropic; Claude Code with Claude Opus
 > 5.5 since 4.1.0, Claude Pro up to 4.0). Every change is reviewed by the
 > developer (CMDR Shodanki), tested in the game and published under his own
-> responsibility. **The plugin itself contains no AI system:** at run time it
-> uses fixed rules and calculations only, sends no data to any AI service, and
-> its output - routes, candidates, statistics, exports - is not AI-generated.
+> responsibility. **The plugin and its SHBOX FIS companion contain no AI
+> system:** at run time they
+> use fixed rules and calculations only, send no data to any AI service, and
+> their output - routes, candidates, statistics, exports, views - is not
+> AI-generated.
 
 Maschinenlesbare Fassung / machine-readable: [`ai-disclosure.json`](ai-disclosure.json)
 
@@ -34,6 +36,7 @@ KI-generierten Inhalten seit dem 10. Juni 2026.
 |---|---|---|
 | Ist SHBOXSEARCH ein KI-System (Art. 3 Nr. 1)? | **Nein** | Feste, vom Menschen festgelegte Regeln: Namens- und Boxel-Mathematik, Kepler-Bahnen, 2-opt-Routenoptimierung, Kurvenanpassung nach kleinsten Quadraten, Zählstatistik. Nach den Leitlinien der Kommission zur Definition von KI-Systemen fallen regelbasierte Datenverarbeitung, klassische mathematische Optimierung und einfache statistische Schätzung nicht darunter. |
 | Und die Bio-Prognose (ab 4.2)? | **Kein KI-System** | `biopredict.py` vergleicht Wertebereiche und zählt Häufigkeiten aus den eigenen Funden – eine einfache statistische Schätzung ohne trainiertes Modell. Die Leitlinien der Kommission nehmen einfache Vorhersagesysteme auf Basis grundlegender Statistik ausdrücklich aus. Die Prognose ist in der Anzeige mit `?` als Vermutung gekennzeichnet, und ihre Trefferquote ist in der README offengelegt. |
+| Und SHBOX FIS (ab 4.4, Ordner `FIS`)? | **Kein KI-System** | Zeigt Daten aus Journal, Statusdateien und Plugin-Datenbank an und rechnet mit festen Regeln: Rollenbewertung der Schiffe als Faustregel aus den Modulen, Tritium-Verbrauch des Trägers als angepasste Formel (kleinste Quadrate), Wochenkosten als Mittelwert. Kein trainiertes Modell, keine KI-Dienste; `/api/health` meldet `"ai_at_runtime": false`. |
 | Pflicht nach Art. 50 Abs. 2 (maschinenlesbare Markierung synthetischer Inhalte)? | **Nicht bei uns** | Die Pflicht trifft den *Anbieter* des KI-Systems, das den Text erzeugt – hier Anthropic –, nicht den Nutzer des Assistenten. |
 | Pflicht nach Art. 50 Abs. 4 UAbs. 2 (KI-Text, der die Öffentlichkeit über Angelegenheiten von öffentlichem Interesse informiert)? | **Nein** | Plugin-Dokumentation ist keine Information über Angelegenheiten von öffentlichem Interesse. Zusätzlich greift die Ausnahme für menschliche Überprüfung und redaktionelle Verantwortung. |
 | Pflicht nach Art. 50 Abs. 1 (Hinweis bei Interaktion mit einem KI-System)? | **Nein** | Niemand interagiert mit einer KI, wenn er das Plugin benutzt. |

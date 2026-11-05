@@ -1,0 +1,1030 @@
+"""Builds the JSON snapshots the web interface draws.
+
+All maths that already exists in the plugin is imported, not re-written:
+sysroute (Kepler positions, route order), biopredict (genus forecast),
+deepspace (fuel model, scoopable), procgen (boxel names).
+"""
+
+from __future__ import annotations
+
+import calendar
+import math
+import time
+from typing import Any, Dict, List, Optional, Sequence
+
+from .data import Database, _json
+
+G0 = 9.80665
+ATM = 101325.0
+LS_PER_M = 1.0 / 299792458.0
+
+_plugin = None   # lazily imported plugin modules
+
+
+def plugin():
+    """The plugin's pure modules. Imported late so config can set sys.path."""
+    global _plugin
+    if _plugin is None:
+        import sys
+        # the plugin folder is read-only for us: no __pycache__ written there
+        keep, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+        try:
+            import biopredict  # type: ignore
+            import deepspace  # type: ignore
+            import procgen  # type: ignore
+            import sysroute  # type: ignore
+            try:
+                import surfacenav  # type: ignore   # plugin 4.5+
+            except ImportError:
+                surfacenav = None
+        finally:
+            sys.dont_write_bytecode = keep
+
+        class _P:
+            pass
+        p = _P()
+        p.sysroute, p.biopredict, p.deepspace, p.procgen = \
+            sysroute, biopredict, deepspace, procgen
+        p.surfacenav = surfacenav
+        _plugin = p
+    return _plugin
+
+
+# ---------------------------------------------------------------------------
+# small helpers
+# ---------------------------------------------------------------------------
+
+def _r(v: Optional[float], nd: int = 2) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        return round(float(v), nd)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dist3(a: Sequence[float], b: Sequence[float]) -> float:
+    return math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(3)))
+
+
+def body_class(row) -> str:
+    """Display class: planet class, star type or 'Belt' / 'Barycentre'."""
+    if row["kind"] == "Star":
+        return row["star_type"] or "Star"
+    return row["planet_class"] or row["kind"] or "?"
+
+
+# Colour category for the 3D view and the legend - kept rule based and small
+def colour_key(row) -> str:
+    if row["kind"] == "Star":
+        st = (row["star_type"] or "?").upper()
+        if st.startswith(("D", "N", "H")) or st in ("SUPERMASSIVEBLACKHOLE",):
+            return "star-remnant"
+        return "star-" + (st[:1] if st[:1] in "OBAFGKMLTY" else "x").lower()
+    pc = (row["planet_class"] or "").lower()
+    if "earthlike" in pc:
+        return "elw"
+    if "water world" in pc:
+        return "water"
+    if "ammonia" in pc:
+        return "ammonia"
+    if "gas giant" in pc:
+        return "gas"
+    if "icy" in pc:
+        return "icy"
+    if "metal" in pc:
+        return "metal"
+    if "rocky ice" in pc:
+        return "rockyice"
+    if "rocky" in pc:
+        return "rocky"
+    return "other"
+
+
+def is_scoopable(star_type: Optional[str]) -> bool:
+    return bool(plugin().deepspace.is_scoopable(star_type))
+
+
+# ---------------------------------------------------------------------------
+# system (TAKTIK)
+# ---------------------------------------------------------------------------
+
+def _orbit_points(row, parent_pos: Sequence[float], n: int = 72
+                  ) -> Optional[List[List[float]]]:
+    sma = row["sma"]
+    if not sma:
+        return None
+    sr = plugin().sysroute
+    pts = []
+    for k in range(n + 1):
+        x, y, z = sr.orbital_position(sma, row["ecc"] or 0.0, row["inc"] or 0.0,
+                                      row["peri"] or 0.0, row["node"] or 0.0,
+                                      360.0 * k / n)
+        pts.append([round(parent_pos[0] + x, 3), round(parent_pos[1] + y, 3),
+                    round(parent_pos[2] + z, 3)])
+    return pts
+
+
+def _rings(row) -> List[Dict[str, Any]]:
+    out = []
+    for r in _json(row["rings_json"], []) or []:
+        out.append({"name": r.get("name"), "cls": r.get("cls"),
+                    "mass": r.get("mass"),
+                    "inner_km": _r((r.get("inner") or 0) / 1000.0, 0),
+                    "outer_km": _r((r.get("outer") or 0) / 1000.0, 0),
+                    "belt": "Belt" in (r.get("name") or "")})
+    return out
+
+
+def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
+                 filters: Sequence[str] = ("todo",),
+                 now: Optional[float] = None,
+                 cost_model: Any = None,
+                 order_model: Any = None) -> Dict[str, Any]:
+    """Everything TAKTIK needs: bodies at Kepler positions, orbits, route, fix."""
+    p = plugin()
+    sr = p.sysroute
+    now = time.time() if now is None else now
+    srow = db.system_by_id64(id64)
+    rows = db.bodies_of(id64)
+    name = srow["name"] if srow is not None else None
+    if not name and rows:
+        # derive system name from the main star's name
+        star = min(rows, key=lambda r: r["body_id"])
+        name = star["name"]
+    out: Dict[str, Any] = {
+        "id64": id64, "name": name, "known": srow is not None,
+        "star_class": srow["star_class"] if srow is not None else None,
+        "pos": [srow["x"], srow["y"], srow["z"]] if srow is not None and srow["x"] is not None else None,
+        "body_count": srow["body_count"] if srow is not None else None,
+        "fss_complete": bool(srow["fss_complete"]) if srow is not None else False,
+        "visited": bool(srow["visited"]) if srow is not None else False,
+        "known_sources": Database.known_sources(srow),
+        "bodies": [], "route": None, "fix": None, "generated": now,
+    }
+    if not rows:
+        out["fix"] = _fix(out, {}, live, now)
+        return out
+
+    bodies = sr.bodies_from_rows(rows, now=now)
+    for b in bodies.values():
+        b.short = sr.shorten(b.name, name or "")
+    by_row = {r["body_id"]: r for r in rows}
+    for bid, b in bodies.items():
+        b.rings = bool(by_row[bid]["ring_classes"] or by_row[bid]["rings_json"])
+
+    # bio hints exactly as the plugin builds them
+    model = None
+    try:
+        model = p.biopredict.BioModel.learn(db.bio_training_rows())
+        for b in bodies.values():
+            b.bio_hint = model.hint(by_row[b.body_id])
+    except Exception:
+        model = None
+
+    # route in the plugin's order (plan_route resolves positions as well)
+    flist = list(filters) or ["todo"]
+    # order with the model the plugin uses, times with the measured one
+    cm = cost_model or sr.DEFAULT_MODEL
+    om = order_model or cm
+    route = sr.plan_route(name or "", bodies, model=om, filters=flist)
+    full = False
+    if not route.stops and "all" not in flist:
+        route = sr.plan_route(name or "", bodies, model=om, filters=["all"])
+    if om is not cm:
+        _recost(route, cm)
+        full = True
+    if not any(b.pos for b in bodies.values()):
+        sr.resolve_positions(bodies)
+
+    for bid, b in sorted(bodies.items()):
+        r = by_row[bid]
+        pos = list(b.pos or (0.0, 0.0, 0.0))
+        parent = bodies.get(b.parent_id) if b.parent_id is not None else None
+        if parent is not None and parent.pos is not None:
+            ppos = parent.pos
+        else:
+            ppos = (pos[0] - b.rel[0], pos[1] - b.rel[1], pos[2] - b.rel[2])
+        radius = r["radius"]
+        out["bodies"].append({
+            "body_id": bid, "name": b.name, "short": b.short,
+            "kind": r["kind"], "cls": body_class(r), "colour": colour_key(r),
+            "parent_id": b.parent_id,
+            "pos": [round(v, 3) for v in pos],
+            # where the orbit is centred (parent body or unscanned barycentre)
+            "ppos": [round(v, 3) for v in ppos],
+            "orbit": _orbit_points(r, ppos) if r["kind"] != "Ring" else None,
+            "radius_km": _r(radius / 1000.0, 1) if radius else None,
+            "radius_ls": (radius * LS_PER_M) if radius else None,
+            "arrival_ls": _r(r["arrival_ls"], 1),
+            "landable": bool(r["landable"]),
+            "terraform": r["terraform"] or "",
+            "rings": _rings(r),
+            "group": sr.group_label(b), "moon": sr.is_moon(b),
+            "flags": {
+                "first": r["was_discovered"] == 0,
+                "first_map": r["was_mapped"] == 0 and r["kind"] == "Planet",
+                "mapped": bool(r["mapped"]),
+                "footfall": r["was_footfalled"] == 0 and bool(r["landable"]),
+                "bio": int(r["sig_bio"] or 0),
+                "geo": int(r["sig_geo"] or 0),
+                "organics": int(r["organics"] or 0),
+                "valuable": (r["planet_class"] in sr.VALUABLE
+                             or (r["terraform"] or "") == "Terraformable"),
+                "wants_dss": b.wants_dss, "wants_bio": b.wants_bio,
+            },
+            "bio_hint": b.bio_hint,
+        })
+
+    out["bio"] = bio_list(db, id64, rows, out["bodies"])
+
+    done_ids = {r["body_id"] for r in rows if r["route_done"]}
+    legs = []
+    next_idx = None
+    prev = (0.0, 0.0, 0.0)
+    for i, s in enumerate(route.stops, 1):
+        b = s.body
+        done = b.body_id in done_ids        # the plugin's own route ticks
+        if not done and next_idx is None and not full:
+            next_idx = i
+        legs.append({
+            "n": i, "body_id": b.body_id, "short": b.short,
+            "from": [round(v, 3) for v in prev], "to": [round(v, 3) for v in b.pos],
+            "leg_ls": round(s.leg_ls, 1), "leg_min": round(s.leg_s / 60.0, 1),
+            "cum_min": round(s.cum_s / 60.0, 1),
+            "work": (s.work + (" | " + b.bio_hint if b.bio_hint and b.wants_bio else "")),
+            "group": s.group, "group_start": s.group_start, "moon": s.is_moon,
+            "done": done,
+            "label": "LEG %d · %.0f LS · ~%.0f min" % (i, s.leg_ls, max(1.0, s.leg_s / 60.0)),
+        })
+        prev = b.pos
+    out["route"] = {
+        "filters": flist, "full_tour": full, "legs": legs, "next": next_idx,
+        "summary": route.summary(), "total_ls": round(route.total_ls, 0),
+        "total_min": round(route.total_s / 60.0, 1), "skipped": route.skipped,
+        "cost_model": cm.as_dict(),
+        "calibrated": cm is not sr.DEFAULT_MODEL,
+    }
+    out["fix"] = _fix(out, by_row, live, now)
+    return out
+
+
+def bio_list(db: Database, id64: int, rows, bodies: List[Dict[str, Any]]
+             ) -> List[Dict[str, Any]]:
+    """
+    TAKTIK: every body of the system with biology - analysed species (from
+    the ScanOrganic history), species being sampled (samples taken, from
+    the surface marks), genera the DSS named but nobody has started, and
+    the forecast for bodies only the FSS has counted.
+    """
+    import json as _json
+    p = plugin()
+    short = {b["body_id"]: b for b in bodies}
+    out: List[Dict[str, Any]] = []
+    def col(r, k):
+        try:
+            return r[k]
+        except (IndexError, KeyError):       # older plugin database
+            return None
+
+    for r in sorted(rows, key=lambda r: col(r, "arrival_ls") or 0.0):
+        sig = int(col(r, "sig_bio") or 0)
+        try:
+            analysed = _json.loads(col(r, "bio_species") or "[]")
+        except (TypeError, ValueError):
+            analysed = []
+        genera = [g for g in (col(r, "genuses") or "").split(",") if g]
+        if not sig and not analysed and not genera:
+            continue
+        species: List[Dict[str, Any]] = []
+        done = set()
+        for a in analysed:
+            nm = a.get("species") or "?"
+            if nm not in done:
+                done.add(nm)
+                species.append({"species": nm, "genus": a.get("genus"), "state": "done",
+                                "samples": 3})
+        if p.surfacenav and r["name"]:
+            st = p.surfacenav.body_state([dict(m) for m in db.surface_marks(id64, r["name"])])
+            for s in st["species"]:
+                if not s["analysed"] and s["species"] not in done:
+                    species.append({"species": s["species"], "genus": s["genus"],
+                                    "state": "open", "samples": s["samples"]})
+        started = {s["genus"] for s in species if s["genus"]}
+        b = short.get(r["body_id"]) or {}
+        out.append({
+            "body_id": r["body_id"], "short": b.get("short") or r["name"],
+            "arrival_ls": _r(col(r, "arrival_ls"), 0), "signals": sig,
+            "species": species,
+            "missing": [g for g in genera if g not in started],
+            "hint": None if genera else b.get("bio_hint"),
+        })
+    return out
+
+
+def _recost(route: Any, cm: Any) -> None:
+    """Re-time the legs of a planned route with another cost model."""
+    cum = 0.0
+    for s in route.stops:
+        s.leg_s = cm.hop(s.leg_ls)
+        s.work_s = cm.work(s.body)
+        cum += s.leg_s + s.work_s
+        s.cum_s = cum
+    route.model = cm
+
+
+_FIX_EVENTS = ("ApproachBody", "SupercruiseExit", "Touchdown", "Liftoff",
+               "SAAScanComplete", "ScanOrganic", "Disembark", "Embark",
+               "ApproachSettlement", "Status", "FSDJump", "Location", "CarrierJump")
+
+
+def _fix(system: Dict[str, Any], by_row: Dict[int, Any],
+         live: Optional[Dict[str, Any]], now: float) -> Optional[Dict[str, Any]]:
+    """The last known reference point - never an exact ship position."""
+    if not live:
+        return None
+    cur = (live.get("system") or {})
+    if cur.get("id64") != system.get("id64"):
+        return None
+    fx = live.get("last_fix") or {}
+    body_id = fx.get("body_id")
+    body_name = fx.get("body")
+    if fx.get("system_id64") not in (None, system.get("id64")):
+        body_id, body_name = None, None
+    if body_id is None and body_name:
+        # Status.json names the body but carries no BodyID
+        for b in system["bodies"]:
+            if b["name"] == body_name:
+                body_id = b["body_id"]
+                break
+    if body_id is None:
+        # after a jump: the arrival star
+        star = None
+        for b in system["bodies"]:
+            if b["kind"] == "Star" and (b["arrival_ls"] or 0) <= 0.01:
+                star = b
+                break
+        if star is None and system["bodies"]:
+            star = min(system["bodies"], key=lambda b: b["body_id"])
+        if star is not None:
+            body_id, body_name = star["body_id"], star["name"]
+        event = fx.get("event") or "FSDJump"
+    else:
+        event = fx.get("event")
+    pos = None
+    short = body_name
+    for b in system["bodies"]:
+        if b["body_id"] == body_id:
+            pos, short = b["pos"], b["short"]
+            break
+    ts = fx.get("ts") or (cur.get("ts"))
+    age = (now - ts) / 60.0 if ts else None
+    # English label for API users; the browser builds its own in the
+    # display language from short + age_min
+    label = "LAST FIX · %s" % (short or "?")
+    if age is not None:
+        label += " · %d min ago" % max(0, int(age))
+    return {"body_id": body_id, "body": body_name, "short": short, "event": event,
+            "pos": pos, "ts": ts, "age_min": _r(age, 1), "label": label,
+            "lat": fx.get("lat"), "lon": fx.get("lon"), "alt": fx.get("alt"),
+            "exact": False}
+
+
+# ---------------------------------------------------------------------------
+# body (PLANET)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# ATLAS (plugin 4.3): signals on bodies, materials picked up
+# ---------------------------------------------------------------------------
+
+def sig_label(kind: str, label: Optional[str]) -> str:
+    if kind == "genus:Brain Trees":
+        return "Brain Trees"
+    if kind == "mining_location":
+        return "Planetary Mining Location"
+    if kind.startswith("genus:"):
+        return "Bio: " + (label or kind[6:])
+    if kind.startswith("codex:"):
+        return "Codex: " + (label or kind[6:])
+    return label or kind
+
+
+def sig_tone(kind: str) -> str:
+    if kind in ("site:nonhuman", "thargoid", "uss:nonhuman"):
+        return "violet"
+    if kind in ("site:guardian", "guardian"):
+        return "cyan"
+    if kind == "genus:Brain Trees" or kind == "mining_location":
+        return "amber"
+    return "green"
+
+
+# genera are shown in the bio block already; Brain Trees stay - engineering
+_SIG_SKIP = ("biological", "geological")
+
+
+def body_signals(rows) -> List[Dict[str, Any]]:
+    out = []
+    for r in rows:
+        k = r["kind"]
+        if k in _SIG_SKIP or (k.startswith("genus:") and k != "genus:Brain Trees"):
+            continue
+        out.append({"kind": k, "label": sig_label(k, r["label"]), "count": r["count"],
+                    "tone": sig_tone(k)})
+    out.sort(key=lambda x: (x["tone"] != "violet", -(x["count"] or 0)))
+    return out
+
+
+def system_signals(rows) -> List[Dict[str, Any]]:
+    agg: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        k = r["kind"]
+        if k.startswith("genus:") and k != "genus:Brain Trees":
+            continue
+        a = agg.setdefault(k, {"kind": k, "label": sig_label(k, r["label"]), "bodies": 0,
+                               "total": 0, "tone": sig_tone(k)})
+        a["bodies"] += 1
+        a["total"] += int(r["count"] or 1)
+    return sorted(agg.values(), key=lambda x: (x["tone"] != "violet", -x["total"]))
+
+
+ATLAS_VIEWS = ("rings", "signals", "materials", "finds")
+
+
+def _ring_class(v: Optional[str]) -> str:
+    return (v or "").replace("eRingClass_", "")
+
+
+def build_atlas(db: Database, view: str, kind: Optional[str],
+                near: Optional[Sequence[float]], limit: int = 40,
+                q: Optional[str] = None, max_ly: Optional[float] = None) -> Dict[str, Any]:
+    """
+    ATLAS: everything found of one kind, nearest system first.
+
+    rings     ring hotspots (material, count, ring class)
+    signals   body signals, DSS genera, codex and pickup-marked sites
+    materials materials picked up, per body
+    finds     ground finds with latitude/longitude (codex, analysed species,
+              settlements, screenshots)
+
+    `q` filters on system, body and label; `max_ly` drops everything farther
+    away (far from the bubble, finds 2000 ly back would swamp list and map;
+    places without coordinates stay out too then). Every item carries id64 and, when
+    the body is known, body_id - the browser opens PLANET with them - and
+    `rel` (ly from you: x, z in the galactic plane, y up) for the small map.
+    """
+    view = view if view in ATLAS_VIEWS else "signals"
+    rows = {"rings": db.atlas_rings, "materials": db.atlas_materials,
+            "finds": db.atlas_finds}.get(view, db.atlas_signals)(kind)
+    need = text = None
+    if q:
+        text = q.strip().lower()
+    items = []
+    for r in rows:
+        keys = r.keys()
+        sysname = r["sys_name"] or str(r["sys_id64"])
+        body = r["body_name"] if "body_name" in keys else None
+        it: Dict[str, Any] = {"system": sysname, "id64": r["sys_id64"], "body": body,
+                              "count": r["count"], "dist_ly": None, "rel": None}
+        if view == "materials":
+            it.update(key=r["material"], label=r["label"], category=r["category"],
+                      last=(r["last"] or "")[:10])
+        elif view == "rings":
+            it.update(key=r["material"], label=r["label"] or r["material"],
+                      ring_class=_ring_class(r["ring_class"]))
+            if r["body_id"] is not None:
+                it["body_id"] = r["body_id"]
+        elif view == "finds":
+            it.update(key=r["kind"], label=r["label"], detail=r["detail"],
+                      lat=_r(r["lat"], 4), lon=_r(r["lon"], 4), last=(r["last"] or "")[:10])
+        else:
+            it.update(key=r["kind"], label=sig_label(r["kind"], r["label"]))
+            if r["body_id"] is not None and r["body_id"] >= 0:
+                it["body_id"] = r["body_id"]
+        if text and not any(text in str(v or "").lower()
+                            for v in (sysname, body, it.get("label"), it.get("detail"))):
+            continue
+        if near and r["x"] is not None:
+            dx, dy, dz = r["x"] - near[0], r["y"] - near[1], r["z"] - near[2]
+            it["dist_ly"] = _r(math.sqrt(dx * dx + dy * dy + dz * dz), 1)
+            it["rel"] = [_r(dx, 2), _r(dy, 2), _r(dz, 2)]
+        if max_ly and near and (it["dist_ly"] is None or it["dist_ly"] > max_ly):
+            continue
+        items.append(it)
+    items.sort(key=lambda x: (x["dist_ly"] if x["dist_ly"] is not None else 1e9,
+                              -(x["count"] or 0)))
+    out = items[:limit]
+    # body names -> body_id, so a click can open the datasheet
+    need = [it for it in out if "body_id" not in it and it.get("body")]
+    if need:
+        ids = db.body_ids(it["id64"] for it in need)
+        for it in need:
+            bid = ids.get((it["id64"], it["body"]))
+            if bid is not None:
+                it["body_id"] = bid
+    for it in out:
+        sysn = it["system"] or ""
+        b = it.get("body") or ""
+        it["body_short"] = b[len(sysn):].strip() if sysn and b.startswith(sysn) else b
+    return {"view": view, "kind": kind, "q": q or "", "max_ly": max_ly,
+            "total": len(items), "items": out}
+
+
+def build_atlas_kinds(db: Database, view: str) -> List[Dict[str, Any]]:
+    """The second picker: what kinds exist in one atlas view, with counts."""
+    out = []
+    for r in db.atlas_kinds(view):
+        label = r["label"] or r["key"]
+        if view == "signals":
+            label = sig_label(r["key"], r["label"])
+        elif view == "materials" and r["category"]:
+            label = "%s · %s" % (r["category"], label)
+        out.append({"key": r["key"], "label": label, "count": r["n"]})
+    return out
+
+
+def build_body(db: Database, id64: int, body_id: int) -> Optional[Dict[str, Any]]:
+    r = db.body(id64, body_id)
+    if r is None:
+        return None
+    p = plugin()
+    srow = db.system_by_id64(id64)
+    sysname = srow["name"] if srow is not None else ""
+    comp = _json(r["atmo_comp"], {}) or {}
+    mats = _json(r["materials"], {}) or {}
+    solid = _json(r["composition"], {}) or {}
+    species = _json(r["bio_species"], []) or []
+    out: Dict[str, Any] = {
+        "id64": id64, "body_id": body_id, "system": sysname,
+        "name": r["name"], "short": p.sysroute.shorten(r["name"] or "", sysname),
+        "kind": r["kind"], "cls": body_class(r), "colour": colour_key(r),
+        "terraform": r["terraform"] or "", "landable": bool(r["landable"]),
+        "arrival_ls": _r(r["arrival_ls"], 1),
+        "radius_km": _r((r["radius"] or 0) / 1000.0, 1) if r["radius"] else None,
+        "mass_em": _r(r["mass_em"], 4),
+        "gravity_g": _r(r["gravity"] / G0, 3) if r["gravity"] is not None else None,
+        "temp_k": _r(r["temp_k"], 0),
+        "pressure_atm": _r(r["pressure"] / ATM, 4) if r["pressure"] is not None else None,
+        "pressure_pa": _r(r["pressure"], 0),
+        "atmosphere": r["atmosphere"] or "",
+        "atmo_type": r["atmo_type"] or "",
+        "atmo_comp": sorted(([k, _r(v, 2)] for k, v in comp.items()),
+                            key=lambda kv: -(kv[1] or 0)),
+        "volcanism": r["volcanism"] or "",
+        "composition": sorted(([k, _r(100.0 * v, 1)] for k, v in solid.items()),
+                              key=lambda kv: -(kv[1] or 0)),
+        "materials": sorted(([k, _r(v, 2)] for k, v in mats.items()),
+                            key=lambda kv: -(kv[1] or 0)),
+        "rotation_d": _r(r["rotation"] / 86400.0, 3) if r["rotation"] else None,
+        "tidal_lock": bool(r["tidal_lock"]),
+        "axial_tilt_deg": _r(math.degrees(r["axial_tilt"]), 2) if r["axial_tilt"] is not None else None,
+        "orbit": {
+            "sma_ls": _r((r["sma"] or 0) * LS_PER_M, 2) if r["sma"] else None,
+            "ecc": _r(r["ecc"], 4), "inc_deg": _r(r["inc"], 2),
+            "period_d": _r(r["period"] / 86400.0, 2) if r["period"] else None,
+        },
+        "rings": _rings(r),
+        "flags": {
+            "first": r["was_discovered"] == 0,
+            "first_map": r["was_mapped"] == 0 and r["kind"] == "Planet",
+            "mapped": bool(r["mapped"]), "scanned": bool(r["scanned"]),
+            "footfall": r["was_footfalled"] == 0 and bool(r["landable"]),
+        },
+        "bio": {
+            "signals": int(r["sig_bio"] or 0), "geo": int(r["sig_geo"] or 0),
+            "analysed": int(r["organics"] or 0),
+            "genera": [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()],
+            "species": [{"species": s.get("species"), "variant": s.get("variant"),
+                         "genus": s.get("genus")} for s in species],
+            "prediction": [],
+        },
+        "hotspots": [{"material": h["label"] or h["material"], "count": h["count"],
+                      "ring": h["body_name"]} for h in db.hotspots_of(id64, body_id)],
+        "signals": body_signals(db.signals_of(id64, body_id)),
+        "materials_found": [{"label": m["label"], "category": m["category"],
+                             "count": m["count"], "last": (m["last"] or "")[:10]}
+                            for m in db.materials_at(id64, r["name"])],
+    }
+    if r["kind"] == "Star":
+        out["star"] = {
+            "type": r["star_type"], "subclass": r["subclass"],
+            "luminosity": r["luminosity"], "mass_sol": _r(r["stellar_mass"], 4),
+            "abs_mag": _r(r["abs_mag"], 3), "age_my": r["age_my"],
+            "scoopable": is_scoopable(r["star_type"]),
+        }
+    if (r["sig_bio"] or 0) > 0 or r["landable"]:
+        try:
+            model = p.biopredict.BioModel.learn(db.bio_training_rows())
+            out["bio"]["prediction"] = [
+                {"genus": g, "score": round(s, 2), "finds": n}
+                for g, s, n in model.predict(r, limit=6)]
+            out["bio"]["model"] = model.summary()
+        except Exception as exc:  # pragma: no cover - model is best effort
+            out["bio"]["model"] = "forecast not available: %s" % exc
+    return out
+
+
+# ---------------------------------------------------------------------------
+# SURFACE: track, marks, exobiology colony circles
+# ---------------------------------------------------------------------------
+
+
+
+def _iso_epoch(ts: Optional[str]) -> Optional[float]:
+    try:
+        return calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _local_xy(lat: float, lon: float, lat0: float, lon0: float, radius: float):
+    """Equirectangular projection around (lat0, lon0) in metres - fine for the
+    few kilometres around a landing site."""
+    dlon = (lon - lon0 + 540.0) % 360.0 - 180.0
+    x = radius * math.cos(math.radians(lat0)) * math.radians(dlon)
+    y = radius * math.radians(lat - lat0)
+    return x, y
+
+
+def build_surface(db: Database, live: Optional[Dict[str, Any]],
+                  id64: Optional[int] = None, body: Optional[str] = None) -> Dict[str, Any]:
+    live = live or {}
+    st = live.get("status") or {}
+    here = bool(st.get("body_name") and st.get("lat") is not None)
+    if not body:
+        if here:
+            body = st.get("body_name")
+            id64 = id64 or (live.get("system") or {}).get("id64")
+        else:
+            last = db.surface_last_body()
+            if last is not None:
+                id64, body = last["sys_id64"], last["body_name"]
+    out: Dict[str, Any] = {"body": body, "id64": id64, "here": False, "track": [],
+                           "marks": [], "bio": [], "me": None}
+    if not body or not id64:
+        return out
+    p = plugin()
+    srow = db.system_by_id64(id64)
+    sysname = srow["name"] if srow is not None else ""
+    out["system"] = sysname
+    out["short"] = p.sysroute.shorten(body, sysname) if sysname else body
+    brow = db.body_by_name(id64, body)
+    radius = (float(st["radius"]) if here and st.get("body_name") == body and st.get("radius")
+              else (float(brow["radius"]) if brow is not None and brow["radius"] else None))
+    track = db.surface_track(id64, body)
+    marks = db.surface_marks(id64, body)
+    out["radius_m"] = _r(radius, 0)
+    if brow is not None:
+        out["gravity_g"] = _r(brow["gravity"] / G0, 3) if brow["gravity"] is not None else None
+        out["body_id"] = brow["body_id"]
+    is_here = here and st.get("body_name") == body
+    out["here"] = is_here
+    # centre: where you are, else the last positioned mark, else the track
+    if is_here:
+        lat0, lon0 = float(st["lat"]), float(st["lon"])
+    else:
+        pos = [m for m in marks if m["lat"] is not None] or list(track)
+        if not pos or not radius:
+            out["marks"] = [{"kind": m["kind"], 
+                             "label": m["label"], "ts": m["ts"], "x": None, "y": None}
+                            for m in marks]
+            return out
+        lat0, lon0 = float(pos[-1]["lat"]), float(pos[-1]["lon"])
+    if not radius:
+        return out
+    out["center"] = {"lat": lat0, "lon": lon0}
+    # track as segments of one mode; thinned to at most ~4000 points
+    step = max(1, len(track) // 4000)
+    seg: Optional[Dict[str, Any]] = None
+    for i, r in enumerate(track):
+        if i % step and i != len(track) - 1:
+            continue
+        x, y = _local_xy(r["lat"], r["lon"], lat0, lon0, radius)
+        if seg is None or seg["mode"] != r["mode"]:
+            seg = {"mode": r["mode"] or "ship", "pts": []}
+            out["track"].append(seg)
+        seg["pts"].append([round(x, 1), round(y, 1)])
+    me_xy = (0.0, 0.0) if is_here else None
+    for m in marks:
+        item = {"kind": m["kind"], 
+                "label": m["label"], "detail": m["detail"], "ts": m["ts"], "x": None, "y": None}
+        if m["lat"] is not None:
+            x, y = _local_xy(m["lat"], m["lon"], lat0, lon0, radius)
+            item["x"], item["y"] = round(x, 1), round(y, 1)
+            if me_xy is not None:
+                item["dist_m"] = round(math.hypot(x, y), 0)
+                item["bearing"] = round((math.degrees(math.atan2(x, y)) + 360.0) % 360.0, 0)
+        out["marks"].append(item)
+    # where the SRV / the ship stand - the points to get back to
+    nav = p.surfacenav.body_state([dict(m) for m in marks]) if p.surfacenav else None
+    for key in ("parked", "ship"):
+        v = nav[key] if nav else None
+        if v is None:
+            continue
+        x, y = _local_xy(v["lat"], v["lon"], lat0, lon0, radius)
+        item = {"x": round(x, 1), "y": round(y, 1), "ts": v["ts"],
+                "label": (v["detail"] or "SRV") if key == "parked" else "ship"}
+        if me_xy is not None:
+            item["dist_m"] = round(math.hypot(x, y), 0)
+            item["bearing"] = round((math.degrees(math.atan2(x, y)) + 360.0) % 360.0, 0)
+        out[key] = item
+    # exobiology: samples per species with the colony range of the genus;
+    # surfacenav restarts a species' count on a new Log like the game does
+    ranges = getattr(p.biopredict, "COLONY_RANGE_M", {})
+    groups: Dict[str, Dict[str, Any]] = {}
+    if nav is not None:
+        for s in nav["species"]:
+            pts = [[round(v, 1) for v in _local_xy(la, lo, lat0, lon0, radius)]
+                   for la, lo in s["points"]]
+            groups[s["species"]] = {"species": s["species"], "genus": s["genus"],
+                                    "range_m": ranges.get(s["genus"] or ""), "points": pts,
+                                    "done": s["analysed"], "samples": s["samples"]}
+    for m in out["marks"]:
+        if nav is not None or not m["kind"].startswith("bio_") or m["x"] is None:
+            continue
+        g = groups.setdefault(m["label"], {"species": m["label"], "genus": m["detail"],
+                                           "range_m": ranges.get(m["detail"] or ""),
+                                           "points": [], "done": False})
+        if m["kind"] == "bio_analyse":
+            g["done"] = True
+        else:
+            g["points"].append([m["x"], m["y"]])
+    for g in groups.values():
+        if me_xy is not None and g["points"] and not g["done"]:
+            g["nearest_m"] = round(min(math.hypot(px, py) for px, py in g["points"]), 0)
+            g["ok"] = g["range_m"] is not None and g["nearest_m"] >= g["range_m"]
+    out["bio"] = list(groups.values())
+    # initial framing: the latest visit only (3 h before the last activity);
+    # older visits to the same body may lie hundreds of km away
+    stamps = [(r["ts"], r["lat"], r["lon"]) for r in track]
+    stamps += [(_iso_epoch(m["ts"]), m["lat"], m["lon"]) for m in marks if m["lat"] is not None]
+    stamps = [t for t in stamps if t[0] is not None]
+    if stamps:
+        last = max(t[0] for t in stamps)
+        pts = [_local_xy(la, lo, lat0, lon0, radius) for t, la, lo in stamps if t >= last - 3 * 3600]
+        if is_here:
+            pts.append((0.0, 0.0))
+        out["focus"] = {"minX": min(p[0] for p in pts), "maxX": max(p[0] for p in pts),
+                        "minY": min(p[1] for p in pts), "maxY": max(p[1] for p in pts)}
+    if is_here:
+        out["me"] = {"x": 0.0, "y": 0.0, "heading": st.get("heading"), "alt": st.get("alt"),
+                     "mode": ("foot" if (st.get("flags2") or 0) & 1 else
+                              "srv" if (st.get("flags") or 0) & (1 << 26) else "ship")}
+    return out
+
+
+# ---------------------------------------------------------------------------
+# BRIEFING
+# ---------------------------------------------------------------------------
+
+def _fuel_state(live: Dict[str, Any]):
+    ds = plugin().deepspace
+    ship = live.get("ship") or {}
+    fuel = live.get("fuel") or {}
+    return ds.FuelState(capacity=float(ship.get("fuel_capacity") or 0.0),
+                        level=float(fuel.get("main") or 0.0),
+                        max_jump=float(ship.get("max_jump") or 0.0),
+                        jumps=[tuple(j) for j in live.get("jumps") or []])
+
+
+def boxel_info(db: Database, name: str) -> Optional[Dict[str, Any]]:
+    """What our database knows about the boxel a procgen name sits in."""
+    pg = plugin().procgen
+    pn = pg.parse_name(name or "")
+    if pn is None:
+        return None
+    key = pn.boxel_key
+    row = db.boxel(key)
+    known = [s for s in db.systems_with_prefix(pn.prefix)
+             if (pg.parse_name(s["name"]) or pn).boxel_key == key
+             and pg.parse_name(s["name"]) is not None]
+    absent = db.absent_in(key)
+    n2_max = row["n2_max"] if row is not None else None
+    counts = [s["body_count"] for s in known if s["body_count"]]
+    visited = [s for s in known if s["visited"]]
+    bio_sys = 0
+    for s in visited:
+        if s["id64"] and db.one("SELECT 1 FROM bodies WHERE sys_id64=? AND sig_bio>0 LIMIT 1",
+                                (s["id64"],)):
+            bio_sys += 1
+    open_n = None
+    if n2_max is not None:
+        seen = {pg.parse_name(s["name"]).n2 for s in known} | {a["n2"] for a in absent}
+        open_n = sum(1 for n in range(0, n2_max + 1) if n not in seen)
+    return {
+        "key": key, "mc": pn.mc, "size_ly": pn.size, "n2": pn.n2,
+        "complete": bool(row["complete"]) if row is not None else False,
+        "n2_max": n2_max, "known": len(known), "visited": len(visited),
+        "absent": len(absent), "candidates_open": open_n,
+        "avg_bodies": round(sum(counts) / len(counts), 1) if counts else None,
+        "bio_systems": bio_sys,
+    }
+
+
+def current_target(live: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """FSDTarget beats NavRoute's next hop beats Status.json Destination."""
+    t = live.get("target")
+    if t and t.get("name"):
+        return dict(t)
+    route = live.get("navroute") or []
+    cur = (live.get("system") or {}).get("name")
+    # NavRoute.json starts with the system it was plotted from; only trust it
+    # while we are on it, and never point back at a hop already flown
+    names = [h.get("name") for h in route]
+    if cur in names:
+        i = len(names) - 1 - names[::-1].index(cur)
+        if i + 1 < len(route):
+            return dict(route[i + 1], source="NavRoute")
+    dest = ((live.get("status") or {}).get("destination") or {})
+    if dest.get("system") and dest.get("system") != (live.get("system") or {}).get("id64"):
+        return {"name": dest.get("name"), "id64": dest.get("system"),
+                "source": "Status"}
+    return None
+
+
+def _navpoints(db: Database, live: Dict[str, Any], limit: int = 14) -> List[Dict[str, Any]]:
+    """The plotted route after the current system, with what we know of each hop."""
+    route = live.get("navroute") or []
+    cur = (live.get("system") or {}).get("name")
+    start = 0
+    for i, h in enumerate(route):
+        if h.get("name") == cur:
+            start = i + 1
+    out = []
+    prev = (live.get("system") or {}).get("pos")
+    for n, h in enumerate(route[start:start + limit], start):
+        row = db.system_by_id64(h["id64"]) if h.get("id64") else None
+        pos = h.get("pos")
+        out.append({"n": n, "name": h.get("name"), "id64": h.get("id64"),
+                    "star_class": h.get("star_class"),
+                    "scoopable": is_scoopable(h.get("star_class")) if h.get("star_class") else None,
+                    "jump_ly": _r(_dist3(prev, pos), 2) if prev and pos else None,
+                    "known_sources": Database.known_sources(row),
+                    "visited": bool(row["visited"]) if row is not None else False})
+        prev = pos
+    return out
+
+
+def _sphere_of(db: Database, pos: Optional[Sequence[float]]) -> Optional[Dict[str, Any]]:
+    """Where the target lies relative to the active survey sphere."""
+    if not pos:
+        return None
+    try:
+        s = db.survey()
+    except Exception:
+        return None
+    if s is None or s["cx"] is None or not s["radius"]:
+        return None
+    d = _dist3(pos, (s["cx"], s["cy"], s["cz"]))
+    return {"name": s["start_system"], "radius": _r(s["radius"], 1),
+            "from_centre_ly": _r(d, 1), "inside": d <= s["radius"],
+            "active": bool(s["active"])}
+
+
+def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    live = live or {}
+    tgt = current_target(live)
+    out: Dict[str, Any] = {"target": None, "generated": time.time(),
+                           "navroute": _navpoints(db, live)}
+    if not tgt:
+        return out
+    name, id64 = tgt.get("name"), tgt.get("id64")
+    row = (db.system_by_id64(id64) if id64 else None) or (db.system_by_name(name) if name else None)
+    star = tgt.get("star_class") or (row["star_class"] if row is not None else None)
+    tpos = tgt.get("pos") or ([row["x"], row["y"], row["z"]] if row is not None and row["x"] is not None else None)
+    cpos = (live.get("system") or {}).get("pos")
+    dist = _r(_dist3(cpos, tpos), 2) if cpos and tpos else None
+    known = Database.known_sources(row)
+    route = live.get("navroute") or []
+    idx = next((i for i, h in enumerate(route) if h.get("name") == name), None)
+    out["target"] = {
+        "name": name, "id64": id64, "source": tgt.get("source"),
+        "star_class": star, "scoopable": is_scoopable(star) if star else None,
+        "distance_ly": dist, "in_db": row is not None,
+        "visited": bool(row["visited"]) if row is not None else False,
+        "known_sources": known, "in_no_database": not known,
+        "body_count": row["body_count"] if row is not None else None,
+        "remaining_jumps": tgt.get("remaining_jumps"),
+        "navpoint": [idx, len(route) - 1] if idx is not None and len(route) > 1 else None,
+    }
+    out["boxel"] = boxel_info(db, name) if name else None
+    out["sphere"] = _sphere_of(db, tpos)
+    sid = id64 or (row["id64"] if row is not None else None)
+    out["signals"] = system_signals(db.signals_of(sid)) if sid else []
+    out["materials_found"] = ([{"label": m["label"], "count": m["count"],
+                                "body": m["body_name"]} for m in db.materials_at(sid)][:6]
+                              if sid else [])
+    if live.get("ship"):
+        fs = _fuel_state(live)
+        f = {"level": _r(fs.level, 1), "capacity": _r(fs.capacity, 0),
+             "jumps_left": fs.jumps_left, "warning": fs.warning()}
+        if dist and fs.max_jump and dist > fs.max_jump * 1.02:
+            # beyond one jump: the game will route it, a per-jump forecast lies
+            f["beyond_range"] = True
+        elif dist:
+            cost = fs.cost_of(dist)
+            if cost is not None:
+                after = max(0.0, fs.level - cost)
+                f["cost_t"] = _r(cost, 2)
+                f["after_t"] = _r(after, 1)
+                fs2 = _fuel_state(live)
+                fs2.level = after
+                f["jumps_after"] = fs2.jumps_left
+        out["fuel"] = f
+    # expectation text, rule based
+    exp = []
+    bx = out["boxel"]
+    if bx and bx["avg_bodies"]:
+        exp.append({"key": "avg_bodies", "n": round(bx["avg_bodies"]), "of": bx["known"]})
+    if bx and bx["visited"]:
+        exp.append({"key": "bio_neighbours", "n": bx["bio_systems"], "of": bx["visited"]})
+    # data, not sentences: the browser words them in the display language
+    out["expectation"] = exp
+    if not known and row is not None and row["visited"]:
+        out["status"] = "only_us"           # visited, but in no external database
+    elif not known:
+        out["status"] = "unknown"           # first discovery possible
+    elif row is not None and row["visited"]:
+        out["status"] = "visited"
+    else:
+        out["status"] = "known"
+    return out
+
+
+# ---------------------------------------------------------------------------
+# SHIP
+# ---------------------------------------------------------------------------
+
+FLAGS = {
+    0: "docked", 1: "landed", 2: "gear", 3: "shields", 4: "supercruise",
+    5: "fa_off", 6: "hardpoints", 7: "in_wing", 8: "lights", 9: "cargo_scoop",
+    10: "silent", 11: "scooping", 16: "fsd_mass_locked", 17: "fsd_charging",
+    18: "fsd_cooldown", 19: "low_fuel", 20: "overheating", 21: "has_latlong",
+    22: "in_danger", 23: "interdicted", 24: "in_ship", 25: "in_fighter",
+    26: "in_srv", 27: "hud_analysis", 28: "night_vision", 30: "fsd_jump",
+}
+
+GUI_FOCUS = {0: "NONE", 1: "INTERNAL", 2: "EXTERNAL", 3: "COMMS", 4: "ROLE",
+             5: "STATION", 6: "GALAXY MAP", 7: "SYSTEM MAP", 8: "ORRERY",
+             9: "FSS", 10: "SAA", 11: "CODEX"}
+
+
+def decode_flags(flags: int) -> List[str]:
+    return [n for bit, n in FLAGS.items() if flags & (1 << bit)]
+
+
+def build_ship(live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    live = live or {}
+    st = live.get("status") or {}
+    ship = live.get("ship") or {}
+    fuel = live.get("fuel") or {}
+    out: Dict[str, Any] = {
+        "ship": ship, "system": live.get("system"),
+        "fuel": {"main": _r(fuel.get("main"), 2), "reservoir": _r(fuel.get("reservoir"), 2),
+                 "capacity": ship.get("fuel_capacity")},
+        "flags": decode_flags(int(st.get("flags") or 0)),
+        "gui_focus": st.get("gui_focus"),
+        "gui_focus_name": GUI_FOCUS.get(st.get("gui_focus") or 0, "?"),
+        "target": current_target(live), "destination": st.get("destination"),
+        "jumping": live.get("jumping"),
+        "status_ts": st.get("ts"),
+    }
+    if ship.get("fuel_capacity"):
+        fs = _fuel_state(live)
+        out["fuel"].update(pct=_r(fs.pct, 1), jumps_left=fs.jumps_left,
+                           range_ly=_r(fs.range_left, 0), warning=fs.warning(),
+                           summary=fs.summary(), samples=fs.samples)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# SURVEY (sphere progress)
+# ---------------------------------------------------------------------------
+
+def build_survey(db: Database) -> Dict[str, Any]:
+    s = db.survey()
+    meta = db.meta()
+    out: Dict[str, Any] = {"active": False, "spheres": [], "boxels": db.boxel_counts()}
+    if meta.get("carrier_system"):
+        out["carrier"] = {"name": meta.get("carrier_name"), "callsign": meta.get("carrier_callsign"),
+                          "system": meta.get("carrier_system"), "updated": meta.get("carrier_updated")}
+    for sp in db.spheres():
+        out["spheres"].append({"id": sp["id"], "label": sp["label"], "center": [sp["cx"], sp["cy"], sp["cz"]],
+                               "radius": sp["radius"], "origin": sp["origin"],
+                               "started": sp["started"], "closed": sp["closed"]})
+    if s is None or s["cx"] is None:
+        return out
+    out.update(active=bool(s["active"]), start_system=s["start_system"],
+               center=[s["cx"], s["cy"], s["cz"]], radius=s["radius"],
+               masscodes=s["masscodes"], started=s["started"], updated=s["updated"])
+    rows = db.systems_in_sphere(s["cx"], s["cy"], s["cz"], s["radius"] or 0.0)
+    visited = [r for r in rows if r["visited"]]
+    only_us = [r for r in visited if not Database.known_sources(r)]
+    out["systems"] = {
+        "known": len(rows), "visited": len(visited),
+        "fss_complete": sum(1 for r in rows if r["fss_complete"]),
+        "only_us": len(only_us),
+        "pct_visited": _r(100.0 * len(visited) / len(rows), 1) if rows else None,
+    }
+    return out

@@ -1,0 +1,123 @@
+"""OBERFLÄCHE: projection, marks, colony circles (plugin 4.4 tables)."""
+
+import math
+import os
+import sqlite3
+import tempfile
+import unittest
+
+from tests import fixtures as fx
+
+from fis.config import Config
+from fis.data import Database
+
+
+def _db(path):
+    cx = sqlite3.connect(path)
+    cx.executescript("""
+    CREATE TABLE systems (name TEXT, id64 INTEGER, x REAL, y REAL, z REAL, quality INTEGER,
+        source TEXT, sources TEXT, star_class TEXT, visited INTEGER, visited_ts TEXT,
+        body_count INTEGER, nonbody_count INTEGER, fss_complete INTEGER, first_seen TEXT, updated TEXT);
+    CREATE TABLE bodies (sys_id64 INTEGER, body_id INTEGER, name TEXT, radius REAL, gravity REAL);
+    CREATE TABLE surface_track (sys_id64 INTEGER, body_name TEXT, ts REAL, lat REAL, lon REAL,
+        alt REAL, heading REAL, mode TEXT);
+    CREATE TABLE surface_marks (ts TEXT, sys_id64 INTEGER, body_name TEXT, kind TEXT, label TEXT,
+        detail TEXT, lat REAL, lon REAL);
+    """)
+    cx.execute("INSERT INTO systems(name,id64,quality,visited) VALUES ('Sys',1,40,1)")
+    cx.execute("INSERT INTO bodies VALUES (1, 5, 'Sys 1 a', 1000000.0, 1.0)")
+    # 1 degree of longitude at the equator on R = 1000 km is 17453 m
+    for i, lon in enumerate((0.0, 0.01, 0.02)):
+        cx.execute("INSERT INTO surface_track VALUES (1,'Sys 1 a',?,0,?,0,90,'srv')", (i * 10.0, lon))
+    cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:00:00Z',1,'Sys 1 a','bio_log',"
+               "'Bacterium Cerbrus','Bacterium',0,0)")
+    cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:05:00Z',1,'Sys 1 a','codex',"
+               "'Water Ice Fumarole','Geology',0,0.02)")
+    cx.commit()
+    cx.close()
+
+
+class SurfaceTest(unittest.TestCase):
+    def setUp(self):
+        cfg = Config()
+        cfg.plugin_dir = fx.PLUGIN_DIR
+        cfg.use_plugin_path()
+        from fis import model
+        self.model = model
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "s.sqlite")
+        _db(self.path)
+        self.db = Database(self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_live_on_body(self):
+        live = {"system": {"id64": 1}, "status": {"body_name": "Sys 1 a", "lat": 0.0,
+                "lon": 0.0337, "radius": 1000000.0, "heading": 90, "alt": 2, "flags": 1 << 26,
+                "flags2": 0}}
+        s = self.model.build_surface(self.db, live)
+        self.assertTrue(s["here"])
+        self.assertEqual(s["track"][0]["mode"], "srv")
+        bio = s["bio"][0]
+        self.assertEqual(bio["range_m"], 500)
+        # you are 0.0337 deg = ~588 m east of the log: far enough for Bacterium
+        self.assertAlmostEqual(bio["nearest_m"], 588, delta=3)
+        self.assertTrue(bio["ok"])
+        codex = [m for m in s["marks"] if m["kind"] == "codex"][0]
+        self.assertAlmostEqual(codex["dist_m"], 0.0137 * math.pi / 180 * 1e6, delta=3)
+        self.assertEqual(s["me"]["mode"], "srv")
+
+    def test_parked_srv_and_restarted_log(self):
+        cx = sqlite3.connect(self.path)
+        cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:06:00Z',1,'Sys 1 a',"
+                   "'srv_parked','SRV','Nomad',0,0.01)")
+        # a second Log restarts the species: only its own point counts
+        cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:07:00Z',1,'Sys 1 a',"
+                   "'bio_log','Bacterium Cerbrus','Bacterium',0,0.03)")
+        cx.commit()
+        cx.close()
+        live = {"system": {"id64": 1}, "status": {"body_name": "Sys 1 a", "lat": 0.0,
+                "lon": 0.0337, "radius": 1000000.0, "heading": 90, "alt": 0, "flags": 0,
+                "flags2": 1}}
+        s = self.model.build_surface(self.db, live)
+        self.assertEqual(s["parked"]["label"], "Nomad")
+        self.assertAlmostEqual(s["parked"]["dist_m"], 0.0237 * math.pi / 180 * 1e6, delta=3)
+        self.assertEqual(round(s["parked"]["bearing"]), 270)      # back west
+        bio = s["bio"][0]
+        self.assertEqual((len(bio["points"]), bio["samples"]), (1, 1))
+        self.assertLess(bio["nearest_m"], 100)
+
+    def test_atlas_finds(self):
+        a = self.model.build_atlas(self.db, "finds", None, (0.0, 0.0, 0.0), 10)
+        self.assertEqual(a["total"], 1)                  # the bio Log alone is no find
+        codex = [i for i in a["items"] if i["key"] == "codex"][0]
+        self.assertEqual(codex["body_id"], 5)            # name -> body for the datasheet
+        self.assertEqual(codex["body_short"], "1 a")
+        self.assertEqual(codex["lon"], 0.02)
+        self.assertEqual(self.model.build_atlas(self.db, "finds", None, None, 10, q="fumarole")["total"], 1)
+        self.assertEqual(self.model.build_atlas(self.db, "finds", "codex", None, 10)["total"], 1)
+        # a distance limit drops places without coordinates (the fixture has none)
+        self.assertEqual(self.model.build_atlas(self.db, "finds", None, (0, 0, 0), 10,
+                                                max_ly=50)["total"], 0)
+        kinds = {k["key"]: k["count"] for k in self.model.build_atlas_kinds(self.db, "finds")}
+        self.assertEqual(kinds, {"codex": 1})            # a Log alone is no find yet
+        # tables of older plugin versions missing: empty, no error
+        self.assertEqual(self.model.build_atlas(self.db, "rings", None, None)["items"], [])
+        self.assertEqual(self.model.build_atlas_kinds(self.db, "signals"), [])
+
+    def test_not_on_body_shows_last(self):
+        s = self.model.build_surface(self.db, {})
+        self.assertEqual(s["body"], "Sys 1 a")
+        self.assertFalse(s["here"])
+        self.assertIsNone(s["me"])
+        self.assertTrue(s["marks"])
+
+    def test_old_plugin_db_without_tables(self):
+        s = self.model.build_surface(Database(os.path.join(fx.DATA_DIR, "shboxsearch.sqlite"))
+                                     if hasattr(fx, "DATA_DIR") else self.db, {})
+        self.assertIn("track", s)
+
+
+if __name__ == "__main__":
+    unittest.main()

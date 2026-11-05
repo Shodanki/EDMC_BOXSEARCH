@@ -1,0 +1,238 @@
+// SHIP – the ship at a glance, for the pilot, the engineer and the loadmaster.
+//
+// Top: an annunciator panel like a fighter's – WARNING (red, act now),
+// CAUTION (amber, needs attention), ADVISORY (cyan, a state you set). Every
+// lamp has a fixed place and stays dark when off, so a glance shows what changed.
+// Below: a schematic cutaway (our own drawing, not to scale – the game files
+// name slots, not positions), the engineer's column (power, modules, damage
+// and function report) and the loadmaster's column (cargo, fuel, locker).
+
+import { getJSON } from "../api.js";
+import { el, frame, fmt, withPopout } from "../ui.js";
+import { t, N_ } from "../i18n.js";
+
+const LAMP = {
+  hull_crit: N_("HULL CRITICAL"), overheat: N_("OVERHEAT"), fuel_crit: N_("FUEL CRITICAL"),
+  danger: N_("DANGER"), interdicted: N_("INTERDICTION"), canopy: N_("CANOPY BREACH"),
+  shutdown: N_("SYSTEMS SHUTDOWN"), oxygen: N_("OXYGEN LOW"),
+  shields_down: N_("SHIELDS DOWN"), hull: N_("HULL"), module_dmg: N_("MODULE DAMAGE"),
+  module_off: N_("MODULE OFF"), ammo: N_("AMMO"), low_fuel: N_("FUEL LOW"), heat: N_("HEAT"),
+  silent: N_("SILENT RUNNING"), fa_off: N_("FA OFF"),
+  lights: N_("LIGHTS"), night_vision: N_("NIGHT VISION"), gear: N_("GEAR DOWN"),
+  scoop: N_("CARGO SCOOP"), hardpoints: N_("HARDPOINTS"), supercruise: N_("SUPERCRUISE"),
+  scooping: N_("FUEL SCOOPING"), fsd_charging: N_("FSD CHARGING"), fsd_cooldown: N_("FSD COOLDOWN"),
+  mass_locked: N_("MASS LOCK"), analysis: N_("ANALYSIS MODE"), docked: N_("DOCKED"), landed: N_("LANDED"),
+};
+const LEVEL = { warning: N_("WARNING"), caution: N_("CAUTION"), advisory: N_("ADVISORY") };
+const GROUP = { hardpoints: N_("HARDPOINTS"), utility: N_("UTILITY"), core: N_("CORE"), optional: N_("OPTIONAL") };
+const REPORT = {
+  module_damaged: N_("{w} at {v} %"), module_off: N_("{w} switched off"), ammo_empty: N_("{w}: ammunition empty"),
+  ammo_low: N_("{w}: ammunition {v} %"), afmu: N_("AFMU repaired {w} to {v} %"),
+  power_over: N_("power draw {v} % of the power plant"),
+};
+
+let root = null, data = null, busy = false;
+
+export function mount(r) {
+  root = r;
+  root.classList.add("ship-view");
+  window.addEventListener("fis-layout", () => { if (data) render(); });
+}
+
+export async function update(ctx, reason) {
+  if (!root || busy) return;
+  busy = true;
+  try { data = await getJSON("/api/shipstatus"); } catch (e) { data = null; }
+  busy = false;
+  render();
+}
+
+const pct = (v) => (v === null || v === undefined ? null : Math.round(v * 100));
+function hcls(h) { return h === null || h === undefined ? "" : h < 0.5 ? "bad" : h < 0.8 ? "warn" : "ok"; }
+function stamp(ts) {
+  if (!ts) return "";
+  return new Date(ts * 1000).toLocaleString(undefined, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function render() {
+  if (!root) return;
+  root.replaceChildren();
+  if (!data || data.empty) {
+    root.append(frame(t("SHIP"), "", el("div", { class: "empty" }, t("NO SHIP DATA"), el("br"),
+      el("span", { class: "c-dim", text: t("Log in to the game – the fitting is written at start, docking and outfitting.") }))));
+    return;
+  }
+  // left: the picture and the hold; right (the wide side): report and the
+  // engineer's module list, which needs the room (user, 05.11.2026)
+  root.append(annunciator(), el("div", { class: "sh-grid" },
+    el("div", { class: "sh-col sh-left" }, cutaway(), logistics()),
+    el("div", { class: "sh-col sh-right" }, report(), engineer())));
+}
+
+// ------------------------------------------------------------ annunciator
+function annunciator() {
+  const s = data.ship;
+  const master = el("div", { class: "ann-master " + data.master },
+    el("div", { class: "am-k", text: data.master === "normal" ? t("ALL SYSTEMS") : t(LEVEL[data.master]) }),
+    el("div", { class: "am-v", text: data.master === "normal" ? t("NORMAL") : t("CHECK") }));
+  const bands = ["warning", "caution", "advisory"].map(lv => el("div", { class: "ann-band " + lv },
+    el("div", { class: "ab-k", text: t(LEVEL[lv]) }),
+    el("div", { class: "ab-lamps" }, ...data.panel.filter(p => p.level === lv).map(p =>
+      el("div", { class: "lamp " + lv + (p.on ? " on" : ""), text: t(LAMP[p.key] || p.key) })))));
+  const id = el("div", { class: "ann-id" },
+    el("div", { class: "c-cyan sh-name", text: (s.name || s.type || "?") }),
+    el("div", { class: "c-dim", text: [s.type, s.ident].filter(Boolean).join(" · ") }),
+    el("div", { class: "sh-hull " + hcls(s.hull), text: t("HULL") + " " + (pct(s.hull) ?? "–") + " %" }),
+    el("div", { class: "c-dim small", text: data.live ? t("live") : t("game not running – last known state") }));
+  return withPopout(frame(t("STATUS"), "", el("div", { class: "ann" }, master,
+    el("div", { class: "ann-bands" }, ...bands), id), { cls: "sh-ann", appear: false }), "ship");
+}
+
+// ------------------------------------------------------------ cutaway
+// Schematic top view: nose up. Hardpoints along the nose by size, utility on
+// the spine, core modules on the centre line front to back, optional
+// internals on both flanks by size. Colour = integrity, dashed = switched off.
+function cutaway() {
+  const W = 420, H = 470, cx = W / 2;
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  svg.setAttribute("class", "sh-cut");
+  const add = (tag, attrs, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (text !== undefined) n.textContent = text;
+    svg.append(n); return n;
+  };
+  // hull outline (stylised, our own)
+  add("path", { d: `M${cx} 18 L${cx + 60} 70 L${cx + 128} 112 L${cx + 160} 300 L${cx + 178} 420 L${cx + 60} 450 L${cx - 60} 450 L${cx - 178} 420 L${cx - 160} 300 L${cx - 128} 112 L${cx - 60} 70 Z`, class: "hull-line" });
+  add("path", { d: `M${cx} 40 L${cx} 440`, class: "hull-axis" });
+  const box = (x, y, w, h, m, label) => {
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("class", "mod " + hcls(m.health) + (m.on === false ? " off" : ""));
+    const r = document.createElementNS(NS, "rect");
+    Object.entries({ x, y, width: w, height: h, rx: 2 }).forEach(([k, v]) => r.setAttribute(k, v));
+    const tt = document.createElementNS(NS, "title");
+    tt.textContent = m.name + " · " + (pct(m.health) ?? "–") + " %" + (m.power ? " · " + fmt(m.power, 2) + " MW" : "")
+      + " · P" + m.priority + (m.eng ? " · " + m.eng : "") + (m.ammo_pct !== undefined && m.ammo_pct !== null ? " · " + t("ammo") + " " + m.ammo_pct + " %" : "");
+    g.append(r, tt);
+    if (label) {
+      const tx = document.createElementNS(NS, "text");
+      tx.setAttribute("x", x + w / 2); tx.setAttribute("y", y + h / 2 + 3.5); tx.setAttribute("text-anchor", "middle");
+      tx.textContent = label; g.append(tx);
+    }
+    svg.append(g);
+  };
+  const M = data.modules;
+  // hardpoints: largest in the middle of the nose
+  const hp = [...M.hardpoints].sort((a, b) => (b.size || 0) - (a.size || 0));
+  const hpRow = []; hp.forEach((m, i) => (i % 2 ? hpRow.push(m) : hpRow.unshift(m)));
+  hpRow.forEach((m, i) => {
+    const n = hpRow.length, w = 20 + 6 * (m.size || 1), gap = 4;
+    const tot = hpRow.reduce((s, x) => s + 20 + 6 * (x.size || 1) + gap, -gap);
+    let x0 = cx - tot / 2; for (let j = 0; j < i; j++) x0 += 20 + 6 * (hpRow[j].size || 1) + gap;
+    const dy = Math.abs(i - (n - 1) / 2) * 9;
+    box(x0, 96 + dy, w, 16, m, ["", "S", "M", "L", "H"][m.size || 0] || "");
+  });
+  // utility on the spine
+  M.utility.forEach((m, i) => box(cx - 13 - (i % 2 ? -26 : 0) - 13, 140 + Math.floor(i / 2) * 15, 24, 11, m, ""));
+  // core along the centre line
+  const order = ["Radar", "LifeSupport", "PowerDistributor", "PowerPlant", "FrameShiftDrive", "FuelTank", "MainEngines"];
+  const short = { Radar: "SEN", LifeSupport: "LS", PowerDistributor: "PD", PowerPlant: "PP", FrameShiftDrive: "FSD", FuelTank: "FUEL", MainEngines: "THR" };
+  let y = 140 + Math.ceil(M.utility.length / 2) * 15 + 8;
+  for (const slot of order) {
+    const m = M.core.find(x => x.slot === slot); if (!m) continue;
+    box(cx - 30, y, 60, 24, m, short[slot]); y += 30;
+  }
+  const armour = M.core.find(x => x.slot === "Armour");
+  if (armour) add("text", { x: cx, y: 465, "text-anchor": "middle", class: "cut-note" }, armour.name);
+  // optional internals on both flanks, biggest first
+  const opt = [...M.optional].sort((a, b) => (b.size || 0) - (a.size || 0));
+  const sideY = [170, 170];
+  opt.forEach((m, i) => {
+    const side = i % 2, w = 22 + 7 * (m.size || 1), h = 12 + 2 * (m.size || 1);
+    const x = side ? cx + 44 + (8 - (m.size || 1)) * 3 : cx - 44 - w - (8 - (m.size || 1)) * 3;
+    box(x, sideY[side], w, h, m, String(m.size || ""));
+    sideY[side] += h + 5;
+  });
+  const legend = el("div", { class: "cut-legend" },
+    el("span", { class: "lg ok", text: "■ " + t("intact") }), el("span", { class: "lg warn", text: "■ < 80 %" }),
+    el("span", { class: "lg bad", text: "■ < 50 %" }), el("span", { class: "lg off", text: "▭ " + t("off") }),
+    el("span", { class: "c-dim", text: t("schematic – the game names slots, not positions") }));
+  return frame(t("CUTAWAY"), stamp(data.ship.loadout_ts), [svg, legend], { cls: "sh-cutf", appear: false });
+}
+
+// ------------------------------------------------------------ engineer
+function engineer() {
+  const p = data.power;
+  const cap = p.capacity || Math.max(p.draw, 1);
+  const prio = el("div", { class: "pw-stack" });
+  let prev = 0;
+  p.by_priority.forEach((v, i) => {
+    const w = Math.max(0, (v - prev) / cap * 100); prev = v;
+    prio.append(el("i", { class: "p" + (i + 1), style: { width: w.toFixed(1) + "%" }, title: "P" + (i + 1) + ": " + fmt(v, 1) + " MW" }));
+  });
+  const pips = el("div", { class: "pips" }, ...["SYS", "ENG", "WEP"].map((k, i) => el("div", { class: "pip" },
+    el("span", { class: "c-dim", text: k }),
+    el("span", { class: "pip-bar" }, ...[0, 1, 2, 3].map(j => el("i", { class: (p.pips[i] || 0) > j ? "on" + ((p.pips[i] || 0) - j < 1 ? " half" : "") : "" }))))));
+  const power = el("div", { class: "pw" },
+    el("div", { class: "pw-head" },
+      el("span", { text: t("POWER") }),
+      el("span", { class: p.load_pct > 100 ? "c-red" : p.load_pct > 90 ? "c-amber" : "c-green",
+        text: fmt(p.draw, 1) + (p.capacity ? " / " + fmt(p.capacity, 1) + " MW · " + p.load_pct + " %" : " MW · " + t("plant capacity unknown")) })),
+    prio,
+    el("div", { class: "c-dim small", text: t("stack by priority P1 … P5 (P1 switches off last)") }),
+    pips);
+  const groups = Object.entries(data.modules).map(([g, list]) => el("div", { class: "mg" },
+    el("div", { class: "mg-h", text: t(GROUP[g]) + " · " + list.length }),
+    ...list.map(m => el("div", { class: "mrow " + hcls(m.health) + (m.on === false ? " off" : ""), title: m.slot + (m.experimental ? " · " + m.experimental : "") },
+      el("span", { class: "m-n", text: m.name }),
+      el("span", { class: "m-h" }, el("i", { style: { width: (pct(m.health) ?? 0) + "%" } })),
+      el("span", { class: "m-v", text: (pct(m.health) ?? "–") + "%" }),
+      el("span", { class: "m-p", text: "P" + m.priority }),
+      el("span", { class: "m-w", text: m.power ? fmt(m.power, 2) : "" }),
+      el("span", { class: "m-a", text: m.ammo_pct !== undefined && m.ammo_pct !== null ? "▮" + m.ammo_pct + "%" : (m.eng || "") })))));
+  const i = data.integrity;
+  return frame(t("ENGINEER"), t("min {v} % · {d} damaged · {o} off", { v: pct(i.min) ?? "–", d: i.damaged, o: i.off }),
+    [power, el("div", { class: "mgroups" }, ...groups)], { cls: "sh-eng", appear: false });
+}
+
+// ------------------------------------------------------------ report
+function report() {
+  const rows = data.report.map(r => el("div", { class: "rp " + r.level },
+    el("span", { class: "rp-l", text: t(LEVEL[r.level]) }),
+    el("span", { text: t(REPORT[r.key] || r.key, { w: r.what || "", v: r.value ?? "" }) })));
+  const body = rows.length ? rows : [el("div", { class: "rp ok" }, el("span", { class: "rp-l", text: "OK" }),
+    el("span", { text: t("All modules intact and switched on.") }))];
+  body.push(el("div", { class: "c-dim small", text: t("Module state as of {t} – the game writes it at login, docking and outfitting.", { t: stamp(data.ship.loadout_ts) }) }));
+  const s = data.ship;
+  body.push(el("div", { class: "kvline" },
+    el("span", { class: "c-dim", text: t("Rebuy") }), el("span", { text: fmt(s.rebuy, 0) + " Cr" }),
+    el("span", { class: "c-dim", text: t("Value") }), el("span", { text: fmt(s.value, 0) + " Cr" }),
+    el("span", { class: "c-dim", text: t("Jump") }), el("span", { text: fmt(s.max_jump, 1) + " ly" })));
+  return frame(t("DAMAGE & FUNCTION REPORT"), String(data.report.length), body, { cls: "sh-rep", appear: false });
+}
+
+// ------------------------------------------------------------ logistics
+function logistics() {
+  const L = data.logistics;
+  const bar = (v, max, cls) => el("span", { class: "lbar " + (cls || "") }, el("i", { style: { width: max ? Math.min(100, 100 * (v || 0) / max).toFixed(1) + "%" : "0" } }));
+  const f = L.fuel;
+  const rows = [
+    el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Cargo") }), bar(L.used, L.capacity),
+      el("span", { text: fmt(L.used, 0) + " / " + fmt(L.capacity, 0) + " t" })),
+    el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Fuel") }), bar(f.main, f.capacity, (f.main / (f.capacity || 1)) < 0.25 ? "warn" : ""),
+      el("span", { text: fmt(f.main, 1) + " / " + fmt(f.capacity, 0) + " t" })),
+    el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Reservoir") }), bar(f.reservoir, f.reserve_cap),
+      el("span", { text: fmt(f.reservoir, 2) + " / " + fmt(f.reserve_cap, 2) + " t" })),
+    el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Limpets") }), el("span"), el("span", { text: fmt(L.limpets, 0) })),
+  ];
+  const inv = L.cargo.length ? el("div", { class: "cargo scroll" }, ...L.cargo.map(c => el("div", { class: "cg" + (c.stolen ? " hot" : "") },
+    el("span", { text: c.name + (c.stolen ? " ⚠" : "") + (c.mission ? " ◆" : "") }), el("span", { class: "num", text: fmt(c.count, 0) + " t" }))))
+    : el("div", { class: "c-dim", text: t("Hold empty.") });
+  const lk = L.locker;
+  const locker = el("div", { class: "c-dim small", text: t("Ship locker: {i} items · {c} components · {u} consumables · {d} data",
+    { i: lk.Items, c: lk.Components, u: lk.Consumables, d: lk.Data }) });
+  const bal = L.balance !== null && L.balance !== undefined ? el("div", { class: "small", text: t("Credits") + ": " + fmt(L.balance, 0) + " Cr" }) : null;
+  return frame(t("LOGISTICS"), L.free !== null ? t("{n} t free", { n: fmt(L.free, 0) }) : "", [...rows, inv, locker, bal], { cls: "sh-log", appear: false });
+}
