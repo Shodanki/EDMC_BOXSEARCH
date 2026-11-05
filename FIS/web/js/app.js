@@ -117,7 +117,7 @@ window.addEventListener("hashchange", () => {
   if (!SOLO && VIEWS[name] && name !== store.view) show(name);
 });
 window.addEventListener("keydown", (e) => {
-  if (e.target.matches("input, textarea, select")) return;
+  if (e.target && e.target.matches && e.target.matches("input, textarea, select")) return;
   if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey) { fullscreen.toggle(); return; }
   if (SOLO) return;
   // keys follow the tab order: briefing, planet, system, galaxy, planet info ...
