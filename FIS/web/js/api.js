@@ -27,15 +27,33 @@ export async function postJSON(path, body) {
  */
 export function subscribe(handlers) {
   const url = "/api/events" + (token ? "?token=" + encodeURIComponent(token) : "");
-  const es = new EventSource(url);
-  es.onopen = () => handlers.open && handlers.open();
-  es.onerror = () => handlers.error && handlers.error(es.readyState);
-  for (const ev of ["snapshot", "jump", "target", "scan", "status"]) {
-    es.addEventListener(ev, (m) => {
-      let data = null;
-      try { data = JSON.parse(m.data); } catch { /* ignore broken frame */ }
-      handlers[ev] && handlers[ev](data);
-    });
-  }
-  return es;
+  let es = null, last = Date.now();
+  const connect = () => {
+    es = new EventSource(url);
+    es.onopen = () => { last = Date.now(); handlers.open && handlers.open(); };
+    es.onerror = () => handlers.error && handlers.error(es.readyState);
+    for (const ev of ["snapshot", "jump", "target", "scan", "status", "ping"]) {
+      es.addEventListener(ev, (m) => {
+        last = Date.now();
+        let data = null;
+        try { data = JSON.parse(m.data); } catch { /* ignore broken frame */ }
+        handlers[ev] && handlers[ev](data);
+      });
+    }
+  };
+  connect();
+  // watchdog: the server sends something at least every 15 s (a ping when
+  // the game is quiet). A link that went silent - tablet asleep, Wi-Fi, a
+  // half-open connection - is dropped and opened again; the new snapshot
+  // brings every view up to date.
+  setInterval(() => {
+    if (Date.now() - last < STALE_MS) return;
+    last = Date.now();
+    try { es.close(); } catch { /* already gone */ }
+    handlers.stale && handlers.stale();
+    connect();
+  }, 5000);
+  return { close: () => es.close() };
 }
+
+const STALE_MS = 40000;

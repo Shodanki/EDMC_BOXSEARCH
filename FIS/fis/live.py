@@ -118,6 +118,13 @@ class LiveTracker:
         self._stop = threading.Event()
         self._replaying = False
         self.errors = 0
+        # watchdog: when the polling last ran, how often the game rewrote the
+        # journal under the same name (06.11.2026: after a lost connection the
+        # game started the file anew; reading on at the old offset, past the
+        # new end, the FIS heard nothing until it was restarted)
+        self._head: Optional[bytes] = None
+        self.last_poll = 0.0
+        self.rewrites = 0
 
     # ---------------------------------------------------------------- api
     def snapshot(self) -> Dict[str, Any]:
@@ -374,6 +381,33 @@ class LiveTracker:
             self.state["navroute"] = self._hops(data.get("Route") or [])
         self._emit("target", {"navroute": len(self.state["navroute"])})
 
+    HEAD_BYTES = 160
+
+    @classmethod
+    def _head_of(cls, path: str) -> Optional[bytes]:
+        """The file's first bytes - the Fileheader line with its timestamp."""
+        try:
+            with open(path, "rb") as fh:
+                return fh.read(cls.HEAD_BYTES)
+        except OSError:
+            return None
+
+    def _rewritten(self, path: str) -> bool:
+        """The same journal file, but shorter than what we read or with
+        another Fileheader: the game wrote it anew."""
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return False
+        head = self._head_of(path)
+        if size < self._offset:
+            return True
+        if self._head and head and len(head) >= len(self._head) and head[:len(self._head)] != self._head:
+            return True
+        if head and (not self._head or len(head) > len(self._head)):
+            self._head = head                 # remember it once it is complete
+        return False
+
     def journals(self) -> List[str]:
         files = glob.glob(os.path.join(self.journal_dir, "Journal.*.log"))
         return sorted(files, key=lambda p: (os.path.getmtime(p), p))
@@ -417,6 +451,7 @@ class LiveTracker:
             self._partial = b""
             self._offset = self._read_lines(newest, 0)
             self._file = newest
+            self._head = self._head_of(newest)
         finally:
             self._replaying = False
         with self._lock:
@@ -430,12 +465,29 @@ class LiveTracker:
             self._file = files[-1]
             self._offset = 0
             self._partial = b""
+            self._head = None
             with self._lock:
                 self.state["journal"] = os.path.basename(self._file)
         if self._file:
+            if self._offset and self._rewritten(self._file):
+                # read the new content from its start, live
+                self.rewrites += 1
+                self._offset = 0
+                self._partial = b""
+                self._head = self._head_of(self._file)
             self._offset = self._read_lines(self._file, self._offset)
         self._read_status()
         self._read_navroute()
+        self.last_poll = time.time()
+
+    def alive(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
+    def restart(self) -> None:
+        """Watchdog: the polling thread died - start a new one where it was."""
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name="fis-live", daemon=True)
+        self._thread.start()
 
     def _run(self) -> None:
         while not self._stop.is_set():

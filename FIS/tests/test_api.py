@@ -332,6 +332,36 @@ class TestDbWatch(_Base):
             app.stop()
 
 
+class TestPing(_Base):
+    """A quiet game: the event stream still sends a named ping with the
+    watchdog state - the page's watchdog can see it (SSE comments it cannot)."""
+    def test_ping_when_quiet(self):
+        from fis.server import Handler
+        app = App(self.cfg, live=fed_tracker(self.tmp), db=self.db)
+        old = Handler.PING_S
+        Handler.PING_S = 0.3
+        srv = make_server(app, host="127.0.0.1", port=0)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            r = urllib.request.urlopen("http://127.0.0.1:%d/api/events" % srv.server_address[1], timeout=5)
+            seen = []
+            for _ in range(40):
+                ln = r.readline().decode("utf-8").strip()
+                seen.append(ln)
+                if ln == "event: ping":
+                    data = json.loads(r.readline().decode("utf-8")[len("data: "):])
+                    self.assertIn("journal_rewrites", data)
+                    self.assertIn("poll_age_s", data)
+                    break
+            else:
+                self.fail("no ping: %r" % seen[-5:])
+            r.close()
+        finally:
+            Handler.PING_S = old
+            srv.shutdown()
+            srv.server_close()
+
+
 class TestSettings(_Base):
     """The settings page: game PC only, FIS page only (custom header, origin)."""
     @classmethod
