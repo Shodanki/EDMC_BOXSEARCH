@@ -58,8 +58,8 @@ function render() {
   root.replaceChildren();
   if (!data) { root.append(frame(t("MINING"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
   root.append(el("div", { class: "mine-grid" },
-    el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session(), limpets(), tritium(), ships()),
-    el("div", { class: "mine-col" }, hotspots(), goods(), history())));
+    el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session(), limpets(), ships()),
+    el("div", { class: "mine-col" }, tritium(), hotspots(), goods(), history())));
 }
 
 // ------------------------------------------------------------ live status
