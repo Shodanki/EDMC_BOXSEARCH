@@ -8,7 +8,8 @@ import { el, frame, fmt, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const CONTENT = { low: N_("low"), medium: N_("medium"), high: N_("high") };
-let root = null, data = null, busy = false;
+const VERDICT = { good: N_("good rock"), fair: N_("fair"), poor: N_("poor - move on") };
+let root = null, data = null, busy = false, live = null, liveBusy = false, liveBox = null;
 let material = localStorage.getItem("fis.mine.material") || "tritium";
 
 export function mount(r) {
@@ -18,11 +19,22 @@ export function mount(r) {
 }
 
 export async function update(ctx, reason) {
-  if (!root || busy) return;
+  if (!root) return;
+  if (reason === "live") { if (data) await updateLive(); return; }   // Status.json: cheap, often
+  if (busy) return;
   busy = true;
   try { data = await getJSON("/api/mining"); } catch (e) { data = null; }
+  try { live = await getJSON("/api/mining/live"); } catch (e) { live = null; }
   busy = false;
   render();
+}
+
+async function updateLive() {
+  if (liveBusy) return;
+  liveBusy = true;
+  try { live = await getJSON("/api/mining/live"); } catch (e) { /* keep the last */ }
+  liveBusy = false;
+  if (liveBox) { const n = liveStatus(); liveBox.replaceWith(n); liveBox = n; }
 }
 
 function stamp(ts) {
@@ -46,8 +58,61 @@ function render() {
   root.replaceChildren();
   if (!data) { root.append(frame(t("MINING"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
   root.append(el("div", { class: "mine-grid" },
-    el("div", { class: "mine-col" }, withPopout(session(), "mining"), limpets(), tritium(), ships()),
+    el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session(), limpets(), tritium(), ships()),
     el("div", { class: "mine-col" }, hotspots(), goods(), history())));
+}
+
+// ------------------------------------------------------------ live status
+// two bars: the hold (limpets | goods | free, with the advised limpet load
+// marked) and the refining of the last 10 minutes (one tick per tonne - the
+// game writes nothing about the refinery's bins, only each finished tonne)
+const GOOD_COL = ["#7CFF6B", "#FFB23E", "#B57CFF", "#4FA3FF", "#E8A06A"];
+function liveStatus() {
+  const L = live;
+  if (!L || !L.capacity) return frame(t("MINING STATUS"), "", el("div", { class: "c-dim", text: t("no data yet") }), { appear: false });
+  const cap = L.capacity, pct = (n) => (100 * n / cap).toFixed(2) + "%";
+  const segs = [el("i", { class: "mh-limpets", style: { width: pct(L.limpets) }, title: t("Limpets") + " " + L.limpets })];
+  L.goods.forEach((g, i) => segs.push(el("i", { style: { width: pct(g.count), background: GOOD_COL[i % GOOD_COL.length] }, title: g.name + " " + g.count + " t" })));
+  const hold = el("div", { class: "mh-bar" }, ...segs,
+    L.advice ? el("b", { class: "mh-mark", style: { left: pct(L.advice.limpets) }, title: t("advised: {n} limpets", { n: L.advice.limpets }) }) : null);
+  const legend = el("div", { class: "mh-legend small" },
+    el("span", { class: "c-cyan", text: "■ " + t("Limpets") + " " + L.limpets }),
+    ...L.goods.map((g, i) => el("span", { style: { color: GOOD_COL[i % GOOD_COL.length] }, text: "■ " + g.name + " " + g.count + " t" })),
+    el("span", { class: "c-dim", text: "□ " + t("free") + " " + fmt(L.free, 0) + " / " + fmt(cap, 0) + " t" }));
+  const ticks = el("div", { class: "mh-bar mh-ticks", title: t("each tonne refined in the last 10 minutes") },
+    ...(L.ticks || []).map(s => el("b", { style: { left: (100 - 100 * s / 600).toFixed(2) + "%" } })));
+  const rows = [
+    el("div", { class: "mh-row" }, el("span", { class: "c-dim", text: t("Hold") }), hold), legend,
+    el("div", { class: "mh-row" }, el("span", { class: "c-dim", text: t("Refined") }), ticks),
+    el("div", { class: "mh-legend small" }, el("span", { class: "c-dim", text: "−10 min" }),
+      el("span", { class: L.rate_h ? "c-green" : "c-dim", text: L.rate_h ? t("{r} t/h now", { r: fmt(L.rate_h, 0) }) : t("nothing refined in 10 min") }),
+      el("span", { class: "c-dim", text: t("now") })),
+  ];
+  if (L.target_name) rows.push(el("div", { class: "small", text: t("Target") + ": " + L.target_name }));
+  // how far cargo space and limpets go
+  const est = [];
+  if (L.full_in_min !== undefined) est.push(t("full in ~{m} min at this rate", { m: fmt(L.full_in_min, 0) }));
+  if (L.limpets_for_t !== null && L.limpets_for_t !== undefined && L.free !== null)
+    est.push(L.limpets_for_t >= L.free ? t("limpets last for ~{t} t - enough", { t: fmt(L.limpets_for_t, 0) })
+      : t("limpets last for ~{t} t - not enough for {f} t free", { t: fmt(L.limpets_for_t, 0), f: fmt(L.free, 0) }));
+  if (est.length) rows.push(el("div", { class: "small " + (L.limpets_for_t < L.free ? "c-amber" : "c-dim"), text: est.join(" · ") }));
+  // prospector reports: the last one large, a few before it
+  const rocks = L.rocks || [];
+  if (rocks.length) {
+    const r = rocks[0], key = L.key;
+    rows.push(el("div", { class: "sr-h", text: t("Prospector") + " · " + (r.ago < 90 ? t("{s} s ago", { s: r.ago }) : t("{n} min ago", { n: Math.round(r.ago / 60) })) }));
+    rows.push(el("div", { class: "pr-rock" }, ...r.materials.map(m => el("div", { class: "pr-mat" + (m.key === key ? " key" : "") },
+      el("span", { text: m.name }), el("span", { class: "lbar" }, el("i", { style: { width: Math.min(100, m.pct * 2) + "%" } })),
+      el("span", { class: "num", text: fmt(m.pct, 1) + " %" })))));
+    rows.push(el("div", { class: "small " + (r.verdict === "good" ? "c-green" : r.verdict === "poor" ? "c-amber" : ""),
+      text: [r.content ? t(CONTENT[r.content]) : "", r.motherlode ? "◆ " + t("motherlode") + ": " + r.motherlode : "",
+        r.remaining < 100 ? t("{r} % left", { r: fmt(r.remaining, 0) }) : "",
+        r.verdict ? t(VERDICT[r.verdict]) + (L.best_share ? " (" + t("best {b} %", { b: fmt(L.best_share, 1) }) + ")" : "") : ""].filter(Boolean).join(" · ") }));
+    if (rocks.length > 1) rows.push(el("div", { class: "pr-list small c-dim" }, ...rocks.slice(1).map(x =>
+      el("div", { class: x.verdict === "good" ? "c-green" : "", text: fmt(Math.round(x.ago / 60), 0) + " min · " + (key ? fmt(x.share, 1) + " % " : "")
+        + (x.content ? t(CONTENT[x.content]) : "") + (x.motherlode ? " · ◆ " + x.motherlode : "") }))));
+  }
+  return frame(t("MINING STATUS"), L.active ? t("live") + " · " + (L.ship || "") : (L.ship || ""), rows, { cls: "mine-live", appear: false });
 }
 
 // ------------------------------------------------------------ session

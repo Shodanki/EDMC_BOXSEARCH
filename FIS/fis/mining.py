@@ -85,6 +85,7 @@ def _summary(run: List[Dict[str, Any]], now: Optional[float] = None) -> Dict[str
     start, end = parse_ts(run[0]["timestamp"]), parse_ts(run[-1]["timestamp"])
     active = now - end <= GAP_S
     refined: Dict[str, Dict[str, Any]] = {}
+    ticks: List[float] = []
     drones = {"prospector": 0, "collection": 0}
     asteroids: List[Dict[str, Any]] = []
     cracked = 0
@@ -94,6 +95,7 @@ def _summary(run: List[Dict[str, Any]], now: Optional[float] = None) -> Dict[str
             k = type_key(e.get("Type"))
             r = refined.setdefault(k, {"key": k, "name": e.get("Type_Localised") or k.capitalize(), "count": 0})
             r["count"] += 1
+            ticks.append(parse_ts(e["timestamp"]))
         elif ev == "LaunchDrone":
             typ = (e.get("Type") or "").lower()
             drones[typ] += 1
@@ -123,6 +125,7 @@ def _summary(run: List[Dict[str, Any]], now: Optional[float] = None) -> Dict[str
         "last": asteroids[-1] if asteroids else None, "best": best,
         "tritium": refined.get("tritium", {}).get("count", 0),
         "main_name": out_ref[0]["name"] if out_ref else None,
+        "rocks": asteroids[-8:], "ticks": ticks[-40:],
     }
 
 
@@ -158,6 +161,90 @@ def limpet_ratio(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
     out = {"all": agg(use) if use else None, "by_type": {}}
     for typ in sorted({r.get("ship_type") for r in use if r.get("ship_type")}):
         out["by_type"][typ] = agg([r for r in use if r.get("ship_type") == typ])
+    return out
+
+
+# ---------------------------------------------------------------- live status
+RATE_WINDOW_S = 600
+
+
+def _share(rock: Optional[Dict[str, Any]], key: Optional[str]) -> float:
+    if not rock or not key:
+        return 0.0
+    return max((m["pct"] for m in rock["materials"] if m["key"] == key), default=0.0)
+
+
+def _target_material(live: Dict[str, Any]) -> Optional[str]:
+    """'Tritium Hotspot' (Status.json destination in a ring) -> 'tritium'."""
+    dest = ((live.get("status") or {}).get("destination") or {})
+    name = dest.get("name") or ""
+    if "hotspot" not in name.lower():
+        return None
+    raw = name
+    if "#type=" in raw:                     # $SAA_RingHotspot:#type=$Tritium_name;;
+        raw = raw.split("#type=", 1)[1]
+    return type_key(raw.replace("Hotspot", "").replace("hotspot", "").strip()) or None
+
+
+def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
+               now: Optional[float] = None) -> Dict[str, Any]:
+    """What the miner needs right now: the hold (limpets / goods / free), the
+    refining rate, the target hotspot, the last prospector reports - and how
+    far cargo space and limpets will go."""
+    now = time.time() if now is None else now
+    try:
+        archive.refresh(force=True)          # mining events are seconds apart
+    except TypeError:
+        archive.refresh()
+    evs = archive.events()
+    runs = _runs(evs)
+    s = _summary(runs[-1], now) if runs else None
+    lo = next((e for e in reversed(evs) if e["event"] == "Loadout"), None) or {}
+    cargo = {}
+    if journal_dir:
+        from .shipview import _read_json
+        cargo = _read_json(os.path.join(journal_dir, "Cargo.json")) or {}
+    inv = cargo.get("Inventory") or [] if cargo.get("Vessel", "Ship") == "Ship" else []
+    limpets = sum(c.get("Count") or 0 for c in inv if (c.get("Name") or "").lower() == "drones")
+    goods = sorted(({"key": type_key(c.get("Name")), "name": c.get("Name_Localised") or (c.get("Name") or "").capitalize(),
+                     "count": c.get("Count") or 0} for c in inv if (c.get("Name") or "").lower() != "drones"),
+                   key=lambda g: -g["count"])
+    cap = int(lo.get("CargoCapacity") or 0)
+    used = limpets + sum(g["count"] for g in goods)
+    out: Dict[str, Any] = {"generated": now, "ship": lo.get("ShipName") or lo.get("Ship"), "capacity": cap,
+                           "limpets": limpets, "goods": goods, "used": used, "free": max(0, cap - used) if cap else None,
+                           "target": _target_material(live),
+                           "target_name": (((live.get("status") or {}).get("destination") or {}).get("name"))}
+    if s:
+        recent = [t for t in s["ticks"] if now - t <= RATE_WINDOW_S]
+        out["active"] = s["active"]
+        out["ticks"] = [round(now - t) for t in recent]          # seconds ago
+        out["rate_h"] = round(len(recent) * 3600.0 / RATE_WINDOW_S) if recent else 0
+        key = out["target"] or s["main"]
+        best = max((_share(r, key) for r in s["rocks"]), default=0.0)
+        rocks = []
+        for r in reversed(s["rocks"][-6:]):
+            sh = _share(r, key)
+            verdict = None
+            if key and best:
+                verdict = "good" if sh >= 0.75 * best else "poor" if sh < 0.4 * best else "fair"
+            rocks.append(dict(r, share=sh, verdict=verdict, ago=round(now - (r["t"] or now))))
+        out["rocks"] = rocks
+        out["key"] = key
+        out["best_share"] = best
+        out["session"] = {k: s[k] for k in ("start", "total", "per_hour", "minutes", "drones", "asteroids")}
+    # how far cargo space and limpets go (limpets per refined tonne from your sessions)
+    rat = limpet_ratio(sessions(evs, now))
+    typ = (lo.get("Ship") or "").lower()
+    basis = rat["by_type"].get(typ) or rat["all"]
+    ratio = basis["ratio"] if basis and basis["ratio"] else DEFAULT_RATIO
+    out["ratio"] = ratio
+    if cap:
+        out["advice"] = limpet_load(cap, ratio)
+    if out.get("free") is not None:
+        out["limpets_for_t"] = int(limpets / ratio) if ratio else None
+        if out.get("rate_h"):
+            out["full_in_min"] = round(out["free"] / out["rate_h"] * 60)
     return out
 
 

@@ -250,6 +250,8 @@ subscribe({
     // the ship panel follows Status.json (lamps, pips, fuel) about once a second
     if (mounted.has("ship") && store.view === "ship") later("shipview", 900, () => ship.update(ctx, "data"));
     if (mounted.has("surface")) later("surface", 1000, () => surface.update(ctx, "data"));
+    // mining: cargo changes with every tonne (Status.json Cargo) - the live block follows
+    if (mounted.has("mining") && store.view === "mining") later("mininglive", 1200, () => mining.update(ctx, "live"));
     // landed, in the SRV or on foot: the surface map is what matters now
     if (autoView() && store.view === "tactical" && data && data.on_surface) show("surface");
     // a new reference body (Status.json near a planet) moves LAST FIX at once
@@ -263,6 +265,7 @@ subscribe({
 setInterval(() => {
   if (store.view === "tactical") refresh("system");
   if (store.view === "carrier") carrier.update(ctx, "data");
+  if (store.view === "mining") mining.update(ctx, "data");
 }, 60000);
 
 show(SOLO || ALIAS[location.hash.slice(1)] || (location.hash || "#tactical").slice(1));
