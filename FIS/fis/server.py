@@ -276,7 +276,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir))
         if path == "/api/carrier":
             from . import shipview
-            return self._json(shipview.build_carrier(app.archive, app.live_state()))
+            return self._json(shipview.build_carrier(app.archive, app.live_state(),
+                                                     journal_dir=app.cfg.journal_dir))
         if path == "/api/galaxy":
             from . import galaxy
             try:

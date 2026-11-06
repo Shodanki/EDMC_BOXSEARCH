@@ -223,6 +223,14 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
     limpets = sum(c["count"] for c in inv if (c["key"] or "").lower() == "drones")
     locker = _read_json(os.path.join(journal_dir, "ShipLocker.json")) or {}
     fuel = live.get("fuel") or {}
+    from . import mining
+    ms = mining.session(archive.events(), now)
+    if ms:
+        car = archive.carrier()
+        if car and ms["tritium"]:
+            per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, car["load"] or 0, car["fuel"] or 0) or 1
+            ms["carrier_jumps"] = round(ms["tritium"] / per, 1)
+        out["mining"] = ms
     out["logistics"] = {
         "cargo": inv, "used": used, "capacity": lo.get("CargoCapacity"),
         "free": (lo.get("CargoCapacity") or 0) - used if lo.get("CargoCapacity") is not None else None,
@@ -236,8 +244,47 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
     return out
 
 
+def _ship_tritium(journal_dir: Optional[str]) -> Optional[int]:
+    if not journal_dir:
+        return None
+    cargo = _read_json(os.path.join(journal_dir, "Cargo.json")) or {}
+    if cargo.get("Vessel", "Ship") != "Ship":
+        return None
+    return sum(c.get("Count") or 0 for c in cargo.get("Inventory") or []
+               if (c.get("Name") or "").lower() == "tritium")
+
+
+def _tritium_more(archive: fl.Archive, live: Dict[str, Any], c: Dict[str, Any],
+                  journal_dir: Optional[str], now: float) -> Dict[str, Any]:
+    """B2: what the ship carries and what you mined, in carrier jumps; the
+    tritium for the end of the plotted route."""
+    from . import galaxy, mining
+    tank, load = int(c["fuel"] or 0), c["load"] or 0
+    per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank) or 1
+    out: Dict[str, Any] = {"to_full": max(0, fl.CARRIER_TANK - tank)}
+    ship = _ship_tritium(journal_dir)
+    if ship is not None:
+        out["ship"] = ship
+        if ship:
+            out["with_ship"] = fl.carrier_range(min(fl.CARRIER_TANK, tank + ship), load)
+    s = mining.session(archive.events(), now)
+    if s and s["tritium"]:
+        out["mined"] = {"t": s["tritium"], "active": s["active"], "end": s["end"],
+                        "jumps": round(s["tritium"] / per, 1),
+                        "ly": round(s["tritium"] / per * fl.CARRIER_MAX_JUMP, 0)}
+    route = [h for h in live.get("navroute") or [] if h.get("pos")]
+    loc = (c.get("location") or {}).get("StarSystem")
+    here = galaxy._positions(archive)(loc) if loc else None
+    if route and here:
+        dest = route[-1]
+        ly = sum((a - b) ** 2 for a, b in zip(dest["pos"], here)) ** 0.5
+        if ly > 1:
+            out["trip"] = dict(fl.carrier_trip(ly, load, tank), to=dest.get("name"))
+    return out
+
+
 def build_carrier(archive: fl.Archive, live: Dict[str, Any],
-                  now: Optional[float] = None) -> Dict[str, Any]:
+                  now: Optional[float] = None, journal_dir: Optional[str] = None) -> Dict[str, Any]:
     now = time.time() if now is None else now
     c = archive.carrier()
     fleet = archive.fleet()
@@ -262,7 +309,8 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
                      "jumps": list(reversed(c.get("jumps") or []))},
         "tritium": {"tank": c["fuel"], "tank_max": fl.CARRIER_TANK, "load": c["load"],
                     "range": rng, "per_max_jump": rng["per_jump"],
-                    "formula": "5 + ly x (load + tritium + %d) / %d" % (fl.TRITIUM_BASE, fl.TRITIUM_DIV)},
+                    "formula": "5 + ly x (load + tritium + %d) / %d" % (fl.TRITIUM_BASE, fl.TRITIUM_DIV),
+                    **_tritium_more(archive, live, c, journal_dir, now)},
         "space": {"total": su.get("TotalCapacity"), "crew": su.get("Crew"), "cargo": su.get("Cargo"),
                   "reserved": su.get("CargoSpaceReserved"), "ships": su.get("ShipPacks"),
                   "modules": su.get("ModulePacks"), "free": su.get("FreeSpace")},

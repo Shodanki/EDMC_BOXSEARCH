@@ -25,6 +25,7 @@ const LAMP = {
 };
 const LEVEL = { warning: N_("WARNING"), caution: N_("CAUTION"), advisory: N_("ADVISORY") };
 const GROUP = { hardpoints: N_("HARDPOINTS"), utility: N_("UTILITY"), core: N_("CORE"), optional: N_("OPTIONAL") };
+const CONTENT = { low: N_("low"), medium: N_("medium"), high: N_("high") };
 const REPORT = {
   module_damaged: N_("{w} at {v} %"), module_off: N_("{w} switched off"), ammo_empty: N_("{w}: ammunition empty"),
   ammo_low: N_("{w}: ammunition {v} %"), afmu: N_("AFMU repaired {w} to {v} %"),
@@ -65,7 +66,7 @@ function render() {
   // left: the picture and the hold; right (the wide side): report and the
   // engineer's module list, which needs the room (user, 05.11.2026)
   root.append(annunciator(), el("div", { class: "sh-grid" },
-    el("div", { class: "sh-col sh-left" }, cutaway(), logistics()),
+    el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), mining()),
     el("div", { class: "sh-col sh-right" }, report(), engineer())));
 }
 
@@ -211,6 +212,30 @@ function report() {
     el("span", { class: "c-dim", text: t("Value") }), el("span", { text: fmt(s.value, 0) + " Cr" }),
     el("span", { class: "c-dim", text: t("Jump") }), el("span", { text: fmt(s.max_jump, 1) + " ly" })));
   return frame(t("DAMAGE & FUNCTION REPORT"), String(data.report.length), body, { cls: "sh-rep", appear: false });
+}
+
+// ------------------------------------------------------------ mining
+// the last mining session (journal): yield per hour, limpets, the rocks
+function mining() {
+  const m = data.mining;
+  if (!m) return null;
+  const rock = (a) => a.materials.slice(0, 3).map(x => x.name + " " + fmt(x.pct, 1) + " %").join(" · ")
+    + (a.content ? " · " + t(CONTENT[a.content]) : "") + (a.motherlode ? " · ◆ " + a.motherlode : "");
+  const rows = [
+    el("div", { class: "gal-big" }, el("span", { class: "c-cyan", text: fmt(m.total, 0) + " t" }),
+      el("span", { class: "c-dim", text: "  " + t("{h} t/h · {m} per minute · {n} min", { h: fmt(m.per_hour, 1), m: fmt(m.per_min, 2), n: m.minutes }) })),
+    ...m.refined.map(r => el("div", { class: "cg" }, el("span", { text: r.name }),
+      el("span", { class: "num", text: fmt(r.count, 0) + " t · " + fmt(r.per_hour, 1) + " t/h" }))),
+    el("div", { class: "small", text: t("Limpets: {p} prospector · {c} collector launched · {l} on board",
+      { p: m.drones.prospector, c: m.drones.collection, l: data.logistics.limpets }) }),
+    el("div", { class: "small c-dim", text: t("{n} asteroids prospected · {ml} motherlodes · {c} cracked",
+      { n: m.asteroids, ml: m.motherlodes, c: m.cracked }) }),
+    m.last ? el("div", { class: "small", text: t("Last rock") + ": " + rock(m.last)
+      + (m.last.remaining !== null && m.last.remaining !== undefined && m.last.remaining < 100 ? " · " + t("{r} % left", { r: fmt(m.last.remaining, 0) }) : "") }) : null,
+    m.best ? el("div", { class: "small c-green", text: t("Best rock") + ": " + rock(m.best) }) : null,
+    m.carrier_jumps ? el("div", { class: "small c-amber", text: t("Tritium mined: ≈ {j} carrier jumps of 500 ly", { j: fmt(m.carrier_jumps, 1) }) }) : null,
+  ];
+  return frame(t("MINING"), m.active ? t("active") : stamp(m.end), rows, { cls: "sh-mine", appear: false });
 }
 
 // ------------------------------------------------------------ logistics

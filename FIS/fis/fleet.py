@@ -35,7 +35,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "CarrierLocation", "CarrierJump", "CarrierJumpRequest", "CarrierJumpCancelled",
           "CarrierDepositFuel", "CarrierBankTransfer", "CarrierFinance", "CarrierCrewServices",
           "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
-          "SAAScanComplete", "SellOrganicData")
+          "SAAScanComplete", "SellOrganicData",
+          "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
 
 # carrier tritium per jump: 5 + ly * (load + tritium + BASE) / DIV, rounded.
@@ -49,6 +50,31 @@ CARRIER_TANK = 1000
 
 def tritium_for_jump(ly: float, load_t: float, tritium_t: float) -> int:
     return int(round(5 + ly * (load_t + tritium_t + TRITIUM_BASE) / TRITIUM_DIV))
+
+
+def carrier_trip(ly: float, load_t: float, tank: int) -> Dict[str, Any]:
+    """Tritium for a trip of `ly` in equal jumps of at most 500 ly. Tritium
+    on board weighs too: when the tank is short, the need is worked out for
+    a carrier that carries it."""
+    n = max(1, int(math.ceil(ly / CARRIER_MAX_JUMP - 1e-9)))
+    hop = ly / n
+
+    def cost(start: float) -> int:
+        left, total = float(start), 0
+        for _ in range(n):
+            need = tritium_for_jump(hop, load_t, left)
+            total += need
+            left -= need
+        return total
+
+    need = cost(tank)
+    if need > tank:
+        start = need
+        for _ in range(4):
+            start = cost(start)
+        need = start
+    return {"ly": round(ly, 1), "jumps": n, "need": int(need), "enough": need <= tank,
+            "short": max(0, int(need) - int(tank))}
 
 
 def carrier_range(tritium: int, load_t: float, hop_ly: float = CARRIER_MAX_JUMP
@@ -540,7 +566,9 @@ class Archive:
             elif ev == "CarrierJumpCancelled":
                 pend = None
             elif ev in ("CarrierLocation", "CarrierJump"):
-                if pend and e.get("StarSystem") == pend["to"]:
+                # the first report from the target is the arrival; later logins
+                # (CarrierLocation again) until the next CarrierStats are not
+                if pend and not pend.get("arrived") and e.get("StarSystem") == pend["to"]:
                     pend["arrived"] = e.get("timestamp")
                     arrived_ts = e.get("timestamp")
                 elif ev == "CarrierJump" or e.get("StarSystem") != cur:

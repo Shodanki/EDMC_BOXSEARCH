@@ -145,6 +145,20 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(view["ident"]["name"], "TESTCARRIER")
         self.assertGreater(view["finance"]["weeks_left"], 10)
 
+    def test_carrier_arrival_while_offline(self):
+        """Arrived while you were away: later logins do not move the arrival."""
+        import os
+        with open(os.path.join(self.tmp.name, "Journal.2026-02-01T090000.01.log"), "w", encoding="utf-8") as fh:
+            for line in ('{"timestamp":"2026-02-01T09:00:00Z","event":"CarrierJumpRequest","SystemName":"Alpha","DepartureTime":"2026-02-01T09:15:00Z"}',
+                         '{"timestamp":"2026-02-01T09:15:00Z","event":"CarrierLocation","StarSystem":"Alpha"}',
+                         '{"timestamp":"2026-03-01T10:00:00Z","event":"CarrierLocation","StarSystem":"Alpha"}',
+                         '{"timestamp":"2026-03-01T10:01:00Z","event":"CarrierStats","Callsign":"ABC-123","FuelLevel":850,"SpaceUsage":{}}'):
+                fh.write(line + "\n")
+        c = fl.Archive(self.tmp.name).carrier()
+        self.assertEqual(c["arrived"], "2026-02-01T09:15:00Z")
+        self.assertEqual(c["jumps"][-1]["to"], "Alpha")
+        self.assertEqual(c["jumps"][-1]["ts"], "2026-02-01T09:15:00Z")
+
     def test_ship_panel(self):
         flags = (1 << 24) | (1 << 8) | (1 << 28) | (1 << 4)   # in ship, lights, night vision, SC; shields off
         live = {"status": {"ts": time.time(), "flags": flags, "flags2": 0, "pips": [4, 6, 2]},
