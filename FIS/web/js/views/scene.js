@@ -253,6 +253,15 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
     items.push({ s: m, text: l.label, tags: [], pri: l.isNext ? 85 : (l.done ? 15 : 30), leg: true,
                  colour: l.isNext ? UI.amber : (l.done ? UI.dim : "#8FCFC8") });
   }
+  // ring hotspots beside the ringed body (no position in the ring is known)
+  for (const b of scene.bodies) {
+    const s = screen.get(b.id);
+    const hs = (b.src && b.src.rings || []).flatMap((r) => r.hotspots || []);
+    if (!s || !hs.length) continue;
+    const text = "◎ " + hs.slice(0, 3).map((h) => h.material + (h.count > 1 ? " ×" + h.count : "")).join(" · ")
+      + (hs.length > 3 ? " +" + (hs.length - 3) : "");
+    items.push({ s, text, tags: [], pri: b.id === state.selected ? 92 : 35, colour: "#E8C27A" });
+  }
   // LAST FIX
   if (scene.fix && scene.fix.p) {
     const s = project(scene.fix.p);

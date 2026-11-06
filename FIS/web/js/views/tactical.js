@@ -183,6 +183,12 @@ function onDbl(e) {
 }
 
 // ------------------------------------------------------------- side panel
+const RING_CLS = { Icy: N_("icy"), Rocky: N_("rocky"), Metalic: N_("metallic"), MetalRich: N_("metal-rich") };
+function ringClass(c) {
+  const k = String(c || "").replace("eRingClass_", "").replace("$", "").replace(";", "");
+  return RING_CLS[k] ? t(RING_CLS[k]) : (k || "?");
+}
+
 function systemReport(sys) {
   if (!sys.report || !sys.report.length) return null;
   const rows = [];
@@ -289,6 +295,10 @@ function renderSide() {
       el("div", { class: "c-dim", text: (b.kind === "Star" ? t("Star") + " " + b.cls : classDe(b.cls)) + " · " + fmt(b.arrival_ls, 0) + " LS" + (b.landable ? " · " + t("landable") : "") }),
       el("div", {}, ...chips),
       b.bio_hint ? el("div", { class: "c-amber", text: b.bio_hint }) : null,
+      ...(b.rings || []).filter((r) => !r.belt).map((r) => el("div", { class: "small" },
+        el("span", { class: "c-cyan", text: (r.name || "").replace(sys.name || "", "").trim() }),
+        el("span", { class: "c-dim", text: " · " + ringClass(r.cls) + (r.inner_km && r.outer_km ? " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" : "") }),
+        r.hotspots && r.hotspots.length ? el("span", { class: "c-amber", text: " · ◎ " + r.hotspots.map((h) => h.material + (h.count > 1 ? " ×" + h.count : "")).join(", ") }) : null)),
       el("button", { onclick: () => ctxRef.show("planet"), text: t("Datasheet") + " ⟶" }),
     ], { kind: "hot", appear: false }));
   }

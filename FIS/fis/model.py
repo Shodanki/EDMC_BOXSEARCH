@@ -135,10 +135,12 @@ def _orbit_points(row, parent_pos: Sequence[float], n: int = 72
     return pts
 
 
-def _rings(row) -> List[Dict[str, Any]]:
+def _rings(row, hotspots: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> List[Dict[str, Any]]:
+    """Rings with class, width - and the hotspots you mapped in each (DSS)."""
     out = []
     for r in _json(row["rings_json"], []) or []:
         out.append({"name": r.get("name"), "cls": r.get("cls"),
+                    "hotspots": (hotspots or {}).get(r.get("name") or "", []),
                     "mass": r.get("mass"),
                     "inner_km": _r((r.get("inner") or 0) / 1000.0, 0),
                     "outer_km": _r((r.get("outer") or 0) / 1000.0, 0),
@@ -176,6 +178,14 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         out["fix"] = _fix(out, {}, live, now)
         return out
 
+    # ring hotspots by ring name (the journal knows no position in the ring)
+    hs_by_ring: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        for h in db.hotspots_of(id64):
+            hs_by_ring.setdefault(h["body_name"] or "", []).append(
+                {"material": h["label"] or h["material"], "count": h["count"]})
+    except Exception:
+        hs_by_ring = {}
     bodies = sr.bodies_from_rows(rows, now=now)
     for b in bodies.values():
         b.short = sr.shorten(b.name, name or "")
@@ -229,7 +239,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
             "arrival_ls": _r(r["arrival_ls"], 1),
             "landable": bool(r["landable"]),
             "terraform": r["terraform"] or "",
-            "rings": _rings(r),
+            "rings": _rings(r, hs_by_ring),
             "group": sr.group_label(b), "moon": sr.is_moon(b),
             "flags": {
                 "first": r["was_discovered"] == 0,
