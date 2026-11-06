@@ -332,6 +332,53 @@ class TestDbWatch(_Base):
             app.stop()
 
 
+class TestSettings(_Base):
+    """The settings page: game PC only, FIS page only (custom header, origin)."""
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.cfg.ini_path = os.path.join(cls.tmp, "fis.ini")
+        cls.app = App(cls.cfg, live=fed_tracker(cls.tmp), db=cls.db)
+        cls.srv = make_server(cls.app, host="127.0.0.1", port=0)
+        cls.cfg.port = cls.srv.server_address[1]
+        cls.base = "http://127.0.0.1:%d" % cls.cfg.port
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def _post(self, body, headers):
+        req = urllib.request.Request(self.base + "/api/settings", data=json.dumps(body).encode(),
+                                     headers=dict({"Content-Type": "application/json"}, **headers), method="POST")
+        return urllib.request.urlopen(req, timeout=5)
+
+    def test_read(self):
+        with urllib.request.urlopen(self.base + "/api/settings", timeout=5) as r:
+            d = json.loads(r.read())
+        self.assertIn(d["language"], ("en", "de"))
+        self.assertFalse(d["lan"])
+
+    def test_post_needs_header_and_own_origin(self):
+        for headers in ({}, {"X-FIS-Settings": "1", "Origin": "http://evil.example"}):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                self._post({"language": "de"}, headers)
+            self.assertEqual(e.exception.code, 403)
+            e.exception.close()
+
+    def test_post_saves(self):
+        with self._post({"language": "de", "open_browser": False, "lan": False},
+                        {"X-FIS-Settings": "1", "Origin": self.base}) as r:
+            d = json.loads(r.read())
+        self.assertTrue(d["saved"])
+        self.assertEqual(d["language"], "de")
+        with open(self.cfg.ini_path, encoding="utf-8") as fh:
+            ini = fh.read()
+        self.assertIn("language = de", ini)
+        self.assertIn("open_browser = false", ini)
+
+
 class TestLanToken(_Base):
     @classmethod
     def setUpClass(cls):

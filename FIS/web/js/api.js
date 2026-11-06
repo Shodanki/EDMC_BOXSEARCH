@@ -12,6 +12,15 @@ export async function getJSON(path) {
   return r.json();
 }
 
+/** POST to the settings endpoint: the custom header keeps other sites out. */
+export async function postJSON(path, body) {
+  const headers = { "Content-Type": "application/json", "X-FIS-Settings": "1" };
+  if (token) headers["X-FIS-Token"] = token;
+  const r = await fetch(path, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
 /**
  * Subscribe to /api/events. handlers: { snapshot, jump, target, scan, status,
  * open, error }. EventSource reconnects on its own; we only report the state.

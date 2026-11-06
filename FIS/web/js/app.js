@@ -15,8 +15,9 @@ import * as carrier from "./views/carrier.js";
 import * as galaxy from "./views/galaxy.js";
 import * as statistics from "./views/statistics.js";
 import * as mining from "./views/mining.js";
+import * as settings from "./views/settings.js";
 
-const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galaxy, statistics, mining };
+const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galaxy, statistics, mining, settings };
 // ?solo=ship: one view alone in its own window (second screen, tablet)
 // ?system=<id64> pins another system (detail window from GALAXY, review)
 const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];

@@ -518,6 +518,14 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .sf-compass-box { display: flex; justify-content: center; margin: 4px 0; }
 .lay-phone .sf-compass-box canvas, .lay-tablet .sf-compass-box canvas { width: 260px !important; height: 260px !important; }
 .sf-life { border: 1px solid rgba(62,242,224,.25); padding: 4px 6px; margin: 6px 0; }
+/* SETTINGS */
+.st-grid { display: grid; grid-template-columns: minmax(320px, 520px) minmax(320px, 1fr); gap: 10px; align-content: start; }
+.st-set { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0 2px; font-size: 13px; }
+.st-url { display: flex; gap: 8px; align-items: center; margin: 4px 0; font-size: 12px; }
+.st-url code { color: #3EF2E0; word-break: break-all; }
+#foot-settings { color: #6E8F8B; text-decoration: none; margin-left: 8px; font-size: 14px; }
+#foot-settings:hover { color: #3EF2E0; }
+.lay-phone .st-grid { grid-template-columns: 1fr; }
 /* MINING */
 .mh-row { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; }
 .mh-bar { position: relative; display: flex; height: 16px; background: rgba(62,242,224,.06); border: 1px solid rgba(62,242,224,.25); }

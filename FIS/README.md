@@ -31,8 +31,11 @@ few questions in the console, once:
 * open the browser when the FIS starts
 * port (default 8770); whether the plugin database and journal folder are found
 
-The answers are kept in `fis.ini` next to `start_fis.bat`. Change them with
-**`fis_settings.bat`**. No command-line parameters needed.
+The answers are kept in `fis.ini` next to `start_fis.bat`. Change them on the
+**settings page** - the gear at the bottom of the FIS, on the game PC only
+(default language, open the browser at start, home network with the address
+for your tablet) - or with **`fis_settings.bat`** (which can also add the
+firewall rule). No command-line parameters needed.
 
 Or from EDMC: *File > Settings > SHBOXSEARCH*, section **SHBOX FIS** -
 **start FIS**, **open in browser**, and the tick **start the FIS together with
