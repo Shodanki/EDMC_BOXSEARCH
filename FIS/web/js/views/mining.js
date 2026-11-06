@@ -1,0 +1,147 @@
+// MINING – everything about mining in one place. Tritium first (deep space:
+// the carrier's fuel), then goods to sell (what pays the carrier's upkeep).
+// Left: the session (live or the last one), tritium for the carrier, the
+// mining ships. Right: ring hotspots nearby, goods and income, all sessions.
+
+import { getJSON } from "../api.js";
+import { el, frame, fmt, withPopout } from "../ui.js";
+import { t, N_ } from "../i18n.js";
+
+const CONTENT = { low: N_("low"), medium: N_("medium"), high: N_("high") };
+let root = null, data = null, busy = false;
+let material = localStorage.getItem("fis.mine.material") || "tritium";
+
+export function mount(r) {
+  root = r;
+  root.classList.add("mine-view");
+  window.addEventListener("fis-layout", () => { if (data) render(); });
+}
+
+export async function update(ctx, reason) {
+  if (!root || busy) return;
+  busy = true;
+  try { data = await getJSON("/api/mining"); } catch (e) { data = null; }
+  busy = false;
+  render();
+}
+
+function stamp(ts) {
+  return ts ? new Date(ts * 1000).toLocaleString(undefined, { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+}
+function cr(v) { return v === null || v === undefined ? "–" : Math.abs(v) >= 1e6 ? fmt(v / 1e6, 1) + " M Cr" : fmt(v, 0) + " Cr"; }
+function row(k, ...v) { return el("div", { class: "ns-row" }, el("div", { class: "ns-k", text: k }), el("div", { class: "ns-v" }, ...v)); }
+function detail(id) {
+  if (!id) return;
+  const w = window.open(location.pathname + "?solo=tactical&system=" + id, "fis-detail", "popup,width=1280,height=860");
+  if (w) w.focus();
+}
+
+function render() {
+  if (!root) return;
+  root.replaceChildren();
+  if (!data) { root.append(frame(t("MINING"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
+  root.append(el("div", { class: "mine-grid" },
+    el("div", { class: "mine-col" }, withPopout(session(), "mining"), tritium(), ships()),
+    el("div", { class: "mine-col" }, hotspots(), goods(), history())));
+}
+
+// ------------------------------------------------------------ session
+function session() {
+  const m = data.session;
+  if (!m) return frame(t("MINING"), "", el("div", { class: "c-dim", text: t("No mining in the journals yet.") }), { appear: false });
+  const rock = (a) => a.materials.slice(0, 3).map(x => x.name + " " + fmt(x.pct, 1) + " %").join(" · ")
+    + (a.content ? " · " + t(CONTENT[a.content]) : "") + (a.motherlode ? " · ◆ " + a.motherlode : "");
+  return frame(t("MINING"), m.active ? t("active") : stamp(m.end), [
+    el("div", { class: "gal-big" }, el("span", { class: "c-cyan", text: fmt(m.total, 0) + " t" }),
+      el("span", { class: "c-dim", text: "  " + t("{h} t/h · {m} per minute · {n} min", { h: fmt(m.per_hour, 1), m: fmt(m.per_min, 2), n: m.minutes }) })),
+    ...m.refined.map(r => el("div", { class: "cg" }, el("span", { text: r.name }),
+      el("span", { class: "num", text: fmt(r.count, 0) + " t · " + fmt(r.per_hour, 1) + " t/h" }))),
+    el("div", { class: "small", text: t("Limpets: {p} prospector · {c} collector launched · {l} on board",
+      { p: m.drones.prospector, c: m.drones.collection, l: data.limpets }) }),
+    el("div", { class: "small c-dim", text: t("{n} asteroids prospected · {ml} motherlodes · {c} cracked",
+      { n: m.asteroids, ml: m.motherlodes, c: m.cracked }) }),
+    m.last ? el("div", { class: "small", text: t("Last rock") + ": " + rock(m.last)
+      + (m.last.remaining !== null && m.last.remaining !== undefined && m.last.remaining < 100 ? " · " + t("{r} % left", { r: fmt(m.last.remaining, 0) }) : "") }) : null,
+    m.best ? el("div", { class: "small c-green", text: t("Best rock") + ": " + rock(m.best) }) : null,
+    m.carrier_jumps ? el("div", { class: "small c-amber", text: t("Tritium mined: ≈ {j} carrier jumps of 500 ly", { j: fmt(m.carrier_jumps, 1) }) }) : null,
+  ], { appear: false });
+}
+
+// ------------------------------------------------------------ tritium -> carrier
+function tritium() {
+  const tr = data.tritium;
+  if (tr.tank === undefined) return null;
+  const pct = Math.round(100 * tr.tank / tr.tank_max);
+  return frame(t("TRITIUM → CARRIER"), pct + " %", [
+    el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Tank") }),
+      el("span", { class: "lbar " + (pct < 25 ? "warn" : "") }, el("i", { style: { width: pct + "%" } })),
+      el("span", { text: fmt(tr.tank, 0) + " / " + fmt(tr.tank_max, 0) + " t" })),
+    row(t("Range"), el("span", { class: "c-green", text: fmt(tr.range.ly, 0) + " ly" }),
+      el("span", { class: "c-dim", text: "  " + t("{n} full jumps of 500 ly", { n: tr.range.jumps }) })),
+    row(t("Per 500 ly"), fmt(tr.per_jump, 0) + " t"),
+    row(t("To a full tank"), fmt(tr.to_full, 0) + " t"),
+    row(t("In your ship"), fmt(tr.ship, 0) + " t",
+      tr.with_ship ? el("span", { class: "c-dim", text: "  → " + t("tank filled: {ly} ly", { ly: fmt(tr.with_ship.ly, 0) }) }) : null),
+    tr.mined ? row(tr.mined.active ? t("Mining now") : t("Last mining"),
+      el("span", { class: "c-green", text: "+" + fmt(tr.mined.t, 0) + " t" }),
+      el("span", { class: "c-dim", text: "  ≈ " + t("{j} jumps · {ly} ly", { j: fmt(tr.mined.jumps, 1), ly: fmt(tr.mined.ly, 0) }) })) : null,
+    row(t("Delivered"), t("{a} t into the hold · {d} t into the tank (30 days: {a30} t · {d30} t)", {
+      a: fmt(tr.to_carrier.all, 0), d: fmt(tr.deposited.all, 0), a30: fmt(tr.to_carrier["30d"], 0), d30: fmt(tr.deposited["30d"], 0) })),
+    el("div", { class: "c-dim small", text: t("Tritium in the hold is not counted (not in the journal).") }),
+  ], { appear: false });
+}
+
+// ------------------------------------------------------------ ships
+function ships() {
+  if (!data.ships.length) return null;
+  const dots = (n) => "●".repeat(n) + "○".repeat(5 - n);
+  return frame(t("MINING SHIPS"), String(data.ships.length), data.ships.map(s => el("div", { class: "cg" },
+    el("span", { text: (s.name || s.type) + (s.ident ? " · " + s.ident : "") + (s.current ? " ◂" : "") }),
+    el("span", { class: "num", text: dots(s.rating) + "  " + fmt(s.cargo, 0) + " t · " + (s.location || "?") }))), { appear: false });
+}
+
+// ------------------------------------------------------------ hotspots
+function hotspots() {
+  const all = data.hotspots;
+  const kinds = [...new Map(all.map(h => [h.key, h.material])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  const sel = el("select", { class: "lay-pick", onchange: (e) => { material = e.target.value; localStorage.setItem("fis.mine.material", material); render(); } },
+    el("option", { value: "", text: t("all") }), ...kinds.map(([k, n]) => el("option", { value: k, text: n })));
+  sel.value = kinds.some(([k]) => k === material) ? material : "";
+  const list = all.filter(h => !sel.value || h.key === sel.value).slice(0, 14);
+  return frame(t("RING HOTSPOTS"), data.from ? t("from {s}", { s: data.from }) : "", [
+    el("div", { class: "gal-row" }, el("span", { class: "c-dim", text: t("Material") }), sel),
+    list.length ? el("div", { class: "mine-list" }, ...list.map(h => el("div", { class: "cg mine-hs", title: h.system, onclick: () => detail(h.id) },
+      el("span", { text: h.ring + (h.count > 1 ? "  ×" + h.count : "") + (sel.value ? "" : " · " + h.material) }),
+      el("span", { class: "num", text: h.ly === null ? "?" : h.ly < 0.1 ? t("here") : fmt(h.ly, 1) + " ly" }))))
+      : el("div", { class: "c-dim", text: t("No hotspots known for this material - scan rings with the DSS.") }),
+    el("div", { class: "c-dim small", text: t("Rings you mapped (plugin database). A click opens the system.") }),
+  ], { appear: false });
+}
+
+// ------------------------------------------------------------ goods and income
+function goods() {
+  const inc = data.income;
+  const rows = data.goods.map(g => el("tr", {},
+    el("td", { text: g.name }), el("td", { class: "num", text: fmt(g.refined, 0) }), el("td", { class: "num", text: fmt(g.refined_30d, 0) }),
+    el("td", { class: "num", text: fmt(g.sold, 0) }), el("td", { class: "num", text: cr(g.revenue) }),
+    el("td", { class: "num", text: g.avg_price ? fmt(g.avg_price, 0) : "–" })));
+  const table = el("table", { class: "mine-table" },
+    el("tr", {}, ...[t("Good"), t("mined t"), t("30 days"), t("sold t"), t("earned"), t("Cr/t")].map(h => el("th", { text: h }))), ...rows);
+  return frame(t("GOODS & INCOME"), "", [
+    table,
+    el("div", { class: "small " + (inc.covers_pct >= 100 ? "c-green" : "c-amber"), text: t("Sold in 30 days: {r} ≈ {w} per week", { r: cr(inc.revenue_30d), w: cr(inc.per_week) })
+      + (inc.upkeep_per_week ? " · " + t("{p} % of the carrier's upkeep ({u} per week)", { p: inc.covers_pct, u: cr(inc.upkeep_per_week) }) : "") }),
+    el("div", { class: "c-dim small", text: t("Sales to your own carrier are not income - they fill its hold.") }),
+  ], { appear: false });
+}
+
+// ------------------------------------------------------------ sessions
+function history() {
+  if (!data.sessions.length) return null;
+  return frame(t("SESSIONS"), String(data.sessions.length), el("table", { class: "mine-table" },
+    el("tr", {}, ...[t("Date"), "min", t("Good"), "t", "t/h"].map(h => el("th", { text: h }))),
+    ...data.sessions.map(s => el("tr", { class: s.active ? "c-cyan" : "" },
+      el("td", { text: stamp(s.start) }), el("td", { class: "num", text: fmt(s.minutes, 0) }),
+      el("td", { text: s.main_name || "–" }), el("td", { class: "num", text: fmt(s.total, 0) }),
+      el("td", { class: "num", text: fmt(s.per_hour, 0) })))), { appear: false });
+}

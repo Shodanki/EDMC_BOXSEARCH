@@ -507,6 +507,16 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .galaxy-view { height: 100%; }
 .gal-grid { display: grid; grid-template-columns: 1fr 320px; gap: 10px; height: 100%; min-height: 0; }
 .gal-main { min-height: 0; } .gal-main .frame-in { display: flex; flex-direction: column; height: 100%; }
+/* MINING */
+.mine-view { height: 100%; min-height: 0; overflow-y: auto; }
+.mine-grid { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(380px, 1.2fr); gap: 10px; align-content: start; }
+.mine-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.mine-hs { cursor: pointer; } .mine-hs:hover { color: #3EF2E0; }
+.mine-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.mine-table th { text-align: left; color: #6E8F8B; font-weight: normal; border-bottom: 1px solid rgba(62,242,224,.2); padding: 2px 4px; }
+.mine-table td { padding: 2px 4px; border-bottom: 1px solid rgba(62,242,224,.06); }
+.mine-table td.num { text-align: right; }
+.lay-phone .mine-grid, .lay-tablet.orient-portrait .mine-grid { grid-template-columns: 1fr; }
 /* STATISTICS */
 .stat-view { height: 100%; min-height: 0; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px;

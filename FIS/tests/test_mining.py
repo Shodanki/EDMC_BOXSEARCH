@@ -49,6 +49,20 @@ class MiningTest(unittest.TestCase):
         self.assertFalse(s["active"])
         self.assertIsNone(mining.session([ev("07:30", "LaunchDrone", Type="Repair")]))
 
+    def test_sessions_and_hotspots(self):
+        hist = mining.sessions(EVENTS, parse_ts("2026-05-30T12:00:00Z"))
+        self.assertEqual([h["main"] for h in hist], ["water", "tritium"])     # oldest first
+
+        class FakeDb:
+            def query(self, sql, args=()):
+                row = lambda m, name, x: {"material": m, "label": None, "count": 1, "body_name": name + " A Ring",
+                                          "ring_class": None, "system": name, "id64": 1, "x": x, "y": 0, "z": 0}
+                return [row("Platinum", "Far", 50), row("Tritium", "Near", 3), row("Tritium", "Unknown", None)]
+        hs = mining.hotspots_near(FakeDb(), (0, 0, 0))
+        self.assertEqual([h["system"] for h in hs], ["Near", "Far", "Unknown"])
+        self.assertEqual(hs[0]["key"], "tritium")
+        self.assertIsNone(hs[2]["ly"])
+
     def test_type_key(self):
         self.assertEqual(mining.type_key("$tritium_name;"), "tritium")
         self.assertEqual(mining.type_key("LowTemperatureDiamond"), "lowtemperaturediamond")

@@ -224,14 +224,6 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
     limpets = sum(c["count"] for c in inv if (c["key"] or "").lower() == "drones")
     locker = _read_json(os.path.join(journal_dir, "ShipLocker.json")) or {}
     fuel = live.get("fuel") or {}
-    from . import mining
-    ms = mining.session(archive.events(), now)
-    if ms:
-        car = archive.carrier()
-        if car and ms["tritium"]:
-            per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, car["load"] or 0, car["fuel"] or 0) or 1
-            ms["carrier_jumps"] = round(ms["tritium"] / per, 1)
-        out["mining"] = ms
     out["logistics"] = {
         "cargo": inv, "used": used, "capacity": lo.get("CargoCapacity"),
         "free": (lo.get("CargoCapacity") or 0) - used if lo.get("CargoCapacity") is not None else None,
