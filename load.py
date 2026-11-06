@@ -339,6 +339,28 @@ def plugin_start3(plugin_dir: str) -> str:
     return "SHBOXSEARCH"
 
 
+# Frontier's /fleetcarrier answer, kept for SHBOX FIS (cargo per good - the
+# tritium in the hold -, finances, itinerary). Local file next to the database.
+CAPI_FC_FILE = os.path.join(_PLUGIN_DIR, "capi_fleetcarrier.json")
+
+
+def capi_fleetcarrier(data: Any) -> Optional[str]:
+    """EDMC hands over the Companion API's carrier data (after CarrierStats,
+    at most every 15 minutes). Saved as it is, atomically; nothing else."""
+    try:
+        raw = getattr(data, "data", data)
+        payload = {"saved": time.time(), "source_host": getattr(data, "source_host", None),
+                   "data": dict(raw) if raw is not None else None}
+        tmp = CAPI_FC_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, default=str)
+        os.replace(tmp, CAPI_FC_FILE)
+        logger.info("capi_fleetcarrier | saved for FIS")
+    except Exception:  # noqa: BLE001 - never break EDMC over this
+        logger.exception("capi_fleetcarrier | could not save")
+    return None
+
+
 def plugin_stop() -> None:
     ov = getattr(ST, "overlay", None)
     if ov is not None:

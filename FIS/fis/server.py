@@ -296,11 +296,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db))
         if path == "/api/carrier":
             from . import shipview
+            from . import capi
             return self._json(shipview.build_carrier(app.archive, app.live_state(),
-                                                     journal_dir=app.cfg.journal_dir))
+                                                     journal_dir=app.cfg.journal_dir,
+                                                     capi_path=capi.path_for(app.cfg.plugin_dir)))
         if path == "/api/mining":
             from . import mining
-            return self._json(mining.build_mining(app.archive, app.db, app.live_state(), app.cfg.journal_dir))
+            from . import capi
+            return self._json(mining.build_mining(app.archive, app.db, app.live_state(), app.cfg.journal_dir,
+                                                  capi_path=capi.path_for(app.cfg.plugin_dir)))
         if path == "/api/statistics":
             from . import stats
             try:

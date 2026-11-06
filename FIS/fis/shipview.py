@@ -251,13 +251,20 @@ def _ship_tritium(journal_dir: Optional[str]) -> Optional[int]:
 
 
 def _tritium_more(archive: fl.Archive, live: Dict[str, Any], c: Dict[str, Any],
-                  journal_dir: Optional[str], now: float) -> Dict[str, Any]:
+                  journal_dir: Optional[str], now: float, capi_path: Optional[str] = None) -> Dict[str, Any]:
     """B2: what the ship carries and what you mined, in carrier jumps; the
     tritium for the end of the plotted route."""
     from . import galaxy, mining
     tank, load = int(c["fuel"] or 0), c["load"] or 0
     per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank) or 1
     out: Dict[str, Any] = {"to_full": max(0, fl.CARRIER_TANK - tank)}
+    hold = hold_tritium(capi_path, now)
+    if hold:
+        out["hold"] = hold
+        if hold["t"]:
+            # tritium in the hold weighs already (it is cargo): as fuel it moves
+            # from the load into the tank, jump by jump
+            out["with_hold"] = fl.carrier_range(tank + hold["t"], max(0, load - hold["t"]))
     ship = _ship_tritium(journal_dir)
     if ship is not None:
         out["ship"] = ship
@@ -279,8 +286,21 @@ def _tritium_more(archive: fl.Archive, live: Dict[str, Any], c: Dict[str, Any],
     return out
 
 
+def _capi_hold(capi_path: Optional[str], now: float) -> Optional[Dict[str, Any]]:
+    from . import capi
+    d = capi.load(capi_path, now)
+    return {k: d[k] for k in ("saved", "age_s", "hold", "hold_total", "tritium", "fuel")} if d else None
+
+
+def hold_tritium(capi_path: Optional[str], now: float) -> Optional[Dict[str, Any]]:
+    from . import capi
+    d = capi.load(capi_path, now)
+    return {"t": d["tritium"], "age_s": d["age_s"], "saved": d["saved"]} if d else None
+
+
 def build_carrier(archive: fl.Archive, live: Dict[str, Any],
-                  now: Optional[float] = None, journal_dir: Optional[str] = None) -> Dict[str, Any]:
+                  now: Optional[float] = None, journal_dir: Optional[str] = None,
+                  capi_path: Optional[str] = None) -> Dict[str, Any]:
     now = time.time() if now is None else now
     c = archive.carrier()
     fleet = archive.fleet()
@@ -306,7 +326,7 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
         "tritium": {"tank": c["fuel"], "tank_max": fl.CARRIER_TANK, "load": c["load"],
                     "range": rng, "per_max_jump": rng["per_jump"],
                     "formula": "5 + ly x (load + tritium + %d) / %d" % (fl.TRITIUM_BASE, fl.TRITIUM_DIV),
-                    **_tritium_more(archive, live, c, journal_dir, now)},
+                    **_tritium_more(archive, live, c, journal_dir, now, capi_path)},
         "space": {"total": su.get("TotalCapacity"), "crew": su.get("Crew"), "cargo": su.get("Cargo"),
                   "reserved": su.get("CargoSpaceReserved"), "ships": su.get("ShipPacks"),
                   "modules": su.get("ModulePacks"), "free": su.get("FreeSpace")},
@@ -315,6 +335,7 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
                     "per_week": up.get("per_week"), "drift_per_week": up.get("drift_per_week"),
                     "basis_days": up.get("days"), "weeks_left": round(weeks, 1) if weeks else None,
                     "taxes": {k.replace("TaxRate_", ""): v for k, v in fin.items() if k.startswith("TaxRate_")}},
+        "capi": _capi_hold(capi_path, now),
         "services": [{"role": x.get("CrewRole"), "active": x.get("Activated"),
                       "enabled": x.get("Enabled"), "crew": x.get("CrewName")}
                      for x in s.get("Crew") or []],

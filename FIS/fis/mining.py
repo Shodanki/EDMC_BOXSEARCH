@@ -184,7 +184,7 @@ def hotspots_near(db: Any, pos, limit: int = 60) -> List[Dict[str, Any]]:
 
 
 def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optional[str],
-                 now: Optional[float] = None) -> Dict[str, Any]:
+                 now: Optional[float] = None, capi_path: Optional[str] = None) -> Dict[str, Any]:
     from . import fleet as fl
     now = time.time() if now is None else now
     evs = archive.events()
@@ -231,6 +231,12 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     if car:
         tank, load = int(car["fuel"] or 0), car["load"] or 0
         per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank) or 1
+        from .shipview import hold_tritium
+        hold = hold_tritium(capi_path, now)
+        if hold:
+            trit["hold"] = hold
+            if hold["t"]:
+                trit["with_hold"] = fl.carrier_range(tank + hold["t"], max(0, load - hold["t"]))
         trit.update({"tank": tank, "tank_max": fl.CARRIER_TANK, "to_full": max(0, fl.CARRIER_TANK - tank),
                      "per_jump": per, "range": fl.carrier_range(tank, load),
                      "with_ship": fl.carrier_range(min(fl.CARRIER_TANK, tank + trit["ship"]), load)

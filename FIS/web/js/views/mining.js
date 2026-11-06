@@ -28,6 +28,11 @@ export async function update(ctx, reason) {
 function stamp(ts) {
   return ts ? new Date(ts * 1000).toLocaleString(undefined, { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
 }
+function age(s) {
+  if (s === null || s === undefined) return "?";
+  return s < 3600 ? t("{n} min ago", { n: Math.max(1, Math.round(s / 60)) }) : s < 172800 ? t("{n} h ago", { n: Math.round(s / 3600) })
+    : t("{n} days ago", { n: Math.round(s / 86400) });
+}
 function cr(v) { return v === null || v === undefined ? "–" : Math.abs(v) >= 1e6 ? fmt(v / 1e6, 1) + " M Cr" : fmt(v, 0) + " Cr"; }
 function row(k, ...v) { return el("div", { class: "ns-row" }, el("div", { class: "ns-k", text: k }), el("div", { class: "ns-v" }, ...v)); }
 function detail(id) {
@@ -113,7 +118,10 @@ function tritium() {
       el("span", { class: "c-dim", text: "  ≈ " + t("{j} jumps · {ly} ly", { j: fmt(tr.mined.jumps, 1), ly: fmt(tr.mined.ly, 0) }) })) : null,
     row(t("Delivered"), t("{a} t into the hold · {d} t into the tank (30 days: {a30} t · {d30} t)", {
       a: fmt(tr.to_carrier.all, 0), d: fmt(tr.deposited.all, 0), a30: fmt(tr.to_carrier["30d"], 0), d30: fmt(tr.deposited["30d"], 0) })),
-    el("div", { class: "c-dim small", text: t("Tritium in the hold is not counted (not in the journal).") }),
+    tr.hold ? row(t("In the carrier's hold"), fmt(tr.hold.t, 0) + " t",
+      tr.with_hold ? el("span", { class: "c-green", text: "  → " + t("with it: {ly} ly · {n} jumps", { ly: fmt(tr.with_hold.ly, 0), n: tr.with_hold.jumps }) }) : null,
+      el("span", { class: "c-dim small", text: "  " + t("Frontier data, {a}", { a: age(tr.hold.age_s) }) }))
+      : el("div", { class: "c-dim small", text: t("Tritium in the carrier's hold comes with EDMC's Frontier data (Companion API) - none yet.") }),
   ], { appear: false });
 }
 

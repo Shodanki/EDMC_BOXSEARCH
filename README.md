@@ -102,10 +102,12 @@ __pycache__/
 *.pyc
 neareststars.json
 survey_state.json
+capi_fleetcarrier.json*
 ```
 
-The last two are legacy import sources and personal data - they belong on your
-disk, not in the repository.
+`neareststars.json` and `survey_state.json` are legacy import sources and
+personal data - they belong on your disk, not in the repository. So does
+`capi_fleetcarrier.json` (see below).
 
 ### Requirements
 
@@ -343,6 +345,12 @@ automatically clears any stale negative-cache entry for that name.
 Everything lives in `shboxsearch.sqlite` in the plugin folder (WAL mode). The
 legacy `neareststars.json` and `survey_state.json` are **read only** during
 import and left untouched.
+
+When EDMC is logged in to Frontier, it fetches your fleet carrier from the
+Companion API (at most every 15 minutes) and hands it to plugins. The plugin
+keeps the latest answer as it is in `capi_fleetcarrier.json` in the plugin
+folder - nothing is sent anywhere. SHBOX FIS reads it for what the journal does
+not say: the goods in the carrier's hold, above all the tritium.
 
 ---
 

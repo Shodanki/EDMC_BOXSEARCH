@@ -39,6 +39,11 @@ function day(ts) {
   const d = typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);
   return d.toLocaleDateString(undefined, { day: "2-digit", month: "2-digit", year: "numeric" });
 }
+function age(s) {
+  if (s === null || s === undefined) return "?";
+  return s < 3600 ? t("{n} min ago", { n: Math.max(1, Math.round(s / 60)) }) : s < 172800 ? t("{n} h ago", { n: Math.round(s / 3600) })
+    : t("{n} days ago", { n: Math.round(s / 86400) });
+}
 function cr(v) { return v === null || v === undefined ? "–" : fmt(v / 1e6, 1) + " M Cr"; }
 function line(k, ...v) { return el("div", { class: "ns-row" }, el("div", { class: "ns-k", text: k }), el("div", { class: "ns-v" }, ...v)); }
 
@@ -105,7 +110,10 @@ function tritium() {
     tr.trip ? line(t("To your route's end"),
       el("span", { text: t("{to}: {ly} ly · {n} jumps · {need} t", { to: tr.trip.to || "?", ly: fmt(tr.trip.ly, 0), n: tr.trip.jumps, need: fmt(tr.trip.need, 0) }) }),
       el("span", { class: tr.trip.enough ? "c-green" : "c-amber", text: "  " + (tr.trip.enough ? t("enough") : t("{s} t short", { s: fmt(tr.trip.short, 0) })) })) : null,
-    el("div", { class: "c-dim small", text: t("Tritium in the hold is not counted (not in the journal).") }),
+    tr.hold ? line(t("In the carrier's hold"), fmt(tr.hold.t, 0) + " t",
+      tr.with_hold ? el("span", { class: "c-green", text: "  → " + t("with it: {ly} ly · {n} jumps", { ly: fmt(tr.with_hold.ly, 0), n: tr.with_hold.jumps }) }) : null,
+      el("span", { class: "c-dim small", text: "  " + t("Frontier data, {a}", { a: age(tr.hold.age_s) }) }))
+      : el("div", { class: "c-dim small", text: t("Tritium in the carrier's hold comes with EDMC's Frontier data (Companion API) - none yet.") }),
     el("div", { class: "c-dim small", text: t("Formula fitted on your own jumps (±1 t): {f}", { f: tr.formula }) }),
   ], { appear: false });
 }
@@ -117,7 +125,18 @@ function hold() {
   return frame(t("HOLD"), t("{n} t free", { n: fmt(s.free, 0) }), [stack,
     el("div", { class: "hold-legend" }, ...SPACE.map(([k, label, c]) => el("span", { class: "hl " + c },
       el("b", { text: "■ " }), t(label) + " " + fmt(s[k] || 0, 0))),
-      el("span", { class: "hl", text: "□ " + t("free") + " " + fmt(s.free, 0) }))], { appear: false });
+      el("span", { class: "hl", text: "□ " + t("free") + " " + fmt(s.free, 0) })), goods()], { appear: false });
+}
+
+// the hold per good - only Frontier's data (Companion API) has it
+function goods() {
+  const c = data.capi;
+  if (!c) return el("div", { class: "c-dim small", text: t("Goods in the hold come with EDMC's Frontier data (Companion API) - none yet.") });
+  return el("div", { class: "fc-goods" },
+    el("div", { class: "c-dim small", text: t("{n} t of goods · Frontier data, {a}", { n: fmt(c.hold_total, 0), a: age(c.age_s) }) }),
+    el("div", { class: "cargo scroll" }, ...c.hold.slice(0, 40).map(g => el("div", { class: "cg" + (g.stolen ? " hot" : "") },
+      el("span", { text: g.name + (g.stolen ? " ⚠" : "") + (g.mission ? " ◆" : "") }),
+      el("span", { class: "num", text: fmt(g.qty, 0) + " t" })))));
 }
 
 function finance() {
