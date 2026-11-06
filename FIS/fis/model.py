@@ -544,7 +544,7 @@ def build_atlas_kinds(db: Database, view: str) -> List[Dict[str, Any]]:
     return out
 
 
-def build_body(db: Database, id64: int, body_id: int) -> Optional[Dict[str, Any]]:
+def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Optional[Dict[str, Any]]:
     r = db.body(id64, body_id)
     if r is None:
         return None
@@ -583,7 +583,10 @@ def build_body(db: Database, id64: int, body_id: int) -> Optional[Dict[str, Any]
             "sma_ls": _r((r["sma"] or 0) * LS_PER_M, 2) if r["sma"] else None,
             "ecc": _r(r["ecc"], 4), "inc_deg": _r(r["inc"], 2),
             "period_d": _r(r["period"] / 86400.0, 2) if r["period"] else None,
+            "peri_deg": _r(r["peri"], 1), "node_deg": _r(r["node"], 1),
         },
+        "was_discovered": (None if r["was_discovered"] is None else bool(r["was_discovered"])),
+        "reserve": (r["reserve"] or "").replace("Resources", "").strip() or None,
         "rings": _rings(r),
         "flags": {
             "first": r["was_discovered"] == 0,
@@ -596,7 +599,7 @@ def build_body(db: Database, id64: int, body_id: int) -> Optional[Dict[str, Any]
             "analysed": int(r["organics"] or 0),
             "genera": [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()],
             "species": [{"species": s.get("species"), "variant": s.get("variant"),
-                         "genus": s.get("genus")} for s in species],
+                         "genus": s.get("genus"), "date": (s.get("ts") or "")[:10]} for s in species],
             "prediction": [],
         },
         "hotspots": [{"material": h["label"] or h["material"], "count": h["count"],
@@ -613,6 +616,33 @@ def build_body(db: Database, id64: int, body_id: int) -> Optional[Dict[str, Any]
             "abs_mag": _r(r["abs_mag"], 3), "age_my": r["age_my"],
             "scoopable": is_scoopable(r["star_type"]),
         }
+    # what it orbits (a barycentre stands for a pair of bodies)
+    if r["parent_id"] is not None:
+        par = db.body(id64, r["parent_id"])
+        if par is not None and par["name"]:
+            out["parent"] = p.sysroute.shorten(par["name"], sysname)
+        elif par is not None:
+            # a barycentre: name the partner(s) sharing it
+            mates = [p.sysroute.shorten(x["name"] or "", sysname) for x in db.bodies_of(id64)
+                     if x["parent_id"] == r["parent_id"] and x["body_id"] != body_id and x["name"]]
+            out["parent"] = "barycentre" + (" + " + ", ".join(mates[:3]) if mates else "")
+    # your own visits to the surface
+    if r["name"]:
+        marks = db.surface_marks(id64, r["name"])
+        landings = [m for m in marks if m["kind"] == "touchdown"]
+        if landings or marks:
+            out["visits"] = {"landings": len(landings), "marks": len(marks),
+                             "last": (max(m["ts"] for m in marks) or "")[:10] if marks else None}
+    if archive is not None:
+        try:
+            out["dss"] = archive.dss(id64, body_id)
+            values = archive.organic_values()
+            for s in out["bio"]["species"]:
+                v = values.get(s.get("species") or "")
+                if v:
+                    s["value"], s["bonus"] = v["value"], v["bonus"]
+        except Exception:  # pragma: no cover - journals are best effort
+            pass
     if (r["sig_bio"] or 0) > 0 or r["landable"]:
         try:
             model = p.biopredict.BioModel.learn(db.bio_training_rows())
@@ -622,6 +652,9 @@ def build_body(db: Database, id64: int, body_id: int) -> Optional[Dict[str, Any]
             out["bio"]["model"] = model.summary()
         except Exception as exc:  # pragma: no cover - model is best effort
             out["bio"]["model"] = "forecast not available: %s" % exc
+    from . import science
+    out["report"] = science.body_report(out)
+    out["report_level"] = science.worst(out["report"])
     return out
 
 

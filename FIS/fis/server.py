@@ -235,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(app.system(int(mm.group(1))))
         mm = _RE_BODY.match(path)
         if mm:
-            out = m.build_body(app.db, int(mm.group(1)), int(mm.group(2)))
+            out = m.build_body(app.db, int(mm.group(1)), int(mm.group(2)), app.archive)
             if out is None:
                 return self._error(404, "body not found")
             return self._json(out)

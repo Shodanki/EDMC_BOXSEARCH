@@ -34,7 +34,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "ShipyardSell", "ShipyardTransfer", "SellShipOnRebuy", "CarrierStats",
           "CarrierLocation", "CarrierJump", "CarrierJumpRequest", "CarrierJumpCancelled",
           "CarrierDepositFuel", "CarrierBankTransfer", "CarrierFinance", "CarrierCrewServices",
-          "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame")
+          "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
+          "SAAScanComplete", "SellOrganicData")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
 
 # carrier tritium per jump: 5 + ly * (load + tritium + BASE) / DIV, rounded.
@@ -465,6 +466,31 @@ class Archive:
         order = sorted(ships.values(), key=lambda s: (not s.get("current"), s.get("stored_at") != "here",
                                                       s.get("type_name") or ""))
         return {"ships": order, "hangar": stored_info, "names": names}
+
+    def dss(self, sys_id64: int, body_id: int) -> Optional[Dict[str, Any]]:
+        """Last surface scan of a body: probes used against the efficiency target."""
+        last = None
+        for e in self.events():
+            if (e["event"] == "SAAScanComplete" and e.get("SystemAddress") == sys_id64
+                    and e.get("BodyID") == body_id):
+                last = e
+        if last is None:
+            return None
+        p, tg = last.get("ProbesUsed"), last.get("EfficiencyTarget")
+        return {"probes": p, "target": tg, "efficient": p is not None and tg is not None and p <= tg,
+                "ts": last.get("timestamp")}
+
+    def organic_values(self) -> Dict[str, Dict[str, int]]:
+        """Species -> value and first-logged bonus, from your own sales of organic data."""
+        out: Dict[str, Dict[str, int]] = {}
+        for e in self.events():
+            if e["event"] != "SellOrganicData":
+                continue
+            for b in e.get("BioData") or []:
+                name = b.get("Species_Localised") or b.get("Species")
+                if name:
+                    out[name] = {"value": int(b.get("Value") or 0), "bonus": int(b.get("Bonus") or 0)}
+        return out
 
     def current_loadout(self) -> Optional[Dict[str, Any]]:
         last = None
