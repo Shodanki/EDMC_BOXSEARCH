@@ -154,7 +154,9 @@ function airWing() {
   const here = ships.filter(s => s.stored_at === "here" || s.current);
   // readiness board: best ship per role on board
   const board = el("div", { class: "cag-board" }, ...ROLES.map(([k, label]) => {
-    const best = here.filter(s => s.rating).sort((a, b) => b.rating.roles[k] - a.rating.roles[k])[0];
+    // ties go to the ship made for the role (T7 SAR before the explorer with rescue limpets)
+    const best = here.filter(s => s.rating).sort((a, b) => b.rating.roles[k] - a.rating.roles[k]
+      || (b.rating.primary === k) - (a.rating.primary === k))[0];
     const n = here.filter(s => s.rating && s.rating.roles[k] >= 4).length;
     return el("button", { class: "cag-role" + (roleFilter === k ? " sel" : ""), onclick: () => { roleFilter = roleFilter === k ? "" : k; localStorage.setItem("fis.cag.role", roleFilter); render(); } },
       el("div", { class: "cr-k", text: t(label) }),
