@@ -183,6 +183,19 @@ class FleetTest(unittest.TestCase):
             ids = sorted(s["id"] for s in fl.Archive(d).fleet()["ships"])
             self.assertEqual(ids, [34, 44])
 
+    def test_sar_role(self):
+        t7 = {"Ship": "type7", "CargoCapacity": 64, "MaxJumpRange": 48.5, "FuelCapacity": {"Main": 112.0},
+              "Modules": [{"Slot": "Slot01_Size5", "Item": "int_dronecontrol_fueltransfer_size5_class5"},
+                          {"Slot": "Slot02_Size3", "Item": "int_multidronecontrol_rescue_size3_class3"},
+                          {"Slot": "Slot03_Size5", "Item": "int_fuelscoop_size5_class5"}]}
+        r = fl.rate_loadout(t7)
+        self.assertEqual(r["roles"]["sar"], 5)
+        self.assertEqual(r["primary"], "sar")
+        self.assertIn("fuel transfer limpets", r["why"]["sar"])
+        miner = {"Ship": "type8", "CargoCapacity": 256, "FuelCapacity": {"Main": 32.0},
+                 "Modules": [{"Slot": "Slot01_Size5", "Item": "int_dronecontrol_collection_size5_class5"}]}
+        self.assertEqual(fl.rate_loadout(miner)["roles"]["sar"], 0)
+
     def test_ship_panel(self):
         flags = (1 << 24) | (1 << 8) | (1 << 28) | (1 << 4)   # in ship, lights, night vision, SC; shields off
         live = {"status": {"ts": time.time(), "flags": flags, "flags2": 0, "pips": [4, 6, 2]},

@@ -11,7 +11,7 @@ import { el, frame, fmt, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const ROLES = [["combat", N_("Combat")], ["mining", N_("Mining")], ["transport", N_("Transport")],
-  ["exploration", N_("Exploration")], ["passengers", N_("Passengers")]];
+  ["exploration", N_("Exploration")], ["passengers", N_("Passengers")], ["sar", N_("SAR")]];
 const SPACE = [["crew", N_("crew"), "c1"], ["cargo", N_("cargo"), "c2"], ["reserved", N_("reserved"), "c3"],
   ["ships", N_("ship packs"), "c4"], ["modules", N_("module packs"), "c5"]];
 const SERVICE = { BlackMarket: N_("Secure warehouse"), Captain: N_("Captain"), Refuel: N_("Refuel"),

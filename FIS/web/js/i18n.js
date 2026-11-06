@@ -475,6 +475,7 @@ const DE = /*DE*/{
   "Tritium mined: ≈ {j} carrier jumps of 500 ly": "Tritium gefördert: ≈ {j} Trägersprünge à 500 ly",
   "MINING": "MINING",
   "STATISTICS": "STATISTIK",
+  "SAR": "SAR",
   "Your carrier {n} is here": "Dein Träger {n} ist hier",
   "Your carrier {n} should be here": "Dein Träger {n} sollte hier sein",
   "Your carrier {n} jumps here · {t}": "Dein Träger {n} springt hierher · {t}",

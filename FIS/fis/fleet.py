@@ -37,7 +37,7 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
           "SAAScanComplete", "SellOrganicData",
           "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked",
-          "Statistics", "Rank", "Progress", "Reputation")
+          "Statistics", "Rank", "Progress", "Reputation", "MarketSell", "CargoTransfer")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
 
 # carrier tritium per jump: 5 + ly * (load + tritium + BASE) / DIV, rounded.
@@ -283,8 +283,23 @@ def rate_loadout(lo: Dict[str, Any]) -> Dict[str, Any]:
     if not has("int_detailedsurfacescanner"):
         expl = min(expl, 2)
     pax = 0 if not cabins else min(5, 1 + cabins)
+    # search and rescue: repair and fuel limpets for others, fuel to give,
+    # a scoop to refill. The rescue / universal multi-limpet controller
+    # counts for repair, fuel transfer and decontamination; a dedicated fuel
+    # transfer controller carries more.
+    mlc = has("int_multidronecontrol_rescue") or has("int_multidronecontrol_universal")
+    repair = has("int_dronecontrol_repair") or mlc
+    fuel_lt = has("int_dronecontrol_fueltransfer")
+    tank = float((lo.get("FuelCapacity") or {}).get("Main") or 0.0)
+    sar = 0.0
+    if repair or fuel_lt or mlc:
+        sar = ((1.5 if repair else 0) + (1.5 if fuel_lt else 1.0 if mlc else 0)
+               + (1.5 if tank >= 150 else 1.0 if tank >= 100 else 0.5 if tank >= 64 else 0)
+               + (0.5 if has("int_fuelscoop") else 0)
+               + (0.3 if has("int_dronecontrol_decontamination") or mlc else 0)
+               + (0.2 if has("int_dronecontrol_collection") or has("int_multidronecontrol_operations") else 0))
     roles = {"combat": _clamp(combat), "mining": _clamp(mine), "transport": trans,
-             "exploration": expl, "passengers": pax}
+             "exploration": expl, "passengers": pax, "sar": _clamp(sar)}
     why = {
         "combat": "%d weapons%s%s%s" % (len(weapons), (", " + module_name(shield)) if shield else ", no shield",
                                         (", %d boosters" % boosters) if boosters else "",
@@ -294,9 +309,14 @@ def rate_loadout(lo: Dict[str, Any]) -> Dict[str, Any]:
         "exploration": "%.1f ly%s%s" % (jump, "" if has("int_fuelscoop") else ", no scoop",
                                         ", DSS" if has("int_detailedsurfacescanner") else ", no DSS"),
         "passengers": "%d cabins" % cabins if cabins else "no cabins",
+        "sar": ", ".join(x for x in (
+            "rescue limpets" if mlc else ("repair limpets" if repair else ""),
+            "fuel transfer limpets" if fuel_lt else "",
+            "%d t fuel" % tank if tank else "",
+            "scoop" if has("int_fuelscoop") else "no scoop") if x) if (repair or fuel_lt or mlc) else "no repair or fuel limpets",
     }
     # ties go to the specialised role - every hull carries some guns
-    pref = ("mining", "exploration", "passengers", "transport", "combat")
+    pref = ("mining", "exploration", "sar", "passengers", "transport", "combat")
     best = max(pref, key=lambda k: (roles[k], -pref.index(k)))
     return {"roles": roles, "why": why, "primary": best if roles[best] > 0 else None}
 
