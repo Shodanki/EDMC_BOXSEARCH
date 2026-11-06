@@ -9,9 +9,12 @@
 
 Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
 
-**New in 4.4: SHBOX FIS**, a flight information system for a second screen,
-tablet or phone - planet surface, system in 3D, galaxy map, planet info, atlas,
-ship status and carrier - in the `FIS` folder of this plugin. See [FIS/README.md](FIS/README.md).
+**SHBOX FIS** (since 4.4), a flight information system for a second screen,
+tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
+info, atlas, ship status, carrier, mining and statistics - in the `FIS`
+folder of this plugin. See [FIS/README.md](FIS/README.md).
+**New in 4.5:** a mining block in the cockpit overlay, your carrier's hold
+from Frontier's data, and many FIS views - see "What changed in 4.5".
 
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
 > all. On the first start 4.1 repairs boxel records written under a wrong
@@ -76,19 +79,19 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 3880 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 1831 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
-| `sysroute.py` | 784 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
+| `load.py` | 4205 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 1938 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `sysroute.py` | 795 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
 | `sources.py` | 563 | External data: EDDiscovery, Spansh, EDSM | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
 | `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
 | `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
-| `overlay.py` | 286 | Cockpit overlay through EDMCModernOverlay (optional) | — |
-| `biopredict.py` | 196 | Genus prediction learned from your own samples | — |
+| `overlay.py` | 318 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `biopredict.py` | 199 | Genus prediction learned from your own samples | — |
 | `diagnostics.py` | 284 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
-| `surfacenav.py` | 260 | Surface compass: parked SRV, open samples, known points | — |
-| `miningstat.py` | 233 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
+| `surfacenav.py` | 263 | Surface compass: parked SRV, open samples, known points | — |
+| `miningstat.py` | 282 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
 | `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain
@@ -1360,7 +1363,8 @@ tag, so the two have to be set together or the notice lies.
 | 4.1.0 | n1 = 0 naming rule fixed, EDDiscovery source working again, bio counter fixed, physical body data stored |
 | 4.2.0 | cockpit overlay, bio prediction from own finds, route plot targets through unprobed boxels |
 | 4.3.0 | discovery filters fixed, supercruise timing on real legs, atlas for body signals and materials, 30 s briefing |
-| 4.4.0 | surface track and finds on bodies, exobiology sample distance in the overlay |
+| 4.4.0 | surface track and finds on bodies, exobiology sample distance in the overlay, SHBOX FIS |
+| 4.5.0 | mining block in the overlay, carrier hold from Frontier's Companion API, FIS: galaxy 3D, mining, statistics |
 
 
 ---
@@ -1633,43 +1637,6 @@ Gypseeum Brain Tree         903 m  < 13
 
 Switch it off under "surface compass" in the settings.
 
-### Mining in the overlay
-
-While you mine - prospector or collector limpets, prospected rocks, refined
-tonnes; gone when you dock or ten minutes after the last of them - the overlay shows five
-lines:
-
-```
-ROCK  Tritium 18.3 % | low | GOOD
-HOLD  59 t ore | 141 t free | 122 limpets
-RATE  336 t/h | full in ~25 min
-SESSION  59 t Tritium | 36 min
-LIMPETS  last ~189 t OK
-```
-
-In a ring the SESSION line becomes `HOTSPOT  Tritium Hotspot targeted - HUD
-compass | 59 t in 36 min`, or an amber reminder when the hotspot is not your
-target: then the game's own HUD compass points to the hotspot's centre, which
-keeps you oriented in the field. The game reports no position inside a ring
-(no latitude, longitude or heading in `Status.json`, no coordinates for a
-hotspot), so the plugin cannot draw a map or a compass of its own there.
-While the mining block is up, the route targets block steps aside; it returns
-ten minutes after the last mining event.
-
-* **ROCK** - the last prospector report: the share of the material you mine
-  (the hotspot you target, else what you refine most), its content, and a
-  verdict against the best rock of this session (GOOD / FAIR / MOVE ON);
-  a motherlode is named
-* **HOLD** - ore and limpets on board, free space
-* **RATE** - tonnes refined in the last ten minutes, per hour, and when the
-  hold is full at that pace (the game writes nothing about the refinery's
-  bins, only each finished tonne)
-* **LIMPETS** - how many tonnes your limpets last at the rate this session
-  uses them; amber when that is less than the room left (every limpet
-  launched leaves the hold, so its tonne is free for ore again)
-
-Switch it off under "mining" in the settings.
-
 ### The Nomad
 
 The flying SRV is launched with `LaunchVessel` and lands with its own
@@ -1724,3 +1691,59 @@ The parent is now taken from the moons' own `Parents` chain. On the test data
 4.7 LS from its planet. Existing data is repaired by one automatic journal
 replay after the update.
 
+---
+
+## What changed in 4.5
+
+### Mining in the overlay
+
+While you mine - prospector or collector limpets, prospected rocks, refined
+tonnes; gone when you dock or ten minutes after the last of them - the overlay shows five
+lines:
+
+```
+ROCK  Tritium 18.3 % | low | GOOD
+HOLD  59 t ore | 141 t free | 122 limpets
+RATE  336 t/h | full in ~25 min
+SESSION  59 t Tritium | 36 min
+LIMPETS  last ~189 t OK
+```
+
+In a ring the SESSION line becomes `HOTSPOT  Tritium Hotspot targeted - HUD
+compass | 59 t in 36 min`, or an amber reminder when the hotspot is not your
+target: then the game's own HUD compass points to the hotspot's centre, which
+keeps you oriented in the field. The game reports no position inside a ring
+(no latitude, longitude or heading in `Status.json`, no coordinates for a
+hotspot), so the plugin cannot draw a map or a compass of its own there.
+While the mining block is up, the route targets block steps aside; it returns
+ten minutes after the last mining event.
+
+* **ROCK** - the last prospector report: the share of the material you mine
+  (the hotspot you target, else what you refine most), its content, and a
+  verdict against the best rock of this session (GOOD / FAIR / MOVE ON);
+  a motherlode is named
+* **HOLD** - ore and limpets on board, free space
+* **RATE** - tonnes refined in the last ten minutes, per hour, and when the
+  hold is full at that pace (the game writes nothing about the refinery's
+  bins, only each finished tonne)
+* **LIMPETS** - how many tonnes your limpets last at the rate this session
+  uses them; amber when that is less than the room left (every limpet
+  launched leaves the hold, so its tonne is free for ore again)
+
+Switch it off under "mining" in the settings.
+
+### Your carrier from Frontier's data
+
+With EDMC logged in to Frontier, the plugin keeps the Companion API's answer
+for your fleet carrier in `capi_fleetcarrier.json` (see "Database"). SHBOX FIS
+reads the goods in the hold from it - above all the tritium, so the carrier's
+range counts the hold too - and the upkeep per week as Frontier bills it.
+
+### SHBOX FIS
+
+Galaxy in 2D and 3D with a replay of your flight path and your carrier,
+MINING and STATISTICS views, the carrier in the system map with its ring
+hotspots and a system report, jumponium readiness, a hazard log, life
+support on foot, a big surface compass, known points on approach, the
+search-and-rescue role for the air wing and a settings page. Details:
+[FIS/README.md](FIS/README.md).
