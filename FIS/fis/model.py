@@ -105,6 +105,16 @@ def is_scoopable(star_type: Optional[str]) -> bool:
     return bool(plugin().deepspace.is_scoopable(star_type))
 
 
+def boost_kind(star_type: Optional[str]) -> Optional[str]:
+    """B8: a jet cone to supercharge the FSD - neutron star (x4) or white dwarf (x1.5)."""
+    s = (star_type or "").strip()
+    if s == "N":
+        return "neutron"
+    if s.startswith("D") and len(s) <= 3 and s[1:].isalpha() or s == "D":
+        return "white_dwarf"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # system (TAKTIK)
 # ---------------------------------------------------------------------------
@@ -237,6 +247,11 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         })
 
     out["bio"] = bio_list(db, id64, rows, out["bodies"])
+    from . import science
+    try:
+        out["report"] = science.system_report([dict(r) for r in rows], out)
+    except Exception:                       # a report must never cost the map
+        out["report"] = []
 
     done_ids = {r["body_id"] for r in rows if r["route_done"]}
     legs = []
@@ -918,6 +933,7 @@ def _navpoints(db: Database, live: Dict[str, Any], limit: int = 14) -> List[Dict
         out.append({"n": n, "name": h.get("name"), "id64": h.get("id64"),
                     "star_class": h.get("star_class"),
                     "scoopable": is_scoopable(h.get("star_class")) if h.get("star_class") else None,
+                    "boost": boost_kind(h.get("star_class")),
                     "jump_ly": _r(_dist3(prev, pos), 2) if prev and pos else None,
                     "known_sources": Database.known_sources(row),
                     "visited": bool(row["visited"]) if row is not None else False})
@@ -960,6 +976,7 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
     out["target"] = {
         "name": name, "id64": id64, "source": tgt.get("source"),
         "star_class": star, "scoopable": is_scoopable(star) if star else None,
+        "boost": boost_kind(star),
         "distance_ly": dist, "in_db": row is not None,
         "visited": bool(row["visited"]) if row is not None else False,
         "known_sources": known, "in_no_database": not known,

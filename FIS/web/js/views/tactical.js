@@ -2,7 +2,39 @@
 // Three.js if the CDN is reachable, otherwise the 2D canvas fallback.
 
 import { el, frame, fmt, chip, ago, classDe, fixLabel } from "../ui.js";
-import { t } from "../i18n.js";
+import { t, N_ } from "../i18n.js";
+
+// SYSTEM REPORT: the server sends facts (fis/science.system_report), the words are here
+const SYS_SECTION = { class: N_("Classification"), record: N_("Record"), biology: N_("Biology"), geology: N_("Geology"),
+  resources: N_("Resources"), notable: N_("Notable"), hazards: N_("Hazards"), advice: N_("Recommendation") };
+const SYS_REPORT = {
+  sys_bodies: N_("{stars} star(s) of class {types} and {planets} planets and moons in the database ({known} bodies in the system)."),
+  sys_fss_done: N_("FSS complete - every body found."),
+  sys_fss_open: N_("FSS not complete - there is more to find."),
+  sys_first: N_("{n} bodies discovered first by you."),
+  sys_valuable: N_("Valuable: {list}."),
+  sys_bio: N_("{n} biological signals on {p} planets, {done} analysed."),
+  sys_geo: N_("{n} geological signals on {p} bodies."),
+  sys_rings: N_("{n} ringed planets: {list}."),
+  sys_jumponium: N_("Every premium FSD injection material on: {list}."),
+  sys_eccentric: N_("Highly eccentric orbits: {list}."),
+  sys_fast_orbit: N_("Around their parent in under 6 hours: {list}."),
+  sys_fast_spin: N_("Days shorter than an hour: {list}."),
+  sys_close: N_("Moons close above their planet: {list}."),
+  sys_many_moons: N_("Many moons: {list}."),
+  sys_nested: N_("Moons of moons: {list}."),
+  sys_landable_atmo: N_("Landable with an atmosphere: {list}."),
+  sys_far: N_("Far out (over 100,000 LS): {list}."),
+  sys_neutron: N_("Neutron star {name}: its jet cones damage the FSD - and supercharge it (range ×4)."),
+  sys_white_dwarf: N_("White dwarf {name}: its jet cones supercharge the FSD (range ×1.5), at a cost to the FSD."),
+  sys_black_hole: N_("Black hole {name}: mind the lensing on approach."),
+  sys_heavy: N_("Heavy landings: {list}."),
+  sys_next_fss: N_("Next: finish the FSS."),
+  sys_next_dss: N_("Next: map {n} with the DSS ({list})."),
+  sys_next_bio: N_("Next: {n} biological signals still to analyse."),
+  sys_next_done: N_("Nothing left to do here - jump on."),
+};
+const SYS_LEVEL = { good: "c-green", warn: "c-amber", danger: "c-red", info: "" };
 import { buildScene, drawOverlay, groupBounds, pick } from "./scene.js";
 import { create2D } from "./render2d.js";
 
@@ -151,6 +183,20 @@ function onDbl(e) {
 }
 
 // ------------------------------------------------------------- side panel
+function systemReport(sys) {
+  if (!sys.report || !sys.report.length) return null;
+  const rows = [];
+  let last = null;
+  for (const f of sys.report) {
+    if (f.section !== last) { rows.push(el("div", { class: "sr-h", text: t(SYS_SECTION[f.section] || f.section) })); last = f.section; }
+    const v = {};
+    for (const [k, x] of Object.entries(f.v || {})) v[k] = typeof x === "number" ? fmt(x, 0) : (x ?? "–");
+    rows.push(el("div", { class: "sr-line " + (SYS_LEVEL[f.level] || "") }, t(SYS_REPORT[f.id] || f.id, v)));
+  }
+  rows.push(el("div", { class: "c-dim small", text: t("Rule-based from the journal and the plugin database – no AI.") }));
+  return frame(t("SYSTEM REPORT"), "", rows, { cls: "sr-frame", appear: false });
+}
+
 function renderSide() {
   const sys = ctxRef.store.system;
   side.replaceChildren();
@@ -177,6 +223,8 @@ function renderSide() {
   if (!sys.known_sources.length) head.push(el("div", {}, chip(t("in no database"), "first")));
   else head.push(el("div", { class: "c-dim", text: t("known: {s}", { s: sys.known_sources.join(", ") }) }));
   side.append(frame("SYSTEM", sys.visited ? t("visited") : "", head, { kind: sys.known_sources.length ? "" : "disc", appear: false }));
+
+  side.append(systemReport(sys));
 
   // flight plan
   const r = sys.route;

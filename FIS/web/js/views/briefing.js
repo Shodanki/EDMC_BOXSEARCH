@@ -60,7 +60,9 @@ export function update(ctx, reason) {
   const np = tg.navpoint ? "NAVPOINT " + tg.navpoint[0] + "/" + tg.navpoint[1] : (tg.source || "");
   const star = tg.star_class
     ? [el("span", { class: "c-cyan", text: tg.star_class }), " · ",
-       tg.scoopable ? el("span", { class: "c-green", text: t("scoopable") }) : el("span", { class: "c-amber", text: t("NOT scoopable") })]
+       tg.scoopable ? el("span", { class: "c-green", text: t("scoopable") }) : el("span", { class: "c-amber", text: t("NOT scoopable") }),
+       tg.boost ? el("span", { class: "c-violet", text: " · ⚡ " + (tg.boost === "neutron" ? t("neutron star: FSD boost ×4 in the jet cone")
+         : t("white dwarf: FSD boost ×1.5 in the jet cone")) }) : null]
     : [el("span", { class: "c-dim", text: t("unknown (only at StartJump)") })];
   const statusEl = el("div", {},
     el("div", { class: unknown ? "br-status disc" : "br-status", text: (unknown ? "■ " : "") + t(st[0]) }),
@@ -154,7 +156,8 @@ function navList(hops, target, appear) {
     list.append(el("li", { class: h.name === target ? "cur" : "" },
       el("span", { class: "nl-n", text: String(h.n).padStart(2, "0") }),
       el("span", { class: "nl-name", text: h.name }),
-      el("span", { class: "nl-star " + (h.scoopable === false ? "c-amber" : "c-cyan"), text: h.star_class || "?" }),
+      el("span", { class: "nl-star " + (h.boost ? "c-violet" : h.scoopable === false ? "c-amber" : "c-cyan"),
+        text: (h.star_class || "?") + (h.boost ? " ⚡" : ""), title: h.boost ? t("jet cone: FSD boost") : "" }),
       el("span", { class: "nl-ly", text: h.jump_ly ? fmt(h.jump_ly, 1) + " ly" : "" }),
       unknown ? chip(t("unknown"), "first") : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") }))));
   }
