@@ -63,6 +63,17 @@ class MiningTest(unittest.TestCase):
         self.assertEqual(hs[0]["key"], "tritium")
         self.assertIsNone(hs[2]["ly"])
 
+    def test_limpet_load(self):
+        # 0.42 limpets per tonne, 322 t: 322 * 0.42 / 1.42 = 95.2 -> +10 % = 105
+        self.assertEqual(mining.limpet_load(322, 0.42), {"limpets": 105, "ore": 217})
+        self.assertEqual(mining.limpet_load(0, 0.42), {"limpets": 0, "ore": 0})
+        runs = [{"total": 200, "asteroids": 30, "drones": {"prospector": 33, "collection": 55}, "ship_type": "lakonminer"},
+                {"total": 5, "asteroids": 1, "drones": {"prospector": 9, "collection": 9}, "ship_type": "lakonminer"}]
+        r = mining.limpet_ratio(runs)
+        self.assertEqual(r["all"]["ratio"], 0.44)          # the 5 t session tells nothing
+        self.assertEqual(r["by_type"]["lakonminer"]["sessions"], 1)
+        self.assertEqual(r["all"]["per_rock_prospector"], 1.1)
+
     def test_type_key(self):
         self.assertEqual(mining.type_key("$tritium_name;"), "tritium")
         self.assertEqual(mining.type_key("LowTemperatureDiamond"), "lowtemperaturediamond")

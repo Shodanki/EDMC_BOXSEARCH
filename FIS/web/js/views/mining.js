@@ -41,7 +41,7 @@ function render() {
   root.replaceChildren();
   if (!data) { root.append(frame(t("MINING"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
   root.append(el("div", { class: "mine-grid" },
-    el("div", { class: "mine-col" }, withPopout(session(), "mining"), tritium(), ships()),
+    el("div", { class: "mine-col" }, withPopout(session(), "mining"), limpets(), tritium(), ships()),
     el("div", { class: "mine-col" }, hotspots(), goods(), history())));
 }
 
@@ -64,6 +64,32 @@ function session() {
       + (m.last.remaining !== null && m.last.remaining !== undefined && m.last.remaining < 100 ? " · " + t("{r} % left", { r: fmt(m.last.remaining, 0) }) : "") }) : null,
     m.best ? el("div", { class: "small c-green", text: t("Best rock") + ": " + rock(m.best) }) : null,
     m.carrier_jumps ? el("div", { class: "small c-amber", text: t("Tritium mined: ≈ {j} carrier jumps of 500 ly", { j: fmt(m.carrier_jumps, 1) }) }) : null,
+  ], { appear: false });
+}
+
+// ------------------------------------------------------------ limpet load
+// cargo = limpets + ore; your sessions say how many limpets a tonne takes
+function limpets() {
+  const P = data.limpet_plan;
+  if (!P || !P.ships.length) return null;
+  const a = P.ratio.all;
+  const basis = a ? t("Your sessions: {r} limpets per refined tonne ({n} sessions, {t} t) · per rock {p} prospector, {c} collector, {tr} t",
+    { r: fmt(a.ratio, 2), n: a.sessions, t: fmt(a.tonnes, 0), p: fmt(a.per_rock_prospector, 1), c: fmt(a.per_rock_collector, 1), tr: fmt(a.tonnes_per_rock, 1) })
+    : t("No mining session yet - assumed {r} limpets per tonne.", { r: fmt(P.default, 2) });
+  const rows = P.ships.map(s => el("tr", { class: s.current ? "c-cyan" : "" },
+    el("td", { text: s.name + (s.current ? " ◂" : "") }), el("td", { class: "num", text: fmt(s.cargo, 0) + " t" }),
+    el("td", { class: "num c-amber", text: fmt(s.limpets, 0) }), el("td", { class: "num", text: fmt(s.ore, 0) + " t" }),
+    el("td", { class: "num c-dim", text: fmt(s.ratio, 2) + (s.own ? "" : " *") })));
+  const cur = P.ships.find(s => s.current);
+  return frame(t("LIMPET LOAD"), "", [
+    el("table", { class: "mine-table" },
+      el("tr", {}, ...[t("Ship"), t("Cargo"), t("Limpets"), t("Ore"), t("per t")].map(h => el("th", { text: h }))), ...rows),
+    cur ? el("div", { class: "small " + (Math.abs(cur.diff) <= 2 ? "c-green" : "c-amber"),
+      text: t("On board {h}", { h: cur.on_board }) + " · " + (Math.abs(cur.diff) <= 2 ? t("about right")
+        : cur.diff > 0 ? t("take {n} more", { n: cur.diff }) : t("{n} too many - room for ore", { n: -cur.diff })) }) : null,
+    el("div", { class: "c-dim small", text: basis }),
+    el("div", { class: "c-dim small", text: t("Limpets = r × cargo / (1 + r) + {p} % reserve: running dry costs a trip, a few spare cost a few tonnes. * no session with this hull - your average.",
+      { p: Math.round(P.reserve * 100) }) }),
   ], { appear: false });
 }
 

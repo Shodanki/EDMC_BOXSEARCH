@@ -126,6 +126,41 @@ def _summary(run: List[Dict[str, Any]], now: Optional[float] = None) -> Dict[str
     }
 
 
+# limpet load: cargo C = limpets L + ore T, and the sessions say L = r * T
+# limpets per refined tonne. Best split L = r C / (1 + r), plus a reserve -
+# running out of limpets with room left costs a trip, a few spare cost
+# a few tonnes.
+DEFAULT_RATIO = 0.4          # laser mining, until your own sessions say better
+LIMPET_RESERVE = 0.10
+MIN_TONNES = 20              # sessions shorter than this tell nothing
+
+
+def limpet_load(cargo: int, ratio: float, reserve: float = LIMPET_RESERVE) -> Dict[str, int]:
+    if not cargo:
+        return {"limpets": 0, "ore": 0}
+    n = int(math.ceil(ratio * cargo / (1.0 + ratio) * (1.0 + reserve)))
+    n = max(0, min(cargo, n))
+    return {"limpets": n, "ore": cargo - n}
+
+
+def limpet_ratio(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Limpets launched per refined tonne over your sessions, overall and
+    per hull type, with what it rests on."""
+    use = [r for r in runs if r["total"] >= MIN_TONNES and (r["drones"]["prospector"] + r["drones"]["collection"])]
+    def agg(lst):
+        lim = sum(r["drones"]["prospector"] + r["drones"]["collection"] for r in lst)
+        t = sum(r["total"] for r in lst)
+        rocks = sum(r["asteroids"] for r in lst)
+        return {"ratio": round(lim / t, 3) if t else None, "sessions": len(lst), "tonnes": t, "limpets": lim,
+                "per_rock_prospector": round(sum(r["drones"]["prospector"] for r in lst) / rocks, 2) if rocks else None,
+                "per_rock_collector": round(sum(r["drones"]["collection"] for r in lst) / rocks, 2) if rocks else None,
+                "tonnes_per_rock": round(t / rocks, 1) if rocks else None}
+    out = {"all": agg(use) if use else None, "by_type": {}}
+    for typ in sorted({r.get("ship_type") for r in use if r.get("ship_type")}):
+        out["by_type"][typ] = agg([r for r in use if r.get("ship_type") == typ])
+    return out
+
+
 def _ly(a, b) -> Optional[float]:
     if not a or not b or None in a or None in b:
         return None
@@ -154,6 +189,17 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     now = time.time() if now is None else now
     evs = archive.events()
     hist = sessions(evs, now)
+    # the ship each session was flown in (last Loadout before it began)
+    loads = [(parse_ts(e.get("timestamp")) or 0, e) for e in evs if e["event"] == "Loadout"]
+    for s in hist:
+        lo = None
+        for t, e in loads:
+            if t > s["start"]:
+                break
+            lo = e
+        if lo:
+            s["ship_type"] = (lo.get("Ship") or "").lower()
+            s["ship_name"] = lo.get("ShipName")
     out: Dict[str, Any] = {"generated": now, "session": hist[-1] if hist else None,
                            "sessions": list(reversed(hist[-30:]))}
     # ---------------------------------------------------------- tritium -> carrier
@@ -238,8 +284,23 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
         r = ((s.get("rating") or {}).get("roles") or {}).get("mining") or 0
         if r >= 3:
             ships.append({"name": s.get("name"), "type": s.get("type_name") or s.get("type"), "ident": s.get("ident"),
+                          "type_key": s.get("type"),
                           "cargo": s.get("cargo"), "rating": r, "location": s.get("location"),
                           "current": bool(s.get("current"))})
     ships.sort(key=lambda s: (-s["rating"], -(s["cargo"] or 0)))
     out["ships"] = ships
+    # ---------------------------------------------------------- limpet load per mining ship
+    rat = limpet_ratio(hist)
+    plans = []
+    for s in ships:
+        typ = (s.get("type_key") or "").lower()
+        basis = rat["by_type"].get(typ) or rat["all"]
+        r = basis["ratio"] if basis and basis["ratio"] else DEFAULT_RATIO
+        p = dict(limpet_load(int(s["cargo"] or 0), r), name=s["name"] or s["type"], cargo=s["cargo"], ratio=r,
+                 own=bool(rat["by_type"].get(typ)), current=s["current"])
+        if s["current"]:
+            p["on_board"] = out["limpets"]
+            p["diff"] = p["limpets"] - out["limpets"]
+        plans.append(p)
+    out["limpet_plan"] = {"ratio": rat, "default": DEFAULT_RATIO, "reserve": LIMPET_RESERVE, "ships": plans}
     return out
