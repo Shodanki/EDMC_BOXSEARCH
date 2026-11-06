@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.4
+# SHBOXSEARCH v4.5
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
