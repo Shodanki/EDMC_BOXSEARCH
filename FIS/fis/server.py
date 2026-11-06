@@ -278,6 +278,13 @@ class Handler(BaseHTTPRequestHandler):
             from . import shipview
             return self._json(shipview.build_carrier(app.archive, app.live_state(),
                                                      journal_dir=app.cfg.journal_dir))
+        if path == "/api/statistics":
+            from . import stats
+            try:
+                days = float((qs.get("days") or ["0"])[0]) or None
+            except ValueError:
+                days = None
+            return self._json(stats.build_statistics(app.archive, days))
         if path == "/api/galaxy":
             from . import galaxy
             try:

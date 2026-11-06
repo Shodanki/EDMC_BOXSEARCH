@@ -50,6 +50,18 @@ class I18nTest(unittest.TestCase):
         missing = [k for k in used_keys() if k not in de]
         self.assertEqual(missing, [], "missing German entries:\n" + "\n".join(missing))
 
+    def test_no_duplicate_keys(self):
+        """A key twice: the later one silently wins in JS (and in json.loads)."""
+        s = _read(os.path.join(WEB, "js", "i18n.js"))
+        dups = []
+
+        def hook(pairs):
+            keys = [k for k, _v in pairs]
+            dups.extend(sorted({k for k in keys if keys.count(k) > 1}))
+            return dict(pairs)
+        json.loads(s[s.index("/*DE*/") + 6:s.index("/*END*/")], object_pairs_hook=hook)
+        self.assertEqual(dups, [], "German entries given twice:\n" + "\n".join(dups))
+
     def test_placeholders_match(self):
         for en, de in german().items():
             self.assertEqual(sorted(re.findall(r"\{\w+\}", en)), sorted(re.findall(r"\{\w+\}", de)),

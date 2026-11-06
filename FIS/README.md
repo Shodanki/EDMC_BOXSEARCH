@@ -80,9 +80,10 @@ or iPhone, "Add to Home Screen" opens the FIS without browser bars.
 | 6 | **ATLAS** | everything found, by kind - ring hotspots, body signals, materials picked up, finds on the ground - nearest first, within a chosen distance |
 | 7 | **SHIP** | status panel (warning / caution / advisory lamps), schematic cutaway, power by priority, modules with integrity and ammunition, damage and function report, cargo and fuel, the last mining session (yield per hour, limpets, best and last rock) |
 | 8 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range (with the tritium in your ship, what you mined and the trip to your route's end), hold, finances, services - and the air wing: every ship in the hangar with role ratings |
+| 9 | **STATISTICS** | the game's own record of you (written at every login): ranks with progress, exploration, exobiology, mining, the carrier, wealth and time played - with the growth over 24 h, 7, 30 or 90 days |
 
 Planet, system, galaxy: the same place at three scales. Addresses work with the
-names too (`/#system`, `/#planetinfo`).
+names too (`/#system`, `/#planetinfo`, `/#stats`).
 
 Notes on what the files allow:
 

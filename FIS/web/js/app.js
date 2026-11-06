@@ -13,8 +13,9 @@ import * as atlas from "./views/atlas.js";
 import * as ship from "./views/ship.js";
 import * as carrier from "./views/carrier.js";
 import * as galaxy from "./views/galaxy.js";
+import * as statistics from "./views/statistics.js";
 
-const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galaxy };
+const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galaxy, statistics };
 // ?solo=ship: one view alone in its own window (second screen, tablet)
 // ?system=<id64> pins another system (detail window from GALAXY, review)
 const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];
@@ -119,7 +120,7 @@ function show(name) {
 for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => show(b.dataset.view));
 // hand-edited URL hash / bookmarks (#briefing, #tactical, #planet)
 // the names on the tabs work as addresses too (#system, #planetinfo)
-const ALIAS = { system: "tactical", planetinfo: "planet" };
+const ALIAS = { system: "tactical", planetinfo: "planet", stats: "statistics" };
 window.addEventListener("hashchange", () => {
   const name = ALIAS[location.hash.slice(1)] || location.hash.slice(1);
   if (!SOLO && VIEWS[name] && name !== store.view) show(name);
@@ -130,7 +131,7 @@ window.addEventListener("keydown", (e) => {
   if (SOLO) return;
   // keys follow the tab order: briefing, planet, system, galaxy, planet info ...
   const map = { "1": "briefing", "2": "surface", "3": "tactical", "4": "galaxy", "5": "planet",
-    "6": "atlas", "7": "ship", "8": "carrier" };
+    "6": "atlas", "7": "ship", "8": "carrier", "9": "statistics" };
   if (map[e.key]) show(map[e.key]);
 });
 

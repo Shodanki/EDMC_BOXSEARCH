@@ -36,7 +36,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "CarrierDepositFuel", "CarrierBankTransfer", "CarrierFinance", "CarrierCrewServices",
           "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
           "SAAScanComplete", "SellOrganicData",
-          "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked")
+          "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked",
+          "Statistics", "Rank", "Progress", "Reputation")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
 
 # carrier tritium per jump: 5 + ly * (load + tritium + BASE) / DIV, rounded.
