@@ -88,6 +88,7 @@ on first run and is **your data** - never overwrite it on an update.
 | `biopredict.py` | 196 | Genus prediction learned from your own samples | — |
 | `diagnostics.py` | 284 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
 | `surfacenav.py` | 260 | Surface compass: parked SRV, open samples, known points | — |
+| `miningstat.py` | 233 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
 | `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain
@@ -1631,6 +1632,33 @@ Gypseeum Brain Tree         903 m  < 13
 * genera the detailed surface scan named that you have not started yet
 
 Switch it off under "surface compass" in the settings.
+
+### Mining in the overlay
+
+While you mine - prospector or collector limpets, prospected rocks, refined
+tonnes; gone ten minutes after the last of them - the overlay shows five
+lines:
+
+```
+ROCK  Tritium 18.3 % | low | GOOD
+HOLD  59 t ore | 141 t free | 122 limpets
+RATE  336 t/h | full in ~25 min
+SESSION  59 t Tritium | 36 min
+LIMPETS  last ~189 t OK
+```
+
+* **ROCK** - the last prospector report: the share of the material you mine
+  (the hotspot you target, else what you refine most), its content, and a
+  verdict against the best rock of this session (GOOD / FAIR / MOVE ON);
+  a motherlode is named
+* **HOLD** - ore and limpets on board, free space
+* **RATE** - tonnes refined in the last ten minutes, per hour, and when the
+  hold is full at that pace (the game writes nothing about the refinery's
+  bins, only each finished tonne)
+* **LIMPETS** - how many tonnes your limpets last at the rate this session
+  uses them; amber when that is less than the free space
+
+Switch it off under "mining" in the settings.
 
 ### The Nomad
 

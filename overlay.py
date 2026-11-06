@@ -215,16 +215,16 @@ class CockpitOverlay:
     # -- drawing -----------------------------------------------------------
     def _origin(self, group: str) -> Tuple[int, int]:
         x, y = ANCHORS.get(self.position, ANCHORS["top-left"])
-        if group in ("brief", "bio", "nav"):
+        if group in ("brief", "bio", "nav", "mine"):
             lh = LINE_H.get(self.size, 16)
             down = (self._drawn.get("targets", 0) + 1) * lh
             if self.position.startswith("bottom"):
                 y -= (MAX_LINES + 1) * lh          # briefing above the targets
-                if group == "nav":
+                if group in ("nav", "mine"):
                     y -= (MAX_LINES + 1) * lh
             else:
                 y += max(down, BRIEFING_GAP * lh // 2)
-                if group == "nav":
+                if group in ("nav", "mine"):
                     y += NAV_BELOW_BIO * lh        # room for the bio distance line
         return x, y
 
@@ -286,6 +286,12 @@ class CockpitOverlay:
         if self.hidden:
             return False
         return self.draw("nav", list(lines), ttl=seconds)
+
+    def show_mining(self, lines: Sequence[Line], seconds: int = 30) -> bool:
+        """Mining block (miningstat): at most five lines, while you mine."""
+        if self.hidden:
+            return False
+        return self.draw("mine", list(lines)[:5], ttl=seconds)
 
     def show_briefing(self, info: Dict[str, Any], seconds: int = 10) -> bool:
         lines = briefing_lines(info)
