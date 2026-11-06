@@ -505,7 +505,14 @@ body.solo #views { padding-top: 30px; }   /* room for the solo control */
 .galaxy-view { height: 100%; }
 .gal-grid { display: grid; grid-template-columns: 1fr 320px; gap: 10px; height: 100%; min-height: 0; }
 .gal-main { min-height: 0; } .gal-main .frame-in { display: flex; flex-direction: column; height: 100%; }
-.gal-map { flex: 1; width: 100%; min-height: 300px; touch-action: none; }
+.gal-stage { flex: 1; position: relative; min-height: 300px; }
+.gal-map, .gal-gl, .gal-ov { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.gal-ov { pointer-events: none; }
+.gal-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
+.gal-seg { display: inline-flex; } .gal-seg button + button { margin-left: -1px; }
+.gal-cams { display: inline-flex; gap: 4px; }
+.gal-replay { flex: 1; min-width: 120px; max-width: 360px; accent-color: #3EF2E0; }
+.gal-head { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
 .gal-side { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
 .gal-big { font-size: 20px; margin-bottom: 4px; }
 .gal-row { display: flex; gap: 8px; align-items: center; font-size: 12px; margin: 4px 0; }

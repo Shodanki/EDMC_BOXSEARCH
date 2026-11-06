@@ -3,6 +3,9 @@
 // shows in the tooltip. Layers can be switched; the path is coloured by age
 // (old = violet, new = cyan). Wheel zooms at the cursor, drag pans, double
 // click fits everything; a click on a system opens it in SYSTEM (new tab).
+// 2D | 3D: the same data in Three.js (galaxy3d.js), loaded on demand; if the
+// CDN is not reachable the view stays 2D. The replay slider draws the path
+// jump by jump, in both modes.
 
 import { getJSON } from "../api.js";
 import { el, frame, fmt, withPopout } from "../ui.js";
@@ -25,13 +28,18 @@ const on = JSON.parse(localStorage.getItem("fis.gal.layers") || "null") ||
   { path: true, carrier: true, systems: true, boxels: true, spheres: true, finds: true, navroute: true };
 let days = Number(localStorage.getItem("fis.gal.days") || "0");
 let mc = localStorage.getItem("fis.gal.mc") || "";
+let mode = new URLSearchParams(location.search).has("2d") ? "2d" : (localStorage.getItem("fis.gal.mode") || "2d");
+let g3 = null, g3load = null, ov = null, stage = null, replay = 1, playTimer = null;
+let ui = {};                     // toolbar elements
 
 export function mount(r) {
   root = r;
   root.classList.add("galaxy-view");
   cv = el("canvas", { class: "gal-map" });
+  ov = el("canvas", { class: "gal-ov", style: { display: "none" } });
+  stage = el("div", { class: "gal-stage" }, cv, ov);
   side = el("div", { class: "gal-side scroll" });
-  root.append(el("div", { class: "gal-grid" }, withPopout(frame(t("GALAXY"), "", cv, { cls: "gal-main", appear: false }), "galaxy"), side));
+  root.append(el("div", { class: "gal-grid" }, withPopout(frame(t("GALAXY"), "", [tools(), stage], { cls: "gal-main", appear: false }), "galaxy"), side));
   g = cv.getContext("2d");
   cv.addEventListener("wheel", (e) => {
     e.preventDefault();
@@ -52,11 +60,92 @@ export function mount(r) {
     if (p !== hover) { hover = p; cv.style.cursor = p && p.id ? "pointer" : ""; draw(); renderSide(); }
   });
   cv.addEventListener("pointerup", () => {
-    if (drag && !drag.moved && hover && hover.id) window.open("/?system=" + hover.id + "#tactical", "_blank");
+    if (drag && !drag.moved && hover && hover.id) openPick(hover);
     drag = null;
   });
   cv.addEventListener("dblclick", () => { fit(); draw(); });
   new ResizeObserver(() => draw()).observe(cv);
+  if (mode === "3d") setMode("3d"); else applyMode();
+}
+
+function openPick(p) { window.open("/?system=" + p.id + "#tactical", "_blank"); }
+
+// ------------------------------------------------------------ toolbar: 2D | 3D, camera, replay
+function tools() {
+  const pick = (m) => () => { localStorage.setItem("fis.gal.mode", m); setMode(m); };
+  ui.b2 = el("button", { text: "2D", onclick: pick("2d") });
+  ui.b3 = el("button", { text: "3D", onclick: pick("3d") });
+  ui.cams = el("span", { class: "gal-cams" },
+    el("button", { text: t("above"), title: t("look down on the galactic plane"), onclick: () => g3 && g3.view("top") }),
+    el("button", { text: t("side"), title: t("look along the galactic plane"), onclick: () => g3 && g3.view("side") }));
+  ui.play = el("button", { text: "▶", title: t("replay the flight path"), onclick: togglePlay });
+  ui.slider = el("input", { type: "range", min: "0", max: "1000", value: "1000", class: "gal-replay",
+    title: t("replay the flight path"), oninput: (e) => { stopPlay(); setReplay(Number(e.target.value) / 1000); } });
+  ui.head = el("span", { class: "gal-head small c-dim" });
+  ui.eng = el("span", { class: "gal-eng small c-dim" });
+  const bar = el("div", { class: "gal-tools" }, el("span", { class: "gal-seg" }, ui.b2, ui.b3), ui.cams, ui.play, ui.slider, ui.head, ui.eng);
+  return bar;
+}
+
+async function setMode(m) {
+  mode = m;
+  if (m === "3d" && !g3) {
+    ui.eng.textContent = t("loading 3D …"); ui.eng.className = "gal-eng small c-dim";
+    try {
+      g3load = g3load || Promise.race([import("./galaxy3d.js"),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000))]);
+      const mod = await g3load;
+      if (!g3) g3 = mod.createGalaxy3D(stage, ov, { t, label, pick: openPick });
+      g3.setReplay(replay);
+      if (data) g3.setData(data, on);
+      ui.eng.textContent = "";
+    } catch (err) {
+      g3load = null; mode = "2d";
+      ui.eng.textContent = t("2D · offline (Three.js not reachable)"); ui.eng.className = "gal-eng small c-amber";
+    }
+  }
+  applyMode();
+}
+
+function applyMode() {
+  const three = mode === "3d" && !!g3;
+  ui.b2.setAttribute("aria-pressed", three ? "false" : "true");
+  ui.b3.setAttribute("aria-pressed", three ? "true" : "false");
+  ui.cams.style.display = three ? "" : "none";
+  if (!cv) return;
+  cv.style.display = three ? "none" : "";
+  ov.style.display = three ? "" : "none";
+  if (g3) { g3.canvas.style.display = three ? "" : "none"; if (three) g3.redraw(); }
+  if (!three) draw();
+  if (side && data) renderSide();
+}
+
+function view3d() { return mode === "3d" && g3; }
+function refit(what) { if (view3d()) g3.view(what === "you" ? "me" : what || "all"); else { fit(what); draw(); } }
+
+function setReplay(k) {
+  replay = Math.max(0, Math.min(1, k));
+  ui.slider.value = String(Math.round(replay * 1000));
+  if (g3) g3.setReplay(replay);
+  const h = head();
+  ui.head.textContent = replay < 1 && h ? h.name + (h.t ? " · " + new Date(h.t * 1000).toLocaleDateString() : "") : "";
+  if (!view3d()) draw();
+}
+function stopPlay() { if (playTimer) { clearInterval(playTimer); playTimer = null; ui.play.textContent = "▶"; } }
+function togglePlay() {
+  if (playTimer) { stopPlay(); return; }
+  if (replay >= 1) setReplay(0);
+  const start = performance.now(), k0 = replay;
+  ui.play.textContent = "❚❚";
+  playTimer = setInterval(() => {                       // the whole period in 20 s
+    const k = k0 + (performance.now() - start) / 20000;
+    setReplay(k);
+    if (k >= 1) stopPlay();
+  }, 50);
+}
+function head() {
+  if (!data || !data.path.length) return null;
+  return data.path[Math.round((data.path.length - 1) * replay)];
 }
 
 export async function update(ctx, reason) {
@@ -67,6 +156,8 @@ export async function update(ctx, reason) {
   if (mc !== "") qs.set("mc", mc);
   try { data = await getJSON("/api/galaxy?" + qs.toString()); } catch (e) { data = null; }
   if (data && view.scale === null) fit();
+  if (data && g3) g3.setData(data, on);
+  if (replay < 1) setReplay(replay);
   renderSide(); draw();
 }
 
@@ -110,7 +201,7 @@ function draw() {
   cv.width = Math.max(1, W * dpr); cv.height = Math.max(1, H * dpr);
   g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
   picks = [];
-  if (!data || W < 40 || H < 40) return;
+  if (!data || W < 40 || H < 40 || view3d()) return;
   if (view.scale === null) fit();
   const vis = (x, z, m = 20) => { const [sx, sy] = toScreen(x, z); return sx > -m && sx < W + m && sy > -m && sy < H + m; };
   // grid
@@ -180,7 +271,8 @@ function draw() {
   if (on.path && data.path.length > 1) {
     const t0 = data.path[0].t || 0, t1 = data.path[data.path.length - 1].t || 1, span = Math.max(1, t1 - t0);
     g.lineWidth = 1.3;
-    for (let i = 1; i < data.path.length; i++) {
+    const last = Math.round((data.path.length - 1) * replay);
+    for (let i = 1; i <= last; i++) {
       const a = data.path[i - 1], b = data.path[i];
       if (b.kind === "login" && Math.hypot(b.x - a.x, b.z - a.z) > 100) continue;   // other session, no flight
       const k = ((b.t || t0) - t0) / span;
@@ -188,7 +280,11 @@ function draw() {
       const [ax, ay] = toScreen(a.x, a.z), [bx, by] = toScreen(b.x, b.z);
       g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
     }
-    for (const p of data.path) { const [sx, sy] = toScreen(p.x, p.z); picks.push({ sx, sy, kind: "jump", p, id: p.id64 }); }
+    data.path.forEach((p, i) => { if (i > last) return; const [sx, sy] = toScreen(p.x, p.z); picks.push({ sx, sy, kind: "jump", p, id: p.id64 }); });
+    if (replay < 1) {                       // replay head
+      const [sx, sy] = toScreen(data.path[last].x, data.path[last].z);
+      g.strokeStyle = "#FFFFFF"; g.lineWidth = 1.5; g.beginPath(); g.arc(sx, sy, 6, 0, Math.PI * 2); g.stroke();
+    }
   }
   // finds
   if (on.finds) {
@@ -267,7 +363,11 @@ function renderSide() {
   ], { appear: false }));
   // layers
   side.append(frame(t("LAYERS"), "", el("div", { class: "gal-layers" }, ...LAYERS.map(([k, l]) => el("label", { class: "gal-lay" },
-    el("input", { type: "checkbox", checked: on[k] ? true : null, onchange: (e) => { on[k] = e.target.checked; localStorage.setItem("fis.gal.layers", JSON.stringify(on)); draw(); } }),
+    el("input", { type: "checkbox", checked: on[k] ? true : null, onchange: (e) => {
+      on[k] = e.target.checked; localStorage.setItem("fis.gal.layers", JSON.stringify(on));
+      if (g3) g3.setLayers(on);
+      draw();
+    } }),
     " " + t(l)))), { appear: false }));
   // survey sphere
   if (data.active) {
@@ -287,14 +387,16 @@ function renderSide() {
         el("span", { class: "c-green", text: "■ " + t("closed") + " " + n.closed }), el("span", { class: "c-amber", text: "■ " + t("open") + " " + n.open }),
         el("span", { class: "c-dim", text: "□ " + t("never checked") + " " + n.unchecked })),
       el("div", { class: "row-btns" },
-        el("button", { text: t("sphere"), onclick: () => { fit("sphere"); draw(); } }),
-        el("button", { text: t("me"), onclick: () => { fit("you"); draw(); } }),
-        el("button", { text: t("all"), onclick: () => { fit(); draw(); } })),
+        el("button", { text: t("sphere"), onclick: () => refit("sphere") }),
+        el("button", { text: t("me"), onclick: () => refit("you") }),
+        el("button", { text: t("all"), onclick: () => refit() })),
     ], { appear: false }));
   }
   side.append(el("div", { class: "legend" },
     el("span", { class: "c-violet", text: "■ " + t("only known to us") }), el("span", { class: "c-green", text: "■ " + t("visited") }),
     el("span", { class: "c-amber", text: "┄ " + t("carrier") }),
     ...Object.entries(FIND_COL).map(([k, c]) => el("span", { style: { color: c }, text: "◆ " + t(FIND_NAME[k]) })),
-    el("span", { class: "c-dim", text: t("path: violet = old, cyan = recent · wheel zoom · drag · double click fits") })));
+    el("span", { class: "c-dim", text: view3d()
+      ? t("path: violet = old, cyan = recent · drag turns · right drag or two fingers pan · wheel zooms")
+      : t("path: violet = old, cyan = recent · wheel zoom · drag · double click fits") })));
 }
