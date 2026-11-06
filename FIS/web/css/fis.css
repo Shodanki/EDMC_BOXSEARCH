@@ -487,8 +487,8 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .lay-phone .mrow .m-w, .lay-phone .mrow .m-a { display: none; }
 .lay-phone .mgroups { max-height: none; }
 .lay-phone .cag-board { grid-template-columns: repeat(2, 1fr); }
-.lay-phone .cag td:nth-child(n+4):nth-child(-n+8) { display: none; }   /* role dots -> board */
-.lay-phone .cag th:nth-child(n+4):nth-child(-n+8) { display: none; }
+.lay-phone .cag td:nth-child(n+4):nth-child(-n+9) { display: none; }   /* role dots -> board */
+.lay-phone .cag th:nth-child(n+4):nth-child(-n+9) { display: none; }
 .lay-phone .kvline { grid-template-columns: auto 1fr; }
 .lay-phone .lg-row { grid-template-columns: 70px 1fr 100px; }
 .lay-phone #top { flex-wrap: wrap; }
