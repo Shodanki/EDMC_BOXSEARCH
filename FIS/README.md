@@ -73,13 +73,18 @@ or iPhone, "Add to Home Screen" opens the FIS without browser bars.
 | Key | View | What it shows |
 |---|---|---|
 | 1 | **BRIEFING** | the jump target: distance, star and scoopable, whether any database knows it, what the neighbours in its boxel held, fuel after the jump, open boxel candidates, the plotted route |
-| 2 | **TACTICAL** | the current system in 3D at its Kepler positions, the course line in the plugin's order with leg times, your last position fix, biology per body |
-| 3 | **PLANET** | datasheet of a body: gravity, temperature, atmosphere, volcanism, materials, rings and hotspots, signals, species, genus forecast |
-| 4 | **SURFACE** | your track on a body (ship, SRV, on foot), finds, colony circles for exobiology sampling, where the SRV is parked |
-| 5 | **ATLAS** | everything found, by kind - ring hotspots, body signals, materials picked up, finds on the ground - nearest first, within a chosen distance |
-| 6 | **SHIP** | status panel (warning / caution / advisory lamps), schematic cutaway, power by priority, modules with integrity and ammunition, damage and function report, cargo and fuel |
-| 7 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range, hold, finances, services - and the air wing: every ship in the hangar with role ratings |
-| 8 | **GALAXY** | your flight path through the galaxy over time, the carrier's path, survey spheres with the status of every boxel, visited systems, notable finds |
+| 2 | **PLANET** | the surface of a body: your track (ship, SRV, on foot), finds, colony circles for exobiology sampling, where the SRV is parked |
+| 3 | **SYSTEM** | the current system in 3D at its Kepler positions, the course line in the plugin's order with leg times, your last position fix, biology per body |
+| 4 | **GALAXY** | your flight path through the galaxy over time, the carrier's path and where it is now (with a pending jump), survey spheres with the status of every boxel, visited systems, notable finds; flat map or 3D with a replay of the flight path; starts on your system, a click moves the focus, a double click opens the system as a detail window |
+| 5 | **PLANET INFO** | datasheet of a body: gravity, temperature, atmosphere, volcanism, materials, rings and hotspots, signals, species, genus forecast |
+| 6 | **ATLAS** | everything found, by kind - ring hotspots, body signals, materials picked up, finds on the ground - nearest first, within a chosen distance |
+| 7 | **SHIP** | status panel (warning / caution / advisory lamps), schematic cutaway, power by priority, modules with integrity and ammunition, damage and function report, cargo and fuel |
+| 8 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range (with the tritium in your ship, what you mined and the trip to your route's end), hold, finances, services - and the air wing: every ship in the hangar with role ratings (combat, mining, transport, exploration, passengers, search and rescue) |
+| 9 | **MINING** | everything about mining, tritium first: the session (yield per hour, limpets, best and last rock), tritium for the carrier (tank, in your ship, mined, delivered), ring hotspots near you, mining ships, goods with what selling them earned against the carrier's upkeep, every session so far |
+| 0 | **STATISTICS** | the game's own record of you (written at every login): ranks with progress, exploration, exobiology, mining, the carrier, wealth and time played - with the growth over 24 h, 7, 30 or 90 days |
+
+Planet, system, galaxy: the same place at three scales. Addresses work with the
+names too (`/#system`, `/#planetinfo`, `/#stats`).
 
 Notes on what the files allow:
 

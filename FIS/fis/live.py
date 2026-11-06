@@ -223,6 +223,7 @@ class LiveTracker:
                         "AfmuRepairs"):
                 s["alerts"].append({"event": ev, "ts": ts,
                                     "module": e.get("Module_Localised") or e.get("Module"),
+                                    "module_key": e.get("Module"),
                                     "health": e.get("Health")})
                 del s["alerts"][:-40]
                 out = "status"

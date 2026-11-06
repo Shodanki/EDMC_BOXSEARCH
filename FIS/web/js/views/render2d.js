@@ -1,4 +1,4 @@
-// 2D fallback for TAKTIK (no internet → no Three.js): top-down canvas with
+// 2D fallback for SYSTEM (no internet → no Three.js): top-down canvas with
 // the same scene model, labels and controls (wheel zoom, drag pan).
 
 import { UI } from "./scene.js";

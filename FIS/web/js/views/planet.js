@@ -36,13 +36,80 @@ const ATMO = { CarbonDioxide: "CO₂", SulphurDioxide: "SO₂", Nitrogen: "N₂"
 const atmoName = (k) => (k === "Silicates" && lang() === "de") ? "Silikate" : (ATMO[k] || k);
 const COMPOSITION = { Rock: N_("Rock"), Metal: N_("Metal"), Ice: N_("Ice") };
 
+// Science report: the server sends facts (fis/science.py), the words are here.
+const SECTION = { class: N_("Classification"), record: N_("Record"), atmosphere: N_("Atmosphere and surface"),
+  geology: N_("Geology"), biology: N_("Biology"), resources: N_("Resources"), hazards: N_("Hazards"),
+  advice: N_("Recommendation") };
+const REPORT = {
+  star: N_("Class {t} {lum} star, {m} solar masses, {age} million years old."),
+  planet: N_("{cls}, radius {r} km, {m} Earth masses, surface gravity {g} g."),
+  orbits: N_("Orbits {p}."),
+  terraformable: N_("Candidate for terraforming."),
+  first_discovery: N_("First discovery: no one scanned this body before us."),
+  known_before: N_("Discovered before us."),
+  first_mapped: N_("Never mapped before – a first mapping is possible."),
+  first_footfall_open: N_("No footfall recorded yet."),
+  dss_efficient: N_("Surface mapped efficiently: {p} probes, target {target}."),
+  dss_done: N_("Surface mapped with {p} probes (target {target})."),
+  atmosphere: N_("{a} atmosphere, {p} atm."),
+  no_atmosphere: N_("No atmosphere."),
+  temperature: N_("Surface temperature {k} K ({c} °C)."),
+  tidal_lock: N_("Tidally locked to its parent."),
+  rotation: N_("Rotation period {d} days."),
+  volcanism: N_("Volcanism: {v}."),
+  no_volcanism: N_("Geologically inactive."),
+  geo_signals: N_("{n} geological signals."),
+  bio_signals: N_("{n} biological signals, {a} species analysed."),
+  bio_open: N_("Not yet sampled: {g}."),
+  bio_forecast: N_("Most likely genus: {g} ({p} %)."),
+  rare_materials: N_("Rare materials: {m}."),
+  jumponium_premium: N_("All materials for premium FSD injection present."),
+  jumponium_standard: N_("All materials for standard FSD injection present."),
+  jumponium_basic: N_("All materials for basic FSD injection present."),
+  rings: N_("{n} ring(s), {c}, reserves {r}."),
+  hotspots: N_("Hotspots: {h}."),
+  gravity_very_high: N_("Very high gravity ({g} g) – landing and SRV use are dangerous."),
+  gravity_high: N_("High gravity ({g} g) – approach carefully."),
+  hot: N_("Extreme heat ({k} K) – watch ship temperature."),
+  cold: N_("Extreme cold ({k} K)."),
+  toxic: N_("Hostile atmosphere: {a}."),
+  neutron: N_("Neutron star – jet cones supercharge the FSD but damage the ship; keep out of them otherwise."),
+  white_dwarf: N_("White dwarf – jet cones supercharge the FSD but damage the ship."),
+  black_hole: N_("Black hole – keep your distance."),
+  scoopable: N_("Fuel scooping possible."),
+  not_scoopable: N_("Not scoopable – check fuel before the next jump."),
+  dss_recommended: N_("Detailed surface scan recommended."),
+  landing: N_("Landing possible ({g} g)."),
+  sample: N_("{n} biological signal(s) still to sample."),
+  bio_complete: N_("Biology complete."),
+};
+const LEVEL_CLS = { good: "c-green", warn: "c-amber", danger: "c-red", info: "" };
+
+function reportFrame(b) {
+  if (!b.report || !b.report.length) return null;
+  const rows = [];
+  let last = null;
+  for (const f of b.report) {
+    if (f.section !== last) { rows.push(el("div", { class: "sr-h", text: t(SECTION[f.section] || f.section) })); last = f.section; }
+    const v = {};
+    // digits by size: 0.0002 Earth masses must not read as 0.00
+    const dig = (x) => (x % 1 === 0 ? 0 : Math.abs(x) < 0.01 ? 4 : Math.abs(x) < 10 ? 2 : 0);
+    for (const [k, x] of Object.entries(f.v || {})) v[k] = typeof x === "number" ? fmt(x, dig(x)) : (x ?? "–");
+    if (f.id === "orbits" && String(f.v.p).startsWith("barycentre")) v.p = t("a barycentre") + String(f.v.p).slice(10);
+    rows.push(el("div", { class: "sr-line " + (LEVEL_CLS[f.level] || "") }, t(REPORT[f.id] || f.id, v)));
+  }
+  rows.push(el("div", { class: "c-dim small", text: t("Rule-based from the journal and the plugin database – no AI.") }));
+  const kind = b.report_level === "danger" ? "warn" : b.report_level === "warn" ? "warn" : "hot";
+  return frame(t("SCIENCE REPORT"), b.short || b.name, rows, { kind, cls: "sr-frame" });
+}
+
 function render(ctx) {
   if (!root) return;
   root.replaceChildren();
   const b = current;
   if (!b) {
-    root.append(frame("PLANET", "", el("div", { class: "empty" }, t("NO BODY SELECTED"), el("br"),
-      el("span", { class: "c-dim", text: t("Click a body in TACTICAL.") }))));
+    root.append(frame(t("PLANET INFO"), "", el("div", { class: "empty" }, t("NO BODY SELECTED"), el("br"),
+      el("span", { class: "c-dim", text: t("Click a body in SYSTEM.") }))));
     return;
   }
   const flags = [];
@@ -74,8 +141,19 @@ function render(ctx) {
   if (b.axial_tilt_deg !== null) tiles.append(tile(t("Axial tilt"), num(b.axial_tilt_deg, 1), "°"));
   if (b.orbit.period_d) tiles.append(tile(t("Orbit"), num(b.orbit.period_d, 1), "d"));
   if (b.orbit.ecc !== null) tiles.append(tile(t("Eccentricity"), num(b.orbit.ecc, 3)));
+  if (b.orbit.inc_deg !== null && b.orbit.inc_deg !== undefined) tiles.append(tile(t("Inclination"), num(b.orbit.inc_deg, 1), "°"));
+  if (b.orbit.sma_ls) tiles.append(tile(t("Semi-major axis"), num(b.orbit.sma_ls, 2), "LS"));
+  if (b.orbit.peri_deg !== null && b.orbit.peri_deg !== undefined) tiles.append(tile(t("Periapsis"), num(b.orbit.peri_deg, 1), "°"));
 
-  const left = [frame(t("DATASHEET"), b.kind === "Star" ? t("Star") : t("Body {n}", { n: b.body_id }), [head, tiles], { kind: "hot" })];
+  const extra = [];
+  if (b.parent) extra.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Orbits") + " " }),
+    String(b.parent).startsWith("barycentre") ? t("a barycentre") + String(b.parent).slice(10) : b.parent));
+  if (b.dss) extra.push(el("div", { class: "pl-line " + (b.dss.efficient ? "c-green" : "") },
+    el("span", { class: "c-dim", text: "DSS " }), t("{p} probes, target {target}", { p: b.dss.probes, target: b.dss.target })
+      + (b.dss.efficient ? " · " + t("efficient") : "") + (b.dss.ts ? " · " + b.dss.ts.slice(0, 10) : "")));
+  if (b.visits) extra.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Your visits") + " " }),
+    t("{l} landings · {m} marks · last {d}", { l: b.visits.landings, m: b.visits.marks, d: b.visits.last || "–" })));
+  const left = [frame(t("DATASHEET"), b.kind === "Star" ? t("Star") : t("Body {n}", { n: b.body_id }), [head, tiles, ...extra], { kind: "hot" })];
 
   if (b.star) {
     left.push(frame(t("STAR"), "", el("div", { class: "kv" },
@@ -97,6 +175,8 @@ function render(ctx) {
     for (const [k, v] of b.composition) atmo.push(hbar(COMPOSITION[k] ? t(COMPOSITION[k]) : k, v, 100, fmt(v, 1) + " %", "green"));
   }
   const right = [];
+  const rep = reportFrame(b);
+  if (rep) right.push(rep);
   if (b.kind !== "Star") right.push(frame(t("ATMOSPHERE · SURFACE"), "", atmo));
 
   // biology
@@ -106,7 +186,9 @@ function render(ctx) {
       el("span", { class: "c-amber", text: t(b.bio.signals === 1 ? "{n} bio signal" : "{n} bio signals", { n: b.bio.signals }) }),
       el("span", { class: "c-dim", text: " · " + t("{n} analysed", { n: b.bio.analysed }) })));
     if (b.bio.genera.length) bio.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Genera (DSS)") + " " }), b.bio.genera.join(", ")));
-    for (const s of b.bio.species) bio.push(el("div", { class: "pl-line c-green", text: "✓ " + (s.variant || s.species) }));
+    for (const s of b.bio.species) bio.push(el("div", { class: "pl-line c-green" }, "✓ " + (s.variant || s.species),
+      el("span", { class: "c-dim", text: (s.date ? " · " + s.date : "")
+        + (s.value ? " · " + fmt(s.value / 1e6, 2) + " M Cr" + (s.bonus ? " (+" + fmt(s.bonus / 1e6, 2) + " M " + t("first logged") + ")" : "") : "") })));
     if (b.bio.prediction.length) {
       bio.push(el("h3", { text: b.bio.genera.length ? t("Forecast (for comparison)") : t("Forecast – possible here"), style: { marginTop: "8px" } }));
       for (const p of b.bio.prediction) bio.push(hbar(p.genus, p.score, 1, Math.round(p.score * 100) + " %", "amber"));
@@ -123,7 +205,7 @@ function render(ctx) {
     const rr = b.rings.map(r => el("div", { class: "pl-line" }, el("span", { class: "c-cyan", text: (r.name || "").replace(b.name, "").trim() || "Ring" }),
       el("span", { class: "c-dim", text: " · " + (r.cls || "") + " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" })));
     for (const h of b.hotspots) rr.push(el("div", { class: "pl-line c-amber", text: "◆ " + h.material + " ×" + h.count }));
-    right.push(frame(t("RINGS"), "", rr));
+    right.push(frame(t("RINGS"), b.reserve ? t("reserves: {r}", { r: b.reserve }) : "", rr));
   }
 
   if (b.signals && b.signals.length) {

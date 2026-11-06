@@ -11,7 +11,7 @@ import { el, frame, fmt, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const ROLES = [["combat", N_("Combat")], ["mining", N_("Mining")], ["transport", N_("Transport")],
-  ["exploration", N_("Exploration")], ["passengers", N_("Passengers")]];
+  ["exploration", N_("Exploration")], ["passengers", N_("Passengers")], ["sar", N_("SAR")]];
 const SPACE = [["crew", N_("crew"), "c1"], ["cargo", N_("cargo"), "c2"], ["reserved", N_("reserved"), "c3"],
   ["ships", N_("ship packs"), "c4"], ["modules", N_("module packs"), "c5"]];
 const SERVICE = { BlackMarket: N_("Secure warehouse"), Captain: N_("Captain"), Refuel: N_("Refuel"),
@@ -96,6 +96,15 @@ function tritium() {
     line(t("Range"), el("span", { class: "big c-green", text: fmt(r.ly, 0) + " ly" }),
       el("span", { class: "c-dim", text: "  " + t("{n} full jumps of 500 ly", { n: r.jumps }) })),
     line(t("Per 500 ly"), fmt(tr.per_max_jump, 0) + " t " + t("at {l} t load", { l: fmt(tr.load, 0) })),
+    line(t("To a full tank"), fmt(tr.to_full, 0) + " t"),
+    tr.ship !== undefined ? line(t("In your ship"), fmt(tr.ship, 0) + " t",
+      tr.with_ship ? el("span", { class: "c-dim", text: "  → " + t("tank filled: {ly} ly", { ly: fmt(tr.with_ship.ly, 0) }) }) : null) : null,
+    tr.mined ? line(tr.mined.active ? t("Mining now") : t("Last mining"),
+      el("span", { class: "c-green", text: "+" + fmt(tr.mined.t, 0) + " t" }),
+      el("span", { class: "c-dim", text: "  ≈ " + t("{j} jumps · {ly} ly", { j: fmt(tr.mined.jumps, 1), ly: fmt(tr.mined.ly, 0) }) })) : null,
+    tr.trip ? line(t("To your route's end"),
+      el("span", { text: t("{to}: {ly} ly · {n} jumps · {need} t", { to: tr.trip.to || "?", ly: fmt(tr.trip.ly, 0), n: tr.trip.jumps, need: fmt(tr.trip.need, 0) }) }),
+      el("span", { class: tr.trip.enough ? "c-green" : "c-amber", text: "  " + (tr.trip.enough ? t("enough") : t("{s} t short", { s: fmt(tr.trip.short, 0) })) })) : null,
     el("div", { class: "c-dim small", text: t("Tritium in the hold is not counted (not in the journal).") }),
     el("div", { class: "c-dim small", text: t("Formula fitted on your own jumps (±1 t): {f}", { f: tr.formula }) }),
   ], { appear: false });
@@ -145,7 +154,9 @@ function airWing() {
   const here = ships.filter(s => s.stored_at === "here" || s.current);
   // readiness board: best ship per role on board
   const board = el("div", { class: "cag-board" }, ...ROLES.map(([k, label]) => {
-    const best = here.filter(s => s.rating).sort((a, b) => b.rating.roles[k] - a.rating.roles[k])[0];
+    // ties go to the ship made for the role (T7 SAR before the explorer with rescue limpets)
+    const best = here.filter(s => s.rating).sort((a, b) => b.rating.roles[k] - a.rating.roles[k]
+      || (b.rating.primary === k) - (a.rating.primary === k))[0];
     const n = here.filter(s => s.rating && s.rating.roles[k] >= 4).length;
     return el("button", { class: "cag-role" + (roleFilter === k ? " sel" : ""), onclick: () => { roleFilter = roleFilter === k ? "" : k; localStorage.setItem("fis.cag.role", roleFilter); render(); } },
       el("div", { class: "cr-k", text: t(label) }),

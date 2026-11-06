@@ -6,7 +6,8 @@ core, y as height):
 
   path       every hyperspace jump of the commander logged in, with time -
              from all journals, so it reaches back as far as they do
-  carrier    the fleet carrier's jumps
+  carrier    the fleet carrier's jumps; carrier_now: where it is (or is
+             expected after a jump you did not see), a jump still pending
   spheres    the survey spheres of the plugin; the active one highlighted
   boxels     for the active sphere and one mass code: every boxel that meets
              the sphere, as closed (all systems known), open (started) or
@@ -61,22 +62,89 @@ def flight_path(archive: fl.Archive, since: Optional[float] = None) -> List[Dict
     return out[-MAX_PATH:]
 
 
-def carrier_path(archive: fl.Archive) -> List[Dict[str, Any]]:
-    """Positions the carrier went through (systems with known coordinates)."""
+def _positions(archive: fl.Archive, db: Optional[Database] = None):
+    """name -> (x, y, z): from the journals, else from the plugin database
+    (systems the carrier went to without you)."""
     pos: Dict[str, Any] = {}
-    seq: List[Dict[str, Any]] = []
     for e in archive.events():
         if e.get("StarPos") and e.get("StarSystem"):
             pos[e["StarSystem"]] = e["StarPos"]
+
+    def find(name: Optional[str]):
+        if not name:
+            return None
+        if name not in pos and db is not None:
+            rows = db.query("SELECT x, y, z FROM systems WHERE name = ? AND x IS NOT NULL LIMIT 1", (name,))
+            pos[name] = [rows[0]["x"], rows[0]["y"], rows[0]["z"]] if rows else None
+        return pos.get(name)
+    return find
+
+
+def carrier_path(archive: fl.Archive, db: Optional[Database] = None) -> List[Dict[str, Any]]:
+    """Positions the carrier went through (systems with known coordinates)."""
+    seq: List[Dict[str, Any]] = []
+    for e in archive.events():
         if e["event"] in ("CarrierJump", "CarrierLocation") and e.get("StarSystem"):
             if seq and seq[-1]["name"] == e["StarSystem"]:
                 continue
-            seq.append({"name": e["StarSystem"], "t": parse_ts(e.get("timestamp"))})
+            seq.append({"name": e["StarSystem"], "id": e.get("SystemAddress"), "t": parse_ts(e.get("timestamp"))})
+    find = _positions(archive, db)
     out = []
     for s in seq:
-        p = pos.get(s["name"])
+        p = find(s["name"])
         if p:
             out.append(dict(s, x=_r(p[0]), y=_r(p[1]), z=_r(p[2])))
+    return out
+
+
+# a carrier jump takes about 15 minutes from the request; it lands at the
+# departure time. Later than this after departure without a CarrierLocation
+# (you were not online) it is taken to be there.
+ARRIVED_AFTER_S = 5 * 60
+
+
+def carrier_now(archive: fl.Archive, db: Optional[Database] = None,
+                now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """Where the carrier is: the last CarrierLocation / CarrierJump - or the
+    target of a jump request whose departure has passed - and a jump that is
+    still to come."""
+    now = time.time() if now is None else now
+    ident: Dict[str, Any] = {}
+    cur: Optional[Dict[str, Any]] = None
+    req: Optional[Dict[str, Any]] = None
+    for e in archive.events():
+        ev = e["event"]
+        if ev == "CarrierStats":
+            ident = {"name": e.get("Name"), "callsign": e.get("Callsign")}
+        elif ev in ("CarrierLocation", "CarrierJump") and e.get("StarSystem"):
+            if cur is None or cur["system"] != e["StarSystem"]:
+                cur = {"system": e["StarSystem"], "id": e.get("SystemAddress"),
+                       "since": parse_ts(e.get("timestamp")), "expected": False}
+            if e.get("BodyID") is not None:
+                cur["body_id"] = e.get("BodyID")
+            if req and req["to"] == e["StarSystem"]:
+                req = None
+        elif ev == "CarrierJumpRequest":
+            ts = parse_ts(e.get("timestamp")) or now
+            req = {"to": e.get("SystemName"), "id": e.get("SystemAddress"), "body": e.get("Body"),
+                   "body_id": e.get("BodyID"),
+                   "departure": parse_ts(e.get("DepartureTime")) or ts + 15 * 60}
+        elif ev == "CarrierJumpCancelled":
+            req = None
+    if req and now > req["departure"] + ARRIVED_AFTER_S:
+        cur = {"system": req["to"], "id": req["id"], "since": req["departure"], "expected": True,
+               "body_id": req.get("body_id"), "body": req.get("body")}
+        req = None
+    if cur is None:
+        return None
+    find = _positions(archive, db)
+    p = find(cur["system"])
+    if not p:
+        return None
+    out = dict(cur, x=_r(p[0]), y=_r(p[1]), z=_r(p[2]), **ident)
+    if req:
+        q = find(req["to"])
+        out["jump"] = dict(req, x=_r(q[0]), y=_r(q[1]), z=_r(q[2])) if q else dict(req)
     return out
 
 
@@ -133,14 +201,22 @@ def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
     out: Dict[str, Any] = {"generated": now, "days": days}
     path = flight_path(archive, since)
     out["path"] = path
-    out["carrier"] = carrier_path(archive)
+    out["carrier"] = carrier_path(archive, db)
+    out["carrier_now"] = carrier_now(archive, db, now)
     jumps = [p for p in path if p["kind"] == "jump"]
     out["stats"] = {"jumps": len(jumps), "ly": _r(sum(p["ly"] or 0 for p in jumps), 0),
                     "systems": len({p["name"] for p in path}),
                     "first": path[0]["t"] if path else None, "last": path[-1]["t"] if path else None}
     sysl = live.get("system") or {}
     pos = sysl.get("pos")
-    out["you"] = {"name": sysl.get("name"), "x": _r(pos[0]), "y": _r(pos[1]), "z": _r(pos[2])} if pos else None
+    if pos:
+        out["you"] = {"name": sysl.get("name"), "id": sysl.get("id64"), "live": True,
+                      "x": _r(pos[0]), "y": _r(pos[1]), "z": _r(pos[2])}
+    else:
+        # FIS started before the game: the last system of the log is where we are
+        last = (path or flight_path(archive, None))[-1:]
+        out["you"] = ({"name": last[0]["name"], "id": last[0]["id64"], "live": False, "t": last[0]["t"],
+                       "x": last[0]["x"], "y": last[0]["y"], "z": last[0]["z"]} if last else None)
     out["navroute"] = [{"name": h.get("name"), "x": _r(h["pos"][0]), "y": _r(h["pos"][1]),
                         "z": _r(h["pos"][2])} for h in live.get("navroute") or [] if h.get("pos")]
     # survey spheres

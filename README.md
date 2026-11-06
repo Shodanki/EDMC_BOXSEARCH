@@ -10,8 +10,8 @@
 Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
 
 **New in 4.4: SHBOX FIS**, a flight information system for a second screen,
-tablet or phone - ship status, tactical view, surface map, atlas, carrier and
-galaxy map - in the `FIS` folder of this plugin. See [FIS/README.md](FIS/README.md).
+tablet or phone - planet surface, system in 3D, galaxy map, planet info, atlas,
+ship status and carrier - in the `FIS` folder of this plugin. See [FIS/README.md](FIS/README.md).
 
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
 > all. On the first start 4.1 repairs boxel records written under a wrong
@@ -1635,7 +1635,7 @@ from the track.
 ### SHBOX FIS - flight information system
 
 A companion in your browser, shipped in the `FIS` folder: eight views (briefing,
-tactical, planet, surface, atlas, ship, carrier, galaxy), English and German,
+planet, system, galaxy, planet info, atlas, ship, carrier), English and German,
 for a desktop, a 10" tablet or a phone, each view also in a window of its own.
 It reads the plugin database and the game's files only. Start it with
 `FIS\start_fis.bat` (Python 3.11+); the first start asks a few questions and

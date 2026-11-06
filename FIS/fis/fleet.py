@@ -34,7 +34,10 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "ShipyardSell", "ShipyardTransfer", "SellShipOnRebuy", "CarrierStats",
           "CarrierLocation", "CarrierJump", "CarrierJumpRequest", "CarrierJumpCancelled",
           "CarrierDepositFuel", "CarrierBankTransfer", "CarrierFinance", "CarrierCrewServices",
-          "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame")
+          "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
+          "SAAScanComplete", "SellOrganicData",
+          "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked",
+          "Statistics", "Rank", "Progress", "Reputation", "MarketSell", "CargoTransfer")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
 
 # carrier tritium per jump: 5 + ly * (load + tritium + BASE) / DIV, rounded.
@@ -48,6 +51,31 @@ CARRIER_TANK = 1000
 
 def tritium_for_jump(ly: float, load_t: float, tritium_t: float) -> int:
     return int(round(5 + ly * (load_t + tritium_t + TRITIUM_BASE) / TRITIUM_DIV))
+
+
+def carrier_trip(ly: float, load_t: float, tank: int) -> Dict[str, Any]:
+    """Tritium for a trip of `ly` in equal jumps of at most 500 ly. Tritium
+    on board weighs too: when the tank is short, the need is worked out for
+    a carrier that carries it."""
+    n = max(1, int(math.ceil(ly / CARRIER_MAX_JUMP - 1e-9)))
+    hop = ly / n
+
+    def cost(start: float) -> int:
+        left, total = float(start), 0
+        for _ in range(n):
+            need = tritium_for_jump(hop, load_t, left)
+            total += need
+            left -= need
+        return total
+
+    need = cost(tank)
+    if need > tank:
+        start = need
+        for _ in range(4):
+            start = cost(start)
+        need = start
+    return {"ly": round(ly, 1), "jumps": n, "need": int(need), "enough": need <= tank,
+            "short": max(0, int(need) - int(tank))}
 
 
 def carrier_range(tritium: int, load_t: float, hop_ly: float = CARRIER_MAX_JUMP
@@ -163,6 +191,16 @@ def module_name(item: Optional[str]) -> str:
     return base
 
 
+def readable_module(localised: Optional[str], raw: Optional[str] = None) -> str:
+    """The game's own module name - unless it is still a $..._name; key:
+    some variants come unlocalised (AfmuRepairs on the free fighter hangar:
+    "$Int_FighterBayMk2_Size5_Class1_Name; (Free)"). Then our own name."""
+    if localised and "$" not in localised:
+        return localised
+    key = re.sub(r"[$;]|_name\b| \(free\)|_free\b", "", (raw or localised or "").lower()).strip()
+    return module_name(key) if key else "?"
+
+
 def slot_group(slot: str) -> str:
     s = slot or ""
     if s.startswith("TinyHardpoint"):
@@ -245,8 +283,23 @@ def rate_loadout(lo: Dict[str, Any]) -> Dict[str, Any]:
     if not has("int_detailedsurfacescanner"):
         expl = min(expl, 2)
     pax = 0 if not cabins else min(5, 1 + cabins)
+    # search and rescue: repair and fuel limpets for others, fuel to give,
+    # a scoop to refill. The rescue / universal multi-limpet controller
+    # counts for repair, fuel transfer and decontamination; a dedicated fuel
+    # transfer controller carries more.
+    mlc = has("int_multidronecontrol_rescue") or has("int_multidronecontrol_universal")
+    repair = has("int_dronecontrol_repair") or mlc
+    fuel_lt = has("int_dronecontrol_fueltransfer")
+    tank = float((lo.get("FuelCapacity") or {}).get("Main") or 0.0)
+    sar = 0.0
+    if repair or fuel_lt or mlc:
+        sar = ((1.5 if repair else 0) + (1.5 if fuel_lt else 1.0 if mlc else 0)
+               + (1.5 if tank >= 150 else 1.0 if tank >= 100 else 0.5 if tank >= 64 else 0)
+               + (0.5 if has("int_fuelscoop") else 0)
+               + (0.3 if has("int_dronecontrol_decontamination") or mlc else 0)
+               + (0.2 if has("int_dronecontrol_collection") or has("int_multidronecontrol_operations") else 0))
     roles = {"combat": _clamp(combat), "mining": _clamp(mine), "transport": trans,
-             "exploration": expl, "passengers": pax}
+             "exploration": expl, "passengers": pax, "sar": _clamp(sar)}
     why = {
         "combat": "%d weapons%s%s%s" % (len(weapons), (", " + module_name(shield)) if shield else ", no shield",
                                         (", %d boosters" % boosters) if boosters else "",
@@ -256,9 +309,14 @@ def rate_loadout(lo: Dict[str, Any]) -> Dict[str, Any]:
         "exploration": "%.1f ly%s%s" % (jump, "" if has("int_fuelscoop") else ", no scoop",
                                         ", DSS" if has("int_detailedsurfacescanner") else ", no DSS"),
         "passengers": "%d cabins" % cabins if cabins else "no cabins",
+        "sar": ", ".join(x for x in (
+            "rescue limpets" if mlc else ("repair limpets" if repair else ""),
+            "fuel transfer limpets" if fuel_lt else "",
+            "%d t fuel" % tank if tank else "",
+            "scoop" if has("int_fuelscoop") else "no scoop") if x) if (repair or fuel_lt or mlc) else "no repair or fuel limpets",
     }
     # ties go to the specialised role - every hull carries some guns
-    pref = ("mining", "exploration", "passengers", "transport", "combat")
+    pref = ("mining", "exploration", "sar", "passengers", "transport", "combat")
     best = max(pref, key=lambda k: (roles[k], -pref.index(k)))
     return {"roles": roles, "why": why, "primary": best if roles[best] > 0 else None}
 
@@ -420,6 +478,14 @@ class Archive:
                                       else s.get("StarSystem")),
                               in_transit=bool(s.get("InTransit")), stored_at=where)
         stored_ts = stored.get("timestamp") if stored else ""
+        # StoredShips never lists the ship you sit in: the one active when the
+        # list was written belongs to the fleet even when its Loadout is older
+        active_at_list = None
+        for e in evs:
+            if (e.get("timestamp") or "") > stored_ts:
+                break
+            if e["event"] == "Loadout" and e.get("ShipID") is not None:
+                active_at_list = int(e["ShipID"])
         # ship ids come back after selling: a fitting belongs to a hangar entry
         # only when the hull type matches; otherwise try same type + same name
         by_name: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -439,7 +505,7 @@ class Archive:
             if sid in ships or sid in sold:
                 continue
             # not in the last hangar list: only ships bought or flown since
-            if stored and (lo.get("timestamp") or "") < stored_ts and sid != current:
+            if stored and (lo.get("timestamp") or "") < stored_ts and sid not in (current, active_at_list):
                 continue
             entry(sid)["type"] = (lo.get("Ship") or "").lower()
             fits[sid] = lo
@@ -465,6 +531,31 @@ class Archive:
         order = sorted(ships.values(), key=lambda s: (not s.get("current"), s.get("stored_at") != "here",
                                                       s.get("type_name") or ""))
         return {"ships": order, "hangar": stored_info, "names": names}
+
+    def dss(self, sys_id64: int, body_id: int) -> Optional[Dict[str, Any]]:
+        """Last surface scan of a body: probes used against the efficiency target."""
+        last = None
+        for e in self.events():
+            if (e["event"] == "SAAScanComplete" and e.get("SystemAddress") == sys_id64
+                    and e.get("BodyID") == body_id):
+                last = e
+        if last is None:
+            return None
+        p, tg = last.get("ProbesUsed"), last.get("EfficiencyTarget")
+        return {"probes": p, "target": tg, "efficient": p is not None and tg is not None and p <= tg,
+                "ts": last.get("timestamp")}
+
+    def organic_values(self) -> Dict[str, Dict[str, int]]:
+        """Species -> value and first-logged bonus, from your own sales of organic data."""
+        out: Dict[str, Dict[str, int]] = {}
+        for e in self.events():
+            if e["event"] != "SellOrganicData":
+                continue
+            for b in e.get("BioData") or []:
+                name = b.get("Species_Localised") or b.get("Species")
+                if name:
+                    out[name] = {"value": int(b.get("Value") or 0), "bonus": int(b.get("Bonus") or 0)}
+        return out
 
     def current_loadout(self) -> Optional[Dict[str, Any]]:
         last = None
@@ -514,7 +605,9 @@ class Archive:
             elif ev == "CarrierJumpCancelled":
                 pend = None
             elif ev in ("CarrierLocation", "CarrierJump"):
-                if pend and e.get("StarSystem") == pend["to"]:
+                # the first report from the target is the arrival; later logins
+                # (CarrierLocation again) until the next CarrierStats are not
+                if pend and not pend.get("arrived") and e.get("StarSystem") == pend["to"]:
                     pend["arrived"] = e.get("timestamp")
                     arrived_ts = e.get("timestamp")
                 elif ev == "CarrierJump" or e.get("StarSystem") != cur:

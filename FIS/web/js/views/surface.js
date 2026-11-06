@@ -30,7 +30,7 @@ export function mount(r) {
   info = el("div", { class: "sf-info" });
   list = el("div", { class: "sf-list scroll" });
   wrap.append(cv, el("div", { class: "sf-side" }, info, list));
-  root.append(frame(t("SURFACE"), "", wrap, { cls: "sf-frame" }));
+  root.append(frame(t("PLANET · SURFACE"), "", wrap, { cls: "sf-frame" }));
   g = cv.getContext("2d");
   cv.addEventListener("wheel", (e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.25 : 0.8); }, { passive: false });
   cv.addEventListener("mousedown", (e) => { drag = { x: e.clientX, y: e.clientY, px: view.panX, py: view.panY }; });

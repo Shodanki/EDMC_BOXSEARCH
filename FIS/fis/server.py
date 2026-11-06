@@ -123,8 +123,28 @@ class App:
                int((fx.get("ts") or 0) // 60), id(self.calib.model))
         self.calib.maybe_refresh()
         cm, om = self.calib.model, self.calib.order_model
-        return self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
+        out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
             self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om))
+        return self._with_carrier(out, id64)
+
+    def _with_carrier(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
+        """Your carrier, when it is in this system or jumping here."""
+        from . import galaxy
+        try:
+            cn = galaxy.carrier_now(self.archive, self.db)
+        except Exception:
+            cn = None
+        if not cn:
+            return out
+        out = dict(out)
+        if cn.get("id") == id64:
+            out["carrier"] = {k: cn.get(k) for k in ("name", "callsign", "body_id", "body", "since", "expected")}
+        j = cn.get("jump") or {}
+        if j.get("id") == id64:
+            out["carrier_incoming"] = {"name": cn.get("name"), "callsign": cn.get("callsign"),
+                                       "departure": j.get("departure"), "body": j.get("body"),
+                                       "body_id": j.get("body_id"), "from": cn.get("system")}
+        return out
 
     def current_id64(self) -> Optional[int]:
         cur = self.live_state().get("system") or {}
@@ -235,7 +255,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(app.system(int(mm.group(1))))
         mm = _RE_BODY.match(path)
         if mm:
-            out = m.build_body(app.db, int(mm.group(1)), int(mm.group(2)))
+            out = m.build_body(app.db, int(mm.group(1)), int(mm.group(2)), app.archive)
             if out is None:
                 return self._error(404, "body not found")
             return self._json(out)
@@ -276,7 +296,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir))
         if path == "/api/carrier":
             from . import shipview
-            return self._json(shipview.build_carrier(app.archive, app.live_state()))
+            return self._json(shipview.build_carrier(app.archive, app.live_state(),
+                                                     journal_dir=app.cfg.journal_dir))
+        if path == "/api/mining":
+            from . import mining
+            return self._json(mining.build_mining(app.archive, app.db, app.live_state(), app.cfg.journal_dir))
+        if path == "/api/statistics":
+            from . import stats
+            try:
+                days = float((qs.get("days") or ["0"])[0]) or None
+            except ValueError:
+                days = None
+            return self._json(stats.build_statistics(app.archive, days))
         if path == "/api/galaxy":
             from . import galaxy
             try:

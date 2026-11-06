@@ -13,9 +13,13 @@ import * as atlas from "./views/atlas.js";
 import * as ship from "./views/ship.js";
 import * as carrier from "./views/carrier.js";
 import * as galaxy from "./views/galaxy.js";
+import * as statistics from "./views/statistics.js";
+import * as mining from "./views/mining.js";
 
-const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galaxy };
+const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galaxy, statistics, mining };
 // ?solo=ship: one view alone in its own window (second screen, tablet)
+// ?system=<id64> pins another system (detail window from GALAXY, review)
+const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];
 const SOLO = (() => { const v = new URLSearchParams(location.search).get("solo"); return v && VIEWS[v] ? v : null; })();
 if (SOLO) document.body.classList.add("solo");
 
@@ -49,6 +53,13 @@ if (SOLO) {
   full.href = location.pathname + "#" + SOLO;
   full.textContent = "FIS";
   full.title = t("all views");
+  if (PINNED) {
+    const tag = document.createElement("span");
+    tag.className = "solo-detail";
+    tag.textContent = t("DETAIL VIEW");
+    tag.title = t("this window shows one system - live data stays in the main window");
+    ctl.append(tag);
+  }
   ctl.append(fullscreen.button(), layout.picker("lay-pick"), langs, full);
   document.body.append(ctl);
 }
@@ -59,7 +70,6 @@ getJSON("/api/config").then((c) => {
   f.textContent = t("Home network: {u}", { u: c.lan_urls[0] });
   f.title = c.lan_urls.join(" · ");
 }).catch(() => {});
-const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];
 
 const store = {
   live: null, system: null, briefing: null, ship: null,
@@ -110,16 +120,19 @@ function show(name) {
 }
 for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => show(b.dataset.view));
 // hand-edited URL hash / bookmarks (#briefing, #tactical, #planet)
+// the names on the tabs work as addresses too (#system, #planetinfo)
+const ALIAS = { system: "tactical", planetinfo: "planet", stats: "statistics" };
 window.addEventListener("hashchange", () => {
-  const name = location.hash.slice(1);
+  const name = ALIAS[location.hash.slice(1)] || location.hash.slice(1);
   if (!SOLO && VIEWS[name] && name !== store.view) show(name);
 });
 window.addEventListener("keydown", (e) => {
-  if (e.target.matches("input, textarea, select")) return;
+  if (e.target && e.target.matches && e.target.matches("input, textarea, select")) return;
   if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey) { fullscreen.toggle(); return; }
   if (SOLO) return;
-  const map = { "1": "briefing", "2": "tactical", "3": "planet", "4": "surface", "5": "atlas",
-    "6": "ship", "7": "carrier", "8": "galaxy" };
+  // keys follow the tab order: briefing, planet, system, galaxy, planet info ...
+  const map = { "1": "briefing", "2": "surface", "3": "tactical", "4": "galaxy", "5": "planet",
+    "6": "atlas", "7": "ship", "8": "carrier", "9": "mining", "0": "statistics" };
   if (map[e.key]) show(map[e.key]);
 });
 
@@ -135,6 +148,7 @@ async function refresh(what) {
     if (what === "system" || what === "all") {
       // ?system=<id64> pins another system (review, second screen)
       store.system = await getJSON(PINNED ? "/api/system/" + PINNED : "/api/system/current");
+      if (PINNED && store.system && store.system.name) document.title = store.system.name + " · " + t("DETAIL VIEW") + " · SHBOX FIS";
       if (store.system && (!store.selected || store.selected.id64 !== store.system.id64)) {
         store.selected = null;
       }
@@ -251,4 +265,4 @@ setInterval(() => {
   if (store.view === "carrier") carrier.update(ctx, "data");
 }, 60000);
 
-show(SOLO || (location.hash || "#tactical").slice(1));
+show(SOLO || ALIAS[location.hash.slice(1)] || (location.hash || "#tactical").slice(1));

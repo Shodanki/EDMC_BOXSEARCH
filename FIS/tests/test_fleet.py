@@ -145,6 +145,57 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(view["ident"]["name"], "TESTCARRIER")
         self.assertGreater(view["finance"]["weeks_left"], 10)
 
+    def test_carrier_arrival_while_offline(self):
+        """Arrived while you were away: later logins do not move the arrival."""
+        import os
+        with open(os.path.join(self.tmp.name, "Journal.2026-02-01T090000.01.log"), "w", encoding="utf-8") as fh:
+            for line in ('{"timestamp":"2026-02-01T09:00:00Z","event":"CarrierJumpRequest","SystemName":"Alpha","DepartureTime":"2026-02-01T09:15:00Z"}',
+                         '{"timestamp":"2026-02-01T09:15:00Z","event":"CarrierLocation","StarSystem":"Alpha"}',
+                         '{"timestamp":"2026-03-01T10:00:00Z","event":"CarrierLocation","StarSystem":"Alpha"}',
+                         '{"timestamp":"2026-03-01T10:01:00Z","event":"CarrierStats","Callsign":"ABC-123","FuelLevel":850,"SpaceUsage":{}}'):
+                fh.write(line + "\n")
+        c = fl.Archive(self.tmp.name).carrier()
+        self.assertEqual(c["arrived"], "2026-02-01T09:15:00Z")
+        self.assertEqual(c["jumps"][-1]["to"], "Alpha")
+        self.assertEqual(c["jumps"][-1]["ts"], "2026-02-01T09:15:00Z")
+
+    def test_readable_module(self):
+        self.assertEqual(fl.readable_module("Wake Scanner", "$hpt_cloudscanner_size0_class5_name;"), "Wake Scanner")
+        self.assertEqual(fl.readable_module("$Int_FighterBayMk2_Size5_Class1_Name; (Free)",
+                                            "$int_fighterbaymk2_size5_class1_free_name;"), "Fighter Hangar 5E")
+        # alerts stored before the raw key was kept
+        self.assertEqual(fl.readable_module("$Int_FighterBayMk2_Size5_Class1_Name; (Free)"), "Fighter Hangar 5E")
+
+    def test_ship_flown_when_hangar_listed(self):
+        """Swapping through the hangar: StoredShips is written while you sit in
+        ship 34 and leaves it out; after the next swap it still belongs to the fleet."""
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "Journal.2026-03-01T090000.01.log"), "w", encoding="utf-8") as fh:
+                for e in (_ev("2026-03-01T09:00:00Z", "Commander", FID="F1", Name="X"),
+                          _ev("2026-03-01T09:00:01Z", "Loadout", Ship="panthermkii", ShipID=34, ShipName="PCC", Modules=[]),
+                          _ev("2026-03-01T09:00:05Z", "StoredShips", StationName="V2L-07J", StarSystem="S",
+                              MarketID=1, ShipsHere=[{"ShipID": 44, "ShipType": "explorer_nx", "Name": "SILVERHAWK", "Value": 1}],
+                              ShipsRemote=[]),
+                          _ev("2026-03-01T09:00:09Z", "ShipyardSwap", ShipType="explorer_nx", ShipID=44,
+                              StoreOldShip="PantherMkII", StoreShipID=34),
+                          _ev("2026-03-01T09:00:10Z", "Loadout", Ship="explorer_nx", ShipID=44, ShipName="SILVERHAWK", Modules=[])):
+                    fh.write(e + "\n")
+            ids = sorted(s["id"] for s in fl.Archive(d).fleet()["ships"])
+            self.assertEqual(ids, [34, 44])
+
+    def test_sar_role(self):
+        t7 = {"Ship": "type7", "CargoCapacity": 64, "MaxJumpRange": 48.5, "FuelCapacity": {"Main": 112.0},
+              "Modules": [{"Slot": "Slot01_Size5", "Item": "int_dronecontrol_fueltransfer_size5_class5"},
+                          {"Slot": "Slot02_Size3", "Item": "int_multidronecontrol_rescue_size3_class3"},
+                          {"Slot": "Slot03_Size5", "Item": "int_fuelscoop_size5_class5"}]}
+        r = fl.rate_loadout(t7)
+        self.assertEqual(r["roles"]["sar"], 5)
+        self.assertEqual(r["primary"], "sar")
+        self.assertIn("fuel transfer limpets", r["why"]["sar"])
+        miner = {"Ship": "type8", "CargoCapacity": 256, "FuelCapacity": {"Main": 32.0},
+                 "Modules": [{"Slot": "Slot01_Size5", "Item": "int_dronecontrol_collection_size5_class5"}]}
+        self.assertEqual(fl.rate_loadout(miner)["roles"]["sar"], 0)
+
     def test_ship_panel(self):
         flags = (1 << 24) | (1 << 8) | (1 << 28) | (1 << 4)   # in ship, lights, night vision, SC; shields off
         live = {"status": {"ts": time.time(), "flags": flags, "flags2": 0, "pips": [4, 6, 2]},
