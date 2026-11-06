@@ -35,6 +35,27 @@ class GalaxyTest(unittest.TestCase):
         car = self.galaxy.carrier_path(self.ar)
         self.assertEqual([c["name"] for c in car], ["Alpha", "Beta"])
         self.assertEqual(car[1]["x"], 400)
+        now = self.galaxy.carrier_now(self.ar)
+        self.assertEqual(now["system"], "Beta")
+        self.assertEqual(now["name"], "TESTCARRIER")
+        self.assertFalse(now["expected"])
+        self.assertNotIn("jump", now)
+
+    def test_carrier_jump_pending_and_expected(self):
+        from fis.live import parse_ts
+        with open(os.path.join(self.tmp.name, "Journal.2026-01-30T090000.01.log"), "w", encoding="utf-8") as fh:
+            fh.write('{"timestamp":"2026-01-30T09:00:00Z","event":"CarrierJumpRequest","SystemName":"Alpha",'
+                     '"SystemAddress":1,"DepartureTime":"2026-01-30T09:15:00Z"}\n')
+        ar = fl.Archive(self.tmp.name)
+        dep = parse_ts("2026-01-30T09:15:00Z")
+        before = self.galaxy.carrier_now(ar, now=dep - 60)
+        self.assertEqual(before["system"], "Beta")           # still there, jump to come
+        self.assertEqual(before["jump"]["to"], "Alpha")
+        self.assertEqual(before["jump"]["x"], 0)
+        after = self.galaxy.carrier_now(ar, now=dep + 3600)
+        self.assertEqual(after["system"], "Alpha")           # not seen, but departed an hour ago
+        self.assertTrue(after["expected"])
+        self.assertNotIn("jump", after)
 
     def test_boxels_in_sphere(self):
         path = os.path.join(self.tmp.name, "db.sqlite")

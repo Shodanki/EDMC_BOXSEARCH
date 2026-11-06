@@ -90,8 +90,20 @@ function fromPick(p) {
   if (p.kind === "system") return { kind: "system", name: p.s.n, id: p.s.id, x: p.s.x, y: p.s.y, z: p.s.z };
   if (p.kind === "jump") return { kind: "jump", name: p.p.name, id: p.p.id64, x: p.p.x, y: p.p.y, z: p.p.z, t: p.p.t };
   if (p.kind === "find") return { kind: "find", name: p.f.name, id: p.f.id, x: p.f.x, y: p.f.y, z: p.f.z, kinds: p.f.kinds };
-  if (p.kind === "carrier") return { kind: "carrier", name: p.c.name, x: p.c.x, y: p.c.y, z: p.c.z };
+  if (p.kind === "carrier") return { kind: "stop", name: p.c.name, id: p.c.id, x: p.c.x, y: p.c.y, z: p.c.z, t: p.c.t };
+  if (p.kind === "carriernow") return carrierFocus();
   return null;
+}
+function carrierFocus() {
+  const c = data && data.carrier_now;
+  return c ? { kind: "carrier", name: c.system, id: c.id, x: c.x, y: c.y, z: c.z, carrier: c } : null;
+}
+// "EAS NAME · system · since 3.11." and "-> target · 14:30" for a pending jump
+function carrierTexts(c) {
+  const when = c.expected ? t("expected there") : c.since ? t("since {d}", { d: new Date(c.since * 1000).toLocaleDateString() }) : "";
+  const main = (c.name || t("carrier")) + (when ? " · " + when : "");
+  const jump = c.jump ? t("jump to {s} · {t}", { s: c.jump.to, t: new Date(c.jump.departure * 1000).toLocaleString() }) : null;
+  return [main, jump, when];
 }
 function pickFocus(p) {
   const f = fromPick(p);
@@ -133,7 +145,7 @@ async function setMode(m) {
       g3load = g3load || Promise.race([import("./galaxy3d.js"),
         new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000))]);
       const mod = await g3load;
-      if (!g3) g3 = mod.createGalaxy3D(stage, ov, { t, label, pick: pickFocus, open: (p) => openDetail(p.id) });
+      if (!g3) g3 = mod.createGalaxy3D(stage, ov, { t, label, carrierTexts, pick: pickFocus, open: (p) => openDetail(p.id) });
       g3.setReplay(replay);
       if (data) { g3.setData(data, on); if (focus) g3.focusOn(focus, { me: focusMe, instant: true, dist: g3.meDistance() }); }
       ui.eng.textContent = "";
@@ -235,7 +247,8 @@ function fit(what) {
 
 function nearest(px, py, rad = 12) {
   let best = null, bd = rad * rad;
-  for (const p of picks) { const d = (p.sx - px) ** 2 + (p.sy - py) ** 2; if (d < bd) { bd = d; best = p; } }
+  // later = drawn on top: wins a tie
+  for (const p of picks) { const d = (p.sx - px) ** 2 + (p.sy - py) ** 2; if (d <= bd) { bd = d; best = p; } }
   return best;
 }
 
@@ -308,11 +321,13 @@ function draw() {
     }
   }
   // carrier path
-  if (on.carrier && data.carrier.length > 1) {
-    g.strokeStyle = "rgba(255,178,62,.75)"; g.lineWidth = 1.2; g.setLineDash([2, 4]); g.beginPath();
-    data.carrier.forEach((c, i) => { const [sx, sy] = toScreen(c.x, c.z); i ? g.lineTo(sx, sy) : g.moveTo(sx, sy); });
-    g.stroke(); g.setLineDash([]);
-    for (const c of data.carrier) { const [sx, sy] = toScreen(c.x, c.z); g.fillStyle = C.amber; g.fillRect(sx - 2.5, sy - 2.5, 5, 5); picks.push({ sx, sy, kind: "carrier", c }); }
+  if (on.carrier && data.carrier.length) {
+    if (data.carrier.length > 1) {
+      g.strokeStyle = "rgba(255,178,62,.75)"; g.lineWidth = 1.2; g.setLineDash([2, 4]); g.beginPath();
+      data.carrier.forEach((c, i) => { const [sx, sy] = toScreen(c.x, c.z); i ? g.lineTo(sx, sy) : g.moveTo(sx, sy); });
+      g.stroke(); g.setLineDash([]);
+    }
+    for (const c of data.carrier) { const [sx, sy] = toScreen(c.x, c.z); g.fillStyle = C.amber; g.fillRect(sx - 2.5, sy - 2.5, 5, 5); picks.push({ sx, sy, kind: "carrier", c, id: c.id }); }
   }
   // flight path, coloured by age
   if (on.path && data.path.length > 1) {
@@ -358,6 +373,23 @@ function draw() {
     const d = data.you ? Math.hypot(data.you.x, data.you.y, data.you.z) : null;
     g.fillText("Sol" + (d ? " " + fmt(d, 0) + " ly" : ""), ex + (Math.cos(ang) > 0 ? -70 : 10), ey + (Math.sin(ang) > 0 ? -10 : 16));
   }
+  // the carrier where it is now (hull with bridge), and a jump still to come
+  if (on.carrier && data.carrier_now) {
+    const cn = data.carrier_now, [main, jump] = carrierTexts(cn);
+    const [sx, sy] = toScreen(cn.x, cn.z);
+    if (jump && cn.jump.x !== undefined) {
+      const [jx, jy] = toScreen(cn.jump.x, cn.jump.z);
+      g.strokeStyle = C.amber; g.lineWidth = 1.5; g.setLineDash([6, 4]);
+      g.beginPath(); g.moveTo(sx, sy); g.lineTo(jx, jy); g.stroke(); g.setLineDash([]);
+      g.beginPath(); g.arc(jx, jy, 6, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = C.amber; g.font = "11px monospace"; g.fillText(jump, jx + 9, jy + 14);
+    }
+    g.fillStyle = "rgba(5,12,13,.9)"; g.strokeStyle = C.amber; g.lineWidth = 1.5;
+    g.fillRect(sx - 9, sy - 3, 18, 7); g.strokeRect(sx - 9, sy - 3, 18, 7);
+    g.fillStyle = C.amber; g.fillRect(sx + 2, sy - 8, 4, 5);
+    g.font = "11px monospace"; g.fillText(main, sx + 13, sy + 4);
+    picks.push({ sx, sy, kind: "carriernow", c: cn, id: cn.id });
+  }
   // you
   if (data.you) {
     const [sx, sy] = toScreen(data.you.x, data.you.z);
@@ -368,7 +400,7 @@ function draw() {
   if (focus && !focusMe) {
     const [sx, sy] = toScreen(focus.x, focus.z);
     g.strokeStyle = C.amber; g.lineWidth = 1.5; g.beginPath(); g.arc(sx, sy, 9, 0, Math.PI * 2); g.stroke();
-    g.fillStyle = C.amber; g.font = "11px monospace"; g.fillText(focus.name || "", sx + 12, sy + 4);
+    if (focus.kind !== "carrier") { g.fillStyle = C.amber; g.font = "11px monospace"; g.fillText(focus.name || "", sx + 12, sy + 4); }
   }
   // hover label
   if (hover) {
@@ -390,7 +422,8 @@ function label(p) {
   const y = (o) => " · y " + fmt(o.y, 0);
   if (p.kind === "system") return p.s.n + y(p.s) + (p.s.u ? " · " + t("only known to us") : p.s.v ? " · " + t("visited") : "");
   if (p.kind === "jump") return p.p.name + y(p.p) + (p.p.t ? " · " + new Date(p.p.t * 1000).toLocaleDateString() : "");
-  if (p.kind === "carrier") return t("carrier") + ": " + p.c.name;
+  if (p.kind === "carrier") return t("carrier") + ": " + p.c.name + (p.c.t ? " · " + new Date(p.c.t * 1000).toLocaleDateString() : "");
+  if (p.kind === "carriernow") return p.c.system + " · " + carrierTexts(p.c)[0];
   if (p.kind === "find") return p.f.name + " · " + p.f.kinds.map(k => t(FIND_NAME[k] || k)).join(", ");
   if (p.kind === "boxel") {
     const keys = p.c.list.filter(b => b.key).map(b => b.key);
@@ -464,7 +497,8 @@ function focusFrame() {
   if (!focusMe && you) facts.push(t("{d} ly from you", { d: fmt(Math.hypot(f.x - you.x, f.y - you.y, f.z - you.z), 1) }));
   if (known) facts.push(known.u ? t("only known to us") : known.v ? t("visited") : "");
   if (f.kinds) facts.push(f.kinds.map(k => t(FIND_NAME[k] || k)).join(", "));
-  if (f.kind === "carrier") facts.push(t("carrier"));
+  if (f.carrier) facts.push(t("carrier") + " " + [f.carrier.name, f.carrier.callsign].filter(Boolean).join(" ") + " · " + carrierTexts(f.carrier)[2]);
+  if (f.kind === "stop") facts.push(t("carrier stop") + (f.t ? " " + new Date(f.t * 1000).toLocaleDateString() : ""));
   if (f.live === false && f.t) facts.push(new Date(f.t * 1000).toLocaleString());
   return frame(t("FOCUS"), tag, [
     el("div", { class: "gal-big c-amber", text: f.name || "?" }),
@@ -472,6 +506,7 @@ function focusFrame() {
     el("div", { class: "row-btns" },
       el("button", { text: t("details") + " ⧉", title: t("open this system in SYSTEM, in its own window"),
         disabled: f.id ? null : true, onclick: () => openDetail(f.id) }),
-      focusMe ? null : el("button", { text: t("back to me"), onclick: () => refit("you") })),
+      focusMe ? null : el("button", { text: t("back to me"), onclick: () => refit("you") }),
+      data.carrier_now && f.kind !== "carrier" ? el("button", { text: t("carrier"), onclick: () => setFocus(carrierFocus(), false, { zoom: true }) }) : null),
   ], { appear: false });
 }

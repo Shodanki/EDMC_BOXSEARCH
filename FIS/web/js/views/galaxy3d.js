@@ -138,6 +138,14 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
       const l = lineObj(data.navroute.map(P), COL.amber, 1, true, Math.max(1, extent / 300));
       root.add(l); layer.navroute = l;
     }
+    // the carrier where it is now, and a jump still to come
+    if (data.carrier_now) {
+      const cn = data.carrier_now, grp = new THREE.Group();
+      grp.add(new THREE.Points(new THREE.BufferGeometry().setFromPoints([P(cn)]),
+        new THREE.PointsMaterial({ size: 11, sizeAttenuation: false, color: COL.amber })));
+      if (cn.jump && cn.jump.x !== undefined) grp.add(lineObj([P(cn), P(cn.jump)], COL.amber, 0.9, true, Math.max(1, extent / 300)));
+      root.add(grp); layer.carriernow = grp;
+    }
     // finds as small diamonds (points)
     if (data.finds.length) {
       const g = new THREE.Group();
@@ -161,6 +169,7 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
   }
 
   function applyLayers() {
+    if (layer.carriernow) layer.carriernow.visible = on.carrier !== false;
     for (const k of ["path", "carrier", "systems", "boxels", "spheres", "finds", "navroute"]) {
       if (layer[k]) layer[k].visible = on[k] !== false;
     }
@@ -255,11 +264,16 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
     if (mark) {                                   // the focus: amber ring and name
       const [x, y, ok] = project(mark.x, mark.y, -mark.z);
       if (ok) { g.strokeStyle = "#FFB23E"; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.stroke();
-        g.fillStyle = "#FFB23E"; g.fillText(mark.name || "", x + 12, y + 4); }
+        if (mark.kind !== "carrier") { g.fillStyle = "#FFB23E"; g.fillText(mark.name || "", x + 12, y + 4); } }
     }
     label({ x: 0, y: 0, z: 0 }, "Sol", "#FFF4E8");
     { const [x, y, ok] = project(0, 0, 0); if (ok) { g.fillStyle = "#FFF4E8"; g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill(); } }
     if (on.navroute !== false) data.navroute.forEach((h, i) => { if (i) label(h, String(i), "#FFB23E"); });
+    if (on.carrier !== false && data.carrier_now && hooks.carrierTexts) {
+      const cn = data.carrier_now, [main, jump] = hooks.carrierTexts(cn);
+      label(cn, main, "#FFB23E");
+      if (jump && cn.jump.x !== undefined) label(cn.jump, jump, "#FFB23E");
+    }
     // replay head
     if (replay < 1) {
       const h = api.replayHead();
@@ -277,7 +291,8 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
       const last = Math.round((data.path.length - 1) * replay);
       data.path.forEach((p, i) => { if (i <= last) add(p, { kind: "jump", p, id: p.id64 }); });
     }
-    if (on.carrier !== false) for (const c of data.carrier) add(c, { kind: "carrier", c });
+    if (on.carrier !== false) for (const c of data.carrier) add(c, { kind: "carrier", c, id: c.id });
+    if (on.carrier !== false && data.carrier_now) add(data.carrier_now, { kind: "carriernow", c: data.carrier_now, id: data.carrier_now.id });
     if (on.finds !== false) for (const f of data.finds) add(f, { kind: "find", f, id: f.id });
     if (hover) {
       const txt = hooks.label ? hooks.label(hover) : "";
@@ -294,7 +309,8 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
   function nearest(e, rad) {
     const r = renderer.domElement.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
     let best = null, bd = rad * rad;
-    for (const p of picks) { const d = (p.sx - x) ** 2 + (p.sy - y) ** 2; if (d < bd) { bd = d; best = p; } }
+    // later = drawn on top: wins a tie
+    for (const p of picks) { const d = (p.sx - x) ** 2 + (p.sy - y) ** 2; if (d <= bd) { bd = d; best = p; } }
     return best;
   }
   function setHover(p) { if (p !== hover) { hover = p; renderer.domElement.style.cursor = p && p.id ? "pointer" : ""; dirty = true; } }
