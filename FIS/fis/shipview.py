@@ -168,7 +168,8 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
         report.append({"level": "caution", "key": "ammo_low", "what": x["name"], "value": x["ammo_pct"]})
     for a in alerts[-8:]:
         if a.get("event") == "AfmuRepairs":
-            report.append({"level": "advisory", "key": "afmu", "what": a.get("module"),
+            report.append({"level": "advisory", "key": "afmu",
+                           "what": fl.readable_module(a.get("module"), a.get("module_key")),
                            "value": round((a.get("health") or 0) * 100), "ts": a.get("ts")})
     if capacity and draw > capacity:
         report.append({"level": "caution", "key": "power_over", "value": round(100 * draw / capacity)})

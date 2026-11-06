@@ -159,6 +159,13 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(c["jumps"][-1]["to"], "Alpha")
         self.assertEqual(c["jumps"][-1]["ts"], "2026-02-01T09:15:00Z")
 
+    def test_readable_module(self):
+        self.assertEqual(fl.readable_module("Wake Scanner", "$hpt_cloudscanner_size0_class5_name;"), "Wake Scanner")
+        self.assertEqual(fl.readable_module("$Int_FighterBayMk2_Size5_Class1_Name; (Free)",
+                                            "$int_fighterbaymk2_size5_class1_free_name;"), "Fighter Hangar 5E")
+        # alerts stored before the raw key was kept
+        self.assertEqual(fl.readable_module("$Int_FighterBayMk2_Size5_Class1_Name; (Free)"), "Fighter Hangar 5E")
+
     def test_ship_panel(self):
         flags = (1 << 24) | (1 << 8) | (1 << 28) | (1 << 4)   # in ship, lights, night vision, SC; shields off
         live = {"status": {"ts": time.time(), "flags": flags, "flags2": 0, "pips": [4, 6, 2]},

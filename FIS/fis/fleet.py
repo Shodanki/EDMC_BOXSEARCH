@@ -190,6 +190,16 @@ def module_name(item: Optional[str]) -> str:
     return base
 
 
+def readable_module(localised: Optional[str], raw: Optional[str] = None) -> str:
+    """The game's own module name - unless it is still a $..._name; key:
+    some variants come unlocalised (AfmuRepairs on the free fighter hangar:
+    "$Int_FighterBayMk2_Size5_Class1_Name; (Free)"). Then our own name."""
+    if localised and "$" not in localised:
+        return localised
+    key = re.sub(r"[$;]|_name\b| \(free\)|_free\b", "", (raw or localised or "").lower()).strip()
+    return module_name(key) if key else "?"
+
+
 def slot_group(slot: str) -> str:
     s = slot or ""
     if s.startswith("TinyHardpoint"):
