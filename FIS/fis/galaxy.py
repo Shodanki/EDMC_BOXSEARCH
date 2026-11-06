@@ -120,16 +120,20 @@ def carrier_now(archive: fl.Archive, db: Optional[Database] = None,
             if cur is None or cur["system"] != e["StarSystem"]:
                 cur = {"system": e["StarSystem"], "id": e.get("SystemAddress"),
                        "since": parse_ts(e.get("timestamp")), "expected": False}
+            if e.get("BodyID") is not None:
+                cur["body_id"] = e.get("BodyID")
             if req and req["to"] == e["StarSystem"]:
                 req = None
         elif ev == "CarrierJumpRequest":
             ts = parse_ts(e.get("timestamp")) or now
             req = {"to": e.get("SystemName"), "id": e.get("SystemAddress"), "body": e.get("Body"),
+                   "body_id": e.get("BodyID"),
                    "departure": parse_ts(e.get("DepartureTime")) or ts + 15 * 60}
         elif ev == "CarrierJumpCancelled":
             req = None
     if req and now > req["departure"] + ARRIVED_AFTER_S:
-        cur = {"system": req["to"], "id": req["id"], "since": req["departure"], "expected": True}
+        cur = {"system": req["to"], "id": req["id"], "since": req["departure"], "expected": True,
+               "body_id": req.get("body_id"), "body": req.get("body")}
         req = None
     if cur is None:
         return None

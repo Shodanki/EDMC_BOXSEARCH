@@ -45,16 +45,18 @@ class GalaxyTest(unittest.TestCase):
         from fis.live import parse_ts
         with open(os.path.join(self.tmp.name, "Journal.2026-01-30T090000.01.log"), "w", encoding="utf-8") as fh:
             fh.write('{"timestamp":"2026-01-30T09:00:00Z","event":"CarrierJumpRequest","SystemName":"Alpha",'
-                     '"SystemAddress":1,"DepartureTime":"2026-01-30T09:15:00Z"}\n')
+                     '"SystemAddress":1,"BodyID":3,"DepartureTime":"2026-01-30T09:15:00Z"}\n')
         ar = fl.Archive(self.tmp.name)
         dep = parse_ts("2026-01-30T09:15:00Z")
         before = self.galaxy.carrier_now(ar, now=dep - 60)
         self.assertEqual(before["system"], "Beta")           # still there, jump to come
         self.assertEqual(before["jump"]["to"], "Alpha")
+        self.assertEqual(before["jump"]["body_id"], 3)
         self.assertEqual(before["jump"]["x"], 0)
         after = self.galaxy.carrier_now(ar, now=dep + 3600)
         self.assertEqual(after["system"], "Alpha")           # not seen, but departed an hour ago
         self.assertTrue(after["expected"])
+        self.assertEqual(after["body_id"], 3)
         self.assertNotIn("jump", after)
 
     def test_boxels_in_sphere(self):

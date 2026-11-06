@@ -123,8 +123,28 @@ class App:
                int((fx.get("ts") or 0) // 60), id(self.calib.model))
         self.calib.maybe_refresh()
         cm, om = self.calib.model, self.calib.order_model
-        return self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
+        out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
             self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om))
+        return self._with_carrier(out, id64)
+
+    def _with_carrier(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
+        """Your carrier, when it is in this system or jumping here."""
+        from . import galaxy
+        try:
+            cn = galaxy.carrier_now(self.archive, self.db)
+        except Exception:
+            cn = None
+        if not cn:
+            return out
+        out = dict(out)
+        if cn.get("id") == id64:
+            out["carrier"] = {k: cn.get(k) for k in ("name", "callsign", "body_id", "body", "since", "expected")}
+        j = cn.get("jump") or {}
+        if j.get("id") == id64:
+            out["carrier_incoming"] = {"name": cn.get("name"), "callsign": cn.get("callsign"),
+                                       "departure": j.get("departure"), "body": j.get("body"),
+                                       "body_id": j.get("body_id"), "from": cn.get("system")}
+        return out
 
     def current_id64(self) -> Optional[int]:
         cur = self.live_state().get("system") or {}

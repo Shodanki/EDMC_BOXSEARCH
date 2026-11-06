@@ -264,6 +264,32 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
     if (s.ok) items.push({ s, text: r.ls >= 1000 ? (r.ls / 1000) + "k LS" : r.ls + " LS", tags: [], pri: 3, ring: true, colour: "#3C5755" });
   }
 
+  // your carrier: hull with bridge beside the body it parks at (journal
+  // BodyID; the main star when that body is not in the scene), and the body a
+  // pending jump goes to
+  const carrierAt = (bodyId) => {
+    const b = (bodyId !== null && bodyId !== undefined && scene.byId.get(bodyId))
+      || scene.bodies.find((x) => x.kind === "Star") || scene.bodies[0];
+    const s = b && screen.get(b.id);
+    return s ? { x: s.x + (s.rad || 4) + 9, y: s.y + (s.rad || 4) + 7, ok: true, rad: 6 } : null;
+  };
+  const hull = (p, dashed) => {
+    ctx2d.save();
+    ctx2d.strokeStyle = UI.amber; ctx2d.fillStyle = dashed ? "rgba(5,12,13,.5)" : "rgba(5,12,13,.9)";
+    ctx2d.lineWidth = 1.4; if (dashed) ctx2d.setLineDash([2, 2]);
+    ctx2d.fillRect(p.x - 8, p.y - 3, 16, 6); ctx2d.strokeRect(p.x - 8, p.y - 3, 16, 6);
+    ctx2d.setLineDash([]); ctx2d.fillStyle = UI.amber; ctx2d.fillRect(p.x + 2, p.y - 7, 3, 4);
+    ctx2d.restore();
+  };
+  if (scene.carrier) {
+    const p = carrierAt(scene.carrier.body_id);
+    if (p) { hull(p, scene.carrier.expected); items.push({ s: p, text: scene.carrier.name || "FC", tags: [], pri: 88, colour: UI.amber }); }
+  }
+  if (scene.carrierIn) {
+    const p = carrierAt(scene.carrierIn.body_id);
+    if (p) { hull(p, true); items.push({ s: p, text: "→ " + (scene.carrierIn.name || "FC"), tags: [], pri: 86, colour: UI.amber }); }
+  }
+
   items.sort((a, b) => b.pri - a.pri);
   ctx2d.font = "12px " + getComputedStyle(document.body).getPropertyValue("--font-mono");
   const OFFS = [[14, -16], [14, 8], [-14, -16], [-14, 8], [0, -28], [0, 20], [26, -30], [-26, 22]];

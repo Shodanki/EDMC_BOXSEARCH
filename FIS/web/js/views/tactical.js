@@ -101,6 +101,7 @@ function toggleAuto() {
 function rebuild(keepView) {
   const sys = ctxRef.store.system;
   scene = sys && sys.bodies && sys.bodies.length ? buildScene(sys, prefs.mode) : null;
+  if (scene) { scene.carrier = sys.carrier || null; scene.carrierIn = sys.carrier_incoming || null; }
   if (renderer) {
     if (scene) renderer.setScene(scene, keepView);
     else renderer.setScene({ bodies: [], route: [], rings: [], extent: 10, byId: new Map() }, false);
@@ -163,6 +164,16 @@ function renderSide() {
       t("{n} bodies", { n: sys.body_count ? sys.bodies.length + "/" + sys.body_count : sys.bodies.length }) +
       (sys.fss_complete ? " · " + t("FSS complete") : "")),
   ];
+  if (sys.carrier) {
+    const c = sys.carrier, at = c.body_id !== null && c.body_id !== undefined && sys.bodies.find((b) => b.body_id === c.body_id);
+    head.push(el("div", { class: "c-amber", text: (c.expected ? t("Your carrier {n} should be here", { n: c.name || "" })
+      : t("Your carrier {n} is here", { n: c.name || "" })) + (at ? " · " + (at.short || at.name) : "") }));
+  }
+  if (sys.carrier_incoming) {
+    const c = sys.carrier_incoming;
+    head.push(el("div", { class: "c-amber", text: t("Your carrier {n} jumps here · {t}", { n: c.name || "",
+      t: c.departure ? new Date(c.departure * 1000).toLocaleString() : "?" }) }));
+  }
   if (!sys.known_sources.length) head.push(el("div", {}, chip(t("in no database"), "first")));
   else head.push(el("div", { class: "c-dim", text: t("known: {s}", { s: sys.known_sources.join(", ") }) }));
   side.append(frame("SYSTEM", sys.visited ? t("visited") : "", head, { kind: sys.known_sources.length ? "" : "disc", appear: false }));
