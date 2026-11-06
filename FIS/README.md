@@ -75,7 +75,7 @@ or iPhone, "Add to Home Screen" opens the FIS without browser bars.
 | 1 | **BRIEFING** | the jump target: distance, star and scoopable, whether any database knows it, what the neighbours in its boxel held, fuel after the jump, open boxel candidates, the plotted route |
 | 2 | **PLANET** | the surface of a body: your track (ship, SRV, on foot), finds, colony circles for exobiology sampling, where the SRV is parked |
 | 3 | **SYSTEM** | the current system in 3D at its Kepler positions, the course line in the plugin's order with leg times, your last position fix, biology per body |
-| 4 | **GALAXY** | your flight path through the galaxy over time, the carrier's path, survey spheres with the status of every boxel, visited systems, notable finds; flat map or 3D with a replay of the flight path |
+| 4 | **GALAXY** | your flight path through the galaxy over time, the carrier's path, survey spheres with the status of every boxel, visited systems, notable finds; flat map or 3D with a replay of the flight path; starts on your system, a click moves the focus, a double click opens the system as a detail window |
 | 5 | **PLANET INFO** | datasheet of a body: gravity, temperature, atmosphere, volcanism, materials, rings and hotspots, signals, species, genus forecast |
 | 6 | **ATLAS** | everything found, by kind - ring hotspots, body signals, materials picked up, finds on the ground - nearest first, within a chosen distance |
 | 7 | **SHIP** | status panel (warning / caution / advisory lamps), schematic cutaway, power by priority, modules with integrity and ammunition, damage and function report, cargo and fuel |

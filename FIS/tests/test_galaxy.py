@@ -67,7 +67,12 @@ class GalaxyTest(unittest.TestCase):
         self.assertEqual(closed[0]["key"], "Synuefe AB-C b1")
         self.assertEqual(len(g["systems"]), 1)
         self.assertEqual(g["you"]["x"], 1)
+        self.assertTrue(g["you"]["live"])
         self.assertEqual(g["stats"]["jumps"], 1)
+        # no live position (FIS started before the game): the last system of the log
+        g = self.galaxy.build_galaxy(Database(path), self.ar, {})
+        self.assertFalse(g["you"]["live"])
+        self.assertEqual(g["you"]["name"], g["path"][-1]["name"])
 
 
 if __name__ == "__main__":

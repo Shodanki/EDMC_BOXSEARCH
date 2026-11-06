@@ -444,6 +444,8 @@ body.solo #views { padding-top: 30px; }   /* room for the solo control */
 #solo-ctl { position: fixed; top: 6px; right: 8px; z-index: 50; display: flex; gap: 6px; align-items: center;
   font-size: 11px; opacity: .55; transition: opacity .2s; }
 #solo-ctl:hover, #solo-ctl:focus-within { opacity: 1; }
+#solo-ctl .solo-detail { color: #071214; background: #FFB23E; padding: 0 6px; font-weight: bold; letter-spacing: .08em; }
+body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 #solo-ctl a { color: #3EF2E0; text-decoration: none; border: 1px solid rgba(62,242,224,.3); padding: 0 6px; }
 
 /* tablet (10": 1280 x 800 landscape, 800 x 1280 portrait) */

@@ -140,7 +140,14 @@ def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
                     "first": path[0]["t"] if path else None, "last": path[-1]["t"] if path else None}
     sysl = live.get("system") or {}
     pos = sysl.get("pos")
-    out["you"] = {"name": sysl.get("name"), "x": _r(pos[0]), "y": _r(pos[1]), "z": _r(pos[2])} if pos else None
+    if pos:
+        out["you"] = {"name": sysl.get("name"), "id": sysl.get("id64"), "live": True,
+                      "x": _r(pos[0]), "y": _r(pos[1]), "z": _r(pos[2])}
+    else:
+        # FIS started before the game: the last system of the log is where we are
+        last = (path or flight_path(archive, None))[-1:]
+        out["you"] = ({"name": last[0]["name"], "id": last[0]["id64"], "live": False, "t": last[0]["t"],
+                       "x": last[0]["x"], "y": last[0]["y"], "z": last[0]["z"]} if last else None)
     out["navroute"] = [{"name": h.get("name"), "x": _r(h["pos"][0]), "y": _r(h["pos"][1]),
                         "z": _r(h["pos"][2])} for h in live.get("navroute") or [] if h.get("pos")]
     # survey spheres

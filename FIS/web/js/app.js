@@ -16,6 +16,8 @@ import * as galaxy from "./views/galaxy.js";
 
 const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galaxy };
 // ?solo=ship: one view alone in its own window (second screen, tablet)
+// ?system=<id64> pins another system (detail window from GALAXY, review)
+const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];
 const SOLO = (() => { const v = new URLSearchParams(location.search).get("solo"); return v && VIEWS[v] ? v : null; })();
 if (SOLO) document.body.classList.add("solo");
 
@@ -49,6 +51,13 @@ if (SOLO) {
   full.href = location.pathname + "#" + SOLO;
   full.textContent = "FIS";
   full.title = t("all views");
+  if (PINNED) {
+    const tag = document.createElement("span");
+    tag.className = "solo-detail";
+    tag.textContent = t("DETAIL VIEW");
+    tag.title = t("this window shows one system - live data stays in the main window");
+    ctl.append(tag);
+  }
   ctl.append(fullscreen.button(), layout.picker("lay-pick"), langs, full);
   document.body.append(ctl);
 }
@@ -59,7 +68,6 @@ getJSON("/api/config").then((c) => {
   f.textContent = t("Home network: {u}", { u: c.lan_urls[0] });
   f.title = c.lan_urls.join(" · ");
 }).catch(() => {});
-const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];
 
 const store = {
   live: null, system: null, briefing: null, ship: null,
@@ -138,6 +146,7 @@ async function refresh(what) {
     if (what === "system" || what === "all") {
       // ?system=<id64> pins another system (review, second screen)
       store.system = await getJSON(PINNED ? "/api/system/" + PINNED : "/api/system/current");
+      if (PINNED && store.system && store.system.name) document.title = store.system.name + " · " + t("DETAIL VIEW") + " · SHBOX FIS";
       if (store.system && (!store.selected || store.selected.id64 !== store.system.id64)) {
         store.selected = null;
       }

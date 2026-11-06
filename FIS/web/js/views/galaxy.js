@@ -2,7 +2,9 @@
 // Top view: galactic x to the right, z up (towards the core); y (height)
 // shows in the tooltip. Layers can be switched; the path is coloured by age
 // (old = violet, new = cyan). Wheel zooms at the cursor, drag pans, double
-// click fits everything; a click on a system opens it in SYSTEM (new tab).
+// click fits everything. The map starts on the focus - the current system, or
+// the last one of the log - and a click moves the focus elsewhere; a double
+// click (or "details") opens that system in SYSTEM in its own popup window.
 // 2D | 3D: the same data in Three.js (galaxy3d.js), loaded on demand; if the
 // CDN is not reachable the view stays 2D. The replay slider draws the path
 // jump by jump, in both modes.
@@ -31,6 +33,7 @@ let mc = localStorage.getItem("fis.gal.mc") || "";
 let mode = new URLSearchParams(location.search).has("2d") ? "2d" : (localStorage.getItem("fis.gal.mode") || "2d");
 let g3 = null, g3load = null, ov = null, stage = null, replay = 1, playTimer = null;
 let ui = {};                     // toolbar elements
+let focus = null, focusMe = true;  // what the map turns around; focusMe: follows you
 
 export function mount(r) {
   root = r;
@@ -57,18 +60,53 @@ export function mount(r) {
       view.cx = drag.cx - dx / view.scale; view.cz = drag.cz + dy / view.scale; draw(); return;
     }
     const p = nearest(e.offsetX, e.offsetY);
-    if (p !== hover) { hover = p; cv.style.cursor = p && p.id ? "pointer" : ""; draw(); renderSide(); }
+    if (p !== hover) { hover = p; cv.style.cursor = p ? "pointer" : ""; draw(); }
   });
-  cv.addEventListener("pointerup", () => {
-    if (drag && !drag.moved && hover && hover.id) openPick(hover);
+  cv.addEventListener("pointerup", (e) => {
+    if (drag && !drag.moved) {
+      const p = nearest(e.offsetX, e.offsetY, e.pointerType === "touch" ? 22 : 12);
+      if (p) { hover = p; pickFocus(p); }
+    }
     drag = null;
   });
-  cv.addEventListener("dblclick", () => { fit(); draw(); });
+  cv.addEventListener("dblclick", (e) => {
+    const p = nearest(e.offsetX, e.offsetY, 14);
+    if (p && p.id) openDetail(p.id); else { fit(); draw(); }
+  });
   new ResizeObserver(() => draw()).observe(cv);
   if (mode === "3d") setMode("3d"); else applyMode();
 }
 
-function openPick(p) { window.open("/?system=" + p.id + "#tactical", "_blank"); }
+// the detail view: SYSTEM alone in one popup window, pinned to that system
+function openDetail(id) {
+  if (!id) return;
+  const w = window.open(location.pathname + "?solo=tactical&system=" + id, "fis-detail", "popup,width=1280,height=860");
+  if (w) w.focus();
+}
+
+// ------------------------------------------------------------ focus
+function meFocus() { return data && data.you ? Object.assign({ kind: "you" }, data.you) : null; }
+function fromPick(p) {
+  if (p.kind === "system") return { kind: "system", name: p.s.n, id: p.s.id, x: p.s.x, y: p.s.y, z: p.s.z };
+  if (p.kind === "jump") return { kind: "jump", name: p.p.name, id: p.p.id64, x: p.p.x, y: p.p.y, z: p.p.z, t: p.p.t };
+  if (p.kind === "find") return { kind: "find", name: p.f.name, id: p.f.id, x: p.f.x, y: p.f.y, z: p.f.z, kinds: p.f.kinds };
+  if (p.kind === "carrier") return { kind: "carrier", name: p.c.name, x: p.c.x, y: p.c.y, z: p.c.z };
+  return null;
+}
+function pickFocus(p) {
+  const f = fromPick(p);
+  if (!f) return;
+  const me = data.you && f.id && f.id === data.you.id;
+  setFocus(me ? meFocus() : f, me);
+}
+function setFocus(f, me, opts = {}) {
+  if (!f) return;
+  focus = f; focusMe = !!me; hover = null;
+  view.cx = f.x; view.cz = f.z;
+  if (opts.zoom || view.scale === null) view.scale = 4;
+  if (g3) g3.focusOn(f, { me: focusMe, instant: opts.instant, dist: opts.zoom ? g3.meDistance() : null });
+  draw(); renderSide();
+}
 
 // ------------------------------------------------------------ toolbar: 2D | 3D, camera, replay
 function tools() {
@@ -95,9 +133,9 @@ async function setMode(m) {
       g3load = g3load || Promise.race([import("./galaxy3d.js"),
         new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000))]);
       const mod = await g3load;
-      if (!g3) g3 = mod.createGalaxy3D(stage, ov, { t, label, pick: openPick });
+      if (!g3) g3 = mod.createGalaxy3D(stage, ov, { t, label, pick: pickFocus, open: (p) => openDetail(p.id) });
       g3.setReplay(replay);
-      if (data) g3.setData(data, on);
+      if (data) { g3.setData(data, on); if (focus) g3.focusOn(focus, { me: focusMe, instant: true, dist: g3.meDistance() }); }
       ui.eng.textContent = "";
     } catch (err) {
       g3load = null; mode = "2d";
@@ -121,7 +159,10 @@ function applyMode() {
 }
 
 function view3d() { return mode === "3d" && g3; }
-function refit(what) { if (view3d()) g3.view(what === "you" ? "me" : what || "all"); else { fit(what); draw(); } }
+function refit(what) {
+  if (what === "you") { setFocus(meFocus(), true, { zoom: true }); return; }
+  if (view3d()) g3.view(what || "all"); else { fit(what); draw(); }
+}
 
 function setReplay(k) {
   replay = Math.max(0, Math.min(1, k));
@@ -154,9 +195,15 @@ export async function update(ctx, reason) {
   const qs = new URLSearchParams();
   if (days) qs.set("days", String(days));
   if (mc !== "") qs.set("mc", mc);
+  const before = data && data.you ? data.you.id : null;
   try { data = await getJSON("/api/galaxy?" + qs.toString()); } catch (e) { data = null; }
-  if (data && view.scale === null) fit();
   if (data && g3) g3.setData(data, on);
+  // start on the focus (you, or the last system of the log); while it is
+  // you, it follows your jumps
+  if (data && (!focus || (focusMe && data.you && data.you.id !== before))) {
+    const first = !focus;
+    setFocus(meFocus() || focus, true, { zoom: first, instant: first });
+  } else if (data && view.scale === null) setFocus(focusMe ? meFocus() || focus : focus, focusMe, { zoom: true, instant: true });
   if (replay < 1) setReplay(replay);
   renderSide(); draw();
 }
@@ -186,8 +233,8 @@ function fit(what) {
   view.scale = Math.min(W / (w * 1.15), H / (h * 1.15));
 }
 
-function nearest(px, py) {
-  let best = null, bd = 12 * 12;
+function nearest(px, py, rad = 12) {
+  let best = null, bd = rad * rad;
   for (const p of picks) { const d = (p.sx - px) ** 2 + (p.sy - py) ** 2; if (d < bd) { bd = d; best = p; } }
   return best;
 }
@@ -317,6 +364,12 @@ function draw() {
     g.strokeStyle = "#FFFFFF"; g.lineWidth = 1.5;
     g.beginPath(); g.arc(sx, sy, 7, 0, Math.PI * 2); g.moveTo(sx - 11, sy); g.lineTo(sx + 11, sy); g.moveTo(sx, sy - 11); g.lineTo(sx, sy + 11); g.stroke();
   }
+  // the focus, when it is not you: amber ring and name
+  if (focus && !focusMe) {
+    const [sx, sy] = toScreen(focus.x, focus.z);
+    g.strokeStyle = C.amber; g.lineWidth = 1.5; g.beginPath(); g.arc(sx, sy, 9, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = C.amber; g.font = "11px monospace"; g.fillText(focus.name || "", sx + 12, sy + 4);
+  }
   // hover label
   if (hover) {
     const txt = label(hover);
@@ -352,6 +405,7 @@ function renderSide() {
   side.replaceChildren();
   if (!data) { side.append(frame(t("GALAXY"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
   const st = data.stats;
+  if (focus) side.append(focusFrame());
   const period = st.first ? new Date(st.first * 1000).toLocaleDateString() + " – " + new Date(st.last * 1000).toLocaleDateString() : "";
   const daySel = el("select", { class: "lay-pick", onchange: (e) => { days = Number(e.target.value); localStorage.setItem("fis.gal.days", String(days)); view.scale = null; update(null, "data"); } },
     ...SPANS.map(([v, l]) => el("option", { value: String(v), text: t(l) })));
@@ -398,5 +452,26 @@ function renderSide() {
     ...Object.entries(FIND_COL).map(([k, c]) => el("span", { style: { color: c }, text: "◆ " + t(FIND_NAME[k]) })),
     el("span", { class: "c-dim", text: view3d()
       ? t("path: violet = old, cyan = recent · drag turns · right drag or two fingers pan · wheel zooms")
-      : t("path: violet = old, cyan = recent · wheel zoom · drag · double click fits") })));
+      : t("path: violet = old, cyan = recent · wheel zoom · drag · double click fits") }),
+    el("span", { class: "c-dim", text: t("click: focus there · double click: details in their own window") })));
+}
+
+function focusFrame() {
+  const f = focus, you = data.you;
+  const tag = focusMe ? (f.live === false ? t("last system") : t("you are here")) : "";
+  const known = f.id ? data.systems.find(s => s.id === f.id) : null;
+  const facts = [t("y {y} ly", { y: fmt(f.y, 0) }), t("{d} ly from Sol", { d: fmt(Math.hypot(f.x, f.y, f.z), 0) })];
+  if (!focusMe && you) facts.push(t("{d} ly from you", { d: fmt(Math.hypot(f.x - you.x, f.y - you.y, f.z - you.z), 1) }));
+  if (known) facts.push(known.u ? t("only known to us") : known.v ? t("visited") : "");
+  if (f.kinds) facts.push(f.kinds.map(k => t(FIND_NAME[k] || k)).join(", "));
+  if (f.kind === "carrier") facts.push(t("carrier"));
+  if (f.live === false && f.t) facts.push(new Date(f.t * 1000).toLocaleString());
+  return frame(t("FOCUS"), tag, [
+    el("div", { class: "gal-big c-amber", text: f.name || "?" }),
+    el("div", { class: "small c-dim", text: facts.filter(Boolean).join(" · ") }),
+    el("div", { class: "row-btns" },
+      el("button", { text: t("details") + " ⧉", title: t("open this system in SYSTEM, in its own window"),
+        disabled: f.id ? null : true, onclick: () => openDetail(f.id) }),
+      focusMe ? null : el("button", { text: t("back to me"), onclick: () => refit("you") })),
+  ], { appear: false });
 }

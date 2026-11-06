@@ -31,7 +31,7 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
   const root = new THREE.Group(); scene.add(root);
   const layer = {};                // name -> THREE.Object3D
   let data = null, on = {}, W = 1, H = 1, dirty = true, tween = null, picks = [], hover = null;
-  let segEnd = [], replay = 1, running = true;      // segEnd[i]: path index where segment i ends
+  let segEnd = [], replay = 1, running = true, mark = null;   // mark: the focus (when it is not you)      // segEnd[i]: path index where segment i ends
 
   function dispose(o) { o.traverse((n) => { if (n.geometry) n.geometry.dispose(); if (n.material) n.material.dispose(); }); }
   function clear() { segEnd = []; for (const o of [...root.children]) { root.remove(o); dispose(o); } for (const k in layer) delete layer[k]; }
@@ -206,11 +206,24 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
       const i = Math.max(0, Math.min(data.path.length - 1, Math.round((data.path.length - 1) * replay)));
       return data.path[i];
     },
+    // turn around another point: keep the camera's offset unless a distance is given
+    focusOn(f, opts = {}) {
+      if (!f) return;
+      mark = opts.me ? null : f;
+      const target = P(f);
+      let off = camera.position.clone().sub(controls.target);
+      if (opts.dist) off = off.lengthSq() > 0 ? off.normalize().multiplyScalar(opts.dist) : new THREE.Vector3(0, 0.7, 0.7).multiplyScalar(opts.dist);
+      const pos = target.clone().add(off);
+      if (opts.instant) { controls.target.copy(target); camera.position.copy(pos); controls.update(); tween = null; }
+      else goTo(target, pos);
+      dirty = true;
+    },
+    meDistance() { return Math.max(150, (data && data.boxel_size || 20) * 8); },
     view(what, instant) {
       if (!data) return;
       let target, dist, dirv = new THREE.Vector3(0, 0.7, 0.7);
       if (what === "sphere" && data.active) { target = P(data.active); dist = data.active.r * 3.2; }
-      else if (what === "me" && data.you) { target = P(data.you); dist = Math.max(150, (data.boxel_size || 20) * 8); }
+      else if (what === "me" && data.you) { target = P(data.you); dist = api.meDistance(); }
       else {
         const b = bounds(); target = b.getCenter(new THREE.Vector3());
         dist = Math.max(80, b.getSize(new THREE.Vector3()).length() * 0.9);
@@ -239,6 +252,11 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
     const label = (o, txt, colr) => { const [x, y, ok] = project(o.x, o.y, -o.z); if (!ok) return; g.fillStyle = colr; g.fillText(txt, x + 7, y - 6); };
     if (on.spheres !== false) for (const sp of data.spheres) label({ x: sp.x, y: sp.y + sp.r, z: sp.z }, sp.label, "#3EF2E0");
     if (data.you) label(data.you, hooks.t ? hooks.t("you") : "you", "#FFFFFF");
+    if (mark) {                                   // the focus: amber ring and name
+      const [x, y, ok] = project(mark.x, mark.y, -mark.z);
+      if (ok) { g.strokeStyle = "#FFB23E"; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.stroke();
+        g.fillStyle = "#FFB23E"; g.fillText(mark.name || "", x + 12, y + 4); }
+    }
     label({ x: 0, y: 0, z: 0 }, "Sol", "#FFF4E8");
     { const [x, y, ok] = project(0, 0, 0); if (ok) { g.fillStyle = "#FFF4E8"; g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill(); } }
     if (on.navroute !== false) data.navroute.forEach((h, i) => { if (i) label(h, String(i), "#FFB23E"); });
@@ -286,10 +304,14 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
     const moved = !downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4;
     downAt = null;
     if (moved) return;
-    // touch has no hover: the first tap shows the label, a second one opens it
+    // a click or tap puts the focus there (touch: also shows the label)
     const p = nearest(e, e.pointerType === "touch" ? 22 : 10);
-    if (e.pointerType === "touch" && p !== hover) { setHover(p); return; }
-    if (p && p.id && hooks.pick) hooks.pick(p);
+    if (e.pointerType === "touch") setHover(p);
+    if (p && hooks.pick) hooks.pick(p);
+  });
+  renderer.domElement.addEventListener("dblclick", (e) => {
+    const p = nearest(e, 14);
+    if (p && p.id && hooks.open) hooks.open(p);
   });
 
   function resize() {
