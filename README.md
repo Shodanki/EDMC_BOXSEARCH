@@ -1647,6 +1647,15 @@ SESSION  59 t Tritium | 36 min
 LIMPETS  last ~189 t OK
 ```
 
+In a ring the SESSION line becomes `HOTSPOT  Tritium Hotspot targeted - HUD
+compass | 59 t in 36 min`, or an amber reminder when the hotspot is not your
+target: then the game's own HUD compass points to the hotspot's centre, which
+keeps you oriented in the field. The game reports no position inside a ring
+(no latitude, longitude or heading in `Status.json`, no coordinates for a
+hotspot), so the plugin cannot draw a map or a compass of its own there.
+While the mining block is up, the route targets block steps aside; it returns
+ten minutes after the last mining event.
+
 * **ROCK** - the last prospector report: the share of the material you mine
   (the hotspot you target, else what you refine most), its content, and a
   verdict against the best rock of this session (GOOD / FAIR / MOVE ON);

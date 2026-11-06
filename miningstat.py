@@ -9,7 +9,10 @@ to five lines for the cockpit overlay:
            a verdict against the best rock of the session, motherlode
   HOLD     ore on board, free space, limpets
   RATE     tonnes per hour over the last ten minutes, full in ~ minutes
-  SESSION  refined this session, how long
+  SESSION  refined this session, how long - in a ring this line becomes
+  HOTSPOT  whether the hotspot is your target (then the game's own HUD
+           compass points to its centre; the game gives no position in a
+           ring, so nothing here can draw a map or a compass of its own)
   LIMPETS  how far the limpets go at the rate your session uses them
 
 Read only, no EDMC imports (testable on its own). The game writes nothing
@@ -29,6 +32,7 @@ ACTIVE_S = 10 * 60         # the overlay block shows this long after the last mi
 RATE_S = 10 * 60
 DEFAULT_RATIO = 0.4        # limpets per refined tonne until the session says better
 EVENTS = ("MiningRefined", "ProspectedAsteroid", "LaunchDrone", "AsteroidCracked", "Loadout")
+PLACE = ("SupercruiseExit", "SupercruiseEntry", "FSDJump", "Location")
 COLOURS = {"head": "#3EF2E0", "data": "#7CFF6B", "warn": "#FFB23E", "new": "#B57CFF", "dim": "#8FA3A6"}
 
 
@@ -55,6 +59,8 @@ class MiningTracker:
         self.capacity = 0
         self.cargo: Dict[str, int] = {}
         self.target: Optional[str] = None
+        self.target_name: Optional[str] = None
+        self.ring: Optional[str] = None           # the ring you dropped into
 
     def reset(self) -> None:
         self.start = 0.0
@@ -75,6 +81,10 @@ class MiningTracker:
         if ev == "Loadout":
             self.capacity = int(e.get("CargoCapacity") or 0)
             return False
+        if ev in PLACE:
+            self.ring = (e.get("Body") if ev == "SupercruiseExit" and e.get("BodyType") == "PlanetaryRing"
+                         else None)
+            return bool(self.last)
         if ev not in EVENTS:
             return False
         if ev == "LaunchDrone" and (e.get("Type") or "").lower() not in ("prospector", "collection"):
@@ -107,10 +117,15 @@ class MiningTracker:
 
     def status(self, entry: Dict[str, Any]) -> None:
         """Status.json: the target hotspot ('Tritium Hotspot') sets the material."""
+        if "Flags" not in entry:
+            return
         dest = entry.get("Destination") or {}
         name = dest.get("Name_Localised") or dest.get("Name") or ""
-        if "hotspot" in name.lower():
+        if "hotspot" in (dest.get("Name") or name).lower():
             self.target = type_key(dest.get("Name") or name) or None
+            self.target_name = name
+        else:
+            self.target = self.target_name = None
 
     # -- derived -------------------------------------------------------------
     def key(self) -> Optional[str]:
@@ -185,7 +200,13 @@ class MiningTracker:
         total = sum(self.refined.values())
         mins = max(1, round((now - self.start) / 60)) if self.start else 0
         main = max(self.refined, key=self.refined.get) if self.refined else None
-        out.append(("SESSION  %d t%s | %d min" % (total, (" " + self.names.get(main, "")) if main else "", mins), c["head"]))
+        if self.ring and self.target:
+            out.append(("HOTSPOT  %s targeted - HUD compass | %d t in %d min"
+                        % (self.target_name or self.target, total, mins), c["head"]))
+        elif self.ring:
+            out.append(("HOTSPOT  not targeted - select it in the nav panel for the HUD compass", c["warn"]))
+        else:
+            out.append(("SESSION  %d t%s | %d min" % (total, (" " + self.names.get(main, "")) if main else "", mins), c["head"]))
         ratio = self.ratio()
         reach = int(limpets / ratio) if ratio else 0
         if free is not None and reach < free:
@@ -206,9 +227,15 @@ def _selftest() -> int:
     for i in range(10, 40, 3):
         m.feed({"timestamp": t0 % i, "event": "MiningRefined", "Type": "$tritium_name;", "Type_Localised": "Tritium"},
                cargo={"tritium": (i - 10) // 3 + 1, "drones": 120})
-    m.status({"Destination": {"Name": "$SAA_RingHotspot:#type=$Tritium_name;;", "Name_Localised": "Tritium Hotspot"}})
+    m.status({"Flags": 1, "Destination": {"Name": "$SAA_RingHotspot:#type=$Tritium_name;;", "Name_Localised": "Tritium Hotspot"}})
     now = _ts({"timestamp": t0 % 59})
     lines = m.lines(now)
+    # in the ring: the session line becomes the hotspot line
+    m.feed({"timestamp": t0 % 50, "event": "SupercruiseExit", "Body": "X 4 B Ring", "BodyType": "PlanetaryRing"})
+    ring_lines = m.lines(now)
+    targeted = m.target
+    m.status({"Flags": 1})                    # target dropped
+    lost = m.lines(now)
     fails = 0
     checks = [
         (len(lines) == 5, "five lines"),
@@ -216,8 +243,11 @@ def _selftest() -> int:
         ("HOLD  10 t ore | 192 t free | 120 limpets" == lines[1][0], "hold line: " + lines[1][0]),
         (lines[2][0].startswith("RATE  60 t/h"), "rate line: " + lines[2][0]),
         (lines[3][0].startswith("SESSION  10 t Tritium"), "session line"),
-        (m.target == "tritium", "target from hotspot"),
+        (targeted == "tritium", "target from hotspot"),
         (m.active(now), "active"),
+        (ring_lines[3][0].startswith("HOTSPOT  Tritium Hotspot targeted"), "hotspot line: " + ring_lines[3][0]),
+        (lost[3][0].startswith("HOTSPOT  not targeted"), "hotspot lost: " + lost[3][0]),
+        (len(lost) == 5, "still five lines"),
     ]
     for ok, what in checks:
         if not ok:

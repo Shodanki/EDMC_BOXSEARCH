@@ -164,6 +164,7 @@ class CockpitOverlay:
         self.size = "small"
         self.hidden = False                  # a game screen is in front
         self._last_targets: List[Line] = []
+        self.mute_targets = False            # mining: the route block steps aside
         self._pending_brief: Optional[Tuple[List[Line], int, float]] = None
 
     # -- game screens ------------------------------------------------------
@@ -185,7 +186,7 @@ class CockpitOverlay:
         if hide:
             self.clear()
             return
-        if self._last_targets:
+        if self._last_targets and not self.mute_targets:
             self.draw("targets", self._last_targets, ttl=900)
         pb = self._pending_brief
         self._pending_brief = None
@@ -268,6 +269,9 @@ class CockpitOverlay:
     def show_targets(self, route: Any, done: Iterable[int]) -> bool:
         lines = targets_lines(route, done)
         self._last_targets = lines
+        if self.mute_targets:
+            self.clear("targets")
+            return False
         if not lines:
             self.clear("targets")
             return False
@@ -286,6 +290,17 @@ class CockpitOverlay:
         if self.hidden:
             return False
         return self.draw("nav", list(lines), ttl=seconds)
+
+    def mute_route(self, on: bool) -> None:
+        """While mining the route targets are no help: hide them, bring them
+        back afterwards."""
+        if on == self.mute_targets:
+            return
+        self.mute_targets = on
+        if on:
+            self.clear("targets")
+        elif self._last_targets and not self.hidden:
+            self.draw("targets", self._last_targets, ttl=900)
 
     def show_mining(self, lines: Sequence[Line], seconds: int = 30) -> bool:
         """Mining block (miningstat): at most five lines, while you mine."""

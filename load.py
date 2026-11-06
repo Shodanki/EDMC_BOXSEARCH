@@ -2665,7 +2665,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
             _note_position(entry)
 
         # mining: rock, hold, rate, session, limpets on the overlay
-        if ev in miningstat.EVENTS or ev == "Cargo":
+        if ev in miningstat.EVENTS or ev in miningstat.PLACE or ev == "Cargo":
             try:
                 cargo = state.get("Cargo") if isinstance(state, dict) else None
                 changed = ST.mine.feed(entry, cargo=cargo)
@@ -2925,7 +2925,9 @@ def _mining_overlay(force: bool = False) -> None:
         if ST._mine_drawn:
             ov.clear("mine")
             ST._mine_drawn = False
+        ov.mute_route(False)                 # the route targets come back
         return
+    ov.mute_route(True)                      # while mining they are no help
     if not force and now - ST._mine_shown < MINE_EVERY_S:
         return
     ST._mine_shown = now
