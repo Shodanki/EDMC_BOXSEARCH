@@ -92,10 +92,11 @@ function liveStatus() {
   // how far cargo space and limpets go
   const est = [];
   if (L.full_in_min !== undefined) est.push(t("full in ~{m} min at this rate", { m: fmt(L.full_in_min, 0) }));
-  if (L.limpets_for_t !== null && L.limpets_for_t !== undefined && L.free !== null)
-    est.push(L.limpets_for_t >= L.free ? t("limpets last for ~{t} t - enough", { t: fmt(L.limpets_for_t, 0) })
-      : t("limpets last for ~{t} t - not enough for {f} t free", { t: fmt(L.limpets_for_t, 0), f: fmt(L.free, 0) }));
-  if (est.length) rows.push(el("div", { class: "small " + (L.limpets_for_t < L.free ? "c-amber" : "c-dim"), text: est.join(" · ") }));
+  const short = L.limpets_for_t !== null && L.limpets_for_t !== undefined && L.room_t !== undefined && L.limpets_for_t < L.room_t;
+  if (L.room_t !== undefined)
+    est.push(short ? t("limpets last for ~{t} t - room for {f} t", { t: fmt(L.limpets_for_t, 0), f: fmt(L.room_t, 0) })
+      : t("room for ~{f} t, limpets last for ~{t} t - enough", { f: fmt(L.room_t, 0), t: fmt(L.limpets_for_t, 0) }));
+  if (est.length) rows.push(el("div", { class: "small " + (short ? "c-amber" : "c-dim"), text: est.join(" · ") }));
   // prospector reports: the last one large, a few before it
   const rocks = L.rocks || [];
   if (rocks.length) {
@@ -158,7 +159,7 @@ function limpets() {
       text: t("On board {h}", { h: cur.on_board }) + " · " + (Math.abs(cur.diff) <= 2 ? t("about right")
         : cur.diff > 0 ? t("take {n} more", { n: cur.diff }) : t("{n} too many - room for ore", { n: -cur.diff })) }) : null,
     el("div", { class: "c-dim small", text: basis }),
-    el("div", { class: "c-dim small", text: t("Limpets = r × cargo / (1 + r) + {p} % reserve: running dry costs a trip, a few spare cost a few tonnes. * no session with this hull - your average.",
+    el("div", { class: "c-dim small", text: t("Limpets = r × cargo + {p} % reserve: every limpet launched frees its tonne, so the hold can end full of ore. Ore = what the hold holds at the end. * no session with this hull - your average.",
       { p: Math.round(P.reserve * 100) }) }),
   ], { appear: false });
 }

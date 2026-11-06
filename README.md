@@ -1636,7 +1636,7 @@ Switch it off under "surface compass" in the settings.
 ### Mining in the overlay
 
 While you mine - prospector or collector limpets, prospected rocks, refined
-tonnes; gone ten minutes after the last of them - the overlay shows five
+tonnes; gone when you dock or ten minutes after the last of them - the overlay shows five
 lines:
 
 ```
@@ -1665,7 +1665,8 @@ ten minutes after the last mining event.
   hold is full at that pace (the game writes nothing about the refinery's
   bins, only each finished tonne)
 * **LIMPETS** - how many tonnes your limpets last at the rate this session
-  uses them; amber when that is less than the free space
+  uses them; amber when that is less than the room left (every limpet
+  launched leaves the hold, so its tonne is free for ore again)
 
 Switch it off under "mining" in the settings.
 

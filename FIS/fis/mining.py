@@ -57,11 +57,17 @@ def _runs(events: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
     """Mining events in runs without a break longer than GAP_S; only runs
     that refined or prospected something (repair, fuel or research limpets
     are no mining)."""
-    mev = [e for e in events if e["event"] in EVENTS and parse_ts(e.get("timestamp"))
+    mev = [e for e in events if (e["event"] in EVENTS or e["event"] == "Docked") and parse_ts(e.get("timestamp"))
            and (e["event"] != "LaunchDrone" or (e.get("Type") or "").lower() in ("prospector", "collection"))]
     runs: List[List[Dict[str, Any]]] = []
     cur: List[Dict[str, Any]] = []
     for e in mev:
+        if e["event"] == "Docked":             # docking at a station or carrier ends a session
+            if cur:
+                cur[-1] = dict(cur[-1], _docked=True)
+                runs.append(cur)
+                cur = []
+            continue
         if cur and parse_ts(e["timestamp"]) - parse_ts(cur[-1]["timestamp"]) > GAP_S:
             runs.append(cur)
             cur = []
@@ -83,7 +89,7 @@ def sessions(events: List[Dict[str, Any]], now: Optional[float] = None) -> List[
 def _summary(run: List[Dict[str, Any]], now: Optional[float] = None) -> Dict[str, Any]:
     now = time.time() if now is None else now
     start, end = parse_ts(run[0]["timestamp"]), parse_ts(run[-1]["timestamp"])
-    active = now - end <= GAP_S
+    active = now - end <= GAP_S and not run[-1].get("_docked")
     refined: Dict[str, Dict[str, Any]] = {}
     ticks: List[float] = []
     drones = {"prospector": 0, "collection": 0}
@@ -129,10 +135,13 @@ def _summary(run: List[Dict[str, Any]], now: Optional[float] = None) -> Dict[str
     }
 
 
-# limpet load: cargo C = limpets L + ore T, and the sessions say L = r * T
-# limpets per refined tonne. Best split L = r C / (1 + r), plus a reserve -
-# running out of limpets with room left costs a trip, a few spare cost
-# a few tonnes.
+# limpet load: a launched limpet leaves the hold, so its tonne is free for
+# ore again. With r limpets per refined tonne (your sessions), at any moment
+# limpets left + ore = L - r T + T <= C: load L = r C and the hold ends full
+# of ore. Plus a reserve - running dry with room left costs a trip, a few
+# spare cost a few tonnes. (06.11.: 159 limpets, 126 used for 272 t, the
+# hold ended at 305 of 322 t - the old split r C / (1 + r) would have run
+# out at ~228 t.)
 DEFAULT_RATIO = 0.4          # laser mining, until your own sessions say better
 LIMPET_RESERVE = 0.10
 MIN_TONNES = 20              # sessions shorter than this tell nothing
@@ -141,9 +150,15 @@ MIN_TONNES = 20              # sessions shorter than this tell nothing
 def limpet_load(cargo: int, ratio: float, reserve: float = LIMPET_RESERVE) -> Dict[str, int]:
     if not cargo:
         return {"limpets": 0, "ore": 0}
-    n = int(math.ceil(ratio * cargo / (1.0 + ratio) * (1.0 + reserve)))
-    n = max(0, min(cargo, n))
-    return {"limpets": n, "ore": cargo - n}
+    n = max(0, min(cargo, int(math.ceil(ratio * cargo * (1.0 + reserve)))))
+    spare = int(math.ceil(ratio * cargo * reserve))           # left over at the end
+    return {"limpets": n, "ore": max(0, cargo - min(n, spare))}
+
+
+def room_for(free: int, ratio: float) -> int:
+    """Tonnes of ore that still fit: each tonne refined also frees r tonnes
+    of limpets."""
+    return int(free / (1.0 - ratio)) if ratio < 1 else free
 
 
 def limpet_ratio(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -243,8 +258,9 @@ def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
         out["advice"] = limpet_load(cap, ratio)
     if out.get("free") is not None:
         out["limpets_for_t"] = int(limpets / ratio) if ratio else None
+        out["room_t"] = room_for(out["free"], ratio)
         if out.get("rate_h"):
-            out["full_in_min"] = round(out["free"] / out["rate_h"] * 60)
+            out["full_in_min"] = round(min(out["room_t"], out["limpets_for_t"] or out["room_t"]) / out["rate_h"] * 60)
     return out
 
 

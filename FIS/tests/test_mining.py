@@ -64,8 +64,10 @@ class MiningTest(unittest.TestCase):
         self.assertIsNone(hs[2]["ly"])
 
     def test_limpet_load(self):
-        # 0.42 limpets per tonne, 322 t: 322 * 0.42 / 1.42 = 95.2 -> +10 % = 105
-        self.assertEqual(mining.limpet_load(322, 0.42), {"limpets": 105, "ore": 217})
+        # 0.42 limpets per tonne, 322 t: launched limpets free their space, so
+        # 322 * 0.42 = 135.2 -> +10 % = 149; at the end ~14 spare, 308 t ore
+        self.assertEqual(mining.limpet_load(322, 0.42), {"limpets": 149, "ore": 308})
+        self.assertEqual(mining.room_for(120, 0.42), 206)        # 120 t free hold 206 t more ore
         self.assertEqual(mining.limpet_load(0, 0.42), {"limpets": 0, "ore": 0})
         runs = [{"total": 200, "asteroids": 30, "drones": {"prospector": 33, "collection": 55}, "ship_type": "lakonminer"},
                 {"total": 5, "asteroids": 1, "drones": {"prospector": 9, "collection": 9}, "ship_type": "lakonminer"}]
