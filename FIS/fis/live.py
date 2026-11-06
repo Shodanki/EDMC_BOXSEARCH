@@ -299,7 +299,10 @@ class LiveTracker:
                                    if dest else None),
                    "legal": st.get("LegalState"),
                    "pips": st.get("Pips"), "cargo": st.get("Cargo"),
-                   "balance": st.get("Balance"), "fire_group": st.get("FireGroup")}
+                   "balance": st.get("Balance"), "fire_group": st.get("FireGroup"),
+                   # on foot (Odyssey): suit oxygen and health 0..1, temperature K, gravity g
+                   "oxygen": st.get("Oxygen"), "health": st.get("Health"),
+                   "temp_k": st.get("Temperature"), "gravity": st.get("Gravity")}
             fuel = st.get("Fuel") or {}
             if fuel:
                 s["fuel"]["main"] = fuel.get("FuelMain", s["fuel"].get("main"))

@@ -31,8 +31,11 @@ few questions in the console, once:
 * open the browser when the FIS starts
 * port (default 8770); whether the plugin database and journal folder are found
 
-The answers are kept in `fis.ini` next to `start_fis.bat`. Change them with
-**`fis_settings.bat`**. No command-line parameters needed.
+The answers are kept in `fis.ini` next to `start_fis.bat`. Change them on the
+**settings page** - the gear at the bottom of the FIS, on the game PC only
+(default language, open the browser at start, home network with the address
+for your tablet) - or with **`fis_settings.bat`** (which can also add the
+firewall rule). No command-line parameters needed.
 
 Or from EDMC: *File > Settings > SHBOXSEARCH*, section **SHBOX FIS** -
 **start FIS**, **open in browser**, and the tick **start the FIS together with
@@ -79,7 +82,7 @@ or iPhone, "Add to Home Screen" opens the FIS without browser bars.
 | 5 | **PLANET INFO** | datasheet of a body: gravity, temperature, atmosphere, volcanism, materials, rings and hotspots, signals, species, genus forecast |
 | 6 | **ATLAS** | everything found, by kind - ring hotspots, body signals, materials picked up, finds on the ground - nearest first, within a chosen distance |
 | 7 | **SHIP** | status panel (warning / caution / advisory lamps), schematic cutaway, power by priority, modules with integrity and ammunition, damage and function report, cargo and fuel |
-| 8 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range (with the tritium in your ship, what you mined and the trip to your route's end), hold, finances, services - and the air wing: every ship in the hangar with role ratings (combat, mining, transport, exploration, passengers, search and rescue) |
+| 8 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range (with the tritium in your ship and - from EDMC's Frontier data - in the carrier's hold, what you mined and the trip to your route's end), hold with its goods, finances, services - and the air wing: every ship in the hangar with role ratings (combat, mining, transport, exploration, passengers, search and rescue) |
 | 9 | **MINING** | everything about mining, tritium first: the session (yield per hour, limpets, best and last rock), tritium for the carrier (tank, in your ship, mined, delivered), ring hotspots near you, mining ships, goods with what selling them earned against the carrier's upkeep, every session so far |
 | 0 | **STATISTICS** | the game's own record of you (written at every login): ranks with progress, exploration, exobiology, mining, the carrier, wealth and time played - with the growth over 24 h, 7, 30 or 90 days |
 

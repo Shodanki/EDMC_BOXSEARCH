@@ -43,6 +43,8 @@ export function update(ctx, reason) {
   const appear = reason === "show" || tname !== lastTarget;
   lastTarget = tname;
   root.replaceChildren();
+  const ap = approach(b && b.approach, appear);
+  if (ap) root.append(ap);
   if (!tg) {
     root.append(frame("BRIEFING", t("no target"),
       el("div", { class: "empty" },
@@ -60,7 +62,9 @@ export function update(ctx, reason) {
   const np = tg.navpoint ? "NAVPOINT " + tg.navpoint[0] + "/" + tg.navpoint[1] : (tg.source || "");
   const star = tg.star_class
     ? [el("span", { class: "c-cyan", text: tg.star_class }), " · ",
-       tg.scoopable ? el("span", { class: "c-green", text: t("scoopable") }) : el("span", { class: "c-amber", text: t("NOT scoopable") })]
+       tg.scoopable ? el("span", { class: "c-green", text: t("scoopable") }) : el("span", { class: "c-amber", text: t("NOT scoopable") }),
+       tg.boost ? el("span", { class: "c-violet", text: " · ⚡ " + (tg.boost === "neutron" ? t("neutron star: FSD boost ×4 in the jet cone")
+         : t("white dwarf: FSD boost ×1.5 in the jet cone")) }) : null]
     : [el("span", { class: "c-dim", text: t("unknown (only at StartJump)") })];
   const statusEl = el("div", {},
     el("div", { class: unknown ? "br-status disc" : "br-status", text: (unknown ? "■ " : "") + t(st[0]) }),
@@ -127,6 +131,22 @@ export function update(ctx, reason) {
 }
 
 // Sphere progress (/api/survey) – a small tile beside the briefing.
+// near a body: what you already know there (finds, open species, the SRV)
+const FIND_ICON = { codex: "★", settlement: "⌂", screenshot: "◉", material: "■" };
+function approach(a, appear) {
+  if (!a) return null;
+  const rows = [];
+  const facts = [];
+  if (a.gravity_g) facts.push(fmt(a.gravity_g, 2) + " g");
+  if (a.bio) facts.push("Bio ×" + a.bio + (a.analysed ? " (" + a.analysed + " ✓)" : ""));
+  if (a.geo) facts.push("Geo ×" + a.geo);
+  if (facts.length) rows.push(el("div", { class: "c-dim", text: facts.join(" · ") }));
+  if (a.parked) rows.push(el("div", { class: "c-amber", text: "◆ " + t("your SRV is parked here") }));
+  for (const s of a.species) rows.push(el("div", { class: "c-amber", text: "◐ " + s.species + " " + s.samples + "/3" }));
+  for (const f of a.finds) rows.push(el("div", {}, el("span", { class: "c-cyan", text: (FIND_ICON[f.kind] || "·") + " " }), f.label || f.kind));
+  return frame(t("APPROACH"), a.short || a.body, rows, { cls: "br-approach", appear });
+}
+
 function surveyTile(s, appear) {
   if (!s || !s.center || !s.systems) return null;
   const n = s.systems;
@@ -154,7 +174,8 @@ function navList(hops, target, appear) {
     list.append(el("li", { class: h.name === target ? "cur" : "" },
       el("span", { class: "nl-n", text: String(h.n).padStart(2, "0") }),
       el("span", { class: "nl-name", text: h.name }),
-      el("span", { class: "nl-star " + (h.scoopable === false ? "c-amber" : "c-cyan"), text: h.star_class || "?" }),
+      el("span", { class: "nl-star " + (h.boost ? "c-violet" : h.scoopable === false ? "c-amber" : "c-cyan"),
+        text: (h.star_class || "?") + (h.boost ? " ⚡" : ""), title: h.boost ? t("jet cone: FSD boost") : "" }),
       el("span", { class: "nl-ly", text: h.jump_ly ? fmt(h.jump_ly, 1) + " ly" : "" }),
       unknown ? chip(t("unknown"), "first") : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") }))));
   }

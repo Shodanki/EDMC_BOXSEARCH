@@ -49,8 +49,9 @@ from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
 from overlay import CockpitOverlay, POSITIONS as OVERLAY_POSITIONS  # noqa: E402
 from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E402
 import surfacenav  # noqa: E402
+import miningstat  # noqa: E402
 
-VERSION = "4.4.0"
+VERSION = "4.5.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -103,6 +104,7 @@ CFG = {
     "overlay_pos": "%s_overlay_pos" % PLUGIN_NAME,
     "overlay_brief": "%s_overlay_brief" % PLUGIN_NAME,
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
+    "overlay_mining": "%s_overlay_mining" % PLUGIN_NAME,
     "fis_autostart": "%s_fis_autostart" % PLUGIN_NAME,
 }
 
@@ -155,6 +157,9 @@ class State:
         self.bio_active: Optional[Dict[str, Any]] = None
         self._bio_shown = 0.0
         self._nav_shown = 0.0
+        self.mine = miningstat.MiningTracker()          # overlay mining block
+        self._mine_shown = 0.0
+        self._mine_drawn = False
         self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera)
         self.last_dest_id64: Optional[int] = None
 
@@ -337,6 +342,28 @@ def plugin_start3(plugin_dir: str) -> str:
     _run_async(_bootstrap_session, label="reading journals")
     _request_route(delay=2.5)
     return "SHBOXSEARCH"
+
+
+# Frontier's /fleetcarrier answer, kept for SHBOX FIS (cargo per good - the
+# tritium in the hold -, finances, itinerary). Local file next to the database.
+CAPI_FC_FILE = os.path.join(_PLUGIN_DIR, "capi_fleetcarrier.json")
+
+
+def capi_fleetcarrier(data: Any) -> Optional[str]:
+    """EDMC hands over the Companion API's carrier data (after CarrierStats,
+    at most every 15 minutes). Saved as it is, atomically; nothing else."""
+    try:
+        raw = getattr(data, "data", data)
+        payload = {"saved": time.time(), "source_host": getattr(data, "source_host", None),
+                   "data": dict(raw) if raw is not None else None}
+        tmp = CAPI_FC_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, default=str)
+        os.replace(tmp, CAPI_FC_FILE)
+        logger.info("capi_fleetcarrier | saved for FIS")
+    except Exception:  # noqa: BLE001 - never break EDMC over this
+        logger.exception("capi_fleetcarrier | could not save")
+    return None
 
 
 def plugin_stop() -> None:
@@ -2637,6 +2664,16 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         if entry.get("BodyID") is not None and ev in POSITION_EVENTS:
             _note_position(entry)
 
+        # mining: rock, hold, rate, session, limpets on the overlay
+        if ev in miningstat.EVENTS or ev in miningstat.PLACE or ev == "Cargo":
+            try:
+                cargo = state.get("Cargo") if isinstance(state, dict) else None
+                changed = ST.mine.feed(entry, cargo=cargo)
+                if changed or (ev == "Cargo" and ST.mine.active()):
+                    _mining_overlay(force=True)
+            except Exception:
+                logger.debug("mining overlay failed", exc_info=True)
+
         # EDMC enriches NavRoute with the full Route array
         if ev == "NavRoute" and not cfg_bool(CFG["harvest_navroute"], True):
             return
@@ -2874,6 +2911,31 @@ def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> N
         ov.show_nav(lines, seconds=4)
 
 
+MINE_EVERY_S = 5.0
+
+
+def _mining_overlay(force: bool = False) -> None:
+    """Overlay mining block (at most five lines) while you mine; gone ten
+    minutes after the last mining event."""
+    ov = getattr(ST, "overlay", None)
+    if ov is None or not ov.enabled or not cfg_bool(CFG["overlay_mining"], True):
+        return
+    now = time.time()
+    if not ST.mine.active(now):
+        if ST._mine_drawn:
+            ov.clear("mine")
+            ST._mine_drawn = False
+        ov.mute_route(False)                 # the route targets come back
+        return
+    ov.mute_route(True)                      # while mining they are no help
+    if not force and now - ST._mine_shown < MINE_EVERY_S:
+        return
+    ST._mine_shown = now
+    from overlay import COL
+    if ov.show_mining(ST.mine.lines(now, COL), seconds=30):
+        ST._mine_drawn = True
+
+
 def _bio_resume(body: str, marks: List[Dict[str, Any]]) -> None:
     """After an EDMC restart mid-sampling: pick up the species in progress."""
     if ST.bio_active is not None:
@@ -2948,6 +3010,11 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
             ov.set_focus(entry.get("GuiFocus", 0))
         except Exception:
             logger.debug("overlay focus failed", exc_info=True)
+    try:
+        ST.mine.status(entry)                # target hotspot -> material
+        _mining_overlay()                    # rate and ages move on; at most every 5 s
+    except Exception:
+        logger.debug("mining overlay failed", exc_info=True)
     if not ST.db or not cfg_bool(CFG["harvest_destination"], True):
         return
     try:
@@ -3799,6 +3866,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     _p["overlay_brief"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_brief"], True) else 0)
     _p["overlay_pos"] = tk.StringVar(value=cfg_str(CFG["overlay_pos"], "top-left"))
     _p["overlay_nav"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_nav"], True) else 0)
+    _p["overlay_mining"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_mining"], True) else 0)
     field(right, "right", "", nb.Checkbutton(
         right, text="show the next route targets in the game", variable=_p["overlay"]))
     field(right, "right", "", nb.Checkbutton(
@@ -3807,6 +3875,9 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     field(right, "right", "", nb.Checkbutton(
         right, text="surface compass: parked SRV, open samples, known points",
         variable=_p["overlay_nav"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="mining: last rock, hold, rate, session, limpets (5 lines)",
+        variable=_p["overlay_mining"]))
     field(right, "right", "Position",
           ttk.OptionMenu(right, _p["overlay_pos"], _p["overlay_pos"].get(),
                          *OVERLAY_POSITIONS))
@@ -3933,6 +4004,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["overlay"], bool(_p["overlay"].get()))
         cfg_set(CFG["overlay_brief"], bool(_p["overlay_brief"].get()))
         cfg_set(CFG["overlay_nav"], bool(_p["overlay_nav"].get()))
+        cfg_set(CFG["overlay_mining"], bool(_p["overlay_mining"].get()))
         if "fis_autostart" in _p:
             cfg_set(CFG["fis_autostart"], bool(_p["fis_autostart"].get()))
         cfg_set(CFG["overlay_pos"], _p["overlay_pos"].get())

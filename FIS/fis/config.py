@@ -165,7 +165,8 @@ class Config:
                 cp.set("fis", k, v)
         with open(self.ini_path, "w", encoding="utf-8") as fh:
             fh.write("; SHBOX FIS settings - written by the first-start dialogue.\n"
-                     "; Change them with fis_settings.bat (or edit by hand).\n\n")
+                     "; Change them on the settings page (gear at the bottom of the FIS, on this PC),\n"
+                     "; with fis_settings.bat, or by hand.\n\n")
             cp.write(fh)
 
     def use_plugin_path(self) -> None:

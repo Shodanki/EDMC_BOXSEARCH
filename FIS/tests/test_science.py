@@ -66,5 +66,40 @@ class ScienceTest(unittest.TestCase):
         self.assertEqual(science.worst(rep), "info")
 
 
+class SystemReportTest(unittest.TestCase):
+    def test_system(self):
+        g = science.G
+        rows = [
+            {"body_id": 0, "name": "Sys A", "kind": "Star", "star_type": "N", "was_discovered": 1},
+            {"body_id": 1, "name": "Sys A 1", "kind": "Planet", "planet_class": "Water world", "parent_id": 0,
+             "was_discovered": 0, "sig_bio": 3, "organics": 1, "mapped": 0, "radius": 6.0e6, "sma": 1e11, "ecc": 0.9},
+            {"body_id": 2, "name": "Sys A 1 a", "kind": "Planet", "planet_class": "Rocky body", "parent_id": 1,
+             "landable": 1, "radius": 1.0e6, "sma": 1.5e7, "ecc": 0.0, "period": 3600, "gravity": 2.5 * g,
+             "atmosphere": "thin neon atmosphere"},
+            {"body_id": 3, "name": "Sys A 1 a a", "kind": "Planet", "planet_class": "Icy body", "parent_id": 2},
+        ]
+        sys_out = {"name": "Sys A", "body_count": 4, "fss_complete": True,
+                   "bodies": [{"body_id": 1, "flags": {"wants_dss": True}}]}
+        rep = science.system_report(rows, sys_out)
+        got = ids(rep)
+        for want in ("sys_bodies", "sys_fss_done", "sys_first", "sys_valuable", "sys_bio", "sys_eccentric",
+                     "sys_fast_orbit", "sys_close", "sys_nested", "sys_landable_atmo", "sys_neutron", "sys_heavy",
+                     "sys_next_dss"):
+            self.assertIn(want, got)
+        close = [f for f in rep if f["id"] == "sys_close"][0]
+        self.assertEqual(close["v"]["list"], "1 a")           # 15 000 km from the centre of a 6000 km planet
+        self.assertEqual([f for f in rep if f["id"] == "sys_nested"][0]["v"]["list"], "1 a a")
+
+
+class BoostTest(unittest.TestCase):
+    def test_boost_kind(self):
+        from fis import model
+        self.assertEqual(model.boost_kind("N"), "neutron")
+        for wd in ("D", "DA", "DAB", "DC", "DQ"):
+            self.assertEqual(model.boost_kind(wd), "white_dwarf")
+        for other in ("M", "K", "H", "DoesNotExist", None):
+            self.assertIsNone(model.boost_kind(other))
+
+
 if __name__ == "__main__":
     unittest.main()

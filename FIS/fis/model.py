@@ -105,6 +105,16 @@ def is_scoopable(star_type: Optional[str]) -> bool:
     return bool(plugin().deepspace.is_scoopable(star_type))
 
 
+def boost_kind(star_type: Optional[str]) -> Optional[str]:
+    """B8: a jet cone to supercharge the FSD - neutron star (x4) or white dwarf (x1.5)."""
+    s = (star_type or "").strip()
+    if s == "N":
+        return "neutron"
+    if s.startswith("D") and len(s) <= 3 and s[1:].isalpha() or s == "D":
+        return "white_dwarf"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # system (TAKTIK)
 # ---------------------------------------------------------------------------
@@ -125,10 +135,12 @@ def _orbit_points(row, parent_pos: Sequence[float], n: int = 72
     return pts
 
 
-def _rings(row) -> List[Dict[str, Any]]:
+def _rings(row, hotspots: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> List[Dict[str, Any]]:
+    """Rings with class, width - and the hotspots you mapped in each (DSS)."""
     out = []
     for r in _json(row["rings_json"], []) or []:
         out.append({"name": r.get("name"), "cls": r.get("cls"),
+                    "hotspots": (hotspots or {}).get(r.get("name") or "", []),
                     "mass": r.get("mass"),
                     "inner_km": _r((r.get("inner") or 0) / 1000.0, 0),
                     "outer_km": _r((r.get("outer") or 0) / 1000.0, 0),
@@ -166,6 +178,14 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         out["fix"] = _fix(out, {}, live, now)
         return out
 
+    # ring hotspots by ring name (the journal knows no position in the ring)
+    hs_by_ring: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        for h in db.hotspots_of(id64):
+            hs_by_ring.setdefault(h["body_name"] or "", []).append(
+                {"material": h["label"] or h["material"], "count": h["count"]})
+    except Exception:
+        hs_by_ring = {}
     bodies = sr.bodies_from_rows(rows, now=now)
     for b in bodies.values():
         b.short = sr.shorten(b.name, name or "")
@@ -219,7 +239,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
             "arrival_ls": _r(r["arrival_ls"], 1),
             "landable": bool(r["landable"]),
             "terraform": r["terraform"] or "",
-            "rings": _rings(r),
+            "rings": _rings(r, hs_by_ring),
             "group": sr.group_label(b), "moon": sr.is_moon(b),
             "flags": {
                 "first": r["was_discovered"] == 0,
@@ -237,6 +257,11 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         })
 
     out["bio"] = bio_list(db, id64, rows, out["bodies"])
+    from . import science
+    try:
+        out["report"] = science.system_report([dict(r) for r in rows], out)
+    except Exception:                       # a report must never cost the map
+        out["report"] = []
 
     done_ids = {r["body_id"] for r in rows if r["route_done"]}
     legs = []
@@ -680,8 +705,34 @@ def _local_xy(lat: float, lon: float, lat0: float, lon0: float, radius: float):
     return x, y
 
 
+# Status.json Flags2 (on foot)
+F2_ON_FOOT, F2_LOW_O2, F2_LOW_HEALTH, F2_COLD, F2_HOT, F2_VERY_COLD, F2_VERY_HOT, F2_BREATHABLE = (
+    0, 6, 7, 8, 9, 10, 11, 16)
+
+
+def life_support(st: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """B5: suit oxygen, health and temperature while on foot - None otherwise."""
+    f2 = int(st.get("flags2") or 0)
+    if not f2 & (1 << F2_ON_FOOT):
+        return None
+    bit = lambda n: bool(f2 & (1 << n))      # noqa: E731
+    return {"oxygen": st.get("oxygen"), "health": st.get("health"), "temp_k": st.get("temp_k"),
+            "gravity": st.get("gravity"), "breathable": bit(F2_BREATHABLE),
+            "low_oxygen": bit(F2_LOW_O2), "low_health": bit(F2_LOW_HEALTH),
+            "cold": bit(F2_COLD), "hot": bit(F2_HOT), "very_cold": bit(F2_VERY_COLD), "very_hot": bit(F2_VERY_HOT)}
+
+
 def build_surface(db: Database, live: Optional[Dict[str, Any]],
                   id64: Optional[int] = None, body: Optional[str] = None) -> Dict[str, Any]:
+    out = _build_surface(db, live, id64, body)
+    life = life_support((live or {}).get("status") or {})
+    if life:
+        out = dict(out, life=life)
+    return out
+
+
+def _build_surface(db: Database, live: Optional[Dict[str, Any]],
+                   id64: Optional[int] = None, body: Optional[str] = None) -> Dict[str, Any]:
     live = live or {}
     st = live.get("status") or {}
     here = bool(st.get("body_name") and st.get("lat") is not None)
@@ -892,6 +943,7 @@ def _navpoints(db: Database, live: Dict[str, Any], limit: int = 14) -> List[Dict
         out.append({"n": n, "name": h.get("name"), "id64": h.get("id64"),
                     "star_class": h.get("star_class"),
                     "scoopable": is_scoopable(h.get("star_class")) if h.get("star_class") else None,
+                    "boost": boost_kind(h.get("star_class")),
                     "jump_ly": _r(_dist3(prev, pos), 2) if prev and pos else None,
                     "known_sources": Database.known_sources(row),
                     "visited": bool(row["visited"]) if row is not None else False})
@@ -915,11 +967,51 @@ def _sphere_of(db: Database, pos: Optional[Sequence[float]]) -> Optional[Dict[st
             "active": bool(s["active"])}
 
 
+FIND_KINDS = ("codex", "settlement", "screenshot", "material")
+
+
+def approach_info(db: Database, live: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Near a body (Status.json names it, orbital cruise or landed): what you
+    already know there - finds, species not finished, where the SRV waits,
+    the body's signals and gravity."""
+    st = live.get("status") or {}
+    body = st.get("body_name")
+    sid = (live.get("system") or {}).get("id64")
+    if not body or not sid:
+        return None
+    marks = [dict(m) for m in db.surface_marks(sid, body)]
+    finds: List[Dict[str, Any]] = []
+    seen = set()
+    for m in reversed(marks):
+        if m["kind"] in FIND_KINDS and (m["kind"], m["label"]) not in seen:
+            seen.add((m["kind"], m["label"]))
+            finds.append({"kind": m["kind"], "label": m["label"]})
+    p = plugin()
+    nav = p.surfacenav.body_state(marks) if getattr(p, "surfacenav", None) and marks else None
+    species = [{"species": s["species"], "samples": s["samples"]} for s in (nav or {}).get("species", [])
+               if not s["analysed"]]
+    row = db.one("SELECT sig_bio, sig_geo, organics, gravity, landable FROM bodies WHERE sys_id64=? AND name=?",
+                 (int(sid), body))
+    out = {"body": body, "short": p.sysroute.shorten(body, (live.get("system") or {}).get("name") or ""),
+           "finds": finds[:8], "species": species, "parked": bool(nav and nav.get("parked")),
+           "bio": int(row["sig_bio"] or 0) if row else 0, "geo": int(row["sig_geo"] or 0) if row else 0,
+           "analysed": int(row["organics"] or 0) if row else 0,
+           "gravity_g": _r((row["gravity"] or 0) / 9.80665, 2) if row and row["gravity"] else None,
+           "landable": bool(row["landable"]) if row else None}
+    if not (finds or species or out["parked"] or out["bio"] or out["geo"]):
+        return None
+    return out
+
+
 def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     live = live or {}
     tgt = current_target(live)
     out: Dict[str, Any] = {"target": None, "generated": time.time(),
                            "navroute": _navpoints(db, live)}
+    try:
+        out["approach"] = approach_info(db, live)
+    except Exception:                     # never cost the briefing
+        out["approach"] = None
     if not tgt:
         return out
     name, id64 = tgt.get("name"), tgt.get("id64")
@@ -934,6 +1026,7 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
     out["target"] = {
         "name": name, "id64": id64, "source": tgt.get("source"),
         "star_class": star, "scoopable": is_scoopable(star) if star else None,
+        "boost": boost_kind(star),
         "distance_ly": dist, "in_db": row is not None,
         "visited": bool(row["visited"]) if row is not None else False,
         "known_sources": known, "in_no_database": not known,

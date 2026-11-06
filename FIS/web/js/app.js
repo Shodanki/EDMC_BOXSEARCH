@@ -15,8 +15,9 @@ import * as carrier from "./views/carrier.js";
 import * as galaxy from "./views/galaxy.js";
 import * as statistics from "./views/statistics.js";
 import * as mining from "./views/mining.js";
+import * as settings from "./views/settings.js";
 
-const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galaxy, statistics, mining };
+const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galaxy, statistics, mining, settings };
 // ?solo=ship: one view alone in its own window (second screen, tablet)
 // ?system=<id64> pins another system (detail window from GALAXY, review)
 const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];
@@ -250,11 +251,17 @@ subscribe({
     // the ship panel follows Status.json (lamps, pips, fuel) about once a second
     if (mounted.has("ship") && store.view === "ship") later("shipview", 900, () => ship.update(ctx, "data"));
     if (mounted.has("surface")) later("surface", 1000, () => surface.update(ctx, "data"));
+    // mining: cargo changes with every tonne (Status.json Cargo) - the live block follows
+    if (mounted.has("mining") && store.view === "mining") later("mininglive", 1200, () => mining.update(ctx, "live"));
     // landed, in the SRV or on foot: the surface map is what matters now
     if (autoView() && store.view === "tactical" && data && data.on_surface) show("surface");
     // a new reference body (Status.json near a planet) moves LAST FIX at once
     const fix = data && data.fix;
-    if (fix !== undefined && fix !== lastFix) { lastFix = fix; later("fix", 600, () => refresh("system")); }
+    if (fix !== undefined && fix !== lastFix) {
+      lastFix = fix;
+      later("fix", 600, () => refresh("system"));
+      later("approach", 700, () => refresh("briefing"));   // known points on the body ahead
+    }
     later("status-sys", 15000, () => refresh("system"));    // LAST FIX ageing
   },
 });
@@ -263,6 +270,7 @@ subscribe({
 setInterval(() => {
   if (store.view === "tactical") refresh("system");
   if (store.view === "carrier") carrier.update(ctx, "data");
+  if (store.view === "mining") mining.update(ctx, "data");
 }, 60000);
 
 show(SOLO || ALIAS[location.hash.slice(1)] || (location.hash || "#tactical").slice(1));

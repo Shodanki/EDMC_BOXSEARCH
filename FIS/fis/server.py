@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from . import config as config_mod
 from . import __version__, setup
 from .config import WEB_DIR, Config
 from .data import Database
@@ -44,6 +45,7 @@ class App:
         from . import model  # after sys.path is set
         self.model = model
         self.cfg = cfg
+        self.lan_at_start = cfg.lan          # LAN on/off needs a restart
         self.db = db or Database(cfg.db_path)
         self.hub = live.hub if live else Hub()
         self.live = live or LiveTracker(cfg.journal_dir, self.hub, cfg.poll_s)
@@ -200,6 +202,75 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    # settings: only from the game PC itself, only from the FIS page
+    LOCAL = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+    def _local(self) -> bool:
+        return (self.client_address[0] if self.client_address else "") in self.LOCAL
+
+    def _same_origin(self) -> bool:
+        """A page of another site cannot send the custom header without a
+        preflight (which we never answer), and its Origin would differ."""
+        if self.headers.get("X-FIS-Settings") != "1":
+            return False
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        port = self.app.cfg.port
+        return origin in ("http://127.0.0.1:%d" % port, "http://localhost:%d" % port, "http://[::1]:%d" % port)
+
+    def _settings(self) -> Dict[str, Any]:
+        cfg = self.app.cfg
+        fw = None
+        if cfg.lan:
+            try:
+                fw = setup.firewall_rule_ok(cfg.port)
+            except Exception:
+                fw = None
+        return {"language": cfg.language, "open_browser": cfg.open_browser, "lan": cfg.lan,
+                "port": cfg.port, "ini": cfg.ini_path, "running_lan": self.app.lan_at_start,
+                # on the game PC only: the address for the tablet, with the token
+                "lan_urls": setup.lan_urls(cfg.port, cfg.token) if cfg.lan and cfg.token else [],
+                "firewall": fw}
+
+    def do_POST(self) -> None:
+        url = urlparse(self.path)
+        # read the (small) body first: answering before it was read makes
+        # Windows reset the connection instead of delivering the answer
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = -1
+        raw = self.rfile.read(n) if 0 < n <= 4096 else b""
+        if n > 4096 or n < 0:
+            self.close_connection = True
+            return self._error(400, "bad request")
+        if url.path != "/api/settings":
+            return self._error(404, "not found")
+        if not self._local():
+            return self._error(403, "settings only on the game PC")
+        if not self._same_origin():
+            return self._error(403, "settings only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, UnicodeDecodeError):
+            return self._error(400, "bad request")
+        cfg = self.app.cfg
+        lang = str(body.get("language", cfg.language)).lower()
+        cfg.language = lang if lang in config_mod.LANGUAGES else cfg.language
+        cfg.open_browser = bool(body.get("open_browser", cfg.open_browser))
+        cfg.lan = bool(body.get("lan", cfg.lan))
+        if cfg.lan:
+            cfg.ensure_token(save=False)
+        cfg.setup_done = True
+        cfg.save()
+        out = self._settings()
+        out["saved"] = True
+        out["restart"] = cfg.lan != self.app.lan_at_start
+        return self._json(out)
+
     def _json(self, obj: Any, code: int = 200) -> None:
         body = json.dumps(obj, ensure_ascii=False, separators=(",", ":"),
                           default=str).encode("utf-8")
@@ -236,6 +307,10 @@ class Handler(BaseHTTPRequestHandler):
         m = app.model
         if path == "/api/health":
             return self._json(app.health())
+        if path == "/api/settings":
+            if not self._local():
+                return self._error(403, "settings only on the game PC")
+            return self._json(self._settings())
         if path == "/api/config":
             # addresses for other devices, never the token (that stays on this PC)
             return self._json({"language": app.cfg.language, "lan": app.cfg.lan,
@@ -293,14 +368,21 @@ class Handler(BaseHTTPRequestHandler):
                 live = dict(live, fuel_warning=m._fuel_state(live).warning() if live.get("ship") else None)
             except Exception:
                 pass
-            return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir))
+            return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db))
         if path == "/api/carrier":
             from . import shipview
+            from . import capi
             return self._json(shipview.build_carrier(app.archive, app.live_state(),
-                                                     journal_dir=app.cfg.journal_dir))
+                                                     journal_dir=app.cfg.journal_dir,
+                                                     capi_path=capi.path_for(app.cfg.plugin_dir)))
+        if path == "/api/mining/live":
+            from . import mining
+            return self._json(mining.build_live(app.archive, app.live_state(), app.cfg.journal_dir))
         if path == "/api/mining":
             from . import mining
-            return self._json(mining.build_mining(app.archive, app.db, app.live_state(), app.cfg.journal_dir))
+            from . import capi
+            return self._json(mining.build_mining(app.archive, app.db, app.live_state(), app.cfg.journal_dir,
+                                                  capi_path=capi.path_for(app.cfg.plugin_dir)))
         if path == "/api/statistics":
             from . import stats
             try:

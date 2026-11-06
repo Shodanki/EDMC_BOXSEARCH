@@ -25,6 +25,16 @@ const LAMP = {
 };
 const LEVEL = { warning: N_("WARNING"), caution: N_("CAUTION"), advisory: N_("ADVISORY") };
 const GROUP = { hardpoints: N_("HARDPOINTS"), utility: N_("UTILITY"), core: N_("CORE"), optional: N_("OPTIONAL") };
+const MAT = { carbon: N_("Carbon"), vanadium: N_("Vanadium"), germanium: N_("Germanium"), arsenic: N_("Arsenic"),
+  cadmium: N_("Cadmium"), niobium: N_("Niobium"), yttrium: N_("Yttrium"), polonium: N_("Polonium") };
+const GRADE = { basic: N_("Basic"), standard: N_("Standard"), premium: N_("Premium") };
+const HAZ = {
+  UnderAttack: N_("under attack"), Interdicted: N_("interdicted by {by}"), EscapeInterdiction: N_("escaped interdiction by {by}"),
+  HullDamage: N_("hull at {pct} %"), HeatWarning: N_("heat warning"), HeatDamage: N_("heat damage"),
+  ShieldState: N_("shields down"), CockpitBreached: N_("cockpit breached"), SystemsShutdown: N_("systems shut down"),
+  Died: N_("ship destroyed"), JetConeDamage: N_("jet cone damaged {m}"), JetConeBoost: N_("FSD supercharged ×{b}"),
+  FighterDestroyed: N_("fighter destroyed"), SRVDestroyed: N_("SRV destroyed"),
+};
 const REPORT = {
   module_damaged: N_("{w} at {v} %"), module_off: N_("{w} switched off"), ammo_empty: N_("{w}: ammunition empty"),
   ammo_low: N_("{w}: ammunition {v} %"), afmu: N_("AFMU repaired {w} to {v} %"),
@@ -65,8 +75,8 @@ function render() {
   // left: the picture and the hold; right (the wide side): report and the
   // engineer's module list, which needs the room (user, 05.11.2026)
   root.append(annunciator(), el("div", { class: "sh-grid" },
-    el("div", { class: "sh-col sh-left" }, cutaway(), logistics()),
-    el("div", { class: "sh-col sh-right" }, report(), engineer())));
+    el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), jumponium()),
+    el("div", { class: "sh-col sh-right" }, report(), hazards(), engineer())));
 }
 
 // ------------------------------------------------------------ annunciator
@@ -211,6 +221,50 @@ function report() {
     el("span", { class: "c-dim", text: t("Value") }), el("span", { text: fmt(s.value, 0) + " Cr" }),
     el("span", { class: "c-dim", text: t("Jump") }), el("span", { text: fmt(s.max_jump, 1) + " ly" })));
   return frame(t("DAMAGE & FUNCTION REPORT"), String(data.report.length), body, { cls: "sh-rep", appear: false });
+}
+
+// ------------------------------------------------------------ jumponium (B3)
+// FSD injections from the raw materials on board; what limits them and the
+// nearest bodies where you measured it
+function jumponium() {
+  const J = data.jumponium;
+  if (!J) return null;
+  const mat = (k) => t(MAT[k] || k);
+  const have = Object.fromEntries(J.materials.map(m => [m.key, m]));
+  const rows = J.ready.map(r => el("div", { class: "jp-row" },
+    el("span", { class: "c-dim", text: t(GRADE[r.grade]) + " +" + r.boost + " %" }),
+    el("span", { class: "jp-n " + (r.can ? "c-green" : "c-amber"), text: fmt(r.can, 0) }),
+    el("span", { class: "small c-dim", text: r.missing.length ? t("missing: {m}", { m: r.missing.map(mat).join(", ") })
+      : t("limited by {m} ({n})", { m: mat(r.limit), n: have[r.limit] ? have[r.limit].count : 0 }) })));
+  const stock = el("div", { class: "jp-mats" }, ...J.materials.map(m => el("span", {
+    class: "chip " + (m.count === 0 ? "warn" : m.count >= m.cap * 0.9 ? "ok" : ""), title: "G" + m.grade + " · max " + m.cap,
+    text: mat(m.key) + " " + m.count + "/" + m.cap })));
+  const src = Object.entries(J.sources).filter(([, l]) => l.length).map(([k, l]) => el("div", { class: "small" },
+    el("span", { class: "c-amber", text: mat(k) + ": " }),
+    l.map(s => s.body + " " + fmt(s.pct, 1) + " %" + (s.ly === null ? "" : s.ly < 0.1 ? " · " + t("here") : " · " + fmt(s.ly, 1) + " ly")).join("  |  ")));
+  const last = J.synthesised.length ? J.synthesised[J.synthesised.length - 1] : null;
+  return frame(t("JUMPONIUM"), J.base_ts ? stamp(Date.parse(J.base_ts) / 1000) : "", [
+    ...rows, stock,
+    src.length ? el("div", { class: "c-dim small", text: t("Where you measured it (landable, nearest first):") }) : null, ...src,
+    last ? el("div", { class: "c-dim small", text: t("Last synthesised: {g} · {d}", { g: t(GRADE[last.grade]), d: stamp(Date.parse(last.ts) / 1000) }) }) : null,
+  ], { cls: "sh-jump", appear: false });
+}
+
+// ------------------------------------------------------------ hazard log (B7)
+function hazards() {
+  const H = data.hazards;
+  if (!H) return null;
+  const c = H.counts || {};
+  const tag = (c.danger ? c.danger + " ▲ " : "") + (c.warn ? c.warn + " △" : "");
+  const short = (it) => it.body ? it.body : it.system || "";
+  const items = H.items.slice(0, 14).map(it => el("div", { class: "hz-row " + it.level },
+    el("span", { class: "c-dim", text: new Date(it.t * 1000).toDateString() === new Date().toDateString()
+      ? new Date(it.t * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : stamp(it.t) }),
+    el("span", { text: t(HAZ[it.kind] || it.kind, { by: it.v.by || "?", pct: it.v.pct, m: it.v.module || "", b: it.v.boost ? fmt(it.v.boost, 1) : "?" })
+      + (it.n > 1 ? "  ×" + it.n : "") + (it.kind === "UnderAttack" && it.v.target && it.v.target !== "You" ? " (" + it.v.target + ")" : "") }),
+    el("span", { class: "c-dim small", text: short(it) })));
+  return frame(t("HAZARD LOG"), tag || t("this session"), items.length ? items
+    : el("div", { class: "c-dim", text: t("Nothing happened this session.") }), { cls: "sh-haz", appear: false });
 }
 
 // ------------------------------------------------------------ logistics
