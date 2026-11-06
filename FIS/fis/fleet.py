@@ -458,6 +458,14 @@ class Archive:
                                       else s.get("StarSystem")),
                               in_transit=bool(s.get("InTransit")), stored_at=where)
         stored_ts = stored.get("timestamp") if stored else ""
+        # StoredShips never lists the ship you sit in: the one active when the
+        # list was written belongs to the fleet even when its Loadout is older
+        active_at_list = None
+        for e in evs:
+            if (e.get("timestamp") or "") > stored_ts:
+                break
+            if e["event"] == "Loadout" and e.get("ShipID") is not None:
+                active_at_list = int(e["ShipID"])
         # ship ids come back after selling: a fitting belongs to a hangar entry
         # only when the hull type matches; otherwise try same type + same name
         by_name: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -477,7 +485,7 @@ class Archive:
             if sid in ships or sid in sold:
                 continue
             # not in the last hangar list: only ships bought or flown since
-            if stored and (lo.get("timestamp") or "") < stored_ts and sid != current:
+            if stored and (lo.get("timestamp") or "") < stored_ts and sid not in (current, active_at_list):
                 continue
             entry(sid)["type"] = (lo.get("Ship") or "").lower()
             fits[sid] = lo
