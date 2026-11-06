@@ -475,6 +475,7 @@ const DE = /*DE*/{
   "MINING": "MINING",
   "STATISTICS": "STATISTIK",
   "SAR": "SAR",
+  "heading up · dots: earlier samples (green = far enough) · ring 1 km": "Kurs oben · Punkte: frühere Proben (grün = weit genug) · Ring 1 km",
   "limpets last for ~{t} t - room for {f} t": "Limpets reichen für ~{t} t - Platz für {f} t",
   "room for ~{f} t, limpets last for ~{t} t - enough": "Platz für ~{f} t, Limpets reichen für ~{t} t - genug",
   "Limpets = r × cargo + {p} % reserve: every limpet launched frees its tonne, so the hold can end full of ore. Ore = what the hold holds at the end. * no session with this hull - your average.": "Limpets = r × Fracht + {p} % Reserve: jeder gestartete Limpet macht seine Tonne frei, der Laderaum kann am Ende voll Erz sein. Erz = was am Ende drin ist. * keine Sitzung mit diesem Rumpf - dein Durchschnitt.",

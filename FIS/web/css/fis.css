@@ -515,6 +515,8 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .hz-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; font-size: 12px; padding: 2px 0;
   border-left: 2px solid transparent; padding-left: 6px; }
 .hz-row.danger { border-left-color: #FF4D4D; } .hz-row.warn { border-left-color: #FFB23E; } .hz-row.info { border-left-color: #3EF2E0; }
+.sf-compass-box { display: flex; justify-content: center; margin: 4px 0; }
+.lay-phone .sf-compass-box canvas, .lay-tablet .sf-compass-box canvas { width: 260px !important; height: 260px !important; }
 .sf-life { border: 1px solid rgba(62,242,224,.25); padding: 4px 6px; margin: 6px 0; }
 /* MINING */
 .mh-row { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; }

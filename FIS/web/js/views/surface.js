@@ -119,15 +119,34 @@ function draw() {
     s.pts.forEach(([x, y], i) => { const [px, py] = P(x, y); i ? g.lineTo(px, py) : g.moveTo(px, py); });
     g.stroke(); g.globalAlpha = 1;
   }
-  // marks
+  // marks: icons always, labels only where they fit (newest first; the
+  // same text at the same spot once - a Brain Tree codex entry and its
+  // samples used to print on top of each other)
   g.font = "12px monospace";
+  const placed = [], seen = new Set();
+  const hit = (r) => placed.some((q) => r.x < q.x + q.w && q.x < r.x + r.w && r.y < q.y + q.h && q.y < r.y + r.h);
   for (const m of data.marks) {
     if (m.x === null) continue;
     const [px, py] = P(m.x, m.y);
     g.fillStyle = TONE[m.kind] || COL.text;
     g.fillText(ICON[m.kind] || "·", px - 4, py + 4);
-    if (["bio_log", "bio_sample", "codex", "settlement", "material"].includes(m.kind) && view.zoom > 0.05) {
-      g.fillStyle = COL.dim; g.fillText((m.label || "").slice(0, 26), px + 8, py - 6);
+    placed.push({ x: px - 5, y: py - 6, w: 10, h: 12 });
+  }
+  if (view.zoom > 0.05) {
+    for (const m of [...data.marks].reverse()) {
+      if (m.x === null || !["bio_log", "bio_sample", "codex", "settlement", "material"].includes(m.kind)) continue;
+      const txt = (m.label || "").slice(0, 26);
+      const [px, py] = P(m.x, m.y);
+      const key = txt + "@" + Math.round(px / 24) + "," + Math.round(py / 24);
+      if (!txt || seen.has(key)) continue;
+      const w = g.measureText(txt).width;
+      for (const [dx, dy] of [[8, -6], [8, 14], [-w - 8, -6], [-w - 8, 14], [-w / 2, -14], [-w / 2, 22]]) {
+        const r = { x: px + dx, y: py + dy - 11, w, h: 13 };
+        if (hit(r)) continue;
+        placed.push(r); seen.add(key);
+        g.fillStyle = COL.dim; g.fillText(txt, px + dx, py + dy);
+        break;
+      }
     }
   }
   // the vehicles to get back to: ring, label, dashed line from you
@@ -174,6 +193,64 @@ function lifeSupport(L) {
       + (L.gravity !== null && L.gravity !== undefined ? " · " + fmt(L.gravity, 2) + " g" : "") }));
 }
 
+// big compass, heading up: where the parked SRV, the ship and the earlier
+// samples lie from here - for a tablet beside the game (solo window)
+function compass(d) {
+  const size = 220;
+  const c = el("canvas", { class: "sf-compass", width: String(size * 2), height: String(size * 2) });
+  c.style.width = c.style.height = size + "px";
+  const x = c.getContext("2d");
+  x.scale(2, 2);
+  const R = size / 2 - 14, cx = size / 2, cy = size / 2;
+  const head = ((d.me && d.me.heading) || 0) * Math.PI / 180;
+  const at = (bearingDeg, r) => { const a = bearingDeg * Math.PI / 180 - head; return [cx + Math.sin(a) * r, cy - Math.cos(a) * r]; };
+  x.strokeStyle = "rgba(62,242,224,.35)"; x.lineWidth = 1;
+  x.beginPath(); x.arc(cx, cy, R, 0, Math.PI * 2); x.stroke();
+  x.beginPath(); x.arc(cx, cy, R * 0.5, 0, Math.PI * 2); x.globalAlpha = 0.4; x.stroke(); x.globalAlpha = 1;
+  for (let b = 0; b < 360; b += 30) {
+    const [ax, ay] = at(b, R), [bx, by] = at(b, R - (b % 90 ? 5 : 10));
+    x.beginPath(); x.moveTo(ax, ay); x.lineTo(bx, by); x.stroke();
+  }
+  x.font = "bold 12px monospace"; x.textAlign = "center"; x.textBaseline = "middle";
+  for (const [b, s] of [[0, "N"], [90, "E"], [180, "S"], [270, "W"]]) {
+    const [tx, ty] = at(b, R + 8); x.fillStyle = b ? "#6E8F8B" : "#FF4D4D"; x.fillText(s, tx, ty);
+  }
+  // earlier samples: dots, the ring is 1000 m (log scale), green when far enough
+  const logr = (m) => Math.min(1, Math.log10(1 + m) / 3) * (R - 6);
+  for (const b of d.bio || []) {
+    if (b.done) continue;
+    for (const [px, py] of b.points) {
+      const dist = Math.hypot(px, py), brg = (Math.atan2(px, py) * 180 / Math.PI + 360) % 360;
+      const [dx, dy] = at(brg, logr(dist));
+      x.fillStyle = b.range_m && dist >= b.range_m ? "#7CFF6B" : "#FFB23E";
+      x.beginPath(); x.arc(dx, dy, 3, 0, Math.PI * 2); x.fill();
+    }
+  }
+  // the vehicles: arrows to the rim, with the distance
+  for (const [key, colr, sym] of [["parked", "#FFB23E", "SRV"], ["ship", "#3EF2E0", "SHIP"]]) {
+    const v = d[key];
+    if (!v || v.bearing === undefined) continue;
+    const [tx, ty] = at(v.bearing, R - 4), [sx, sy] = at(v.bearing, 18);
+    x.strokeStyle = colr; x.lineWidth = 3; x.beginPath(); x.moveTo(sx, sy); x.lineTo(tx, ty); x.stroke();
+    const a = v.bearing * Math.PI / 180 - head;
+    x.fillStyle = colr; x.beginPath();
+    x.moveTo(tx + Math.sin(a) * 6, ty - Math.cos(a) * 6);
+    x.lineTo(tx + Math.sin(a + 2.5) * 9, ty - Math.cos(a + 2.5) * 9);
+    x.lineTo(tx + Math.sin(a - 2.5) * 9, ty - Math.cos(a - 2.5) * 9); x.closePath(); x.fill();
+    const [lx, ly] = at(v.bearing, R * 0.62);
+    x.font = "bold 11px monospace";
+    const txt = sym + " " + (v.dist_m >= 1000 ? fmt(v.dist_m / 1000, 1) + " km" : fmt(v.dist_m, 0) + " m");
+    const w = x.measureText(txt).width + 6;
+    x.fillStyle = "rgba(5,12,13,.85)"; x.fillRect(lx - w / 2, ly - 8, w, 16);
+    x.fillStyle = colr; x.fillText(txt, lx, ly);
+  }
+  // you, nose up
+  x.fillStyle = "#FFFFFF"; x.beginPath(); x.moveTo(cx, cy - 10); x.lineTo(cx + 6, cy + 7); x.lineTo(cx, cy + 3); x.lineTo(cx - 6, cy + 7); x.closePath(); x.fill();
+  x.font = "11px monospace"; x.fillStyle = "#6E8F8B";
+  x.fillText(fmt((d.me && d.me.heading) || 0, 0) + "°", cx, cy + 22);
+  return el("div", { class: "sf-compass-box", title: t("heading up · dots: earlier samples (green = far enough) · ring 1 km") }, c);
+}
+
 function render() {
   if (!root) return;
   info.replaceChildren(); list.replaceChildren();
@@ -186,6 +263,8 @@ function render() {
     el("span", { class: "c-dim", text: " · " + (data.system || "") + (data.gravity_g !== undefined && data.gravity_g !== null ? " · " + fmt(data.gravity_g, 2) + " g" : "") })));
   info.append(el("div", { class: "c-dim small", text: data.here ? t("LIVE · you are here") : t("last visit – not live") }));
   if (data.life) info.append(lifeSupport(data.life));
+  if (data.here && data.me && (data.parked || data.ship || (data.bio || []).some(b => !b.done && b.points.length)))
+    info.append(compass(data));
   if (data.me && data.me.alt !== null && data.me.alt !== undefined)
     info.append(el("div", { class: "small", text: t("Altitude {a} m · heading {h}°", { a: fmt(data.me.alt, 0), h: fmt(data.me.heading, 0) }) }));
   for (const [key, colr] of [["parked", "c-amber"], ["ship", "c-cyan"]]) {
