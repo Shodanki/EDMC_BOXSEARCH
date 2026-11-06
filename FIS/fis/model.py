@@ -680,8 +680,34 @@ def _local_xy(lat: float, lon: float, lat0: float, lon0: float, radius: float):
     return x, y
 
 
+# Status.json Flags2 (on foot)
+F2_ON_FOOT, F2_LOW_O2, F2_LOW_HEALTH, F2_COLD, F2_HOT, F2_VERY_COLD, F2_VERY_HOT, F2_BREATHABLE = (
+    0, 6, 7, 8, 9, 10, 11, 16)
+
+
+def life_support(st: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """B5: suit oxygen, health and temperature while on foot - None otherwise."""
+    f2 = int(st.get("flags2") or 0)
+    if not f2 & (1 << F2_ON_FOOT):
+        return None
+    bit = lambda n: bool(f2 & (1 << n))      # noqa: E731
+    return {"oxygen": st.get("oxygen"), "health": st.get("health"), "temp_k": st.get("temp_k"),
+            "gravity": st.get("gravity"), "breathable": bit(F2_BREATHABLE),
+            "low_oxygen": bit(F2_LOW_O2), "low_health": bit(F2_LOW_HEALTH),
+            "cold": bit(F2_COLD), "hot": bit(F2_HOT), "very_cold": bit(F2_VERY_COLD), "very_hot": bit(F2_VERY_HOT)}
+
+
 def build_surface(db: Database, live: Optional[Dict[str, Any]],
                   id64: Optional[int] = None, body: Optional[str] = None) -> Dict[str, Any]:
+    out = _build_surface(db, live, id64, body)
+    life = life_support((live or {}).get("status") or {})
+    if life:
+        out = dict(out, life=life)
+    return out
+
+
+def _build_surface(db: Database, live: Optional[Dict[str, Any]],
+                   id64: Optional[int] = None, body: Optional[str] = None) -> Dict[str, Any]:
     live = live or {}
     st = live.get("status") or {}
     here = bool(st.get("body_name") and st.get("lat") is not None)

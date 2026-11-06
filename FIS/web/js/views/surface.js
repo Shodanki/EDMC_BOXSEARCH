@@ -158,6 +158,22 @@ function draw() {
   }
 }
 
+// B5: suit oxygen, health and temperature while on foot (Status.json)
+function lifeSupport(L) {
+  const bar = (v, warn) => el("span", { class: "lbar " + (warn ? "warn" : "") },
+    el("i", { style: { width: Math.round(100 * (v || 0)) + "%" } }));
+  const tempTag = L.very_cold ? t("very cold") : L.very_hot ? t("very hot") : L.cold ? t("cold") : L.hot ? t("hot") : "";
+  const temp = L.temp_k !== null && L.temp_k !== undefined ? fmt(L.temp_k, 0) + " K · " + fmt(L.temp_k - 273.15, 0) + " °C" : "–";
+  return el("div", { class: "sf-life" },
+    el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Oxygen") }), bar(L.oxygen, L.low_oxygen),
+      el("span", { class: L.low_oxygen ? "c-amber" : "", text: L.oxygen === null || L.oxygen === undefined ? "–" : Math.round(L.oxygen * 100) + " %" })),
+    el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Health") }), bar(L.health, L.low_health),
+      el("span", { class: L.low_health ? "c-amber" : "", text: L.health === null || L.health === undefined ? "–" : Math.round(L.health * 100) + " %" })),
+    el("div", { class: "small " + (L.very_cold || L.very_hot ? "c-amber" : ""), text: t("Temperature") + ": " + temp + (tempTag ? " · " + tempTag : "") }),
+    el("div", { class: "small c-dim", text: (L.breathable ? t("breathable atmosphere") : t("no breathable atmosphere"))
+      + (L.gravity !== null && L.gravity !== undefined ? " · " + fmt(L.gravity, 2) + " g" : "") }));
+}
+
 function render() {
   if (!root) return;
   info.replaceChildren(); list.replaceChildren();
@@ -169,6 +185,7 @@ function render() {
   info.append(el("div", { class: "sf-title" }, el("span", { class: "c-cyan", text: data.short || data.body }),
     el("span", { class: "c-dim", text: " · " + (data.system || "") + (data.gravity_g !== undefined && data.gravity_g !== null ? " · " + fmt(data.gravity_g, 2) + " g" : "") })));
   info.append(el("div", { class: "c-dim small", text: data.here ? t("LIVE · you are here") : t("last visit – not live") }));
+  if (data.life) info.append(lifeSupport(data.life));
   if (data.me && data.me.alt !== null && data.me.alt !== undefined)
     info.append(el("div", { class: "small", text: t("Altitude {a} m · heading {h}°", { a: fmt(data.me.alt, 0), h: fmt(data.me.heading, 0) }) }));
   for (const [key, colr] of [["parked", "c-amber"], ["ship", "c-cyan"]]) {

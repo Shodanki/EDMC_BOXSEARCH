@@ -86,7 +86,7 @@ def _ammo_full(archive: fl.Archive) -> Dict[tuple, int]:
     return full
 
 
-def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str,
+def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str, db: Any = None,
                      now: Optional[float] = None) -> Dict[str, Any]:
     now = time.time() if now is None else now
     st = live.get("status") or {}
@@ -224,6 +224,9 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
     limpets = sum(c["count"] for c in inv if (c["key"] or "").lower() == "drones")
     locker = _read_json(os.path.join(journal_dir, "ShipLocker.json")) or {}
     fuel = live.get("fuel") or {}
+    from . import hazards, materials
+    out["jumponium"] = materials.build_jumponium(archive, db, (live.get("system") or {}).get("pos"))
+    out["hazards"] = hazards.build_hazards(archive, now=now)
     out["logistics"] = {
         "cargo": inv, "used": used, "capacity": lo.get("CargoCapacity"),
         "free": (lo.get("CargoCapacity") or 0) - used if lo.get("CargoCapacity") is not None else None,

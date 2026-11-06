@@ -507,6 +507,15 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .galaxy-view { height: 100%; }
 .gal-grid { display: grid; grid-template-columns: 1fr 320px; gap: 10px; height: 100%; min-height: 0; }
 .gal-main { min-height: 0; } .gal-main .frame-in { display: flex; flex-direction: column; height: 100%; }
+/* SHIP: jumponium, hazard log; PLANET: life support */
+.jp-row { display: grid; grid-template-columns: 120px 52px 1fr; gap: 8px; align-items: baseline; font-size: 12px; margin: 2px 0; }
+.jp-n { font-size: 18px; text-align: right; }
+.jp-mats { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.jp-mats .chip.warn { border-color: #FFB23E; color: #FFB23E; } .jp-mats .chip.ok { border-color: #7CFF6B; color: #7CFF6B; }
+.hz-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; font-size: 12px; padding: 2px 0;
+  border-left: 2px solid transparent; padding-left: 6px; }
+.hz-row.danger { border-left-color: #FF4D4D; } .hz-row.warn { border-left-color: #FFB23E; } .hz-row.info { border-left-color: #3EF2E0; }
+.sf-life { border: 1px solid rgba(62,242,224,.25); padding: 4px 6px; margin: 6px 0; }
 /* MINING */
 .mine-view { height: 100%; min-height: 0; overflow-y: auto; }
 .mine-grid { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(380px, 1.2fr); gap: 10px; align-content: start; }

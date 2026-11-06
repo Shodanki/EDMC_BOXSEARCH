@@ -37,7 +37,14 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
           "SAAScanComplete", "SellOrganicData",
           "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked",
-          "Statistics", "Rank", "Progress", "Reputation", "MarketSell", "CargoTransfer")
+          "Statistics", "Rank", "Progress", "Reputation", "MarketSell", "CargoTransfer",
+          # raw materials (jumponium)
+          "Materials", "MaterialCollected", "MaterialDiscarded", "Synthesis", "EngineerCraft",
+          "MaterialTrade", "TechnologyBroker", "MissionCompleted", "ScientificResearch",
+          # hazard log and where it happened
+          "UnderAttack", "Interdicted", "EscapeInterdiction", "HullDamage", "HeatWarning", "HeatDamage",
+          "ShieldState", "CockpitBreached", "SystemsShutdown", "Died", "JetConeDamage", "JetConeBoost",
+          "FighterDestroyed", "SRVDestroyed", "ApproachBody", "LeaveBody", "SupercruiseExit", "Touchdown")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
 
 # carrier tritium per jump: 5 + ly * (load + tritium + BASE) / DIV, rounded.
@@ -382,6 +389,8 @@ class Archive:
                         fid = e.get("FID") or fid
                         out.append({"event": "Commander", "timestamp": e.get("timestamp"),
                                     "_fid": fid, "Name": e.get("Name") or e.get("Commander")})
+                        if e.get("event") == "LoadGame":      # session start (hazard log)
+                            out.append({"event": "LoadGame", "timestamp": e.get("timestamp"), "_fid": fid})
                         continue
                     if e.get("event") in ("FSDJump", "Location"):
                         # only the coordinates are needed (carrier jump distances)

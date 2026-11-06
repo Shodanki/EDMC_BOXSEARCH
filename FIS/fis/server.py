@@ -293,7 +293,7 @@ class Handler(BaseHTTPRequestHandler):
                 live = dict(live, fuel_warning=m._fuel_state(live).warning() if live.get("ship") else None)
             except Exception:
                 pass
-            return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir))
+            return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db))
         if path == "/api/carrier":
             from . import shipview
             return self._json(shipview.build_carrier(app.archive, app.live_state(),
