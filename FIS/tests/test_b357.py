@@ -59,6 +59,12 @@ class LifeSupportTest(unittest.TestCase):
         self.assertEqual(life["temp_k"], 150.0)
 
 
+class ApproachTest(unittest.TestCase):
+    def test_nothing_without_a_body(self):
+        self.assertIsNone(model.approach_info(None, {"status": {}}))
+        self.assertIsNone(model.approach_info(None, {"status": {"body_name": "X 1"}}))   # no system yet
+
+
 class HazardTest(unittest.TestCase):
     def test_log(self):
         with tempfile.TemporaryDirectory() as d:

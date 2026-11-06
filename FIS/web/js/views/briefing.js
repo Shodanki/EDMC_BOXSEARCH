@@ -43,6 +43,8 @@ export function update(ctx, reason) {
   const appear = reason === "show" || tname !== lastTarget;
   lastTarget = tname;
   root.replaceChildren();
+  const ap = approach(b && b.approach, appear);
+  if (ap) root.append(ap);
   if (!tg) {
     root.append(frame("BRIEFING", t("no target"),
       el("div", { class: "empty" },
@@ -129,6 +131,22 @@ export function update(ctx, reason) {
 }
 
 // Sphere progress (/api/survey) – a small tile beside the briefing.
+// near a body: what you already know there (finds, open species, the SRV)
+const FIND_ICON = { codex: "★", settlement: "⌂", screenshot: "◉", material: "■" };
+function approach(a, appear) {
+  if (!a) return null;
+  const rows = [];
+  const facts = [];
+  if (a.gravity_g) facts.push(fmt(a.gravity_g, 2) + " g");
+  if (a.bio) facts.push("Bio ×" + a.bio + (a.analysed ? " (" + a.analysed + " ✓)" : ""));
+  if (a.geo) facts.push("Geo ×" + a.geo);
+  if (facts.length) rows.push(el("div", { class: "c-dim", text: facts.join(" · ") }));
+  if (a.parked) rows.push(el("div", { class: "c-amber", text: "◆ " + t("your SRV is parked here") }));
+  for (const s of a.species) rows.push(el("div", { class: "c-amber", text: "◐ " + s.species + " " + s.samples + "/3" }));
+  for (const f of a.finds) rows.push(el("div", {}, el("span", { class: "c-cyan", text: (FIND_ICON[f.kind] || "·") + " " }), f.label || f.kind));
+  return frame(t("APPROACH"), a.short || a.body, rows, { cls: "br-approach", appear });
+}
+
 function surveyTile(s, appear) {
   if (!s || !s.center || !s.systems) return null;
   const n = s.systems;

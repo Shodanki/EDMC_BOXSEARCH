@@ -475,6 +475,8 @@ const DE = /*DE*/{
   "MINING": "MINING",
   "STATISTICS": "STATISTIK",
   "SAR": "SAR",
+  "APPROACH": "ANFLUG",
+  "your SRV is parked here": "dein SRV steht hier",
   "heading up · dots: earlier samples (green = far enough) · ring 1 km": "Kurs oben · Punkte: frühere Proben (grün = weit genug) · Ring 1 km",
   "limpets last for ~{t} t - room for {f} t": "Limpets reichen für ~{t} t - Platz für {f} t",
   "room for ~{f} t, limpets last for ~{t} t - enough": "Platz für ~{f} t, Limpets reichen für ~{t} t - genug",

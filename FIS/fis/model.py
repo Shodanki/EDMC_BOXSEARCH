@@ -967,11 +967,51 @@ def _sphere_of(db: Database, pos: Optional[Sequence[float]]) -> Optional[Dict[st
             "active": bool(s["active"])}
 
 
+FIND_KINDS = ("codex", "settlement", "screenshot", "material")
+
+
+def approach_info(db: Database, live: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Near a body (Status.json names it, orbital cruise or landed): what you
+    already know there - finds, species not finished, where the SRV waits,
+    the body's signals and gravity."""
+    st = live.get("status") or {}
+    body = st.get("body_name")
+    sid = (live.get("system") or {}).get("id64")
+    if not body or not sid:
+        return None
+    marks = [dict(m) for m in db.surface_marks(sid, body)]
+    finds: List[Dict[str, Any]] = []
+    seen = set()
+    for m in reversed(marks):
+        if m["kind"] in FIND_KINDS and (m["kind"], m["label"]) not in seen:
+            seen.add((m["kind"], m["label"]))
+            finds.append({"kind": m["kind"], "label": m["label"]})
+    p = plugin()
+    nav = p.surfacenav.body_state(marks) if getattr(p, "surfacenav", None) and marks else None
+    species = [{"species": s["species"], "samples": s["samples"]} for s in (nav or {}).get("species", [])
+               if not s["analysed"]]
+    row = db.one("SELECT sig_bio, sig_geo, organics, gravity, landable FROM bodies WHERE sys_id64=? AND name=?",
+                 (int(sid), body))
+    out = {"body": body, "short": p.sysroute.shorten(body, (live.get("system") or {}).get("name") or ""),
+           "finds": finds[:8], "species": species, "parked": bool(nav and nav.get("parked")),
+           "bio": int(row["sig_bio"] or 0) if row else 0, "geo": int(row["sig_geo"] or 0) if row else 0,
+           "analysed": int(row["organics"] or 0) if row else 0,
+           "gravity_g": _r((row["gravity"] or 0) / 9.80665, 2) if row and row["gravity"] else None,
+           "landable": bool(row["landable"]) if row else None}
+    if not (finds or species or out["parked"] or out["bio"] or out["geo"]):
+        return None
+    return out
+
+
 def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     live = live or {}
     tgt = current_target(live)
     out: Dict[str, Any] = {"target": None, "generated": time.time(),
                            "navroute": _navpoints(db, live)}
+    try:
+        out["approach"] = approach_info(db, live)
+    except Exception:                     # never cost the briefing
+        out["approach"] = None
     if not tgt:
         return out
     name, id64 = tgt.get("name"), tgt.get("id64")

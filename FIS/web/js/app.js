@@ -256,7 +256,11 @@ subscribe({
     if (autoView() && store.view === "tactical" && data && data.on_surface) show("surface");
     // a new reference body (Status.json near a planet) moves LAST FIX at once
     const fix = data && data.fix;
-    if (fix !== undefined && fix !== lastFix) { lastFix = fix; later("fix", 600, () => refresh("system")); }
+    if (fix !== undefined && fix !== lastFix) {
+      lastFix = fix;
+      later("fix", 600, () => refresh("system"));
+      later("approach", 700, () => refresh("briefing"));   // known points on the body ahead
+    }
     later("status-sys", 15000, () => refresh("system"));    // LAST FIX ageing
   },
 });
