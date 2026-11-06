@@ -315,7 +315,12 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
     rng = fl.carrier_range(c["fuel"] or 0, c["load"] or 0)
     up = c.get("upkeep") or {}
     avail = fin.get("AvailableBalance")
-    weeks = (avail / up["per_week"]) if up.get("per_week") and avail else None
+    # Frontier's own figure beats the estimate from the balance history
+    from . import capi
+    capd = capi.load(capi_path, now)
+    fup = (capd or {}).get("upkeep")
+    per_week = fup["per_week"] if fup and fup.get("per_week") else up.get("per_week")
+    weeks = (avail / per_week) if per_week and avail else None
     out.update({
         "ident": {"name": s.get("Name"), "callsign": s.get("Callsign"), "type": s.get("CarrierType"),
                   "access": s.get("DockingAccess"), "notorious": s.get("AllowNotorious"),
@@ -332,7 +337,9 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
                   "modules": su.get("ModulePacks"), "free": su.get("FreeSpace")},
         "finance": {"balance": fin.get("CarrierBalance"), "reserve": fin.get("ReserveBalance"),
                     "available": avail, "reserve_pct": fin.get("ReservePercent"),
-                    "per_week": up.get("per_week"), "drift_per_week": up.get("drift_per_week"),
+                    "per_week": per_week, "per_week_estimate": up.get("per_week"),
+                    "per_week_source": "frontier" if fup and fup.get("per_week") else "estimate",
+                    "upkeep": fup, "drift_per_week": up.get("drift_per_week"),
                     "basis_days": up.get("days"), "weeks_left": round(weeks, 1) if weeks else None,
                     "taxes": {k.replace("TaxRate_", ""): v for k, v in fin.items() if k.startswith("TaxRate_")}},
         "capi": _capi_hold(capi_path, now),

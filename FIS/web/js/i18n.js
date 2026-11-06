@@ -475,6 +475,7 @@ const DE = /*DE*/{
   "MINING": "MINING",
   "STATISTICS": "STATISTIK",
   "SAR": "SAR",
+  "Frontier: core {c} + services {s}": "Frontier: Grundkosten {c} + Dienste {s}",
   "icy": "Eis",
   "rocky": "Gestein",
   "metallic": "metallisch",

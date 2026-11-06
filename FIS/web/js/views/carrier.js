@@ -148,14 +148,18 @@ function finance() {
   ];
   if (f.per_week) {
     const until = f.weeks_left ? new Date(Date.now() + f.weeks_left * 7 * 86400000) : null;
-    rows.push(line(t("Cost per week"), el("span", { class: "c-amber", text: "~" + cr(f.per_week) }),
-      el("span", { class: "c-dim", text: "  " + t("estimate over {d} days", { d: fmt(f.basis_days, 0) }) })));
+    const exact = f.per_week_source === "frontier";
+    rows.push(line(t("Cost per week"), el("span", { class: "c-amber", text: (exact ? "" : "~") + cr(f.per_week) }),
+      el("span", { class: "c-dim", text: "  " + (exact
+        ? t("Frontier: core {c} + services {s}", { c: cr(f.upkeep.core), s: cr(f.upkeep.services) })
+        : t("estimate over {d} days", { d: fmt(f.basis_days, 0) })) })));
     if (until) rows.push(line(t("Lasts until"), el("span", { class: f.weeks_left < 8 ? "c-red" : f.weeks_left < 26 ? "c-amber" : "c-green",
       text: day(until.getTime() / 1000) }), el("span", { class: "c-dim", text: "  (" + t("{w} weeks", { w: fmt(f.weeks_left, 0) }) + ")" })));
   } else {
     rows.push(line(t("Cost per week"), el("span", { class: "c-dim", text: t("not measurable – income at the carrier covers the costs") })));
   }
-  rows.push(el("div", { class: "c-dim small", text: t("Estimate: balance change with your own transfers taken out; market income at the carrier cannot be separated.") }));
+  if (f.per_week_source !== "frontier")
+    rows.push(el("div", { class: "c-dim small", text: t("Estimate: balance change with your own transfers taken out; market income at the carrier cannot be separated.") }));
   return frame(t("FINANCES"), "", rows, { appear: false });
 }
 

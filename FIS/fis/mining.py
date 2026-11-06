@@ -276,7 +276,9 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
         g["avg_price"] = round(g["revenue"] / g["sold"]) if g["sold"] else None
     out["goods"] = sorted(goods.values(), key=lambda g: (-g["refined"]))
     rev30 = sum(g["revenue_30d"] for g in goods.values())
-    upkeep = ((car or {}).get("upkeep") or {}).get("per_week")
+    from . import capi
+    fup = (capi.load(capi_path, now) or {}).get("upkeep") or {}
+    upkeep = fup.get("per_week") or ((car or {}).get("upkeep") or {}).get("per_week")
     out["income"] = {"revenue_30d": rev30, "per_week": round(rev30 / 30 * 7),
                      "upkeep_per_week": upkeep,
                      "covers_pct": round(100.0 * (rev30 / 30 * 7) / upkeep) if upkeep else None}

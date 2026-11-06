@@ -11,6 +11,7 @@ from fis import capi, fleet as fl
 SAMPLE = {"saved": 1000.0, "source_host": "companion.orerve.net", "data": {
     "name": {"callsign": "V2L-07J", "vanityName": "4541"}, "currentStarSystem": "Synuefe TH-J b42-5",
     "fuel": "889",
+    "finance": {"maintenance": 27383148, "coreCost": 5000000, "servicesCost": 22383148, "maintenanceToDate": 8457479},
     "cargo": [{"commodity": "Tritium", "locName": "Tritium", "qty": 500, "value": 25000000, "stolen": False, "mission": False},
               {"commodity": "Tritium", "locName": "Tritium", "qty": 120, "value": 6000000, "stolen": False, "mission": False},
               {"commodity": "Bromellite", "locName": "Bromellite", "qty": 31, "value": 1500000, "stolen": True, "mission": False},
@@ -37,6 +38,8 @@ class CapiTest(unittest.TestCase):
         self.assertEqual(d["fuel"], 889.0)
         self.assertEqual(d["age_s"], 600)
         self.assertEqual(d["callsign"], "V2L-07J")
+        self.assertEqual(d["upkeep"]["per_week"], 27383148)
+        self.assertEqual(d["upkeep"]["core"] + d["upkeep"]["services"], 27383148)
 
     def test_missing_or_broken(self):
         self.assertIsNone(capi.load(None))

@@ -58,7 +58,13 @@ def load(path: Optional[str], now: Optional[float] = None) -> Optional[Dict[str,
             g["mission"] += q
     hold: List[Dict[str, Any]] = sorted(goods.values(), key=lambda g: -g["qty"])
     name = d.get("name") if isinstance(d.get("name"), dict) else {}
-    return {"saved": saved, "age_s": round(now - saved) if saved else None,
+    fin = d.get("finance") if isinstance(d.get("finance"), dict) else {}
+    # upkeep per week as Frontier bills it: core cost + the services running
+    upkeep = ({"per_week": int(_num(fin.get("maintenance")) or 0), "core": int(_num(fin.get("coreCost")) or 0),
+               "services": int(_num(fin.get("servicesCost")) or 0),
+               "to_date": int(_num(fin.get("maintenanceToDate")) or 0)}
+              if _num(fin.get("maintenance")) else None)
+    return {"saved": saved, "upkeep": upkeep, "age_s": round(now - saved) if saved else None,
             "callsign": name.get("callsign"), "system": d.get("currentStarSystem"),
             "fuel": _num(d.get("fuel")), "hold": hold,
             "hold_total": sum(g["qty"] for g in hold),
