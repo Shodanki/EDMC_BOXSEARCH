@@ -1697,9 +1697,9 @@ replay after the update.
 
 ### Mining in the overlay
 
-While you mine in a ship with mining tools - from the first prospector or
-collector limpet; refining alone (ground mining in the Rhino SRV) starts
-nothing; gone when you dock, jump, or ten minutes after the last mining
+While you mine in a ship with mining tools - from the first prospector
+limpet (collectors serve other work too); refining alone (ground mining in
+the Rhino SRV) starts nothing; gone when you dock, jump, or ten minutes after the last mining
 event - the overlay shows five lines:
 
 ```

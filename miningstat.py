@@ -16,7 +16,8 @@ to five lines for the cockpit overlay:
   LIMPETS  how far the limpets go at the rate your session uses them,
            against the room left (a launched limpet frees its tonne)
 
-Only a prospector or collector limpet starts a session (refining alone - the
+Only a prospector limpet starts a session - collectors serve other work too
+(refining alone - the
 Rhino SRV's ground mining, the refinery's last tonnes after docking - does
 not). Docking at a station or carrier or a hyperspace jump ends it.
 
@@ -117,7 +118,10 @@ class MiningTracker:
         # alone - ground mining in the Rhino SRV, the last tonnes in the
         # refinery after docking - is no mining-ship session (07.11.2026:
         # 44 t Tantalum/Thorium from a Rhino out of an explorer)
-        armed = ev in ("LaunchDrone", "ProspectedAsteroid") and self.miner is not False
+        # collector limpets serve other work too (cargo, escape pods): only a
+        # prospector - which every mining run begins with - starts a session
+        armed = ((ev == "LaunchDrone" and (e.get("Type") or "").lower() == "prospector")
+                 or ev == "ProspectedAsteroid") and self.miner is not False
         if self.ended or (self.last and t - self.last > GAP_S):
             if not armed:
                 return False
@@ -282,6 +286,11 @@ def _selftest() -> int:
     explorer.feed({"event": "Loadout", "CargoCapacity": 128, "Modules": [{"Item": "int_dronecontrol_collection_size1_class5"}]})
     explorer.feed({"timestamp": t0 % 1, "event": "LaunchDrone", "Type": "Collection"})
     explorer_idle = not explorer.active(now)
+    # a collector limpet even from a mining ship starts nothing - only a prospector does
+    collector = MiningTracker()
+    collector.feed({"event": "Loadout", "CargoCapacity": 322, "Modules": [{"Item": "hpt_mininglaser_fixed_small"}]})
+    collector.feed({"timestamp": t0 % 1, "event": "LaunchDrone", "Type": "Collection"})
+    collector_idle = not collector.active(now)
     # a jump ends the session like docking
     jumper = MiningTracker()
     jumper.feed({"timestamp": t0 % 1, "event": "LaunchDrone", "Type": "Prospector"})
@@ -304,6 +313,7 @@ def _selftest() -> int:
         (rhino_idle, "refining without a limpet starts nothing"),
         (jump_ends, "a jump ends the session"),
         (explorer_idle, "no session out of a ship without mining tools"),
+        (collector_idle, "a collector limpet alone starts no session"),
         (ring_lines[3][0].startswith("HOTSPOT  Tritium Hotspot targeted"), "hotspot line: " + ring_lines[3][0]),
         (lost[3][0].startswith("HOTSPOT  not targeted"), "hotspot lost: " + lost[3][0]),
         (len(lost) == 5, "still five lines"),
