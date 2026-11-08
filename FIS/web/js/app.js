@@ -234,6 +234,13 @@ subscribe({
   open() { store.connected = true; setLed(""); },
   error(rs) { store.connected = false; setLed(rs === 0 ? "wait" : "off"); },
   snapshot(data) { store.live = data; refresh("all"); },
+  // the link went silent and is opened again (api.js watchdog)
+  stale() { store.connected = false; setLed("wait"); },
+  // the server's watchdog state: a reader that stalled shows as a dim LED
+  ping(data) {
+    if (data && data.poll_age_s !== null && data.poll_age_s > 20) setLed("off");
+    else if (store.connected) setLed("");
+  },
   jump() {
     refresh("all");
     if (mounted.has("galaxy") && store.view === "galaxy") later("galaxy", 1500, () => galaxy.update(ctx, "data"));

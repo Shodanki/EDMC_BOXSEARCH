@@ -98,8 +98,13 @@ Notes on what the files allow:
   hull.
 * Ship fittings are known for ships flown since your journals begin.
 * The carrier's tritium use per jump is computed with a formula fitted on
-  real jumps (within 1 t); tritium kept in the hold is not counted. The weekly
-  cost is an estimate from the balance over time.
+  real jumps (within 1 t). Tritium in the carrier's hold and the exact weekly
+  upkeep come from EDMC's Frontier data (Companion API) once EDMC has fetched
+  it; without it the weekly cost is an estimate from the balance over time.
+* The live link watches itself: if the game writes its journal anew under the
+  same name (seen after a lost connection), the FIS reads the new file from
+  its start; a reader that stopped is started again; a page whose connection
+  went silent (tablet asleep, Wi-Fi) reconnects within about 40 seconds.
 * The route uses the same filters as the plugin (read from EDMC's settings).
 * If one journal folder holds several commanders, the FIS shows the one who
   logged in last.
@@ -121,5 +126,6 @@ Settings beyond the questions (all optional) are listed in `fis.ini.example`.
 
 `python -m fis --help` lists parameters for development (`--db`, `--journal`,
 `--port`, `--no-setup` ...). `/api/health` reports the state of database,
-journal and live connections; `/api/config` the language and home-network
+journal, live connections and the watchdog (reader alive, last poll, journal
+rewrites, restarts); `/api/config` the language and home-network
 addresses. Tests: `python -m unittest discover -s tests -t .` from this folder.

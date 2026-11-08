@@ -46,6 +46,8 @@ class App:
         self.model = model
         self.cfg = cfg
         self.lan_at_start = cfg.lan          # LAN on/off needs a restart
+        self.watch_restarts = 0
+        self._watch_stop = threading.Event()
         self.db = db or Database(cfg.db_path)
         self.hub = live.hub if live else Hub()
         self.live = live or LiveTracker(cfg.journal_dir, self.hub, cfg.poll_s)
@@ -155,6 +157,32 @@ class App:
         row = self.db.last_visited()
         return int(row["id64"]) if row is not None and row["id64"] else None
 
+    # ---------------------------------------------------------- watchdog
+    WATCH_S = 5.0
+    STALL_S = 20.0
+
+    def watchdog_state(self) -> Dict[str, Any]:
+        lp = getattr(self.live, "last_poll", 0.0) or 0.0
+        return {"live_thread": self.live.alive() if hasattr(self.live, "alive") else None,
+                "poll_age_s": round(time.time() - lp, 1) if lp else None,
+                "journal_rewrites": getattr(self.live, "rewrites", 0),
+                "restarts": self.watch_restarts}
+
+    def watch(self) -> None:
+        """Keeps the live link alive: a dead polling thread is started again;
+        the state goes to /api/health and every SSE ping."""
+        def run() -> None:
+            while not self._watch_stop.wait(self.WATCH_S):
+                try:
+                    if hasattr(self.live, "alive") and not self.live.alive():
+                        self.watch_restarts += 1
+                        print("FIS watchdog: the journal reader had stopped - restarted (%d)"
+                              % self.watch_restarts, flush=True)
+                        self.live.restart()
+                except Exception:
+                    pass
+        threading.Thread(target=run, name="fis-watchdog", daemon=True).start()
+
     def health(self) -> Dict[str, Any]:
         live = self.live_state()
         return {
@@ -163,6 +191,7 @@ class App:
             "journal": {"dir": self.cfg.journal_dir, "exists": os.path.isdir(self.cfg.journal_dir),
                         "file": live.get("journal"), "last_event": live.get("last_event"),
                         "errors": self.live.errors},
+            "watchdog": self.watchdog_state(),
             "sse_clients": self.hub.clients, "lan": self.cfg.lan,
             "cost_model": self.calib.info,
             "ai_at_runtime": False,
@@ -412,6 +441,8 @@ class Handler(BaseHTTPRequestHandler):
                                          lambda: m.build_survey(app.db)))
         return self._error(404, "unknown endpoint")
 
+    PING_S = 15.0                            # quiet game: a ping at least this often
+
     def _sse(self) -> None:
         q = self.app.hub.subscribe()
         try:
@@ -424,11 +455,11 @@ class Handler(BaseHTTPRequestHandler):
             self._sse_write("snapshot", self.app.live_state())
             while True:
                 try:
-                    ev, data = q.get(timeout=15.0)
+                    ev, data = q.get(timeout=self.PING_S)
                     self._sse_write(ev, data)
                 except queue.Empty:
-                    self.wfile.write(b": ping\n\n")
-                    self.wfile.flush()
+                    # a named event: the page's watchdog sees it (comments it would not)
+                    self._sse_write("ping", dict(self.app.watchdog_state(), t=time.time()))
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             pass
         finally:
@@ -518,6 +549,7 @@ def main(argv: Optional[list] = None) -> int:
               " otherwise pick another port with fis_settings.bat." % cfg.port)
         return 2
     app.live.start()
+    app.watch()
     app.watch_db()
     # measure route times from the journals in the background (like the plugin)
     threading.Thread(target=app.calib.run_once, name="fis-calib", daemon=True).start()
