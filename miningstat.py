@@ -16,7 +16,9 @@ to five lines for the cockpit overlay:
   LIMPETS  how far the limpets go at the rate your session uses them,
            against the room left (a launched limpet frees its tonne)
 
-Docking at a station or carrier ends the session (and the block).
+Only a prospector or collector limpet starts a session (refining alone - the
+Rhino SRV's ground mining, the refinery's last tonnes after docking - does
+not). Docking at a station or carrier or a hyperspace jump ends it.
 
 Read only, no EDMC imports (testable on its own). The game writes nothing
 about the refinery's bins - only each finished tonne (MiningRefined).
@@ -35,6 +37,7 @@ ACTIVE_S = 10 * 60         # the overlay block shows this long after the last mi
 RATE_S = 10 * 60
 DEFAULT_RATIO = 0.4        # limpets per refined tonne until the session says better
 EVENTS = ("MiningRefined", "ProspectedAsteroid", "LaunchDrone", "AsteroidCracked", "Loadout", "Docked")
+MINING_TOOLS = ("hpt_mininglaser", "hpt_mining_", "hpt_mrascanner", "int_refinery")
 PLACE = ("SupercruiseExit", "SupercruiseEntry", "FSDJump", "Location")
 COLOURS = {"head": "#3EF2E0", "data": "#7CFF6B", "warn": "#FFB23E", "new": "#B57CFF", "dim": "#8FA3A6"}
 
@@ -64,6 +67,7 @@ class MiningTracker:
         self.target: Optional[str] = None
         self.target_name: Optional[str] = None
         self.ring: Optional[str] = None           # the ring you dropped into
+        self.miner: Optional[bool] = None         # ship has mining tools (None: no Loadout yet)
 
     def reset(self) -> None:
         self.start = 0.0
@@ -84,10 +88,20 @@ class MiningTracker:
             self.cargo = {str(k).lower(): int(v or 0) for k, v in cargo.items()}
         if ev == "Loadout":
             self.capacity = int(e.get("CargoCapacity") or 0)
+            # a mining ship carries mining tools; a collector limpet out of an
+            # explorer (picking up cargo) is no mining
+            mods = e.get("Modules")
+            self.miner = (any(str(m.get("Item") or "").lower().startswith(MINING_TOOLS) for m in mods)
+                          if mods else None)
             return False
         if ev in PLACE:
             self.ring = (e.get("Body") if ev == "SupercruiseExit" and e.get("BodyType") == "PlanetaryRing"
                          else None)
+            if ev == "FSDJump":               # a jump: navigating now, mining is over
+                changed = bool(self.last)
+                self.last = 0.0
+                self.ended = True
+                return changed
             return bool(self.last)
         if ev not in EVENTS:
             return False
@@ -99,9 +113,18 @@ class MiningTracker:
         if ev == "LaunchDrone" and (e.get("Type") or "").lower() not in ("prospector", "collection"):
             return False                      # repair, fuel, research limpets are no mining
         t = _ts(e)
+        # only a prospector or collector limpet starts a session: refining
+        # alone - ground mining in the Rhino SRV, the last tonnes in the
+        # refinery after docking - is no mining-ship session (07.11.2026:
+        # 44 t Tantalum/Thorium from a Rhino out of an explorer)
+        armed = ev in ("LaunchDrone", "ProspectedAsteroid") and self.miner is not False
         if self.ended or (self.last and t - self.last > GAP_S):
-            self.reset()                      # a new session after docking or a long break
+            if not armed:
+                return False
+            self.reset()                      # a new session after docking, a jump or a long break
         if not self.start:
+            if not armed:
+                return False
             self.start = t
         self.last = t
         if ev == "MiningRefined":
@@ -250,6 +273,20 @@ def _selftest() -> int:
     was_active = m.active(now)
     m.feed({"timestamp": t0 % 58, "event": "Docked", "StationType": "FleetCarrier"})
     docked_active = m.active(now)
+    # refining without a limpet (Rhino SRV, the refinery's last tonnes) starts nothing
+    rhino = MiningTracker()
+    rhino.feed({"timestamp": t0 % 1, "event": "MiningRefined", "Type": "$tantalum_name;"})
+    rhino_idle = not rhino.active(now) and not rhino.refined
+    # a collector limpet from a ship without mining tools (an explorer) starts nothing
+    explorer = MiningTracker()
+    explorer.feed({"event": "Loadout", "CargoCapacity": 128, "Modules": [{"Item": "int_dronecontrol_collection_size1_class5"}]})
+    explorer.feed({"timestamp": t0 % 1, "event": "LaunchDrone", "Type": "Collection"})
+    explorer_idle = not explorer.active(now)
+    # a jump ends the session like docking
+    jumper = MiningTracker()
+    jumper.feed({"timestamp": t0 % 1, "event": "LaunchDrone", "Type": "Prospector"})
+    jumper.feed({"timestamp": t0 % 2, "event": "FSDJump", "StarSystem": "X"})
+    jump_ends = not jumper.active(now)
     # undocked again: the next limpet starts a new session from zero
     m.feed({"timestamp": "2026-11-06T10:05:00Z", "event": "LaunchDrone", "Type": "Prospector"})
     fresh = sum(m.refined.values()) == 0 and m.limpets_used == 1
@@ -264,6 +301,9 @@ def _selftest() -> int:
         (was_active, "active"),
         (not docked_active, "docking ends the session"),
         (fresh, "a new session after docking"),
+        (rhino_idle, "refining without a limpet starts nothing"),
+        (jump_ends, "a jump ends the session"),
+        (explorer_idle, "no session out of a ship without mining tools"),
         (ring_lines[3][0].startswith("HOTSPOT  Tritium Hotspot targeted"), "hotspot line: " + ring_lines[3][0]),
         (lost[3][0].startswith("HOTSPOT  not targeted"), "hotspot lost: " + lost[3][0]),
         (len(lost) == 5, "still five lines"),

@@ -1697,9 +1697,10 @@ replay after the update.
 
 ### Mining in the overlay
 
-While you mine - prospector or collector limpets, prospected rocks, refined
-tonnes; gone when you dock or ten minutes after the last of them - the overlay shows five
-lines:
+While you mine in a ship with mining tools - from the first prospector or
+collector limpet; refining alone (ground mining in the Rhino SRV) starts
+nothing; gone when you dock, jump, or ten minutes after the last mining
+event - the overlay shows five lines:
 
 ```
 ROCK  Tritium 18.3 % | low | GOOD
