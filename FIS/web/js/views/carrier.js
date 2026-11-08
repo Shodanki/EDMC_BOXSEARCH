@@ -12,6 +12,7 @@ import { t, N_ } from "../i18n.js";
 
 const ROLES = [["combat", N_("Combat")], ["mining", N_("Mining")], ["transport", N_("Transport")],
   ["exploration", N_("Exploration")], ["passengers", N_("Passengers")], ["sar", N_("SAR")]];
+const ROLE_HELP = { combat: N_("Combat: weapons by mount size, shield size and class, shield boosters, hull reinforcement, armour"), mining: N_("Mining: mining lasers and tools, refinery, prospector and collector limpet controllers, pulse wave scanner"), transport: N_("Transport: cargo capacity - 5 dots from 500 t"), exploration: N_("Exploration: jump range - 5 dots from 60 ly; without a fuel scoop at most 1, without a surface scanner at most 2"), passengers: N_("Passengers: passenger cabins"), sar: N_("Search and rescue: repair and fuel transfer limpets, fuel to give, fuel scoop, decontamination and collector limpets") };
 const SPACE = [["crew", N_("crew"), "c1"], ["cargo", N_("cargo"), "c2"], ["reserved", N_("reserved"), "c3"],
   ["ships", N_("ship packs"), "c4"], ["modules", N_("module packs"), "c5"]];
 const SERVICE = { BlackMarket: N_("Secure warehouse"), Captain: N_("Captain"), Refuel: N_("Refuel"),
@@ -52,7 +53,7 @@ function render() {
   root.replaceChildren();
   if (!data || data.empty) {
     root.append(frame(t("CARRIER"), "", el("div", { class: "empty" }, t("NO CARRIER DATA"), el("br"),
-      el("span", { class: "c-dim", text: t("Open the carrier management once – the game then writes its state.") }))));
+      el("span", { class: "c-dim", text: t("No carrier of your own known yet - your ships are listed below. If you own one, open the carrier management once.") }))));
     if (data && data.fleet && data.fleet.length) root.append(airWing());
     return;
   }
@@ -189,8 +190,10 @@ function airWing() {
   let list = [...ships];
   if (roleFilter) list = list.filter(s => s.rating && s.rating.roles[roleFilter] > 0)
     .sort((a, b) => b.rating.roles[roleFilter] - a.rating.roles[roleFilter]);
-  const head = el("tr", {}, ...["", t("Ship"), t("Where"), ...ROLES.map(([, l]) => t(l).slice(0, 4)), t("Hull"), "ly", "t", t("Fitting")]
-    .map(h => el("th", { text: h })));
+  // role columns: the full name and how the dots are earned on hover
+  const head = el("tr", {}, ...["", t("Ship"), t("Where")].map(h => el("th", { text: h })),
+    ...ROLES.map(([k, l]) => el("th", { text: t(l).slice(0, 4), title: t(ROLE_HELP[k]), class: "role-h" })),
+    ...[t("Hull"), "ly", "t", t("Fitting")].map(h => el("th", { text: h })));
   const rows = list.map(s => {
     const r = s.rating;
     const where = s.current ? t("in use") : s.stored_at === "here" ? t("on board") : (s.system || s.location || "–") + (s.in_transit ? " ⟫" : "");
