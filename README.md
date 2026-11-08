@@ -1365,6 +1365,7 @@ tag, so the two have to be set together or the notice lies.
 | 4.3.0 | discovery filters fixed, supercruise timing on real legs, atlas for body signals and materials, 30 s briefing |
 | 4.4.0 | surface track and finds on bodies, exobiology sample distance in the overlay, SHBOX FIS |
 | 4.5.0 | mining block in the overlay, carrier hold from Frontier's Companion API, FIS: galaxy 3D, mining, statistics |
+| 4.5.1 | fixes: FIS keeps following a journal the game rewrote, live-link watchdog; mining block only from a prospector in a mining ship |
 
 
 ---
@@ -1748,3 +1749,17 @@ hotspots and a system report, jumponium readiness, a hazard log, life
 support on foot, a big surface compass, known points on approach, the
 search-and-rescue role for the air wing and a settings page. Details:
 [FIS/README.md](FIS/README.md).
+
+### 4.5.1 - fixes
+
+* **SHBOX FIS stayed silent after a lost connection.** The game had written
+  its journal anew under the same name; the FIS read on past the new end. It
+  now reads such a file from its start, a watchdog restarts a stopped reader,
+  and a page whose connection went silent reconnects by itself.
+* **Mining block only when you mine with a mining ship.** It starts with the
+  first prospector limpet in a ship with mining tools; collector limpets (they
+  serve other work too), refining in the Rhino SRV and the refinery's last
+  tonnes after docking start nothing. A jump ends it, like docking.
+* FIS CARRIER: hovering a role column explains how its dots are earned; a
+  commander without a carrier of their own sees the ships without a hint that
+  assumes one.
