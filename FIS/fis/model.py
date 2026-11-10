@@ -482,7 +482,87 @@ def system_signals(rows) -> List[Dict[str, Any]]:
     return sorted(agg.values(), key=lambda x: (x["tone"] != "violet", -x["total"]))
 
 
-ATLAS_VIEWS = ("rings", "signals", "materials", "finds", "bio")
+ATLAS_VIEWS = ("rings", "signals", "materials", "finds", "bio", "systems")
+SYSTEM_STATES = ("unvisited", "visited", "surveyed", "only_us", "absent")
+
+
+def survey_rows(db: Database) -> Dict[str, Any]:
+    """
+    M6/M14: every system of the active survey sphere with its state - known
+    to the online sources but not visited yet, visited, surveyed (FSS
+    complete) - plus the names checked in the galaxy map and found not to
+    exist. "only_us": no online source knows the system. Read only, from
+    the plugin database.
+    """
+    s = db.survey()
+    out: Dict[str, Any] = {"survey": None, "systems": []}
+    if s is None or s["cx"] is None:
+        return out
+    c = (s["cx"], s["cy"], s["cz"])
+    out["survey"] = {"start_system": s["start_system"], "center": list(c), "radius": s["radius"],
+                     "active": bool(s["active"]), "started": s["started"]}
+    for r in db.systems_in_sphere(c[0], c[1], c[2], s["radius"] or 0.0):
+        srcs = Database.known_sources(r)
+        state = "surveyed" if r["fss_complete"] else "visited" if r["visited"] else "unvisited"
+        out["systems"].append({
+            "name": r["name"], "id64": r["id64"], "x": r["x"], "y": r["y"], "z": r["z"],
+            "from_centre_ly": _r(math.dist((r["x"], r["y"], r["z"]), c), 2),
+            "state": state, "only_us": not srcs, "sources": srcs,
+            "bodies": r["body_count"]})
+    for r in db.absent_all():
+        out["systems"].append({"name": r["name"], "id64": None, "x": None, "y": None, "z": None,
+                               "from_centre_ly": None, "state": "absent", "only_us": False,
+                               "sources": [], "bodies": None, "checked": r["ts"]})
+    return out
+
+
+def _atlas_systems(db: Database, kind: Optional[str], near: Optional[Sequence[float]],
+                   limit: int, q: Optional[str], max_ly: Optional[float]) -> Dict[str, Any]:
+    """ATLAS SYSTEMS (M6): the survey sphere's systems, nearest first."""
+    text = (q or "").strip().lower()
+    items = []
+    for r in survey_rows(db)["systems"]:
+        if kind == "only_us" and not r["only_us"]:
+            continue
+        if kind and kind != "only_us" and r["state"] != kind:
+            continue
+        if text and text not in r["name"].lower():
+            continue
+        it: Dict[str, Any] = {"system": r["name"], "id64": r["id64"], "body": None, "count": None,
+                              "key": r["state"], "only_us": r["only_us"], "sources": r["sources"],
+                              "bodies": r["bodies"], "dist_ly": None, "rel": None}
+        if near and r["x"] is not None:
+            dx, dy, dz = r["x"] - near[0], r["y"] - near[1], r["z"] - near[2]
+            it["dist_ly"] = _r(math.sqrt(dx * dx + dy * dy + dz * dz), 1)
+            it["rel"] = [_r(dx, 2), _r(dy, 2), _r(dz, 2)]
+        if max_ly and near and (it["dist_ly"] is None or it["dist_ly"] > max_ly):
+            continue
+        items.append(it)
+    items.sort(key=lambda x: (x["dist_ly"] if x["dist_ly"] is not None else 1e9, x["system"]))
+    for it in items:
+        it["body_short"] = ""
+    return {"view": "systems", "kind": kind, "q": q or "", "max_ly": max_ly,
+            "total": len(items), "items": items[:limit]}
+
+
+def survey_export(db: Database, fmt: str) -> Any:
+    """M14: the survey sphere as CSV (text) or JSON (dict)."""
+    data = survey_rows(db)
+    if fmt == "json":
+        return data
+    import csv
+    import io as _io
+    buf = _io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["name", "id64", "x", "y", "z", "from_centre_ly", "state", "only_us",
+                "sources", "bodies"])
+    for r in data["systems"]:
+        w.writerow([r["name"], r["id64"] or "", r["x"] if r["x"] is not None else "",
+                    r["y"] if r["y"] is not None else "", r["z"] if r["z"] is not None else "",
+                    r["from_centre_ly"] if r["from_centre_ly"] is not None else "", r["state"],
+                    "1" if r["only_us"] else "0", "|".join(r["sources"]),
+                    r["bodies"] if r["bodies"] is not None else ""])
+    return buf.getvalue()
 # M1: Horizons-era organics are logged with the composition scanner (codex)
 # only - the genetic sampler never analyses them, so a body whose only open
 # signals are these counts as done. Assumption, to confirm in game.
@@ -529,6 +609,8 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
     `rel` (ly from you: x, z in the galactic plane, y up) for the small map.
     """
     view = view if view in ATLAS_VIEWS else "signals"
+    if view == "systems":
+        return _atlas_systems(db, kind, near, limit, q, max_ly)
     rows = {"rings": db.atlas_rings, "materials": db.atlas_materials,
             "finds": db.atlas_finds, "bio": db.atlas_bio}.get(view, db.atlas_signals)(kind)
     need = text = None
@@ -603,6 +685,13 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
 def build_atlas_kinds(db: Database, view: str) -> List[Dict[str, Any]]:
     """The second picker: what kinds exist in one atlas view, with counts."""
     out = []
+    if view == "systems":
+        rows = survey_rows(db)["systems"]
+        n = {k: 0 for k in SYSTEM_STATES}
+        for r in rows:
+            n[r["state"]] += 1
+            n["only_us"] += 1 if r["only_us"] else 0
+        return [{"key": k, "label": k, "count": n[k]} for k in SYSTEM_STATES if n[k]]
     if view == "bio":
         n = {"open": 0, "done": 0}
         for r in db.atlas_bio():

@@ -209,6 +209,23 @@ class TestModel(_Base):
         self.assertEqual(sv["systems"]["visited"], 1)
         self.assertEqual(sv["systems"]["only_us"], 1)
 
+    def test_atlas_systems_and_export(self):
+        # M6: the survey sphere's systems by state, M14: the same as a file
+        at = self.model.build_atlas(self.db, "systems", None, None, 50)
+        states = sorted(it["key"] for it in at["items"])
+        self.assertIn("absent", states)
+        self.assertEqual(len([s for s in states if s != "absent"]), 2)
+        kinds = {k["key"]: k["count"] for k in self.model.build_atlas_kinds(self.db, "systems")}
+        self.assertEqual((kinds.get("absent"), kinds.get("only_us")), (1, 1))
+        only = self.model.build_atlas(self.db, "systems", "only_us", None, 50)["items"]
+        self.assertTrue(only and all(it["only_us"] for it in only))
+        csv_text = self.model.survey_export(self.db, "csv")
+        lines = csv_text.strip().splitlines()
+        self.assertEqual(lines[0].split(",")[:3], ["name", "id64", "x"])
+        self.assertEqual(len(lines), 1 + 3)
+        js = self.model.survey_export(self.db, "json")
+        self.assertEqual(js["survey"]["radius"], 30.0)
+
 
 @unittest.skipUnless(os.path.exists(fx.REAL_DB), "no copy of a real database in tests/data")
 class TestRealData(unittest.TestCase):
@@ -315,6 +332,15 @@ class TestServer(_Base):
             r.read()
             self.assertEqual(r.status, 404, p)
             c.close()
+
+    def test_survey_export(self):
+        # M14: the survey sphere as a file
+        st, h, body = self.get("/api/survey/export?format=csv")
+        self.assertEqual(st, 200)
+        self.assertIn('attachment; filename="shbox-survey-', h.get("Content-Disposition"))
+        self.assertTrue(body.startswith(b"\xef\xbb\xbf"))           # BOM for Excel
+        st, h, body = self.get("/api/survey/export?format=json")
+        self.assertEqual(json.loads(body)["survey"]["start_system"], fx.SYS)
 
     def test_static_types(self):
         for p, want in (("/", "text/html; charset=utf-8"), ("/js/i18n.js", "text/javascript; charset=utf-8"),

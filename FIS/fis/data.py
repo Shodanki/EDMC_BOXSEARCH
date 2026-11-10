@@ -262,6 +262,10 @@ class Database:
         return self.query("SELECT * FROM systems WHERE name LIKE ? ESCAPE '\\'",
                           (esc + "%",))
 
+    def absent_all(self) -> List[sqlite3.Row]:
+        """Names checked in the galaxy map and found not to exist."""
+        return self.query("SELECT name, boxel, ts FROM absent ORDER BY name")
+
     def absent_in(self, key: str) -> List[sqlite3.Row]:
         return self.query("SELECT * FROM absent WHERE boxel=?", (key,))
 

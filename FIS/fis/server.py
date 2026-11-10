@@ -522,6 +522,19 @@ class Handler(BaseHTTPRequestHandler):
             sig = (app.db.mtime(), app.archive.rev, pos, nav, mc, days)
             return self._json(app.cached("galaxy:%s:%s" % (mc, days), sig,
                                          lambda: galaxy.build_galaxy(app.db, app.archive, live, mc, days)))
+        if path == "/api/survey/export":
+            # M14: the survey sphere as a file - CSV or JSON
+            fmt = "json" if (qs.get("format") or ["csv"])[0] == "json" else "csv"
+            res = m.survey_export(app.db, fmt)
+            day = time.strftime("%Y-%m-%d")
+            if fmt == "json":
+                body = json.dumps(res, ensure_ascii=False, indent=1, default=str).encode("utf-8")
+                ctype = "application/json; charset=utf-8"
+            else:
+                body = ("\ufeff" + res).encode("utf-8")   # BOM: Excel reads UTF-8 then
+                ctype = "text/csv; charset=utf-8"
+            return self._send(200, body, ctype, {
+                "Content-Disposition": 'attachment; filename="shbox-survey-%s.%s"' % (day, fmt)})
         if path == "/api/survey":
             return self._json(app.cached("survey", app.db.mtime(),
                                          lambda: m.build_survey(app.db)))
