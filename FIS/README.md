@@ -132,7 +132,7 @@ contains the access token - keep it out of the stream picture.
 | 5 | **PLANET INFO** | datasheet of a body: gravity, temperature, atmosphere, volcanism, materials, rings and hotspots, signals, species, genus forecast |
 | 6 | **ATLAS** | everything found, by kind - ring hotspots, body signals, materials picked up, finds on the ground, bio signals - nearest first, within a chosen distance; SYSTEMS lists the survey sphere by state (not visited, visited, surveyed, known to no online source, checked and not existing) and exports it as CSV or JSON |
 | 7 | **SHIP** | status panel (warning / caution / advisory lamps), schematic cutaway, power by priority, modules with integrity and ammunition, damage and function report, cargo and fuel |
-| 8 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range (with the tritium in your ship and - from EDMC's Frontier data - in the carrier's hold, what you mined and the trip to your route's end), hold with its goods, finances, services - and the air wing: every ship in the hangar with role ratings (combat, mining, transport, exploration, passengers, search and rescue); docked at someone else's carrier: what its market buys (what you carry first, tritium next) and sells, from the market you opened |
+| 8 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range (with the tritium in your ship and - from EDMC's Frontier data - in the carrier's hold, what you mined and the trip to your route's end), hold with its goods, finances, services - and the air wing: every ship in the hangar with role ratings (combat, mining, transport, exploration, passengers, search and rescue); docked at someone else's carrier: what its market buys (what you carry first, tritium next) and sells, from the market you opened; **known carriers** - also without a carrier of your own: the carriers you docked at, started a mission or community goal from, rode along with or saw in the FSS, with their last known system, how old that is and how far from you, what you started there and what their market bought when you last opened it. Mark the ones you want to find again with ☆ (and a note); favourites come first, get a ★ in SYSTEM's points of interest and on the GALAXY map |
 | 9 | **MINING** | everything about mining, tritium first: the session (yield per hour, limpets, best and last rock), tritium for the carrier (tank, in your ship, mined, delivered), ring hotspots near you, mining ships, goods with what selling them earned against the carrier's upkeep, every session so far |
 | 0 | **STATISTICS** | the game's own record of you (written at every login): ranks with progress, exploration, exobiology, mining, the carrier, wealth and time played - with the growth over 24 h, 7, 30 or 90 days |
 
@@ -158,6 +158,12 @@ Notes on what the files allow:
 * The route uses the same filters as the plugin (read from EDMC's settings).
 * If one journal folder holds several commanders, the FIS shows the one who
   logged in last.
+* Known carriers come only from your own journals - nothing is looked up
+  online, so a carrier's position is where *you* last saw it. Favourites,
+  notes and the last market of each visited carrier are kept per commander
+  in `favourites.json` next to `fis.ini` (personal - keep it out of anything
+  you share). Starring works from the tablet too (with the home-network
+  token); the settings stay on the game PC.
 
 ## Files
 
