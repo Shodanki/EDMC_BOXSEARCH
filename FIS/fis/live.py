@@ -87,6 +87,7 @@ def empty_state() -> Dict[str, Any]:
         "target": None,         # FSDTarget: name, id64, star_class, remaining_jumps
         "ship_target": None,    # ShipTargeted: the locked ship, as far as scanned (E5)
         "vehicle": None,        # surface vehicle out now: "SRV Rhino", "Nomad" ... (M2)
+        "suit": None,           # SuitLoadout: suit, class, mods, weapons (M5)
         "navroute": [],         # NavRoute.json hops
         "fuel": {},             # main, reservoir
         "status": {},           # Status.json, decoded
@@ -98,6 +99,34 @@ def empty_state() -> Dict[str, Any]:
         "journal": None,        # file being followed
         "last_event": None, "last_event_ts": None,
     }
+
+
+# M5: the journal's localised suit names are sometimes left as "$...;"
+SUITS = {"explorationsuit": "Artemis Suit", "utilitysuit": "Maverick Suit",
+         "tacticalsuit": "Dominator Suit", "flightsuit": "Flight Suit"}
+SUIT_MODS = {
+    "suit_increasedbatterycapacity": "Improved Battery Capacity", "suit_nightvision": "Night Vision",
+    "suit_increasedsprintduration": "Increased Sprint Duration", "suit_improvedjumpassist": "Improved Jump Assist",
+    "suit_backpackcapacity": "Extra Backpack Capacity", "suit_increasedammoreserves": "Extra Ammo Capacity",
+    "suit_improvedradar": "Enhanced Tracking", "suit_increasedo2capacity": "Increased Air Reserves",
+    "suit_quieterfootsteps": "Quieter Footsteps", "suit_reducedtoolbatteryconsumption": "Reduced Tool Battery Usage",
+    "suit_increasedmeleedamage": "Added Melee Damage", "suit_increasedshieldregen": "Faster Shield Regen",
+    "suit_increasedarmour": "Damage Resistance"}
+
+
+def suit_from(e: Dict[str, Any]) -> Dict[str, Any]:
+    """SuitLoadout / SwitchSuitLoadout -> what the FIS shows on foot."""
+    key = (e.get("SuitName") or "").lower()
+    base, _, cls = key.partition("_class")
+    name = e.get("SuitName_Localised") or ""
+    if not name or name.startswith("$"):
+        name = SUITS.get(base, base.replace("suit", " suit").strip().title() or "Suit")
+    mods = [SUIT_MODS.get(m, m.replace("suit_", "").replace("_", " ")) for m in e.get("SuitMods") or []]
+    weapons = [{"slot": m.get("SlotName"), "name": m.get("ModuleName_Localised") or m.get("ModuleName"),
+                "class": m.get("Class"), "mods": len(m.get("WeaponMods") or [])}
+               for m in e.get("Modules") or []]
+    return {"name": name, "class": int(cls) if cls.isdigit() else None, "mods": mods,
+            "loadout": e.get("LoadoutName"), "weapons": weapons}
 
 
 class LiveTracker:
@@ -201,6 +230,8 @@ class LiveTracker:
                     if s["target"] and s["target"].get("id64") == e.get("SystemAddress"):
                         s["target"]["star_class"] = e.get("StarClass")
                     out = "target"
+            elif ev in ("SuitLoadout", "SwitchSuitLoadout"):
+                s["suit"] = suit_from(e)
             elif ev in ("LaunchSRV", "LaunchVessel"):
                 s["vehicle"] = (e.get("SRVType_Localised") or e.get("VesselType_Localised")
                                 or e.get("SRVType") or e.get("VesselType") or "SRV")

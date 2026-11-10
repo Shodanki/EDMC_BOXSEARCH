@@ -452,9 +452,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/surface":
             sid = (qs.get("sys") or [None])[0]
             body = (qs.get("body") or [None])[0]
-            return self._json(m.build_surface(app.db, app.live_state(),
-                                              int(sid) if sid and sid.isdigit() else None,
-                                              body or None))
+            out = m.build_surface(app.db, app.live_state(),
+                                  int(sid) if sid and sid.isdigit() else None, body or None)
+            if out.get("life"):
+                out["backpack"] = m.backpack(app.cfg.journal_dir)     # on foot (M5)
+            return self._json(out)
         if path == "/api/atlas/kinds":
             return self._json({"view": (qs.get("view") or ["signals"])[0],
                                "kinds": m.build_atlas_kinds(app.db, (qs.get("view") or ["signals"])[0])})

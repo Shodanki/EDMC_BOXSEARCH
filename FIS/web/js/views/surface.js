@@ -200,7 +200,28 @@ function lifeSupport(L) {
       el("span", { class: L.low_health ? "c-amber" : "", text: L.health === null || L.health === undefined ? "–" : Math.round(L.health * 100) + " %" })),
     el("div", { class: "small " + (L.very_cold || L.very_hot ? "c-amber" : ""), text: t("Temperature") + ": " + temp + (tempTag ? " · " + tempTag : "") }),
     el("div", { class: "small c-dim", text: (L.breathable ? t("breathable atmosphere") : t("no breathable atmosphere"))
-      + (L.gravity !== null && L.gravity !== undefined ? " · " + fmt(L.gravity, 2) + " g" : "") }));
+      + (L.gravity !== null && L.gravity !== undefined ? " · " + fmt(L.gravity, 2) + " g" : "") }),
+    ...suitRows(data.suit, data.backpack));
+}
+
+// M5: suit, its mods and weapons (SuitLoadout) and the backpack on foot
+function suitRows(S, B) {
+  const rows = [];
+  if (S) {
+    rows.push(el("div", { class: "small" }, el("span", { class: "c-cyan", text: S.name + (S.class ? " G" + S.class : "") }),
+      el("span", { class: "c-dim", text: S.loadout ? " · " + S.loadout : "" })));
+    if (S.mods && S.mods.length) rows.push(el("div", { class: "small c-dim", text: S.mods.join(" · ") }));
+    for (const w of S.weapons || []) rows.push(el("div", { class: "small" }, "▸ " + (w.name || "?") + (w.class ? " G" + w.class : ""),
+      el("span", { class: "c-dim", text: w.mods ? " · " + t("{n} mods", { n: w.mods }) : "" })));
+  }
+  if (B) {
+    const cons = (B.consumables || []).filter(c => c.count).map(c => c.name + " ×" + c.count);
+    rows.push(el("div", { class: "small" }, el("span", { class: "c-dim", text: t("Backpack") + " " }),
+      cons.length ? cons.join(" · ") : t("no consumables")));
+    if (B.items || B.components || B.data) rows.push(el("div", { class: "small c-dim",
+      text: t("goods {i} · components {c} · data {d}", { i: B.items, c: B.components, d: B.data }) }));
+  }
+  return rows;
 }
 
 // big compass, heading up: where the parked SRV, the ship and the earlier

@@ -778,8 +778,27 @@ def build_surface(db: Database, live: Optional[Dict[str, Any]],
     out = _build_surface(db, live, id64, body)
     life = life_support((live or {}).get("status") or {})
     if life:
-        out = dict(out, life=life)
+        out = dict(out, life=life, suit=(live or {}).get("suit"))
     return out
+
+
+def backpack(journal_dir: Optional[str]) -> Optional[Dict[str, Any]]:
+    """M5: what you carry on foot (Backpack.json): consumables by name,
+    goods / components / data as counts."""
+    if not journal_dir:
+        return None
+    import json as _j
+    import os as _os
+    try:
+        with open(_os.path.join(journal_dir, "Backpack.json"), encoding="utf-8") as fh:
+            bp = _j.load(fh)
+    except (OSError, ValueError):
+        return None
+    count = lambda k: sum(int(i.get("Count") or 0) for i in bp.get(k) or [])   # noqa: E731
+    return {"consumables": [{"name": i.get("Name_Localised") or i.get("Name"), "count": int(i.get("Count") or 0)}
+                            for i in bp.get("Consumables") or []],
+            "items": count("Items"), "components": count("Components"), "data": count("Data"),
+            "ts": bp.get("timestamp")}
 
 
 def _build_surface(db: Database, live: Optional[Dict[str, Any]],

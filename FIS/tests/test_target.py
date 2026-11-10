@@ -67,6 +67,42 @@ class TestVehicle(unittest.TestCase):
         self.assertIsNone(lt.snapshot()["vehicle"])
 
 
+class TestSuit(unittest.TestCase):
+    """M5: suit and weapons from SuitLoadout, backpack from Backpack.json."""
+    def test_suit_names_mods_weapons(self):
+        lt = LiveTracker(".")
+        # the journal sometimes leaves the localised name as a "$...;" key
+        lt.feed(ev("SuitLoadout", SuitName="explorationsuit_class5", SuitName_Localised="$ExplorationSuit_Class1_Name;",
+                   SuitMods=["suit_nightvision", "suit_somethingnew"], LoadoutName="Genetics A5",
+                   Modules=[{"SlotName": "PrimaryWeapon1", "ModuleName": "wpn_m_assaultrifle_plasma_fauto",
+                             "ModuleName_Localised": "Manticore Oppressor", "Class": 2, "WeaponMods": ["x"]}]))
+        s = lt.snapshot()["suit"]
+        self.assertEqual((s["name"], s["class"], s["loadout"]), ("Artemis Suit", 5, "Genetics A5"))
+        self.assertEqual(s["mods"], ["Night Vision", "somethingnew"])
+        self.assertEqual(s["weapons"], [{"slot": "PrimaryWeapon1", "name": "Manticore Oppressor", "class": 2, "mods": 1}])
+
+    def test_backpack(self):
+        import json
+        import os
+        import tempfile
+        from fis.config import Config
+        from tests import fixtures as fx
+        cfg = Config()
+        cfg.plugin_dir = fx.PLUGIN_DIR
+        cfg.use_plugin_path()
+        from fis import model
+        d = tempfile.mkdtemp(prefix="fis-bp-")
+        with open(os.path.join(d, "Backpack.json"), "w", encoding="utf-8") as fh:
+            json.dump({"timestamp": TS, "event": "Backpack", "Items": [{"Name": "x", "Count": 2}],
+                       "Components": [], "Data": [{"Name": "y", "Count": 1}],
+                       "Consumables": [{"Name": "healthpack", "Name_Localised": "Medkit", "Count": 1},
+                                       {"Name": "energycell", "Name_Localised": "Energy Cell", "Count": 3}]}, fh)
+        b = model.backpack(d)
+        self.assertEqual(b["consumables"], [{"name": "Medkit", "count": 1}, {"name": "Energy Cell", "count": 3}])
+        self.assertEqual((b["items"], b["components"], b["data"]), (2, 0, 1))
+        self.assertIsNone(model.backpack(os.path.join(d, "missing")))
+
+
 class FakeDb:
     def body(self, id64, body_id):
         return {"name": "Sol 3", "arrival_ls": 499.0} if (id64, body_id) == (10477373803, 3) else None
