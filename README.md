@@ -79,10 +79,10 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4491 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `load.py` | 4512 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
 | `sysdb.py` | 2192 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 795 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
-| `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
+| `boxelplan.py` | 772 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
 | `sources.py` | 735 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
 | `netgate.py` | 469 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
 | `shells.py` | 224 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
@@ -756,11 +756,14 @@ distance     4.2 ly   uncertainty +-9 ly
 this boxel   1 candidate   odds void
 queue        973 probes (gap 0, probe 2, empty 971)
 
-[copy prefix] [not there] [boxel done] [later]
+[copy prefix] [copy bundle] [not there] [boxel done] [later]
 [replan] [copy FC] [carrier spot] [x] carrier start
 ```
 
 Clicking **Fly** or **Probe** in the main panel copies that name.
+**copy bundle** copies one prefix for several of the next probe boxels when
+they share sector, letters and mass code - `Synuefe VA-I b` lists b2, b3 and
+b17 (and the other b boxels of VA-I) in one galaxy-map search.
 
 ## 10. Preferences
 

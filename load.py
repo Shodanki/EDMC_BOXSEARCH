@@ -46,6 +46,7 @@ from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       calibrate_from_journal, calibrate_work_from_journal,
                       leg_distance_ls,
                       plan_route, resolve_positions, shorten)
+from boxelplan import bundled_probe_prefix                   # noqa: E402
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
                        corridor_targets, set_origin)
@@ -227,6 +228,7 @@ _btn_fc: Optional[tk.Button] = None
 _btn_stats: Optional[tk.Button] = None
 _btn_boxel: Optional[tk.Button] = None
 _btn_prefix: Optional[tk.Button] = None
+_btn_bundle: Optional[tk.Button] = None
 _btn_next: Optional[tk.Button] = None
 _lbl_stats = None
 _v_stats: Optional[tk.StringVar] = None
@@ -2659,6 +2661,23 @@ def _copy_prefix() -> None:
         _set_status("no boxel prefix for this candidate")
 
 
+def _copy_bundle() -> None:
+    """Copy one prefix for several of the next probe boxels (same sector,
+    letters and mass code) - one paste in the galaxy map lists them all."""
+    prefix, keys = bundled_probe_prefix(ST.probe, 5)
+    if not prefix:
+        _set_status("no probe boxels to bundle")
+        return
+    _copy(prefix)
+    if len(keys) > 1:
+        tails = ", ".join(k[len(prefix):] or k.split()[-1] for k in keys)
+        _set_status("'%s' lists the next %d probe boxels (%s) - and the other "
+                    "boxels starting with it" % (prefix, len(keys), tails))
+    else:
+        _set_status("only one of the next boxels in this group - '%s' copied"
+                    % prefix)
+
+
 def _probe_skip() -> None:
     if ST.probe:
         ST.probe.append(ST.probe.pop(0))
@@ -3752,7 +3771,7 @@ def _probe_window_close() -> None:
         except Exception:
             pass
     _probe_win = None
-    _btn_prefix = _btn_absent = _btn_boxel = _btn_skip = None
+    _btn_prefix = _btn_bundle = _btn_absent = _btn_boxel = _btn_skip = None
     _refresh()
 
 
@@ -3773,9 +3792,11 @@ def _probe_window_open() -> None:
                                                padx=10, pady=(8, 6))
     bar = tk.Frame(_probe_win)
     bar.grid(row=1, column=0, sticky=tk.EW, padx=10, pady=(0, 4))
-    global _btn_prefix, _btn_absent, _btn_boxel, _btn_skip
+    global _btn_prefix, _btn_bundle, _btn_absent, _btn_boxel, _btn_skip
     _btn_prefix = tk.Button(bar, text="copy prefix", command=_copy_prefix)
     _btn_prefix.pack(side=tk.LEFT)
+    _btn_bundle = tk.Button(bar, text="copy bundle", command=_copy_bundle)
+    _btn_bundle.pack(side=tk.LEFT, padx=(4, 0))
     _btn_absent = tk.Button(bar, text="not there", command=_probe_absent)
     _btn_absent.pack(side=tk.LEFT, padx=(4, 0))
     _btn_boxel = tk.Button(bar, text="boxel done", command=_boxel_done)
@@ -3974,7 +3995,7 @@ def _refresh() -> None:
             _btn_fc.config(state=tk.NORMAL if ST.carrier else tk.DISABLED)
         # These live in the probe window and vanish when it closes.
         state = tk.NORMAL if (ST.active and ST.probe) else tk.DISABLED
-        for b in (_btn_absent, _btn_skip, _btn_boxel, _btn_prefix):
+        for b in (_btn_absent, _btn_skip, _btn_boxel, _btn_prefix, _btn_bundle):
             if b is None:
                 continue
             try:

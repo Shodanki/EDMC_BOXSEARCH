@@ -29,6 +29,8 @@ jobs:
         run: python netgate.py
       - name: EDDiscovery name decoding self test
         run: python sources.py
+      - name: probe bundle prefix self test
+        run: python boxelplan.py
       - name: local-first shells self test
         run: python shells.py
       - name: local-first flow (load.py against a fake galaxy, no network)

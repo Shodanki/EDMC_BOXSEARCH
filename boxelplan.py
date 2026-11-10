@@ -636,6 +636,69 @@ def _seg_dist(p, a, b) -> Tuple[float, float]:
     return math.dist(p, q), t
 
 
+def bundled_probe_prefix(probe: Sequence["Target"], n: int = 5) -> Tuple[str, List[str]]:
+    """
+    One galaxy-map search prefix for several of the next probe boxels.
+
+    Boxels of one sector, letter group and mass code differ only in their
+    n1 digits ("Synuefe VA-I b2", "Synuefe VA-I b3"), so the key without its
+    digits - "Synuefe VA-I b" - lists them all in one search (and the other
+    b boxels of VA-I as well; the galaxy map sorts them by name). Looks at
+    the next n distinct boxels of the queue and bundles those that share the
+    first one's group; boxels of other groups are left for later - a shorter
+    common prefix would list a whole sector. Grouping by the full key text
+    keeps sector names of several words ("Col 285 Sector ...") intact.
+    Returns (prefix, bundled boxel keys); ("", []) for an empty queue.
+    """
+    keys: List[str] = []
+    for t in probe:
+        k = getattr(t, "boxel_key", None)
+        if k and k not in keys:
+            keys.append(k)
+            if len(keys) >= max(1, n):
+                break
+    if not keys:
+        return "", []
+    group = keys[0].rstrip("0123456789")
+    bundle = [k for k in keys if k.rstrip("0123456789") == group]
+    if len(bundle) == 1:
+        return boxel_prefix(keys[0]), bundle
+    return group, bundle
+
+
+def _selftest() -> int:
+    """python boxelplan.py - the probe bundle prefix."""
+    fails = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal fails
+        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
+        fails += 0 if ok else 1
+
+    class T:
+        def __init__(self, key):
+            self.boxel_key = key
+
+    q = [T("Synuefe VA-I b2"), T("Synuefe VA-I b2"), T("Synuefe VA-I b3"),
+         T("Synuefe XV-C d"), T("Synuefe VA-I b17")]
+    p, b = bundled_probe_prefix(q)
+    check(p == "Synuefe VA-I b" and b == ["Synuefe VA-I b2", "Synuefe VA-I b3",
+                                          "Synuefe VA-I b17"],
+          "same sector, letters and mass code: one prefix for three boxels")
+    p, b = bundled_probe_prefix([T("Col 285 Sector AB-C d12"), T("Col 285 Sector AB-C d13"),
+                                 T("Col 285 Sector ZZ-Y d4")])
+    check(p == "Col 285 Sector AB-C d" and len(b) == 2,
+          "sector of several words stays whole; other letter group left out")
+    p, b = bundled_probe_prefix([T("Synuefe XV-C d"), T("Synuefe VA-I b2")])
+    check(p == "Synuefe XV-C d" and b == ["Synuefe XV-C d"],
+          "nothing to bundle: the single boxel's own prefix")
+    p, b = bundled_probe_prefix([T("Synuefe VA-I b2"), T("Synuefe VA-I b3")], n=1)
+    check(p == "Synuefe VA-I b2-" and len(b) == 1, "n=1: just the next boxel")
+    check(bundled_probe_prefix([]) == ("", []), "empty queue")
+    print("failures: %d" % fails)
+    return fails
+
+
 def corridor_targets(origin: Sequence[float], candidates: Sequence[Dict[str, object]],
                      empties: Sequence[Tuple[float, float, float, float]],
                      jump_range: float, limit: int = 3,
@@ -703,3 +766,7 @@ def _angle(o, a, b) -> float:
     nb = math.sqrt(sum(v * v for v in vb)) or 1.0
     cos = max(-1.0, min(1.0, sum(va[i] * vb[i] for i in range(3)) / (na * nb)))
     return math.degrees(math.acos(cos))
+
+
+if __name__ == "__main__":
+    raise SystemExit(1 if _selftest() else 0)
