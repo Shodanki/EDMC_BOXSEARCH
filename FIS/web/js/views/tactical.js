@@ -185,7 +185,7 @@ function onDbl(e) {
 // ------------------------------------------------------------- side panel
 const RING_CLS = { Icy: N_("icy"), Rocky: N_("rocky"), Metalic: N_("metallic"), MetalRich: N_("metal-rich") };
 function ringClass(c) {
-  const k = String(c || "").replace("eRingClass_", "").replace("$", "").replace(";", "");
+  const k = String(c || "").replace("eRingClass_", "").replace(/[$;]/g, "");
   return RING_CLS[k] ? t(RING_CLS[k]) : (k || "?");
 }
 
