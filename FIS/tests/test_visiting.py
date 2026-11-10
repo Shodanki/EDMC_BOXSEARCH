@@ -39,7 +39,8 @@ class TestVisiting(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         self.docked = {"status": {"flags": 1}}
-        self.ar = Ar([{"event": "Docked", "MarketID": 555, "StationType": "FleetCarrier"}])
+        self.ar = Ar([{"event": "Docked", "MarketID": 555, "StationType": "FleetCarrier",
+                       "timestamp": "2026-11-10T20:10:00Z"}])
 
     def _write(self, name, obj):
         with open(os.path.join(self.d, name), "w", encoding="utf-8") as fh:
@@ -61,6 +62,12 @@ class TestVisiting(unittest.TestCase):
         self.assertIsNone(visiting_carrier(self.ar, self.docked, self.d, own_id=555))       # own carrier
         self.assertIsNone(visiting_carrier(Ar([{"event": "Docked", "MarketID": 777}]),
                                            self.docked, self.d))                            # old market file
+        # loaded on the pad: Location with Docked counts as the docking
+        loc = Ar([{"event": "Location", "Docked": True, "MarketID": 555, "timestamp": "2026-11-10T20:12:00Z"}])
+        self.assertEqual(visiting_carrier(loc, self.docked, self.d)["callsign"], "K7Q-12Z")
+        # a market opened before this docking is from an earlier visit (10.11.: one from May)
+        later = Ar([{"event": "Location", "Docked": True, "MarketID": 555, "timestamp": "2026-11-10T20:22:41Z"}])
+        self.assertIsNone(visiting_carrier(later, self.docked, self.d))
         self._write("Market.json", _market(555, [TRIT], station_type="Coriolis"))
         self.assertIsNone(visiting_carrier(self.ar, self.docked, self.d))                   # a station
         self.assertIsNone(visiting_carrier(self.ar, self.docked, None))

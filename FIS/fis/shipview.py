@@ -356,8 +356,9 @@ def visiting_carrier(archive: Any, live: Dict[str, Any], journal_dir: Optional[s
     """
     M7: docked at someone else's fleet carrier - what its market buys and
     sells, from Market.json (written when you open the commodity market).
-    Only while docked (Status.json) and only when the last Docked event was
-    this very market, so an old Market.json never shows. A hint how you can
+    Only while docked (Status.json), only when the last docking was this
+    very market and only with a Market.json opened since, so an old file
+    never shows. A hint how you can
     help - tritium for the next jump, trade orders - nothing is sent.
     """
     if not journal_dir or not (int((live.get("status") or {}).get("flags") or 0) & 1):
@@ -367,12 +368,19 @@ def visiting_carrier(archive: Any, live: Dict[str, Any], journal_dir: Optional[s
         return None
     if own_id and m.get("MarketID") == own_id:
         return None
+    # the docking: a Docked event - or, when the game was loaded on the pad,
+    # the Location written with Docked: true. The market must be younger
+    # than it, else Market.json is from an earlier visit.
     dock = None
     try:
-        dock = next((e for e in reversed(archive.events()) if e.get("event") == "Docked"), None)
+        dock = next((e for e in reversed(archive.events())
+                     if e.get("event") == "Docked"
+                     or (e.get("event") == "Location" and e.get("Docked"))), None)
     except Exception:
         dock = None
     if not dock or dock.get("MarketID") != m.get("MarketID"):
+        return None
+    if (m.get("timestamp") or "") < (dock.get("timestamp") or ""):
         return None
     cargo = _read_json(os.path.join(journal_dir, "Cargo.json")) or {}
     carry = {}
