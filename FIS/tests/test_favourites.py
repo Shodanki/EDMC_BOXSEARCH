@@ -136,6 +136,10 @@ class TestApiLocal(TestApi):
         # SYSTEM points of interest: the star travels with the system data
         out = self.app._with_favourites({"poi": [{"kind": "carrier", "name": "BLUE HERON Q2W-3ER"}]})
         self.assertTrue(out["poi"][0]["favourite"])
+        # GALAXY: the star at the last known position
+        with urllib.request.urlopen(self.base + "/api/galaxy", timeout=10) as r:
+            fc = json.loads(r.read())["fav_carriers"]
+        self.assertEqual([(f["callsign"], f["system"], f["x"]) for f in fc], [("Q2W-3ER", "Test Beta", 10.0)])
         with self._post({"callsign": "Q2W-3ER", "on": False}, {"X-FIS-Settings": "1"}) as r:
             self.assertFalse(json.loads(r.read())["favourite"])
 

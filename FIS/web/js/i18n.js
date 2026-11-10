@@ -898,5 +898,6 @@ const DE = /*DE*/{
   "Last known positions from your own journals; the market is the one you last opened there. Nothing is fetched online.": "Letzte bekannte Positionen aus deinen eigenen Journalen; der Markt ist der, den du dort zuletzt geöffnet hast. Nichts wird online abgefragt.",
   "KNOWN CARRIERS": "BEKANNTE TRÄGER",
   "{f} favourites · {n} known": "{f} Favoriten · {n} bekannt",
-  "favourite": "Favorit"
+  "favourite": "Favorit",
+  "last seen {d}": "zuletzt gesehen {d}"
 }/*END*/;

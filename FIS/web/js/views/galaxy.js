@@ -96,6 +96,7 @@ function fromPick(p) {
   if (p.kind === "find") return { kind: "find", name: p.f.name, id: p.f.id, x: p.f.x, y: p.f.y, z: p.f.z, kinds: p.f.kinds };
   if (p.kind === "carrier") return { kind: "stop", name: p.c.name, id: p.c.id, x: p.c.x, y: p.c.y, z: p.c.z, t: p.c.t };
   if (p.kind === "carriernow") return carrierFocus();
+  if (p.kind === "favcarrier") return { kind: "system", name: p.c.system, id: p.c.id, x: p.c.x, y: p.c.y, z: p.c.z };
   return null;
 }
 function carrierFocus() {
@@ -394,6 +395,15 @@ function draw() {
     g.font = "11px monospace"; g.fillText(main, sx + 13, sy + 4);
     picks.push({ sx, sy, kind: "carriernow", c: cn, id: cn.id });
   }
+  // K4: favourite carriers at their last known position - a star
+  if (on.carrier && data.fav_carriers) {
+    g.font = "13px monospace"; g.fillStyle = C.amber;
+    for (const f of data.fav_carriers) {
+      const [sx, sy] = toScreen(f.x, f.z);
+      g.fillText("★", sx - 5, sy + 5);
+      picks.push({ sx, sy, kind: "favcarrier", c: f, id: f.id });
+    }
+  }
   // you
   if (data.you) {
     const [sx, sy] = toScreen(data.you.x, data.you.z);
@@ -428,6 +438,8 @@ function label(p) {
   if (p.kind === "jump") return p.p.name + y(p.p) + (p.p.t ? " · " + new Date(p.p.t * 1000).toLocaleDateString() : "");
   if (p.kind === "carrier") return t("carrier") + ": " + p.c.name + (p.c.t ? " · " + new Date(p.c.t * 1000).toLocaleDateString() : "");
   if (p.kind === "carriernow") return p.c.system + " · " + carrierTexts(p.c)[0];
+  if (p.kind === "favcarrier") return "★ " + [p.c.name, p.c.callsign].filter(Boolean).join(" ") + " · " + (p.c.system || "?")
+    + (p.c.ts ? " · " + t("last seen {d}", { d: String(p.c.ts).slice(0, 10) }) : "");
   if (p.kind === "find") return p.f.name + " · " + p.f.kinds.map(k => t(FIND_NAME[k] || k)).join(", ");
   if (p.kind === "boxel") {
     const keys = p.c.list.filter(b => b.key).map(b => b.key);

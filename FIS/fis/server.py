@@ -23,7 +23,7 @@ import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from . import config as config_mod
@@ -149,6 +149,22 @@ class App:
         if not favs:
             return out
         return dict(out, poi=mark_favourite_pois(out["poi"], favs))
+
+    def favourite_carriers_at(self) -> List[Dict[str, Any]]:
+        """K4 GALAXY: your favourite carriers at their last known position."""
+        try:
+            from . import carriers
+            favs = carriers.build_known(self.archive, self.favourites, None, sighted=0)["favourites"]
+        except Exception:
+            return []
+        out = []
+        for c in favs:
+            p = c.get("pos")
+            if p and len(p) >= 3:
+                out.append({"callsign": c["callsign"], "name": c.get("name"), "system": c.get("system"),
+                            "id": c.get("id64"), "ts": c.get("ts"), "how": c.get("how"),
+                            "x": round(float(p[0]), 2), "y": round(float(p[1]), 2), "z": round(float(p[2]), 2)})
+        return out
 
     def _with_carrier(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
         """Your carrier, when it is in this system or jumping here."""
@@ -627,8 +643,9 @@ class Handler(BaseHTTPRequestHandler):
             nav = len(live.get("navroute") or [])
             app.archive.refresh()
             sig = (app.db.mtime(), app.archive.rev, pos, nav, mc, days)
-            return self._json(app.cached("galaxy:%s:%s" % (mc, days), sig,
-                                         lambda: galaxy.build_galaxy(app.db, app.archive, live, mc, days)))
+            out = app.cached("galaxy:%s:%s" % (mc, days), sig,
+                             lambda: galaxy.build_galaxy(app.db, app.archive, live, mc, days))
+            return self._json(dict(out, fav_carriers=app.favourite_carriers_at()))
         if path == "/api/survey/export":
             # M14: the survey sphere as a file - CSV or JSON
             fmt = "json" if (qs.get("format") or ["csv"])[0] == "json" else "csv"
