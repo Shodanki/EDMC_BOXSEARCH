@@ -580,6 +580,17 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
     mats = _json(r["materials"], {}) or {}
     solid = _json(r["composition"], {}) or {}
     species = _json(r["bio_species"], []) or []
+    # ring hotspots: the journal gives each ring its own BodyID, so they are
+    # found by the ring names of this body (or by body_id when it is a ring
+    # itself) - by the planet's body_id there are none (F4)
+    ring_names = {g.get("name") for g in (_json(r["rings_json"], []) or []) if g.get("name")}
+    hotspots = [{"material": h["label"] or h["material"], "count": h["count"],
+                 "ring": h["body_name"]} for h in db.hotspots_of(id64)
+                if h["body_name"] in ring_names or h["body_id"] == body_id]
+    hs_by_ring: Dict[str, List[Dict[str, Any]]] = {}
+    for h in hotspots:
+        hs_by_ring.setdefault(h["ring"] or "", []).append(
+            {"material": h["material"], "count": h["count"]})
     out: Dict[str, Any] = {
         "id64": id64, "body_id": body_id, "system": sysname,
         "name": r["name"], "short": p.sysroute.shorten(r["name"] or "", sysname),
@@ -612,7 +623,7 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
         },
         "was_discovered": (None if r["was_discovered"] is None else bool(r["was_discovered"])),
         "reserve": (r["reserve"] or "").replace("Resources", "").strip() or None,
-        "rings": _rings(r),
+        "rings": _rings(r, hs_by_ring),
         "flags": {
             "first": r["was_discovered"] == 0,
             "first_map": r["was_mapped"] == 0 and r["kind"] == "Planet",
@@ -627,8 +638,7 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
                          "genus": s.get("genus"), "date": (s.get("ts") or "")[:10]} for s in species],
             "prediction": [],
         },
-        "hotspots": [{"material": h["label"] or h["material"], "count": h["count"],
-                      "ring": h["body_name"]} for h in db.hotspots_of(id64, body_id)],
+        "hotspots": hotspots,
         "signals": body_signals(db.signals_of(id64, body_id)),
         "materials_found": [{"label": m["label"], "category": m["category"],
                              "count": m["count"], "last": (m["last"] or "")[:10]}
