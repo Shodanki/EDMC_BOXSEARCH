@@ -45,7 +45,7 @@ Q_CONFIRMED = 20
 Q_EXTERNAL = 30
 Q_JOURNAL = 40
 
-SCHEMA_VERSION = 4          # 4: external_calls (4.6 local-first)
+SCHEMA_VERSION = 4          # 4: external_calls, fetched_shells (4.6 local-first)
 
 # Body classes that are always worth mapping (DSS)
 VALUABLE_CLASSES = {
@@ -240,6 +240,21 @@ CREATE TABLE IF NOT EXISTS external_calls (
     ms       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS external_calls_ts ON external_calls(ts);
+
+-- 4.6 local-first: which shell (centre, r_min..r_max) each online service
+-- delivered completely, and until when that counts (5-14 days, random).
+-- The systems themselves are in `systems`; this only says "asked already".
+CREATE TABLE IF NOT EXISTS fetched_shells (
+    id         INTEGER PRIMARY KEY,
+    service    TEXT NOT NULL,          -- edsm | spansh
+    cx REAL NOT NULL, cy REAL NOT NULL, cz REAL NOT NULL,
+    r_min      REAL NOT NULL,
+    r_max      REAL NOT NULL,
+    fetched_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    systems    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS fetched_shells_svc ON fetched_shells(service, expires_at);
 """
 
 CALL_LOG_DAYS = 30
@@ -363,6 +378,7 @@ class SystemDB:
                         (str(SCHEMA_VERSION),))
         self.cx.commit()
         self.prune_external_calls()
+        self.prune_shells()
         self.sectors = SectorRegistry()
         self._load_sectors()
         # where the commander is, for MaterialCollected (which names no body)
@@ -547,6 +563,34 @@ class SystemDB:
     def prune_external_calls(self, days: int = CALL_LOG_DAYS) -> int:
         n = self.cx.execute("DELETE FROM external_calls WHERE ts<?",
                             (time.time() - days * 86400.0,)).rowcount
+        self.cx.commit()
+        return n
+
+    # ------------------------------------------------------ fetched shells
+    def record_shell(self, service: str, center: Sequence[float], r_min: float,
+                     r_max: float, systems: int, ttl_s: float,
+                     now: Optional[float] = None) -> None:
+        now = time.time() if now is None else now
+        self.cx.execute(
+            "INSERT INTO fetched_shells(service, cx, cy, cz, r_min, r_max,"
+            " fetched_at, expires_at, systems) VALUES (?,?,?,?,?,?,?,?,?)",
+            (service, float(center[0]), float(center[1]), float(center[2]),
+             float(r_min), float(r_max), now, now + float(ttl_s), int(systems)))
+        self.cx.commit()
+
+    def valid_shells(self, service: str, now: Optional[float] = None
+                     ) -> List[Tuple[float, float, float, float, float]]:
+        """Regions (cx, cy, cz, r_min, r_max) the service delivered and that
+        are still valid."""
+        now = time.time() if now is None else now
+        return [(r[0], r[1], r[2], r[3], r[4]) for r in self.cx.execute(
+            "SELECT cx, cy, cz, r_min, r_max FROM fetched_shells"
+            " WHERE service=? AND expires_at>?", (service, now))]
+
+    def prune_shells(self, keep_days: int = 60) -> int:
+        """Forget shells that expired more than keep_days ago."""
+        n = self.cx.execute("DELETE FROM fetched_shells WHERE expires_at<?",
+                            (time.time() - keep_days * 86400.0,)).rowcount
         self.cx.commit()
         return n
 
@@ -2126,6 +2170,12 @@ def _selftest() -> int:
               "call log counts per service")
         check(db.prune_external_calls() == 1 and db.external_calls_since(0) == 2,
               "call log keeps %d days" % CALL_LOG_DAYS)
+        db.record_shell("edsm", (1, 2, 3), 0, 25, 40, 5 * 86400, now=now)
+        db.record_shell("edsm", (1, 2, 3), 25, 50, 90, 10, now=now - 86400)
+        db.record_shell("spansh", (1, 2, 3), 0, 25, 41, 9 * 86400, now=now)
+        check(db.valid_shells("edsm", now) == [(1.0, 2.0, 3.0, 0.0, 25.0)]
+              and len(db.valid_shells("spansh", now)) == 1,
+              "fetched shells: valid ones per service, expired ones not")
         db.close()
         legacy = os.path.join(d, "legacy.sqlite")
         cx = sqlite3.connect(legacy)
