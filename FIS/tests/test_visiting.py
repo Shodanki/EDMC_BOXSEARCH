@@ -72,6 +72,22 @@ class TestVisiting(unittest.TestCase):
         self.assertIsNone(visiting_carrier(self.ar, self.docked, self.d))                   # a station
         self.assertIsNone(visiting_carrier(self.ar, self.docked, None))
 
+    def test_real_archive_keeps_location_docking(self):
+        # 10.11.: the archive slimmed Location to coordinates, so "loaded on
+        # the pad" (Location with Docked: true) never counted in real use
+        from fis import fleet as fl
+        jd = tempfile.mkdtemp()
+        lines = [{"timestamp": "2026-11-10T20:05:00Z", "event": "Commander", "FID": "F9", "Name": "Tester"},
+                 {"timestamp": "2026-11-10T20:12:00Z", "event": "Location", "Docked": True,
+                  "StationName": "K7Q-12Z", "StationType": "FleetCarrier", "MarketID": 555,
+                  "StarSystem": "Test System", "SystemAddress": 42, "StarPos": [1, 2, 3]}]
+        with open(os.path.join(jd, "Journal.2026-11-10T200500.01.log"), "w", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(x) + "\n" for x in lines))
+        with open(os.path.join(jd, "Market.json"), "w", encoding="utf-8") as fh:
+            json.dump(_market(555, [TRIT]), fh)
+        v = visiting_carrier(fl.Archive(jd), self.docked, jd)
+        self.assertEqual(v and v["callsign"], "K7Q-12Z")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -426,10 +426,16 @@ class Archive:
                             out.append({"event": "LoadGame", "timestamp": e.get("timestamp"), "_fid": fid})
                         continue
                     if e.get("event") in ("FSDJump", "Location"):
-                        # only the coordinates are needed (carrier jump distances)
-                        e = {"event": e["event"], "timestamp": e.get("timestamp"),
-                             "StarSystem": e.get("StarSystem"), "StarPos": e.get("StarPos"),
-                             "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
+                        # the coordinates (carrier jump distances) - and for a
+                        # Location the docking: loading the game on a pad
+                        # writes no Docked, only Location with Docked: true
+                        slim = {"event": e["event"], "timestamp": e.get("timestamp"),
+                                "StarSystem": e.get("StarSystem"), "StarPos": e.get("StarPos"),
+                                "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
+                        if e.get("Docked"):
+                            slim.update({k: e.get(k) for k in ("Docked", "StationName",
+                                                               "StationType", "MarketID")})
+                        e = slim
                     elif e.get("event") == "ShipTargeted":
                         if not str(e.get("PilotName") or "").startswith("$RolePanel2_unmanned"):
                             continue
