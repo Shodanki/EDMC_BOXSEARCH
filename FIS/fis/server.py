@@ -59,6 +59,9 @@ class App:
         self._stop = threading.Event()
         from .fleet import Archive
         self.archive = Archive(cfg.journal_dir)
+        from .favourites import FavouriteStore
+        # personal (K2): next to fis.ini, never in the repository
+        self.favourites = FavouriteStore(os.path.join(os.path.dirname(cfg.ini_path), "favourites.json"))
         from .calib import Calibrator
         self.calib = Calibrator(cfg.journal_dir, model.plugin().sysroute, self._leg_ls)
 
@@ -335,6 +338,8 @@ class Handler(BaseHTTPRequestHandler):
         if n > 4096 or n < 0:
             self.close_connection = True
             return self._error(400, "bad request")
+        if url.path == "/api/carriers/favourite":
+            return self._post_favourite(raw)
         if url.path != "/api/settings":
             return self._error(404, "not found")
         if not self._local():
@@ -365,6 +370,58 @@ class Handler(BaseHTTPRequestHandler):
         out["token_changed"] = changed
         out["restart"] = cfg.lan != self.app.lan_at_start
         return self._json(out)
+
+    LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+    def _page_write_ok(self) -> bool:
+        """
+        K2: may this request change a favourite? Unlike the settings (which
+        can switch the LAN and the token, so game PC only) a star and a note
+        are harmless and the tablet beside the screen is where you look at
+        CARRIER - so the tablet may, under the same locks as every read plus
+        the ones a write needs:
+          * the custom header X-FIS-Settings (another site's page cannot send
+            it without a preflight, which is never answered),
+          * Origin, when sent, equal to this very address,
+          * without LAN only a localhost Host (no DNS-rebinding detour),
+          * with LAN the token (header or the page's cookie),
+          * the E14 brake (do_POST) and small bodies (4 KiB).
+        """
+        if self.headers.get("X-FIS-Settings") != "1":
+            return False
+        host = self.headers.get("Host") or ""
+        origin = self.headers.get("Origin")
+        if origin and origin != "http://" + host:
+            return False
+        if not self.app.cfg.lan:
+            name = host.rsplit(":", 1)[0] if not host.endswith("]") else host
+            return name in self.LOCAL_HOSTS
+        return self._authorised({})
+
+    def _post_favourite(self, raw: bytes) -> None:
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "favourites only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, UnicodeDecodeError):
+            return self._error(400, "bad request")
+        from . import carriers
+        cs = str(body.get("callsign") or "")
+        if not carriers.is_callsign(cs):
+            return self._error(400, "bad callsign")
+        app = self.app
+        fid = app.archive.commander()[0]
+        info = carriers.known_carriers(app.archive.events()).get(cs)
+        note = body.get("note")
+        try:
+            fav = app.favourites.set_favourite(fid, cs, bool(body.get("on", True)),
+                                               note=None if note is None else str(note), info=info)
+        except ValueError as exc:
+            return self._error(400, str(exc))
+        return self._json({"callsign": cs, "favourite": fav is not None, "note": (fav or {}).get("note", "")})
 
     def _json(self, obj: Any, code: int = 200) -> None:
         body = json.dumps(obj, ensure_ascii=False, separators=(",", ":"),
@@ -490,6 +547,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(shipview.build_carrier(app.archive, app.live_state(),
                                                      journal_dir=app.cfg.journal_dir,
                                                      capi_path=capi.path_for(app.cfg.plugin_dir)))
+        if path == "/api/carriers/known":
+            from . import carriers
+            return self._json(carriers.build_known(app.archive, app.favourites, app.live_state()))
         if path == "/api/mining/live":
             from . import mining
             return self._json(mining.build_live(app.archive, app.live_state(), app.cfg.journal_dir))

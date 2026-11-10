@@ -27,6 +27,7 @@ CARRIER view has it already. Read only, nothing is sent anywhere.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -180,3 +181,68 @@ def own_jump_flags(evs: List[Dict[str, Any]]) -> List[bool]:
                 foreign = not ((mid and mid == own["market_id"]) or (cs and cs == own["callsign"]))
         flags.append(foreign)
     return flags
+
+
+MAX_SIGHTED = 40             # carriers only seen in passing, newest first
+
+
+def _dist(a: Any, b: Any) -> Optional[float]:
+    try:
+        return round(math.dist([float(v) for v in a[:3]], [float(v) for v in b[:3]]), 1)
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def build_known(archive: Any, store: Any, live: Optional[Dict[str, Any]] = None,
+                sighted: int = MAX_SIGHTED) -> Dict[str, Any]:
+    """
+    K4 data for /api/carriers/known: favourites first, then the carriers you
+    docked at or started something from, then the newest sightings. Each
+    with the last known position (journal, or the position stored with the
+    favourite when the journal no longer has it), its distance from you and
+    - K3 - the last market seen there.
+    """
+    fid, name = archive.commander()
+    evs = archive.events()
+    known = known_carriers(evs)
+    saved = store.get(fid) if store is not None else {"favourites": {}, "markets": {}}
+    favs, markets = saved["favourites"], saved["markets"]
+    here = ((live or {}).get("system") or {}).get("pos")
+
+    def item(cs: str) -> Dict[str, Any]:
+        k = known.get(cs)
+        f = favs.get(cs)
+        it: Dict[str, Any] = dict(k) if k else {
+            "callsign": cs, "docked_n": 0, "sightings": 0, "started": [], "last_docked": None,
+            "first_ts": None}
+        if f:
+            for key in ("name", "market_id", "system", "id64", "pos", "ts", "how"):
+                if it.get(key) is None and f.get(key) is not None:
+                    it[key] = f[key]
+            if not k:
+                it["from_store"] = True     # the journal does not have it (any more)
+        it["favourite"] = bool(f)
+        it["note"] = (f or {}).get("note") or ""
+        it["market"] = markets.get(cs)
+        it["dist_ly"] = _dist(it.get("pos"), here) if here and it.get("pos") else None
+        return it
+
+    fav_items = sorted((item(cs) for cs in favs), key=lambda i: i.get("ts") or "", reverse=True)
+    rest = [cs for cs in known if cs not in favs]
+    met = sorted((item(cs) for cs in rest if known[cs]["docked_n"] or known[cs]["started"]
+                  or known[cs]["last_docked"] or known[cs]["how"] == "jump"),
+                 key=lambda i: i.get("ts") or "", reverse=True)
+    met_cs = {i["callsign"] for i in met}
+    seen = sorted((cs for cs in rest if cs not in met_cs),
+                  key=lambda cs: known[cs].get("ts") or "", reverse=True)
+    if store is not None and fid:
+        # keep the stored position of a favourite current while the journal has it
+        for cs in favs:
+            if cs in known:
+                try:
+                    store.remember_position(fid, cs, known[cs])
+                except OSError:
+                    pass
+    return {"commander": name, "favourites": fav_items, "met": met,
+            "sighted": [item(cs) for cs in seen[:max(0, sighted)]],
+            "counts": {"known": len(known), "favourites": len(favs), "sighted": len(seen)}}
