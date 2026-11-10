@@ -20,6 +20,41 @@ export function el(tag, attrs = {}, ...kids) {
   return n;
 }
 
+/**
+ * Copy text to the clipboard. The Clipboard API exists only in a secure
+ * context - on the game PC (localhost) - so a tablet over plain http in the
+ * home network falls back to a selected text field and the old copy
+ * command; if even that is refused, the text stays selected in the field
+ * for a long press. Returns true when the text was copied.
+ */
+export async function copyText(text, btn) {
+  const mark = (s) => { if (!btn) return; const old = btn.dataset.label || btn.textContent;
+    btn.dataset.label = old; btn.textContent = s; setTimeout(() => { btn.textContent = old; }, 1400); };
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      mark("✓"); return true;
+    }
+  } catch (e) { /* fall back below */ }
+  const ta = el("textarea", { readonly: true, class: "copy-buf",
+    style: { position: "fixed", left: "0", bottom: "0", width: "1px", height: "1px", opacity: "0" } });
+  ta.value = text;
+  document.body.append(ta);
+  ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  if (ok) { ta.remove(); mark("✓"); return true; }
+  // last resort: show the text, selected, to copy by hand
+  Object.assign(ta.style, { width: "min(90vw, 420px)", height: "2.4em", opacity: "1", left: "50%",
+    bottom: "12px", transform: "translateX(-50%)", zIndex: "9999" });
+  ta.focus(); ta.select();
+  const gone = () => ta.remove();
+  ta.addEventListener("blur", gone, { once: true });
+  setTimeout(gone, 30000);
+  mark("…");
+  return false;
+}
+
 /** A chamfered frame: <div.frame><div.frame-in>title + body</div></div> */
 export function frame(title, tag, body, opts = {}) {
   const cls = ["frame", opts.kind || "", opts.appear === false ? "" : "appear", opts.cls || ""].join(" ");

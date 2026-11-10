@@ -553,6 +553,8 @@ const DE = /*DE*/{
   "Save": "Speichern",
   "Type this on the tablet (same home network):": "Auf dem Tablet eingeben (gleiches Heimnetz):",
   "copy": "kopieren",
+  "copy name": "Namen kopieren",
+  "copy the system name - paste it in the galaxy map to plot the jump": "Systemnamen kopieren – in der Galaxiekarte einfügen und den Sprung planen",
   "Not active yet - restart the FIS.": "Noch nicht aktiv - FIS neu starten.",
   "No firewall rule lets other devices in - fis_settings.bat can add one (Windows asks for permission).": "Keine Firewall-Regel lässt andere Geräte herein - fis_settings.bat kann eine anlegen (Windows fragt nach).",
   "Firewall rule: {r}": "Firewall-Regel: {r}",

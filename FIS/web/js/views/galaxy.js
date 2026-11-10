@@ -10,7 +10,7 @@
 // jump by jump, in both modes.
 
 import { getJSON } from "../api.js";
-import { el, frame, fmt, withPopout } from "../ui.js";
+import { el, frame, fmt, withPopout, copyText } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const LAYERS = [["path", N_("flight path")], ["carrier", N_("carrier")], ["systems", N_("systems")],
@@ -506,6 +506,9 @@ function focusFrame() {
     el("div", { class: "row-btns" },
       el("button", { text: t("details") + " ⧉", title: t("open this system in SYSTEM, in its own window"),
         disabled: f.id ? null : true, onclick: () => openDetail(f.id) }),
+      // G1: the name for the game's galaxy map - paste it there to plot the jump
+      el("button", { text: t("copy name"), title: t("copy the system name - paste it in the galaxy map to plot the jump"),
+        disabled: f.name && f.name !== "?" ? null : true, onclick: (e) => copyText(f.name, e.currentTarget) }),
       focusMe ? null : el("button", { text: t("back to me"), onclick: () => refit("you") }),
       data.carrier_now && f.kind !== "carrier" ? el("button", { text: t("carrier"), onclick: () => setFocus(carrierFocus(), false, { zoom: true }) }) : null),
   ], { appear: false });

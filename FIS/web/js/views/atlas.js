@@ -6,7 +6,7 @@
 // hits around you (galactic x/z, ly).
 
 import { getJSON } from "../api.js";
-import { el, frame, fmt } from "../ui.js";
+import { el, frame, fmt, copyText } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const TABS = [["rings", N_("RINGS")], ["signals", N_("SIGNALS")], ["materials", N_("MATERIALS")], ["finds", N_("FINDS")],
@@ -141,11 +141,7 @@ function open(it) {
   else window.open("/?system=" + it.id64 + "#tactical", "_blank");
 }
 
-async function copy(text, btn) {
-  try { await navigator.clipboard.writeText(text); btn.textContent = "✓"; }
-  catch (e) { btn.textContent = "×"; }
-  setTimeout(() => { btn.textContent = "⧉"; }, 1200);
-}
+function copy(text, btn) { return copyText(text, btn); }
 
 function setHover(i) {
   if (i === hover) return;
