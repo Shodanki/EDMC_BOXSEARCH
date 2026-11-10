@@ -154,5 +154,61 @@ class TestNewToken(_Base):
         self.assertEqual(self.cfg.token, new)
 
 
+class TestLanBrake(_Base):
+    """E14: requests from home-network devices are braked, the game PC never."""
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.cfg.lan = True
+        cls.cfg.token = "brake-token"
+        cls.app = App(cls.cfg, live=fed_tracker(cls.tmp), db=cls.db)
+        cls.srv = make_server(cls.app, host="127.0.0.1", port=0)
+        cls.base = "http://127.0.0.1:%d" % cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        self.saved = (Handler.LOCAL, Handler.RATE_MAX, Handler.FAIL_MAX)
+        for d in (Handler._hits, Handler._fails, Handler._blocked):
+            d.clear()
+
+    def tearDown(self):
+        Handler.LOCAL, Handler.RATE_MAX, Handler.FAIL_MAX = self.saved
+        for d in (Handler._hits, Handler._fails, Handler._blocked):
+            d.clear()
+
+    def _code(self, q="?token=brake-token"):
+        try:
+            with urllib.request.urlopen(self.base + "/api/health" + q, timeout=5) as r:
+                return r.status, None
+        except urllib.error.HTTPError as e:
+            ra = e.headers.get("Retry-After")
+            e.close()
+            return e.code, ra
+
+    def test_rate(self):
+        Handler.LOCAL, Handler.RATE_MAX = (), 5     # every caller is a LAN device now
+        codes = [self._code()[0] for _ in range(6)]
+        self.assertEqual(codes, [200] * 5 + [429])
+        code, ra = self._code()
+        self.assertEqual(code, 429)
+        self.assertGreaterEqual(int(ra), 1)
+
+    def test_wrong_tokens_block(self):
+        Handler.LOCAL, Handler.FAIL_MAX = (), 3
+        self.assertEqual([self._code("?token=x")[0] for _ in range(3)], [401, 401, 401])
+        self.assertEqual(self._code()[0], 429)      # blocked now, even with the right token
+
+    def test_game_pc_never_braked(self):
+        Handler.RATE_MAX, Handler.FAIL_MAX = 2, 2
+        codes = [self._code()[0] for _ in range(5)] + [self._code("?token=x")[0] for _ in range(3)]
+        self.assertEqual(codes, [200] * 5 + [401] * 3)
+        self.assertEqual(self._code()[0], 200)
+
+
 if __name__ == "__main__":
     unittest.main()

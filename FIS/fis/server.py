@@ -208,6 +208,60 @@ class Handler(BaseHTTPRequestHandler):
         if os.environ.get("FIS_DEBUG"):
             sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
+    # ------------------------------------------------- E14: home-network brake
+    # Devices in the home network (never the game PC itself) get at most
+    # RATE_MAX requests per RATE_WINDOW_S - a page load with all its modules
+    # stays far below - and after FAIL_MAX wrong tokens within FAIL_WINDOW_S
+    # nothing at all for BLOCK_S (guessing the token is pointless anyway,
+    # this keeps a stuck or hostile device from hammering the FIS).
+    RATE_WINDOW_S, RATE_MAX = 10.0, 120
+    FAIL_WINDOW_S, FAIL_MAX, BLOCK_S = 600.0, 20, 600.0
+    _brake_lock = threading.Lock()
+    _hits: Dict[str, Any] = {}
+    _fails: Dict[str, Any] = {}
+    _blocked: Dict[str, float] = {}
+
+    def _braked(self) -> Optional[float]:
+        """None = go on; else seconds to wait (answer 429)."""
+        if self._local():
+            return None
+        ip = self.client_address[0] if self.client_address else "?"
+        now = time.monotonic()
+        cls = Handler
+        with cls._brake_lock:
+            until = cls._blocked.get(ip)
+            if until is not None:
+                if now < until:
+                    return until - now
+                cls._blocked.pop(ip, None)
+            q = cls._hits.setdefault(ip, [])
+            while q and now - q[0] > cls.RATE_WINDOW_S:
+                q.pop(0)
+            if len(q) >= cls.RATE_MAX:
+                return cls.RATE_WINDOW_S - (now - q[0])
+            q.append(now)
+        return None
+
+    def _note_fail(self) -> None:
+        if self._local():
+            return
+        ip = self.client_address[0] if self.client_address else "?"
+        now = time.monotonic()
+        cls = Handler
+        with cls._brake_lock:
+            q = cls._fails.setdefault(ip, [])
+            while q and now - q[0] > cls.FAIL_WINDOW_S:
+                q.pop(0)
+            q.append(now)
+            if len(q) >= cls.FAIL_MAX:
+                cls._blocked[ip] = now + cls.BLOCK_S
+                q.clear()
+
+    def _too_many(self, wait: float) -> None:
+        self.close_connection = True
+        self._send(429, b'{"error":"too many requests"}', "application/json; charset=utf-8",
+                   {"Retry-After": str(max(1, int(wait + 0.999)))})
+
     # ---------------------------------------------------------- helpers
     def _authorised(self, qs: Dict[str, Any]) -> bool:
         cfg = self.app.cfg
@@ -264,6 +318,10 @@ class Handler(BaseHTTPRequestHandler):
                 "firewall": fw}
 
     def do_POST(self) -> None:
+        wait = self._braked()
+        if wait is not None:
+            self.close_connection = True
+            return self._too_many(wait)
         url = urlparse(self.path)
         # read the (small) body first: answering before it was read makes
         # Windows reset the connection instead of delivering the answer
@@ -319,9 +377,13 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET()
 
     def do_GET(self) -> None:
+        wait = self._braked()
+        if wait is not None:
+            return self._too_many(wait)
         url = urlparse(self.path)
         qs = parse_qs(url.query)
         if not self._authorised(qs):
+            self._note_fail()
             return self._error(401, "token required")
         path = url.path
         try:

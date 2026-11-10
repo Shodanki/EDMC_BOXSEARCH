@@ -91,6 +91,10 @@ Choose "this PC and devices in the home network" in the first-start questions.
 * The **settings page** (on the game PC) shows the addresses with a **QR
   code** next to them - point the tablet camera at it instead of typing the
   token. Only the game PC gets the QR code; other devices are refused.
+  **New access token** there locks out every device with the old one.
+* Devices in the home network are braked: at most 120 requests in 10 s,
+  and after 20 wrong tokens in 10 minutes nothing for 10 minutes. The game
+  PC itself is never braked.
 * **Firewall:** the FIS checks - read only - whether an enabled Windows
   Firewall rule allows TCP on its port (any rule, whatever its name). If not, it
   asks **once** whether to create the rule "SHBOX FIS": only with your yes,
