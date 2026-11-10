@@ -79,11 +79,12 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4205 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 1938 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `load.py` | 4238 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 2142 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 795 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
-| `sources.py` | 563 | External data: EDDiscovery, Spansh, EDSM | — |
+| `sources.py` | 566 | External data: EDDiscovery, Spansh, EDSM | `netgate` |
+| `netgate.py` | 405 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
 | `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
 | `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
@@ -316,7 +317,22 @@ uploaded them. One action, a large haul.
 |---|---|---|
 | **EDDiscovery** (`EDDSystem.sqlite`) | 10 | local, no rate limit, very complete. Found automatically under `%LOCALAPPDATA%\EDDiscovery`. The current EDD layout (`SystemTable` + `Sectors` + `Names`, names packed into `nameid`) is decoded directly; older layouts fall back to runtime detection. The coordinate scale is verified against the system you are in; the status line reports `verified` or `unverified`. EDD only needs to have been run once with its system database downloaded; it may be running at the same time. |
 | **Spansh** | 20 | `POST /api/systems/search`, paged at 500. Index is rebuilt daily from the galaxy dump → up to 48 h behind. |
-| **EDSM** | 30 | `sphere-systems`, 100 ly radius cap. Larger radii are split into 100 ly sub-spheres. Leaky-bucket rate limit; HTTP 429 aborts cleanly. |
+| **EDSM** | 30 | `sphere-systems`, 100 ly radius cap. Larger radii are split into 100 ly sub-spheres. Leaky-bucket rate limit, followed through its headers. |
+
+**Fair use.** EDSM and Spansh are community services under heavy load; the
+plugin asks them as gently as it can. They are only asked when you start a
+survey, and every request goes through one gateway (`netgate.py`):
+
+* one request at a time, never in parallel, with a pause between two requests
+  to the same service (EDSM 2 s, Spansh 1 s);
+* EDSM's rate-limit headers are followed - when few requests are left before
+  its reset, the pauses grow; at zero, EDSM is left alone until the reset;
+* HTTP 429/503: the wait from `Retry-After` (or 5 s, 10 s), at most three
+  tries; then the service is left alone until EDMC restarts. A wait longer
+  than two minutes is not slept through - the service rests until then;
+* the User-Agent names the plugin version and this repository;
+* every request is logged with time, status and duration in the database
+  (table `external_calls`, kept 30 days) and summed up in the EDMC log.
 
 Deliberately **not** used:
 

@@ -12,6 +12,10 @@ Ordered by priority (lower = preferred):
   20  Spansh       daily galaxy dump index, usually more complete than EDSM
   30  EDSM         sphere API, 100 ly radius cap, leaky-bucket rate limit
 
+EDSM and Spansh are asked only through netgate.Gateway: one request at a
+time, paced, Retry-After and rate-limit headers followed, honest User-Agent,
+every attempt recorded.
+
 Important: NONE of these knows about undiscovered systems. They only hold
 what the community has uploaded. The undiscovered part comes from
 boxelplan.py plus the in-game galaxy map.
@@ -26,17 +30,13 @@ import os
 import sqlite3
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-logger = logging.getLogger(__name__)
+from netgate import Gateway
 
-try:
-    import requests
-except ImportError:  # pragma: no cover
-    requests = None  # type: ignore
+logger = logging.getLogger(__name__)
 
 EDSM_SPHERE = "https://www.edsm.net/api-v1/sphere-systems"
 EDSM_CUBE = "https://www.edsm.net/api-v1/cube-systems"
 SPANSH_SEARCH = "https://spansh.co.uk/api/systems/search"
-USER_AGENT = "SHBOXSEARCH/4.3 (EDMC plugin)"
 
 ProgressCB = Optional[Callable[[str], None]]
 
@@ -67,14 +67,12 @@ class EDSMSource(Source):
     MAX_SPHERE = 100.0     # API limit
     MAX_CUBE = 200.0       # API limit (edge length)
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, gateway: Gateway, timeout: int = 30):
+        self.gw = gateway
         self.timeout = timeout
-        self.s = requests.Session() if requests else None
-        if self.s:
-            self.s.headers.update({"User-Agent": USER_AGENT, "Accept": "application/json"})
 
     def available(self) -> Tuple[bool, str]:
-        return (True, "ready") if self.s else (False, "requests module missing")
+        return self.gw.status("edsm")
 
     def _parse(self, data, out: Dict[str, Dict]) -> None:
         if isinstance(data, dict):
@@ -89,8 +87,6 @@ class EDSMSource(Source):
                               "z": float(c["z"]), "id64": s.get("id64")}
 
     def fetch(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
-        if not self.s:
-            return []
         out: Dict[str, Dict] = {}
         if radius <= self.MAX_SPHERE:
             calls = [(center, radius)]
@@ -109,13 +105,15 @@ class EDSMSource(Source):
         for idx, (c, r) in enumerate(calls, 1):
             if progress:
                 progress("EDSM %d/%d" % (idx, len(calls)))
+            resp = self.gw.request("edsm", "GET", EDSM_SPHERE, "sphere-systems",
+                                   timeout=self.timeout, params={
+                                       "x": c[0], "y": c[1], "z": c[2], "radius": r,
+                                       "showCoordinates": 1, "showId": 1},
+                                   headers={"Accept": "application/json"})
+            if resp is None:
+                # offline, resting or no network: stop asking EDSM for now
+                break
             try:
-                resp = self.s.get(EDSM_SPHERE, timeout=self.timeout, params={
-                    "x": c[0], "y": c[1], "z": c[2], "radius": r, "showCoordinates": 1,
-                    "showId": 1})
-                if resp.status_code == 429:
-                    logger.warning("EDSM rate limit hit, aborting")
-                    break
                 resp.raise_for_status()
                 self._parse(resp.json(), out)
             except Exception as e:
@@ -132,20 +130,15 @@ class SpanshSource(Source):
     priority = 20
     PAGE = 500
 
-    def __init__(self, timeout: int = 40):
+    def __init__(self, gateway: Gateway, timeout: int = 40):
+        self.gw = gateway
         self.timeout = timeout
-        self.s = requests.Session() if requests else None
-        if self.s:
-            self.s.headers.update({"User-Agent": USER_AGENT,
-                                   "Content-Type": "application/json",
-                                   "Accept": "application/json"})
 
     def available(self) -> Tuple[bool, str]:
-        return (True, "ready (index up to 48 h old)") if self.s else (False, "requests module missing")
+        ok, why = self.gw.status("spansh")
+        return ok, (why + ", index up to 48 h old") if ok else why
 
     def fetch(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
-        if not self.s:
-            return []
         out: Dict[str, Dict] = {}
         page = 0
         while True:
@@ -157,8 +150,14 @@ class SpanshSource(Source):
             }
             if progress:
                 progress("Spansh page %d" % (page + 1))
+            r = self.gw.request("spansh", "POST", SPANSH_SEARCH, "systems/search",
+                                data=json.dumps(body), timeout=self.timeout,
+                                headers={"Content-Type": "application/json",
+                                         "Accept": "application/json"})
+            if r is None:
+                # offline, resting or no network: stop asking Spansh for now
+                break
             try:
-                r = self.s.post(SPANSH_SEARCH, data=json.dumps(body), timeout=self.timeout)
                 r.raise_for_status()
                 data = r.json()
             except Exception as e:
@@ -503,11 +502,15 @@ class EDDiscoverySource(Source):
 # ---------------------------------------------------------------------------
 
 class SourceManager:
-    def __init__(self, edd_path: Optional[str] = None):
+    def __init__(self, edd_path: Optional[str] = None,
+                 gateway: Optional[Gateway] = None):
+        # one gateway for the whole plugin: pass it in so that pacing and
+        # rests survive a rebuilt SourceManager (preferences changed)
+        self.gateway = gateway or Gateway()
         self.sources: Dict[str, Source] = {
             "edd": EDDiscoverySource(edd_path),
-            "spansh": SpanshSource(),
-            "edsm": EDSMSource(),
+            "spansh": SpanshSource(self.gateway),
+            "edsm": EDSMSource(self.gateway),
         }
 
     def set_reference(self, id64: Optional[int],

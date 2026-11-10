@@ -45,7 +45,7 @@ Q_CONFIRMED = 20
 Q_EXTERNAL = 30
 Q_JOURNAL = 40
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4          # 4: external_calls (4.6 local-first)
 
 # Body classes that are always worth mapping (DSS)
 VALUABLE_CLASSES = {
@@ -227,7 +227,22 @@ CREATE TABLE IF NOT EXISTS surface_marks (
     PRIMARY KEY (ts, kind, body_name, label)
 );
 CREATE INDEX IF NOT EXISTS surface_marks_body ON surface_marks(sys_id64, body_name);
+
+-- 4.6 local-first: one row per request to an outside service (netgate),
+-- kept CALL_LOG_DAYS days - shows how gently the plugin asks EDSM/Spansh.
+CREATE TABLE IF NOT EXISTS external_calls (
+    id       INTEGER PRIMARY KEY,
+    ts       REAL NOT NULL,            -- epoch seconds
+    service  TEXT NOT NULL,            -- edsm | spansh | github
+    endpoint TEXT NOT NULL,
+    status   INTEGER NOT NULL,         -- HTTP status, 0 = no answer
+    ok       INTEGER NOT NULL,
+    ms       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS external_calls_ts ON external_calls(ts);
 """
+
+CALL_LOG_DAYS = 30
 
 
 def _epoch(stamp: Optional[str]) -> Optional[float]:
@@ -347,6 +362,7 @@ class SystemDB:
         self.cx.execute("INSERT OR REPLACE INTO meta(k,v) VALUES ('schema',?)",
                         (str(SCHEMA_VERSION),))
         self.cx.commit()
+        self.prune_external_calls()
         self.sectors = SectorRegistry()
         self._load_sectors()
         # where the commander is, for MaterialCollected (which names no body)
@@ -505,6 +521,34 @@ class SystemDB:
     def set_meta(self, k: str, v: str) -> None:
         self.cx.execute("INSERT OR REPLACE INTO meta(k,v) VALUES (?,?)", (k, str(v)))
         self.cx.commit()
+
+    # ------------------------------------------------------ external calls
+    def log_external_calls(self, records: Iterable[Sequence[Any]]) -> int:
+        """Store netgate records (ts, service, endpoint, status, ok, ms)."""
+        rows = [(float(r[0]), str(r[1]), str(r[2]), int(r[3]), 1 if r[4] else 0,
+                 int(r[5])) for r in records]
+        if rows:
+            self.cx.executemany(
+                "INSERT INTO external_calls(ts, service, endpoint, status, ok, ms)"
+                " VALUES (?,?,?,?,?,?)", rows)
+            self.cx.commit()
+        return len(rows)
+
+    def external_calls_since(self, since: float,
+                             service: Optional[str] = None) -> int:
+        if service:
+            r = self.cx.execute("SELECT COUNT(*) FROM external_calls "
+                                "WHERE ts>=? AND service=?", (since, service))
+        else:
+            r = self.cx.execute("SELECT COUNT(*) FROM external_calls WHERE ts>=?",
+                                (since,))
+        return int(r.fetchone()[0])
+
+    def prune_external_calls(self, days: int = CALL_LOG_DAYS) -> int:
+        n = self.cx.execute("DELETE FROM external_calls WHERE ts<?",
+                            (time.time() - days * 86400.0,)).rowcount
+        self.cx.commit()
+        return n
 
     # ---------------------------------------------------------------- sectors
     def _load_sectors(self) -> None:
@@ -2072,6 +2116,17 @@ def _selftest() -> int:
         for _ in range(4):
             backup_database(path, "test")
         check(len(baks()) == BACKUP_KEEP, "only the newest %d backups kept" % BACKUP_KEEP)
+        db = SystemDB(path)
+        now = time.time()
+        db.log_external_calls([(now - 40 * 86400, "edsm", "sphere", 200, True, 50),
+                               (now, "edsm", "sphere", 429, False, 30),
+                               (now, "spansh", "search", 200, True, 900)])
+        check(db.external_calls_since(now - 60) == 2
+              and db.external_calls_since(now - 60, "edsm") == 1,
+              "call log counts per service")
+        check(db.prune_external_calls() == 1 and db.external_calls_since(0) == 2,
+              "call log keeps %d days" % CALL_LOG_DAYS)
+        db.close()
         legacy = os.path.join(d, "legacy.sqlite")
         cx = sqlite3.connect(legacy)
         cx.execute("CREATE TABLE systems (name TEXT)")

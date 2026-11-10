@@ -36,6 +36,7 @@ if _PLUGIN_DIR not in sys.path:
 from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
 from sysdb import SystemDB, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
 from sources import SourceManager                              # noqa: E402
+from netgate import Gateway                                    # noqa: E402
 from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
                        staging_lines, tritium_systems)
 from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
@@ -134,7 +135,10 @@ class State:
     def __init__(self):
         self.db: Optional[SystemDB] = None
         self.lock = threading.RLock()
-        self.sources = SourceManager()
+        # the plugin's one door to the internet - created once, so pacing
+        # and rests survive a rebuilt SourceManager
+        self.net = Gateway(VERSION)
+        self.sources = SourceManager(gateway=self.net)
         self.planner: Optional[Planner] = None
 
         self.active = False
@@ -314,7 +318,7 @@ def plugin_start3(plugin_dir: str) -> str:
         logger.exception("could not open database")
         return "SHBOXSEARCH"
 
-    ST.sources = SourceManager(cfg_str(CFG["edd_path"]) or None)
+    ST.sources = SourceManager(cfg_str(CFG["edd_path"]) or None, gateway=ST.net)
     ST.overlay = CockpitOverlay(logger)
     _overlay_apply_settings()
 
@@ -374,6 +378,8 @@ def plugin_stop() -> None:
     _stats_window_close()
     _probe_window_close()
     _mining_window_close()
+    ST.net.stop()             # wake a waiting request; nothing more is sent
+    _flush_net_log()
     with ST.lock:
         if ST.db:
             ST.db.close()
@@ -399,6 +405,20 @@ def _run_async(fn, *args, label: str = "working", **kw) -> None:
     threading.Thread(target=wrapper, daemon=True, name="SHBOX-" + label).start()
 
 
+def _flush_net_log() -> List[Tuple]:
+    """Move the gateway's recorded requests into the database call log
+    (on the caller's thread, under ST.lock). Returns the records."""
+    rec = ST.net.drain()
+    if rec:
+        with ST.lock:
+            if ST.db:
+                try:
+                    ST.db.log_external_calls(rec)
+                except Exception:
+                    logger.exception("could not store the external call log")
+    return rec
+
+
 def _fetch_sources() -> None:
     if not ST.center:
         return
@@ -419,6 +439,17 @@ def _fetch_sources() -> None:
         logger.info("  source %-12s %-3s %s", name, "ok" if ok else "no", why)
     rows, used = ST.sources.fetch_all(ST.center, ST.radius, enabled,
                                       progress=lambda s: _set_status(s))
+    rec = _flush_net_log()
+    if rec:
+        per: Dict[str, List[int]] = {}
+        for _ts, svc, _ep, _st, ok, ms in rec:
+            c = per.setdefault(svc, [0, 0, 0])
+            c[0] += 1
+            c[1] += 0 if ok else 1
+            c[2] += ms
+        logger.info("external requests: %s", ", ".join(
+            "%s %d (%d failed, %.1f s)" % (k, v[0], v[1], v[2] / 1000.0)
+            for k, v in sorted(per.items())))
     with ST.lock:
         n = 0
         for r in rows:
@@ -1797,15 +1828,17 @@ def _check_for_update(force: bool = False) -> None:
                 return
         except ValueError:
             pass
-    try:
-        import requests
-    except ImportError:
+    if not ST.net.usable:
         logger.info("update check: 'requests' not available in this EDMC build")
         return
     try:
-        r = requests.get(RELEASES_API, timeout=10,
-                         headers={"Accept": "application/vnd.github+json",
-                                  "User-Agent": "SHBOXSEARCH/%s" % VERSION})
+        r = ST.net.request("github", "GET", RELEASES_API, "releases/latest",
+                           timeout=10,
+                           headers={"Accept": "application/vnd.github+json"})
+        _flush_net_log()
+        if r is None:
+            logger.info("update check: no answer (offline, resting or no network)")
+            return
         cfg_set(CFG["update_checked"], str(int(time.time())))
         if r.status_code == 403:
             logger.info("update check: rate limited by GitHub, trying again tomorrow")
@@ -4019,7 +4052,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
             _carrier_var.set(_p["carrier_start"].get())
         cfg_set(CFG["debug"], bool(_p["debug"].get()))
         logger.setLevel(logging.DEBUG if _p["debug"].get() else logging.INFO)
-        ST.sources = SourceManager(_p["eddpath"].get() or None)
+        ST.sources = SourceManager(_p["eddpath"].get() or None, gateway=ST.net)
         if _radius_var:
             _radius_var.set(_p["radius"].get())
         if ST.active:
