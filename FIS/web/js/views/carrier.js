@@ -57,9 +57,30 @@ function age(s) {
 function cr(v) { return v === null || v === undefined ? "–" : fmt(v / 1e6, 1) + " M Cr"; }
 function line(k, ...v) { return el("div", { class: "ns-row" }, el("div", { class: "ns-k", text: k }), el("div", { class: "ns-v" }, ...v)); }
 
+// M7: docked at someone else's carrier - what it buys (how you can help) and sells
+function visiting() {
+  const v = data.visiting;
+  const rows = [];
+  if (!v.buys.length && !v.sells.length) rows.push(el("div", { class: "c-dim", text: t("This carrier trades nothing right now.") }));
+  if (v.buys.length) {
+    rows.push(el("div", { class: "sr-h", text: t("IT BUYS") }));
+    for (const b of v.buys.slice(0, 12)) rows.push(el("div", { class: "cg" + (b.carry ? " c-green" : b.key === "tritium" ? " c-amber" : "") },
+      el("span", { text: b.name + (b.carry ? "  · " + t("you carry {n} t", { n: b.carry }) : "") }),
+      el("span", { class: "num", text: fmt(b.demand, 0) + " t · " + fmt(b.price, 0) + " Cr" })));
+  }
+  if (v.sells.length) {
+    rows.push(el("div", { class: "sr-h", text: t("IT SELLS") }));
+    for (const s of v.sells.slice(0, 8)) rows.push(el("div", { class: "cg" },
+      el("span", { text: s.name }), el("span", { class: "num", text: fmt(s.stock, 0) + " t · " + fmt(s.price, 0) + " Cr" })));
+  }
+  rows.push(el("div", { class: "c-dim small", text: t("From the market you opened at {d} - open it again for fresh figures.", { d: String(v.market_ts || "").slice(11, 16) }) }));
+  return frame(t("DOCKED AT A CARRIER"), (v.callsign || "") + (v.system ? " · " + v.system : ""), rows, { appear: false });
+}
+
 function render() {
   if (!root) return;
   root.replaceChildren();
+  if (data && data.visiting) root.append(visiting());
   if (!data || data.empty) {
     root.append(frame(t("CARRIER"), "", el("div", { class: "empty" }, t("NO CARRIER DATA"), el("br"),
       el("span", { class: "c-dim", text: t("No carrier of your own known yet - your ships are listed below. If you own one, open the carrier management once.") }))));
