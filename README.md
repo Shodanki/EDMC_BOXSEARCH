@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.5
+# SHBOXSEARCH v4.6
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -14,8 +14,11 @@ tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
 folder of this plugin. See [FIS/README.md](FIS/README.md) - with
 screenshots (demo data).
-**New in 4.5:** a mining block in the cockpit overlay, your carrier's hold
-from Frontier's data, and many FIS views - see "What changed in 4.5".
+**New in 4.6:** local first - EDSM and Spansh are asked in shells, only when
+the plan needs them, with a daily cap and an offline switch; EDDiscovery
+replaces Spansh when it is current. In the FIS: Rhino rigs and hold, the ship
+waiting at the Rhino's drop point, open bio signals, data at risk, on foot,
+a QR code for the tablet and an OBS mode - see "What changed in 4.6".
 
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
 > all. On the first start 4.1 repairs boxel records written under a wrong
@@ -71,6 +74,11 @@ The database migrates itself: new columns are added in place, nothing is
 dropped. When an update adds new per-body data, the plugin replays your
 journals once on its own (4.1 does); *Preferences -> SHBOXSEARCH -> Replay
 journals* repeats that at any time and is safe to run as often as you like.
+Since 4.6 the plugin copies the database to `shboxsearch.sqlite.schema<N>-<time>.bak`
+before it changes the schema or repairs records (the last three are kept).
+
+SHBOX FIS keeps running when EDMC is closed: after an update close its
+window (or end `python -m fis`) so it starts with the new files.
 
 
 ## Files
@@ -1423,6 +1431,7 @@ tag, so the two have to be set together or the notice lies.
 | 4.4.0 | surface track and finds on bodies, exobiology sample distance in the overlay, SHBOX FIS |
 | 4.5.0 | mining block in the overlay, carrier hold from Frontier's Companion API, FIS: galaxy 3D, mining, statistics |
 | 4.5.1 | fixes: FIS keeps following a journal the game rewrote, live-link watchdog; mining block only from a prospector in a mining ship |
+| 4.6.0 | local first: online sources in shells when needed, daily cap, offline switch, EDDiscovery first; FIS: Rhino rigs and hold, open bio signals, data at risk, on foot, QR code, OBS mode |
 
 
 ---
@@ -1836,3 +1845,58 @@ search-and-rescue role for the air wing and a settings page. Details:
 * FIS CARRIER: hovering a role column explains how its dots are earned; a
   commander without a carrier of their own sees the ships without a hint that
   assumes one.
+
+---
+
+## What changed in 4.6
+
+### Local first - fair use of EDSM and Spansh
+
+Both are community services under heavy load. 4.6 asks them as little as
+the survey allows (details in "External sources", *Fair use*):
+
+* **In shells, when needed.** The sphere is fetched in 25 ly shells, nearest
+  first, and the next shell only when the plan reaches it - after a jump
+  close to the edge of what is known, or when nothing is left to do inside.
+  A restart of EDMC asks nothing.
+* **Remembered, spread out.** Each shell a source delivered stays valid for
+  a random 5 to 14 days, so many installations do not ask at the same time.
+  *reload online data* asks again on purpose.
+* **EDDiscovery first.** Its system database is a copy of Spansh's dump;
+  when it was updated within two days, Spansh is not asked at all and the
+  local file is read shell by shell. A locked file (EDDiscovery running) is
+  read again later. Catalogue names (`HIP 12345`) are now read from it too.
+* **One polite gateway** for every request, the update check included:
+  pacing per service, the services' own rate-limit headers, back-off and a
+  rest for the session after repeated errors, an honest User-Agent, at most
+  50 requests per service and UTC day, at most 20 Spansh pages per shell.
+  The statistics show *external today: EDSM n of 50 · Spansh n of 50*.
+* **offline** in the settings sends nothing at all.
+* **Backups.** The database is copied before a schema change or a repair.
+* **copy bundle** copies one galaxy-map prefix for several of the next probe
+  boxels of one sector, letter group and mass code.
+* The FIS brings its own Three.js - the 3D views work without the internet.
+
+### SHBOX FIS
+
+* **Rhino** - the PLANET view numbers the mining rigs where you collected
+  them (*Rig 2 · 11 t Deuterium*), shows the Rhino's hold and how many full
+  rigs still fit, and the ship hovering at the drop point (the Rhino leaves
+  a ship that hovers; no touchdown). Ground mining is a MINING session of
+  its own, and the carrier's air wing counts Rhino and exobiology hangars.
+* **Biology** - ATLAS BIOLOGY lists the open and the finished bio signals;
+  the SYSTEM view folds finished species; the surface map highlights the
+  species you are working on.
+* **SHIP** - unsold data at risk (exobiology valued, exploration counted)
+  and the selected target (destination, FSD target, locked ship).
+* **On foot** - suit, mods, weapons and backpack in PLANET.
+* **PLANET INFO** - science report under the datasheet, ring hotspots under
+  each ring, no more reload on every scan.
+* **CARRIER** - the air wing sorts by any column and filters the ship list.
+* **Settings page** - a QR code of the home-network address for the tablet,
+  display links and an OBS mode, a new access token at a click, and a brake
+  for home-network devices (rate and wrong tokens).
+* Screenshots from demo data in [FIS/README.md](FIS/README.md).
+
+After the update the plugin replays your journals once (Rhino rigs from
+earlier outings). Close the FIS window once so it starts with the new files.

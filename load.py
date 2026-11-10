@@ -55,7 +55,7 @@ from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E40
 import surfacenav  # noqa: E402
 import miningstat  # noqa: E402
 
-VERSION = "4.5.1"
+VERSION = "4.6.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
