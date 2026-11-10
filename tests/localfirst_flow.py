@@ -133,17 +133,26 @@ with tempfile.TemporaryDirectory() as d:
     check(Sess.log == [] and ST.horizon == 50.0, "restart: shells still valid - no request")
 
     # 3) shells expire -> restart plans nothing until asked, then asks shell 1
+    #    (F2: no phantom plan with radius 0, even with no position known)
     ST.db.cx.execute("UPDATE fetched_shells SET expires_at=?", (time.time() - 1,))
     ST.db.cx.commit()
+    ST.cur_pos = None
+    seen = []
+    real_build = ST.planner.build
+    ST.planner.build = lambda c, r, **kw: seen.append(r) or real_build(c, r, **kw)
     load._resume_worker()
-    check(Sess.log[:2] == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)],
-          "expired: asked again, nearest shell first")
+    ST.planner.build = real_build
+    check(Sess.log == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)]
+          and ST.horizon == 25.0 and ST.flight,
+          "expired: asked again, nearest shell first, then a real plan")
+    check(seen and min(seen) > 0, "no plan built with radius 0 (phantom probes)")
+    ST.cur_pos = (0.0, 0.0, 0.0)
 
-    # 4) reload button: every shell to the horizon again, paced
+    # 4) reload button: the shells up to the horizon again - and no further (F3)
     Sess.log.clear()
     load._reload_online()
-    check(("spansh", 0.0, 25.0) in Sess.log and ("edsm", 25.0, 50.0) in Sess.log,
-          "reload: shells up to the horizon asked again")
+    check(Sess.log == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)],
+          "reload: shells up to the horizon asked again, not beyond")
 
     # 5) offline: nothing sent, the plan uses local data to the radius
     Sess.log.clear()
@@ -156,7 +165,8 @@ with tempfile.TemporaryDirectory() as d:
     Sess.log.clear()
     ST.center = (3.0, 0.0, 0.0)
     load._start_worker()
-    check(Sess.log == [], "survey 3 ly away: shells already valid - no request")
+    check(not any(lo == 0.0 for _, lo, _ in Sess.log) and ST.horizon >= 25.0,
+          "survey 3 ly away: the valid 0-25 shell is not asked again")
 
     # 7) EDSM switched off: only Spansh asked
     Sess.log.clear()

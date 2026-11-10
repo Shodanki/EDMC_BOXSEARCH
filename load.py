@@ -557,7 +557,7 @@ def _advance_horizon(allow_fetch: bool = True, force_to: float = 0.0) -> bool:
             moved = True
             _set_status("online data to %.0f of %.0f ly | %d new systems"
                         % (b, ST.radius, n))
-            if not forced:
+            if not forced or b >= force_to - 1e-6:
                 break
         return moved
     finally:
@@ -647,6 +647,18 @@ def _copy_route_target() -> None:
 
 def _rebuild_plan() -> None:
     if not (ST.center and ST.planner):
+        return
+    if ST.active and ST.horizon <= 0.0:
+        # nothing asked yet (new survey, or every shell expired): no plan
+        # rather than one from nothing - the first shell is fetched now
+        ST.flight, ST.probe, ST.plan_counts = [], [], {}
+        ST.plan_info = "online data not asked yet - fetching the first shell"
+        ST.stats_lines = ["online data: not asked yet - the first shell "
+                          "(0-%.0f ly) is being fetched"
+                          % min(ST.radius, shells.SHELL_STEP)]
+        logger.info("plan: %s", ST.plan_info)
+        _ui(_stats_window_refresh)
+        _maybe_extend()
         return
     with ST.lock:
         plan = ST.planner.build(
