@@ -10,7 +10,7 @@
 // (x, y in the reference plane, z out of it). Scene space is Three.js style,
 // Y up: scene = [x, z, -y].
 
-import { fixLabel } from "../ui.js";
+import { fixLabel, C, alpha } from "../ui.js";
 
 export const COLOURS = {
   "star-o": "#9BB0FF", "star-b": "#AABFFF", "star-a": "#CAD7FF", "star-f": "#F8F7FF",
@@ -19,7 +19,8 @@ export const COLOURS = {
   elw: "#4FA3FF", water: "#3E7BFF", ammonia: "#C9B25A", gas: "#D9A46A", icy: "#BFE3F2",
   metal: "#C9C3B5", rocky: "#A88C74", rockyice: "#9FB3B8", other: "#8FA3A0",
 };
-export const UI = { cyan: "#3EF2E0", green: "#7CFF6B", amber: "#FFB23E", red: "#FF4D4D", violet: "#B57CFF", dim: "#6E8F8B", text: "#CFEFEB" };
+// the interface colours come from the theme tokens (ui.js C); the table above is physics
+export const UI = C;
 
 const len = (v) => Math.hypot(v[0], v[1], v[2]);
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -189,7 +190,7 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
       ctx2d.beginPath(); ctx2d.arc(s.x, s.y, r, 0, Math.PI * 2); ctx2d.stroke();
     }
     if (b.flags.bio) {
-      ctx2d.strokeStyle = b.flags.organics >= b.flags.bio ? "rgba(255,178,62,.45)" : UI.amber;
+      ctx2d.strokeStyle = b.flags.organics >= b.flags.bio ? alpha("amber", .45) : UI.amber;
       ctx2d.setLineDash([2, 3]);
       ctx2d.beginPath(); ctx2d.arc(s.x, s.y, r + 3, 0, Math.PI * 2); ctx2d.stroke();
       ctx2d.setLineDash([]);
@@ -270,7 +271,7 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
   // LAST FIX
   if (scene.fix && scene.fix.p) {
     const s = project(scene.fix.p);
-    if (s.ok) items.push({ s, text: fixLabel(scene.fix), tags: [], pri: 100, fix: true, colour: "#FFFFFF" });
+    if (s.ok) items.push({ s, text: fixLabel(scene.fix), tags: [], pri: 100, fix: true, colour: C.white });
   }
   // distance rings
   for (const r of scene.rings) {
@@ -289,7 +290,7 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
   };
   const hull = (p, dashed) => {
     ctx2d.save();
-    ctx2d.strokeStyle = UI.amber; ctx2d.fillStyle = dashed ? "rgba(5,12,13,.5)" : "rgba(5,12,13,.9)";
+    ctx2d.strokeStyle = UI.amber; ctx2d.fillStyle = dashed ? alpha("panel", .5) : alpha("panel", .9);
     ctx2d.lineWidth = 1.4; if (dashed) ctx2d.setLineDash([2, 2]);
     ctx2d.fillRect(p.x - 8, p.y - 3, 16, 6); ctx2d.strokeRect(p.x - 8, p.y - 3, 16, 6);
     ctx2d.setLineDash([]); ctx2d.fillStyle = UI.amber; ctx2d.fillRect(p.x + 2, p.y - 7, 3, 4);
@@ -332,7 +333,7 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
     drawn++;
     // hairline from the object to the label
     if (!it.leg && !it.ring) {
-      ctx2d.strokeStyle = it.fix ? "rgba(255,255,255,.7)" : "rgba(62,242,224,.45)";
+      ctx2d.strokeStyle = it.fix ? alpha("white", .7) : alpha("cyan", .45);
       ctx2d.lineWidth = 1;
       ctx2d.beginPath();
       const lx = spot.x + (spot.x > it.s.x ? 0 : spot.w);
@@ -343,13 +344,13 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
       ctx2d.stroke();
     }
     if (it.fix) {   // diamond marker: a reference, not a position
-      ctx2d.strokeStyle = "#FFFFFF";
+      ctx2d.strokeStyle = C.white;
       ctx2d.beginPath();
       ctx2d.moveTo(it.s.x, it.s.y - 9); ctx2d.lineTo(it.s.x + 9, it.s.y);
       ctx2d.lineTo(it.s.x, it.s.y + 9); ctx2d.lineTo(it.s.x - 9, it.s.y); ctx2d.closePath();
       ctx2d.setLineDash([3, 3]); ctx2d.stroke(); ctx2d.setLineDash([]);
     }
-    ctx2d.fillStyle = "rgba(5,8,10,.62)";
+    ctx2d.fillStyle = alpha("bg", .62);
     ctx2d.fillRect(spot.x, spot.y, spot.w, spot.h - 2);
     ctx2d.fillStyle = it.colour;
     ctx2d.textBaseline = "top";

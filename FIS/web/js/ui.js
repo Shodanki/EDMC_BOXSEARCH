@@ -7,6 +7,37 @@
 
 import { t, locale, lang } from "./i18n.js";
 
+// ------------------------------------------------------------ colour tokens
+// T1: the interface colours live as CSS variables in fis.css (:root); canvas
+// drawing reads the same tokens here, so a theme changes both. The values
+// below are only the fallback while the stylesheet is not there. Stars and
+// planet classes keep their physical colours (scene.js) - no theme repaints
+// a G star. A theme switch reloads the page (themeChanged() for tests).
+const TOKENS = { cyan: "#3EF2E0", green: "#7CFF6B", amber: "#FFB23E", red: "#FF4D4D",
+  violet: "#B57CFF", dim: "#6E8F8B", text: "#CFEFEB", faint: "#2A3D3B", blue: "#4FA3FF",
+  gold: "#FFD23E", white: "#FFFFFF", panel: "#050C0D", bg: "#05080A", ink: "#071214" };
+let tokenCache = null;
+function readTokens() {
+  const out = Object.assign({}, TOKENS);
+  try {
+    const cs = getComputedStyle(document.documentElement);
+    for (const k of Object.keys(TOKENS)) {
+      const v = cs.getPropertyValue("--" + k).trim();
+      if (/^#[0-9a-f]{6}$/i.test(v)) out[k] = v;
+    }
+  } catch (e) { /* no document (tests): the fallback values */ }
+  return out;
+}
+/** C.cyan, C.amber ... - the theme's colour for canvas drawing. */
+export const C = new Proxy({}, { get(_t, k) { if (!tokenCache) tokenCache = readTokens(); return tokenCache[k]; } });
+/** alpha("cyan", .25) -> "rgba(62,242,224,0.25)" in the theme's colour. */
+export function alpha(token, a) {
+  const h = C[token] || token;
+  const n = parseInt(String(h).slice(1), 16);
+  return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
+}
+export function themeChanged() { tokenCache = null; }
+
 export function el(tag, attrs = {}, ...kids) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {

@@ -8,20 +8,20 @@
 // circles for exobiology. Local map in metres around you / the last fix.
 
 import { getJSON } from "../api.js";
-import { el, frame, fmt } from "../ui.js";
+import { el, frame, fmt, C, alpha } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 let root = null, cv = null, g = null, data = null, info = null, list = null;
 let view = { zoom: null, panX: 0, panY: 0 };
 let drag = null;
 
-const COL = { ship: "#3EF2E0", srv: "#FFB23E", foot: "#7CFF6B", grid: "rgba(62,242,224,.10)",
-  dim: "#6E8F8B", violet: "#B57CFF", red: "#FF4D4D", text: "#CFEDEA" };
+const COL = { ship: C.cyan, srv: C.amber, foot: C.green, grid: alpha("cyan", .10),
+  dim: C.dim, violet: C.violet, red: C.red, text: C.text };
 const ICON = { touchdown: "▼", liftoff: "▲", srv_out: "◆", srv_in: "◇", disembark: "●", embark: "○",
   bio_log: "✚", bio_sample: "✚", bio_analyse: "✔", material: "■", codex: "★", settlement: "⌂", screenshot: "◉",
   srv_parked: "◆", rig: "⬢" };
-const TONE = { bio_log: "#FFB23E", bio_sample: "#FFB23E", bio_analyse: "#7CFF6B", material: "#B57CFF",
-  codex: "#3EF2E0", settlement: "#CFEDEA", touchdown: "#3EF2E0", liftoff: "#6E8F8B", rig: "#FFD23E" };
+const TONE = { bio_log: C.amber, bio_sample: C.amber, bio_analyse: C.green, material: C.violet,
+  codex: C.cyan, settlement: C.text, touchdown: C.cyan, liftoff: C.dim, rig: C.gold };
 const KIND = { touchdown: N_("Touchdown"), liftoff: N_("Lift-off"), srv_out: N_("SRV out"), srv_in: N_("SRV in"),
   disembark: N_("On foot"), embark: N_("Boarded"), srv_parked: N_("SRV parked"), bio_log: N_("Bio 1/3"),
   bio_sample: N_("Bio 2/3"), bio_analyse: N_("Bio 3/3"), material: N_("Material"), codex: N_("Codex"),
@@ -113,8 +113,8 @@ function draw() {
       const [px, py] = P(x, y);
       g.setLineDash([4, 4]);
       g.lineWidth = b.active ? 2 : 1;
-      g.strokeStyle = b.done ? "rgba(124,255,107,.35)" : b.active ? "rgba(255,178,62,.95)"
-        : act ? "rgba(255,178,62,.22)" : "rgba(255,178,62,.55)";
+      g.strokeStyle = b.done ? alpha("green", .35) : b.active ? alpha("amber", .95)
+        : act ? alpha("amber", .22) : alpha("amber", .55);
       g.beginPath(); g.arc(px, py, b.range_m * view.zoom, 0, Math.PI * 2); g.stroke();
       g.setLineDash([]); g.lineWidth = 1;
     }
@@ -250,7 +250,7 @@ function compass(d) {
   const R = size / 2 - 14, cx = size / 2, cy = size / 2;
   const head = ((d.me && d.me.heading) || 0) * Math.PI / 180;
   const at = (bearingDeg, r) => { const a = bearingDeg * Math.PI / 180 - head; return [cx + Math.sin(a) * r, cy - Math.cos(a) * r]; };
-  x.strokeStyle = "rgba(62,242,224,.35)"; x.lineWidth = 1;
+  x.strokeStyle = alpha("cyan", .35); x.lineWidth = 1;
   x.beginPath(); x.arc(cx, cy, R, 0, Math.PI * 2); x.stroke();
   x.beginPath(); x.arc(cx, cy, R * 0.5, 0, Math.PI * 2); x.globalAlpha = 0.4; x.stroke(); x.globalAlpha = 1;
   for (let b = 0; b < 360; b += 30) {
@@ -259,7 +259,7 @@ function compass(d) {
   }
   x.font = "bold 12px monospace"; x.textAlign = "center"; x.textBaseline = "middle";
   for (const [b, s] of [[0, "N"], [90, "E"], [180, "S"], [270, "W"]]) {
-    const [tx, ty] = at(b, R + 8); x.fillStyle = b ? "#6E8F8B" : "#FF4D4D"; x.fillText(s, tx, ty);
+    const [tx, ty] = at(b, R + 8); x.fillStyle = b ? C.dim : C.red; x.fillText(s, tx, ty);
   }
   // earlier samples: dots, the ring is 1000 m (log scale), green when far enough
   const logr = (m) => Math.min(1, Math.log10(1 + m) / 3) * (R - 6);
@@ -268,14 +268,14 @@ function compass(d) {
     for (const [px, py] of b.points) {
       const dist = Math.hypot(px, py), brg = (Math.atan2(px, py) * 180 / Math.PI + 360) % 360;
       const [dx, dy] = at(brg, logr(dist));
-      x.fillStyle = b.range_m && dist >= b.range_m ? "#7CFF6B" : "#FFB23E";
+      x.fillStyle = b.range_m && dist >= b.range_m ? C.green : C.amber;
       x.globalAlpha = d.active && !b.active ? 0.3 : 1;
       x.beginPath(); x.arc(dx, dy, b.active ? 4 : 3, 0, Math.PI * 2); x.fill();
       x.globalAlpha = 1;
     }
   }
   // the vehicles: arrows to the rim, with the distance
-  for (const [key, colr, sym] of [["parked", "#FFB23E", "SRV"], ["ship", "#3EF2E0", "SHIP"]]) {
+  for (const [key, colr, sym] of [["parked", C.amber, "SRV"], ["ship", C.cyan, "SHIP"]]) {
     const v = d[key];
     if (!v || v.bearing === undefined) continue;
     const [tx, ty] = at(v.bearing, R - 4), [sx, sy] = at(v.bearing, 18);
@@ -289,12 +289,12 @@ function compass(d) {
     x.font = "bold 11px monospace";
     const txt = sym + " " + (v.dist_m >= 1000 ? fmt(v.dist_m / 1000, 1) + " km" : fmt(v.dist_m, 0) + " m");
     const w = x.measureText(txt).width + 6;
-    x.fillStyle = "rgba(5,12,13,.85)"; x.fillRect(lx - w / 2, ly - 8, w, 16);
+    x.fillStyle = alpha("panel", .85); x.fillRect(lx - w / 2, ly - 8, w, 16);
     x.fillStyle = colr; x.fillText(txt, lx, ly);
   }
   // you, nose up
-  x.fillStyle = "#FFFFFF"; x.beginPath(); x.moveTo(cx, cy - 10); x.lineTo(cx + 6, cy + 7); x.lineTo(cx, cy + 3); x.lineTo(cx - 6, cy + 7); x.closePath(); x.fill();
-  x.font = "11px monospace"; x.fillStyle = "#6E8F8B";
+  x.fillStyle = C.white; x.beginPath(); x.moveTo(cx, cy - 10); x.lineTo(cx + 6, cy + 7); x.lineTo(cx, cy + 3); x.lineTo(cx - 6, cy + 7); x.closePath(); x.fill();
+  x.font = "11px monospace"; x.fillStyle = C.dim;
   x.fillText(fmt((d.me && d.me.heading) || 0, 0) + "°", cx, cy + 22);
   return el("div", { class: "sf-compass-box", title: t("heading up · dots: earlier samples (green = far enough) · ring 1 km") }, c);
 }

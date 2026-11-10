@@ -9,7 +9,7 @@
 // mining ships. Right: ring hotspots nearby, goods and income, all sessions.
 
 import { getJSON } from "../api.js";
-import { el, frame, fmt, withPopout } from "../ui.js";
+import { el, frame, fmt, withPopout, C } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const CONTENT = { low: N_("low"), medium: N_("medium"), high: N_("high") };
@@ -71,7 +71,7 @@ function render() {
 // two bars: the hold (limpets | goods | free, with the advised limpet load
 // marked) and the refining of the last 10 minutes (one tick per tonne - the
 // game writes nothing about the refinery's bins, only each finished tonne)
-const GOOD_COL = ["#7CFF6B", "#FFB23E", "#B57CFF", "#4FA3FF", "#E8A06A"];
+const GOOD_COL = [C.green, C.amber, C.violet, C.blue, "#E8A06A"];
 // out in the Rhino: hold and how many full rigs still fit (a rig goes in whole)
 function rhinoHold(h) {
   return el("div", { class: "small " + (h.short ? "c-amber" : "c-dim"), text: h.short

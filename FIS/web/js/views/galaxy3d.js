@@ -14,6 +14,7 @@
 // dashed lines. Galactic plane: faint grid at y = 0, arrows to Sol and core.
 // Labels and the tooltip live on a 2D canvas over the 3D one.
 
+import { C, alpha } from "../ui.js";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
@@ -264,28 +265,28 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
     if (!data) return;
     g.font = "11px monospace";
     const label = (o, txt, colr) => { const [x, y, ok] = project(o.x, o.y, -o.z); if (!ok) return; g.fillStyle = colr; g.fillText(txt, x + 7, y - 6); };
-    if (on.spheres !== false) for (const sp of data.spheres) label({ x: sp.x, y: sp.y + sp.r, z: sp.z }, sp.label, "#3EF2E0");
-    if (data.you) label(data.you, hooks.t ? hooks.t("you") : "you", "#FFFFFF");
+    if (on.spheres !== false) for (const sp of data.spheres) label({ x: sp.x, y: sp.y + sp.r, z: sp.z }, sp.label, C.cyan);
+    if (data.you) label(data.you, hooks.t ? hooks.t("you") : "you", C.white);
     if (mark) {                                   // the focus: amber ring and name
       const [x, y, ok] = project(mark.x, mark.y, -mark.z);
-      if (ok) { g.strokeStyle = "#FFB23E"; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.stroke();
-        if (mark.kind !== "carrier") { g.fillStyle = "#FFB23E"; g.fillText(mark.name || "", x + 12, y + 4); } }
+      if (ok) { g.strokeStyle = C.amber; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.stroke();
+        if (mark.kind !== "carrier") { g.fillStyle = C.amber; g.fillText(mark.name || "", x + 12, y + 4); } }
     }
     label({ x: 0, y: 0, z: 0 }, "Sol", "#FFF4E8");
     { const [x, y, ok] = project(0, 0, 0); if (ok) { g.fillStyle = "#FFF4E8"; g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill(); } }
-    if (on.navroute !== false) data.navroute.forEach((h, i) => { if (i) label(h, String(i), "#FFB23E"); });
+    if (on.navroute !== false) data.navroute.forEach((h, i) => { if (i) label(h, String(i), C.amber); });
     if (on.carrier !== false && data.carrier_now && hooks.carrierTexts) {
       const cn = data.carrier_now, [main, jump] = hooks.carrierTexts(cn);
-      label(cn, main, "#FFB23E");
-      if (jump && cn.jump.x !== undefined) label(cn.jump, jump, "#FFB23E");
+      label(cn, main, C.amber);
+      if (jump && cn.jump.x !== undefined) label(cn.jump, jump, C.amber);
     }
     // replay head
     if (replay < 1) {
       const h = api.replayHead();
       if (h) {
         const [x, y, ok] = project(h.x, h.y, -h.z);
-        if (ok) { g.strokeStyle = "#FFFFFF"; g.beginPath(); g.arc(x, y, 6, 0, Math.PI * 2); g.stroke();
-          g.fillStyle = "#FFFFFF"; g.fillText(h.name + (h.t ? " · " + new Date(h.t * 1000).toLocaleDateString() : ""), x + 9, y + 14); }
+        if (ok) { g.strokeStyle = C.white; g.beginPath(); g.arc(x, y, 6, 0, Math.PI * 2); g.stroke();
+          g.fillStyle = C.white; g.fillText(h.name + (h.t ? " · " + new Date(h.t * 1000).toLocaleDateString() : ""), x + 9, y + 14); }
       }
     }
     // pick candidates (screen space, like the 2D map)
@@ -304,9 +305,9 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
       if (txt) {
         g.font = "12px monospace"; const w = g.measureText(txt).width + 10;
         const x = Math.min(W - w - 4, hover.sx + 10), y = Math.max(16, hover.sy - 12);
-        g.fillStyle = "rgba(5,12,13,.88)"; g.fillRect(x, y - 13, w, 18);
-        g.strokeStyle = "rgba(62,242,224,.4)"; g.strokeRect(x, y - 13, w, 18);
-        g.fillStyle = "#CFEDEA"; g.fillText(txt, x + 5, y);
+        g.fillStyle = alpha("panel", .88); g.fillRect(x, y - 13, w, 18);
+        g.strokeStyle = alpha("cyan", .4); g.strokeRect(x, y - 13, w, 18);
+        g.fillStyle = C.text; g.fillText(txt, x + 5, y);
       }
     }
   }
