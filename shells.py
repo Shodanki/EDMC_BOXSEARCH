@@ -161,8 +161,12 @@ def needs_next(horizon: float, radius: float, center: Sequence[float],
                pos: Sequence[float] = None, targets_left: int = 1) -> bool:
     """Is the next shell needed? Only while the horizon is short of the
     sphere, and then when nothing is left to fly to inside it or the
-    commander is within EDGE_LY of its edge."""
+    commander is within EDGE_LY of its edge. Never while the commander is
+    far outside the sphere - another commander on this PC, or a trip
+    elsewhere: the shells wait until someone comes back."""
     if horizon >= radius - 1e-6:
+        return False
+    if pos is not None and _dist(pos, center) > radius + EDGE_LY:
         return False
     if targets_left <= 0:
         return True
@@ -218,6 +222,11 @@ def _selftest() -> int:
     check(not needs_next(25, 50, c, c, 5), "targets left, at the centre: wait")
     edge = (c[0] + 16.0, c[1], c[2])
     check(needs_next(25, 50, c, edge, 5), "10 ly from the horizon: next shell")
+    far = (c[0] + 900.0, c[1], c[2])
+    check(not needs_next(25, 50, c, far, 5) and not needs_next(25, 50, c, far, 0),
+          "far outside the sphere (another commander, a trip): no shell")
+    check(needs_next(25, 50, c, (c[0] + 55.0, c[1], c[2]), 5),
+          "just outside the sphere, coming in: next shell")
     check(in_shell((c[0] + 30, c[1], c[2]), c, 25, 50)
           and not in_shell((c[0] + 10, c[1], c[2]), c, 25, 50), "shell filter")
 
