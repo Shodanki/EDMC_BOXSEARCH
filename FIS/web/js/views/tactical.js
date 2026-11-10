@@ -208,6 +208,32 @@ function systemReport(sys) {
   return frame(t("SYSTEM REPORT"), "", rows, { cls: "sr-frame", appear: false });
 }
 
+// M10: points of interest - stations, settlements, carriers, beacons
+const POI_ICON = { station: "▣", settlement: "⌂", carrier: "◈", extraction: "⛏", beacon: "◎" };
+const POI_KIND = { station: N_("station"), settlement: N_("settlement"), carrier: N_("fleet carrier"),
+  extraction: N_("extraction site"), beacon: N_("nav beacon") };
+function poiFrame(sys) {
+  const list = sys.poi || [];
+  if (!list.length) return null;
+  const CARRIERS_SHOWN = 8;                // the latest sightings; the bubble has dozens
+  const nCar = list.filter(p => p.kind === "carrier").length;
+  let car = 0;
+  const shown = list.filter(p => p.kind !== "carrier" || car++ < CARRIERS_SHOWN);
+  const rows = shown.map(p => {
+    const bits = [t(POI_KIND[p.kind] || p.kind)];
+    if (p.body) bits.push(p.body);
+    if (p.dist_ls !== undefined && p.dist_ls !== null) bits.push(fmt(p.dist_ls, 0) + " LS");
+    if (p.docked) bits.push(t("docked"));
+    if (p.seen) bits.push(t("seen {d}", { d: String(p.seen).slice(0, 10) }));
+    return el("div", { class: "sr-line" },
+      el("span", { class: "c-cyan", text: (POI_ICON[p.kind] || "·") + " " + p.name }),
+      el("span", { class: "c-dim small", text: "  " + bits.join(" · ") }));
+  });
+  if (nCar > CARRIERS_SHOWN) rows.push(el("div", { class: "c-dim small", text: t("+{n} more fleet carriers seen here", { n: nCar - CARRIERS_SHOWN }) }));
+  rows.push(el("div", { class: "c-dim small", text: t("From your own journals - carriers move on.") }));
+  return frame(t("POINTS OF INTEREST"), String(list.length), rows, { cls: "sr-frame", appear: false });
+}
+
 function renderSide() {
   const sys = ctxRef.store.system;
   side.replaceChildren();
@@ -236,6 +262,8 @@ function renderSide() {
   side.append(frame("SYSTEM", sys.visited ? t("visited") : "", head, { kind: sys.known_sources.length ? "" : "disc", appear: false }));
 
   side.append(systemReport(sys));
+  const poi = poiFrame(sys);
+  if (poi) side.append(poi);
 
   // flight plan
   const r = sys.route;

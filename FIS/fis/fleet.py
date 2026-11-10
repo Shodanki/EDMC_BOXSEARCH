@@ -55,7 +55,9 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "UnderAttack", "Interdicted", "EscapeInterdiction", "HullDamage", "HeatWarning", "HeatDamage",
           "ShieldState", "CockpitBreached", "SystemsShutdown", "Died", "JetConeDamage", "JetConeBoost",
           "FighterDestroyed", "SRVDestroyed", "ApproachBody", "LeaveBody", "SupercruiseExit", "Touchdown",
-          "Docked")
+          "Docked",
+          # points of interest in SYSTEM (M10): stations, carriers, beacons
+          "FSSSignalDiscovered")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
 
 # carrier tritium per jump: 5 + ly * (load + tritium + BASE) / DIV, rounded.

@@ -211,6 +211,14 @@ class Database:
         return self.query("SELECT * FROM surface_track WHERE sys_id64=? AND body_name=? "
                           "ORDER BY ts", (int(id64), body))
 
+    def settlements_of(self, id64: int) -> List[sqlite3.Row]:
+        """M10: settlements approached in a system (ApproachSettlement marks)."""
+        if not self.has_table("surface_marks"):
+            return []
+        return self.query("SELECT body_name, label, lat, lon, MAX(ts) ts FROM surface_marks "
+                          "WHERE sys_id64=? AND kind='settlement' GROUP BY body_name, label",
+                          (id64,))
+
     def surface_marks(self, id64: int, body: str) -> List[sqlite3.Row]:
         if not self.has_table("surface_marks"):
             return []

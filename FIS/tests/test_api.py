@@ -209,6 +209,39 @@ class TestModel(_Base):
         self.assertEqual(sv["systems"]["visited"], 1)
         self.assertEqual(sv["systems"]["only_us"], 1)
 
+    def test_system_poi(self):
+        # M10: stations, carriers (latest first), beacons; USS are left out
+        class Ar:
+            def refresh(self):
+                pass
+
+            def events(self):
+                a = fx.SYS_ID
+                return [
+                    {"event": "FSSSignalDiscovered", "SystemAddress": a, "SignalName": "Old Carrier X1Y-2Z3",
+                     "SignalType": "FleetCarrier", "IsStation": True, "timestamp": "2026-11-01T10:00:00Z"},
+                    {"event": "FSSSignalDiscovered", "SystemAddress": a, "SignalName": "New Carrier A1B-2C3",
+                     "SignalType": "FleetCarrier", "IsStation": True, "timestamp": "2026-11-09T10:00:00Z"},
+                    {"event": "FSSSignalDiscovered", "SystemAddress": a, "SignalName": "Test Port",
+                     "SignalType": "Outpost", "IsStation": True, "timestamp": "2026-11-02T10:00:00Z"},
+                    {"event": "Docked", "SystemAddress": a, "StationName": "Test Port", "StationType": "Outpost",
+                     "DistFromStarLS": 512.3, "timestamp": "2026-11-03T10:00:00Z"},
+                    {"event": "FSSSignalDiscovered", "SystemAddress": a, "SignalName": "$USS_Type_Salvage;",
+                     "SignalType": "USS", "timestamp": "2026-11-03T10:00:00Z"},
+                    {"event": "FSSSignalDiscovered", "SystemAddress": a, "SignalName": "Beacon",
+                     "SignalType": "NavBeacon", "timestamp": "2026-11-03T10:00:00Z"},
+                    {"event": "FSSSignalDiscovered", "SystemAddress": 42, "SignalName": "Elsewhere",
+                     "SignalType": "Outpost", "timestamp": "2026-11-03T10:00:00Z"},
+                ]
+        poi = self.model.system_poi(self.db, fx.SYS_ID, Ar())
+        self.assertEqual([(p["kind"], p["name"]) for p in poi],
+                         [("station", "Test Port"), ("carrier", "New Carrier A1B-2C3"),
+                          ("carrier", "Old Carrier X1Y-2Z3"), ("beacon", "Beacon")])
+        port = poi[0]
+        self.assertTrue(port["docked"])
+        self.assertEqual(port["dist_ls"], 512)
+        self.assertEqual(self.model.system_poi(self.db, fx.SYS_ID, None), [])
+
     def test_atlas_systems_and_export(self):
         # M6: the survey sphere's systems by state, M14: the same as a file
         at = self.model.build_atlas(self.db, "systems", None, None, 50)

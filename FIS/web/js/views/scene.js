@@ -246,6 +246,7 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
     if (b.flags.geo) tags.push(["GEO", "#E8A06A"]);
     if (b.flags.mapped) tags.push(["✓", UI.green]);
     if (b.flags.footfall) tags.push(["FF", UI.violet]);
+    if (b.flags.settlement) tags.push(["⌂" + (b.flags.settlement > 1 ? b.flags.settlement : ""), UI.text]);
     let text = b.short || "?";
     if (col && col.head === b.id && b.id !== state.selected) text += "  +" + col.n;
     items.push({ s, text, tags, pri, b, colour: b.id === state.selected ? UI.amber : (pri >= 90 ? UI.cyan : UI.text) });

@@ -15,7 +15,7 @@ from __future__ import annotations
 import calendar
 import math
 import time
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .data import Database, _json
 
@@ -153,12 +153,87 @@ def _rings(row, hotspots: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> L
     return out
 
 
+# M10: what the FSS lists as a place to go - not the passing signal sources
+POI_TYPES = {
+    "FleetCarrier": "carrier", "SquadronCarrier": "carrier",
+    "NavBeacon": "beacon", "ResourceExtraction": "extraction", "Titan": "station",
+    "Outpost": "station", "Installation": "station", "Megaship": "station",
+    "StationCoriolis": "station", "StationONeilCylinder": "station", "StationONeilOrbis": "station",
+    "StationBernalSphere": "station", "StationMegaShip": "station", "StationAsteroid": "station",
+    "Station": "station",
+}
+POI_ORDER = {"station": 0, "settlement": 1, "carrier": 2, "extraction": 3, "beacon": 4}
+
+
+def system_poi(db: Database, id64: int, archive: Any = None) -> List[Dict[str, Any]]:
+    """
+    M10: points of interest of one system, from your own journals and the
+    plugin database - stations, outposts, installations and megaships,
+    settlements (with their body), fleet carriers seen there, nav beacons
+    and extraction sites. Latest sighting per name; docking adds the
+    distance from the arrival star.
+    """
+    pois: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    evs = []
+    if archive is not None:
+        try:
+            archive.refresh()
+            evs = [e for e in archive.events() if e.get("SystemAddress") == id64]
+        except Exception:
+            evs = []
+    for e in evs:
+        ev = e.get("event")
+        if ev == "FSSSignalDiscovered":
+            st = e.get("SignalType") or ""
+            kind = POI_TYPES.get(st) or ("station" if e.get("IsStation") and st != "FleetCarrier" else None)
+            if not kind:
+                continue
+            name = e.get("SignalName_Localised") or e.get("SignalName") or ""
+            if not name or name.startswith("$"):
+                continue
+            p = pois.setdefault((kind, name), {"kind": kind, "type": st, "name": name})
+            p["seen"] = max(p.get("seen") or "", e.get("timestamp") or "")
+        elif ev == "Docked":
+            name = e.get("StationName_Localised") or e.get("StationName") or ""
+            st = e.get("StationType") or ""
+            kind = POI_TYPES.get(st, "station")
+            if not name:
+                continue
+            p = pois.setdefault((kind, name), {"kind": kind, "type": st, "name": name})
+            p["seen"] = max(p.get("seen") or "", e.get("timestamp") or "")
+            p["docked"] = True
+            if e.get("DistFromStarLS") is not None:
+                p["dist_ls"] = _r(e.get("DistFromStarLS"), 0)
+    srow = db.system_by_id64(id64)
+    sysname = srow["name"] if srow is not None else ""
+    try:
+        rows = db.settlements_of(id64)
+    except Exception:
+        rows = []
+    for r in rows:
+        body = r["body_name"] or ""
+        short = body[len(sysname):].strip() if sysname and body.startswith(sysname) else body
+        pois[("settlement", (r["label"] or "") + "@" + body)] = {
+            "kind": "settlement", "type": "Settlement", "name": r["label"] or "?", "body": short,
+            "body_name": body, "lat": _r(r["lat"], 4), "lon": _r(r["lon"], 4), "seen": r["ts"]}
+    out = list(pois.values())
+    # by kind; carriers come and go - the latest sightings first
+    carriers = sorted((p for p in out if p["kind"] == "carrier"),
+                      key=lambda p: p.get("seen") or "", reverse=True)
+    rest = sorted((p for p in out if p["kind"] != "carrier"),
+                  key=lambda p: (POI_ORDER.get(p["kind"], 9), p["name"]))
+    before = [p for p in rest if POI_ORDER.get(p["kind"], 9) < POI_ORDER["carrier"]]
+    after = [p for p in rest if POI_ORDER.get(p["kind"], 9) > POI_ORDER["carrier"]]
+    return before + carriers + after
+
+
 def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
                  filters: Sequence[str] = ("todo",),
                  now: Optional[float] = None,
                  cost_model: Any = None,
                  order_model: Any = None,
-                 skip_arrival: bool = False) -> Dict[str, Any]:
+                 skip_arrival: bool = False,
+                 archive: Any = None) -> Dict[str, Any]:
     """Everything TAKTIK needs: bodies at Kepler positions, orbits, route, fix."""
     p = plugin()
     sr = p.sysroute
@@ -265,6 +340,20 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         })
 
     out["bio"] = bio_list(db, id64, rows, out["bodies"])
+    # M10: stations, settlements, carriers, beacons - and a mark on the body
+    try:
+        out["poi"] = system_poi(db, id64, archive)
+    except Exception:
+        out["poi"] = []
+    by_body = {}
+    for p in out["poi"]:
+        if p["kind"] == "settlement":
+            by_body[p["body_name"]] = by_body.get(p["body_name"], 0) + 1
+    if by_body:
+        for b in out["bodies"]:
+            n = by_body.get(b.get("name"))
+            if n:
+                b["flags"]["settlement"] = n
     from . import science
     try:
         out["report"] = science.system_report([dict(r) for r in rows], out)
