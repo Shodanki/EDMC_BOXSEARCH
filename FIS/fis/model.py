@@ -755,7 +755,7 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
             if last is not None:
                 id64, body = last["sys_id64"], last["body_name"]
     out: Dict[str, Any] = {"body": body, "id64": id64, "here": False, "track": [],
-                           "marks": [], "bio": [], "me": None}
+                           "marks": [], "bio": [], "me": None, "active": None}
     if not body or not id64:
         return out
     p = plugin()
@@ -848,6 +848,18 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
         if me_xy is not None and g["points"] and not g["done"]:
             g["nearest_m"] = round(min(math.hypot(px, py) for px, py in g["points"]), 0)
             g["ok"] = g["range_m"] is not None and g["nearest_m"] >= g["range_m"]
+    # E10: the species being worked on = the unfinished one with the newest
+    # log/sample mark; the map draws it bright and dims the others
+    newest: Dict[str, str] = {}
+    for m in out["marks"]:
+        if m["kind"] in ("bio_log", "bio_sample") and m["label"] and m["ts"]:
+            newest[m["label"]] = max(newest.get(m["label"], ""), str(m["ts"]))
+    open_ = [g for g in groups.values() if not g["done"] and g["species"] in newest]
+    active = max(open_, key=lambda g: newest[g["species"]]) if open_ else None
+    for g in groups.values():
+        g["active"] = g is active
+    out["active"] = ({"species": active["species"], "genus": active["genus"]}
+                     if active is not None else None)
     out["bio"] = list(groups.values())
     # initial framing: the latest visit only (3 h before the last activity);
     # older visits to the same body may lie hundreds of km away

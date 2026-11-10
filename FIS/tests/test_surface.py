@@ -88,6 +88,32 @@ class SurfaceTest(unittest.TestCase):
         self.assertEqual((len(bio["points"]), bio["samples"]), (1, 1))
         self.assertLess(bio["nearest_m"], 100)
 
+    def test_active_species(self):
+        """E10: the unfinished species with the newest log/sample is active."""
+        cx = sqlite3.connect(self.path)
+        rows = [("2026-11-05T10:10:00Z", "bio_log", "Stratum Tectonicas", "Stratum", 0.05),
+                ("2026-11-05T10:20:00Z", "bio_log", "Fonticulua Campestris", "Fonticulua", 0.06),
+                ("2026-11-05T10:30:00Z", "bio_sample", "Stratum Tectonicas", "Stratum", 0.07),
+                # an analysed species never is the active one, however new
+                ("2026-11-05T10:40:00Z", "bio_log", "Tussock Ignis", "Tussock", 0.08),
+                ("2026-11-05T10:41:00Z", "bio_sample", "Tussock Ignis", "Tussock", 0.081),
+                ("2026-11-05T10:42:00Z", "bio_analyse", "Tussock Ignis", "Tussock", 0.082)]
+        for ts, kind, label, genus, lon in rows:
+            cx.execute("INSERT INTO surface_marks VALUES (?,1,'Sys 1 a',?,?,?,0,?)",
+                       (ts, kind, label, genus, lon))
+        cx.commit()
+        cx.close()
+        live = {"system": {"id64": 1}, "status": {"body_name": "Sys 1 a", "lat": 0.0,
+                "lon": 0.07, "radius": 1000000.0, "heading": 90, "alt": 0, "flags": 0,
+                "flags2": 1}}
+        s = self.model.build_surface(self.db, live)
+        self.assertEqual(s["active"], {"species": "Stratum Tectonicas", "genus": "Stratum"})
+        act = [b["species"] for b in s["bio"] if b["active"]]
+        self.assertEqual(act, ["Stratum Tectonicas"])
+        # nothing open -> no active species
+        s2 = self.model.build_surface(self.db, {"system": {"id64": 1}, "status": {}})
+        self.assertIn("active", s2)
+
     def test_atlas_finds(self):
         a = self.model.build_atlas(self.db, "finds", None, (0.0, 0.0, 0.0), 10)
         self.assertEqual(a["total"], 1)                  # the bio Log alone is no find

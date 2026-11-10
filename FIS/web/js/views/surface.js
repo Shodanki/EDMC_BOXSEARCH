@@ -100,15 +100,18 @@ function draw() {
   g.stroke();
   g.fillStyle = COL.dim; g.font = "11px monospace";
   g.fillText((step >= 1000 ? fmt(step / 1000, 1) + " km" : step + " m") + " / " + t("square") + "   N ↑", 10, H - 10);
-  // colony circles
+  // colony circles - E10: the species being worked on bright, others dimmed
+  const act = data.active;
   for (const b of data.bio) {
     if (!b.range_m) continue;
     for (const [x, y] of b.points) {
       const [px, py] = P(x, y);
       g.setLineDash([4, 4]);
-      g.strokeStyle = b.done ? "rgba(124,255,107,.35)" : "rgba(255,178,62,.55)";
+      g.lineWidth = b.active ? 2 : 1;
+      g.strokeStyle = b.done ? "rgba(124,255,107,.35)" : b.active ? "rgba(255,178,62,.95)"
+        : act ? "rgba(255,178,62,.22)" : "rgba(255,178,62,.55)";
       g.beginPath(); g.arc(px, py, b.range_m * view.zoom, 0, Math.PI * 2); g.stroke();
-      g.setLineDash([]);
+      g.setLineDash([]); g.lineWidth = 1;
     }
   }
   // track
@@ -128,8 +131,12 @@ function draw() {
   for (const m of data.marks) {
     if (m.x === null) continue;
     const [px, py] = P(m.x, m.y);
+    const hi = markActive(m, act);
+    g.globalAlpha = hi === false ? 0.3 : 1;
     g.fillStyle = TONE[m.kind] || COL.text;
-    g.fillText(ICON[m.kind] || "·", px - 4, py + 4);
+    if (hi) { g.font = "bold 15px monospace"; g.fillText(ICON[m.kind] || "·", px - 5, py + 5); g.font = "12px monospace"; }
+    else g.fillText(ICON[m.kind] || "·", px - 4, py + 4);
+    g.globalAlpha = 1;
     placed.push({ x: px - 5, y: py - 6, w: 10, h: 12 });
   }
   if (view.zoom > 0.05) {
@@ -144,7 +151,10 @@ function draw() {
         const r = { x: px + dx, y: py + dy - 11, w, h: 13 };
         if (hit(r)) continue;
         placed.push(r); seen.add(key);
-        g.fillStyle = COL.dim; g.fillText(txt, px + dx, py + dy);
+        const hi = markActive(m, act);
+        g.globalAlpha = hi === false ? 0.4 : 1;
+        g.fillStyle = hi ? COL.text : COL.dim; g.fillText(txt, px + dx, py + dy);
+        g.globalAlpha = 1;
         break;
       }
     }
@@ -194,6 +204,16 @@ function lifeSupport(L) {
 }
 
 // big compass, heading up: where the parked SRV, the ship and the earlier
+// E10: true = belongs to the species being worked on (its samples, or a
+// codex entry of the same genus/species), false = another bio/codex mark
+// while one is active (drawn dimmed), null = not concerned
+function markActive(m, act) {
+  if (!act || !(m.kind.startsWith("bio_") || m.kind === "codex")) return null;
+  const lbl = (m.label || "").toLowerCase();
+  if (m.kind.startsWith("bio_")) return lbl === (act.species || "").toLowerCase();
+  return !!((act.species && lbl.includes(act.species.toLowerCase())) || (act.genus && lbl.includes(act.genus.toLowerCase())));
+}
+
 // samples lie from here - for a tablet beside the game (solo window)
 function compass(d) {
   const size = 220;
@@ -223,7 +243,9 @@ function compass(d) {
       const dist = Math.hypot(px, py), brg = (Math.atan2(px, py) * 180 / Math.PI + 360) % 360;
       const [dx, dy] = at(brg, logr(dist));
       x.fillStyle = b.range_m && dist >= b.range_m ? "#7CFF6B" : "#FFB23E";
-      x.beginPath(); x.arc(dx, dy, 3, 0, Math.PI * 2); x.fill();
+      x.globalAlpha = d.active && !b.active ? 0.3 : 1;
+      x.beginPath(); x.arc(dx, dy, b.active ? 4 : 3, 0, Math.PI * 2); x.fill();
+      x.globalAlpha = 1;
     }
   }
   // the vehicles: arrows to the rim, with the distance
@@ -280,7 +302,9 @@ function render() {
     const txt = b.nearest_m !== undefined
       ? b.species + " " + n + "/3 · " + fmt(b.nearest_m, 0) + " m / " + (b.range_m || "?") + " m"
       : b.species + " · " + n + "/3";
-    info.append(el("div", { class: b.ok ? "c-green" : "c-amber", text: (b.ok ? "OK  " : "▲  ") + txt }));
+    info.append(el("div", { class: (b.ok ? "c-green" : "c-amber") + (b.active ? " sf-active" : data.active ? " sf-dim" : ""),
+      title: b.active ? t("species being worked on - bright on the map") : "",
+      text: (b.active ? "▶ " : "") + (b.ok ? "OK  " : "▲  ") + txt }));
   }
   const ms = [...data.marks].reverse().slice(0, 60);
   for (const m of ms) {

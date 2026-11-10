@@ -597,3 +597,5 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .sr-line { font-size: 12.5px; line-height: 1.45; padding-left: 10px; text-indent: -10px; }
 .sr-line::before { content: "▸ "; color: #3EF2E0; }
 .sr-line.c-red::before { color: #FF4D4D; } .sr-line.c-amber::before { color: #FFB23E; } .sr-line.c-green::before { color: #7CFF6B; }
+.sf-active { font-weight: bold; }
+.sf-dim { opacity: .55; }

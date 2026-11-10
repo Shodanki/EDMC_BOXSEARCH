@@ -84,6 +84,7 @@ const DE = /*DE*/{
   "NOT scoopable": "NICHT scoopbar",
   "unknown (only at StartJump)": "unbekannt (erst bei StartJump)",
   "TARGET": "ZIEL",
+  "species being worked on - bright on the map": "Art in Arbeit – auf der Karte hell",
   "in this system": "in diesem System",
   "another system": "anderes System",
   "Destination": "Ziel",
