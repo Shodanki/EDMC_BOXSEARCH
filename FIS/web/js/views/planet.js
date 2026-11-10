@@ -174,9 +174,11 @@ function render(ctx) {
     atmo.push(el("h3", { text: t("Composition"), style: { marginTop: "8px" } }));
     for (const [k, v] of b.composition) atmo.push(hbar(COMPOSITION[k] ? t(COMPOSITION[k]) : k, v, 100, fmt(v, 1) + " %", "green"));
   }
-  const right = [];
+  // E2: the science report sits under the datasheet, the signals below it;
+  // the right column (atmosphere, biology, materials, rings) moves up
   const rep = reportFrame(b);
-  if (rep) right.push(rep);
+  if (rep) left.push(rep);
+  const right = [];
   if (b.kind !== "Star") right.push(frame(t("ATMOSPHERE · SURFACE"), "", atmo));
 
   // biology
@@ -222,7 +224,7 @@ function render(ctx) {
     const ss = b.signals.map(s => el("div", { class: "pl-line c-" + s.tone, text: "◆ " + s.label + (s.count > 1 ? " ×" + s.count : "") }));
     if (b.signals.some(s => s.kind && s.kind.startsWith("site:")))
       ss.push(el("div", { class: "c-dim small", text: t("“from pickup”: a surface site recognised by the material collected – the journal does not report it itself.") }));
-    right.push(frame(t("SIGNALS"), b.signals.length + "", ss, { kind: b.signals.some(s => s.tone === "violet") ? "disc" : "" }));
+    left.push(frame(t("SIGNALS"), b.signals.length + "", ss, { kind: b.signals.some(s => s.tone === "violet") ? "disc" : "" }));
   }
   if (b.materials_found && b.materials_found.length) {
     const mf = b.materials_found.map(m => el("div", { class: "pl-line" },
