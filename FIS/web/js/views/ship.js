@@ -76,7 +76,32 @@ function render() {
   // engineer's module list, which needs the room (user, 05.11.2026)
   root.append(annunciator(), el("div", { class: "sh-grid" },
     el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), jumponium()),
-    el("div", { class: "sh-col sh-right" }, target(), report(), hazards(), engineer())));
+    el("div", { class: "sh-col sh-right" }, target(), unsold(), report(), hazards(), engineer())));
+}
+
+// ------------------------------------------------------------ unsold data (M4)
+// What a destroyed ship would cost in data: exobiology since it was sold
+// (valued from your own sales), exploration data only counted.
+function unsold() {
+  const U = data.unsold;
+  if (!U) return null;
+  const B = U.bio, X = U.exploration;
+  if (!B.count && !X.systems) return frame(t("UNSOLD DATA"), "", el("div", { class: "c-dim", text: t("Nothing unsold - all data is cashed in.") }), { appear: false });
+  const Mcr = (v) => fmt(v / 1e6, 1) + " M Cr";
+  const rows = [];
+  if (B.count) {
+    rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exobiology") + " " }),
+      el("span", { class: "c-amber", text: t("{n} analysed, not sold", { n: B.count }) + (B.value ? " · ≈ " + Mcr(B.value) : "") }),
+      B.first ? el("span", { class: "c-green", text: " · " + t("{n} first logged", { n: B.first }) }) : null));
+    if (B.unknown) rows.push(el("div", { class: "c-dim small", text: t("{n} species without a known value (never sold by you)", { n: B.unknown }) }));
+    for (const x of B.items.slice(-5)) rows.push(el("div", { class: "small" }, "◐ " + (x.variant || x.species),
+      el("span", { class: "c-dim", text: (x.system ? " · " + x.system : "") + (x.value ? " · " + Mcr(x.value) : "") })));
+  }
+  if (X.systems) rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exploration") + " " }),
+    el("span", { text: t("{s} systems · {b} bodies · {m} mapped", { s: X.systems, b: X.bodies, m: X.mapped }) })));
+  rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; exploration data only counted.") }));
+  if (U.advice === "sell") rows.push(el("div", { class: "c-red", text: t("A lot at stake - consider selling at the next station or carrier with Vista Genomics / Universal Cartographics.") }));
+  return frame(t("UNSOLD DATA"), B.value ? "≈ " + Mcr(B.value) : "", rows, { cls: "sh-unsold", appear: false, kind: U.advice ? "warn" : "" });
 }
 
 // ------------------------------------------------------------ target (E5)

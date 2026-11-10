@@ -238,7 +238,27 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
         "balance": st.get("balance"),
     }
     out["target"] = build_target(live, db)
+    out["unsold"] = _unsold(archive)
     return out
+
+
+_UNSOLD_CACHE: Dict[str, Any] = {"key": None, "val": None}
+
+
+def _unsold(archive: Any) -> Optional[Dict[str, Any]]:
+    """M4, worked out again only when the journals changed (the SHIP sheet
+    asks about once a second)."""
+    from . import unsold
+    try:
+        archive.refresh()
+        key = (id(archive), getattr(archive, "rev", None))
+        if key[1] is not None and _UNSOLD_CACHE["key"] == key:
+            return _UNSOLD_CACHE["val"]
+        val = unsold.build_unsold(archive.events(), archive.organic_values())
+        _UNSOLD_CACHE.update(key=key, val=val)
+        return val
+    except Exception:            # a broken journal line must not cost the sheet
+        return None
 
 
 def build_target(live: Dict[str, Any], db: Any = None) -> Dict[str, Any]:

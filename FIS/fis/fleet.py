@@ -36,6 +36,9 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "CarrierDepositFuel", "CarrierBankTransfer", "CarrierFinance", "CarrierCrewServices",
           "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
           "SAAScanComplete", "SellOrganicData",
+          # unsold data at risk (M4)
+          "ScanOrganic", "FSSDiscoveryScan", "MultiSellExplorationData", "SellExplorationData",
+          "Resurrect",
           "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked",
           # surface vehicles: ground mining with the Rhino (M2)
           "LaunchSRV", "DockSRV", "LaunchVessel", "DockVessel",
