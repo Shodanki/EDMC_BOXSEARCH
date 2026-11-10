@@ -91,6 +91,28 @@ class SurfaceTest(unittest.TestCase):
         cx.close()
         self.assertNotIn("ship", self.model.build_surface(self.db, live))
 
+    def test_rhino_rigs(self):
+        # one "refined" mark per tonne; the view gets one numbered rig each
+        cx = sqlite3.connect(self.path)
+        cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:06:00Z',1,'Sys 1 a',"
+                   "'srv_out','SRV Rhino',NULL,0,0.0)")
+        for i in range(11):
+            cx.execute("INSERT INTO surface_marks VALUES (?,1,'Sys 1 a','refined','Deuterium',"
+                       "'rig',0,0.01)", ("2026-11-05T10:10:%02dZ" % i,))
+        for i in range(3):
+            cx.execute("INSERT INTO surface_marks VALUES (?,1,'Sys 1 a','refined','Deuterium',"
+                       "'rig',0,0.02)", ("2026-11-05T10:20:%02dZ" % i,))
+        cx.commit()
+        cx.close()
+        live = {"system": {"id64": 1}, "status": {"body_name": "Sys 1 a", "lat": 0.0,
+                "lon": 0.0337, "radius": 1000000.0, "heading": 90, "alt": 1, "flags": 1 << 26,
+                "flags2": 0}}
+        s = self.model.build_surface(self.db, live)
+        rigs = [m for m in s["marks"] if m["kind"] == "rig"]
+        self.assertEqual([m["label"] for m in rigs], ["Rig 1 · 11 t Deuterium", "Rig 2 · 3 t Deuterium"])
+        self.assertFalse([m for m in s["marks"] if m["kind"] == "refined"])
+        self.assertAlmostEqual(rigs[0]["dist_m"], 0.0237 * math.pi / 180 * 1e6, delta=3)
+
     def test_parked_srv_and_restarted_log(self):
         cx = sqlite3.connect(self.path)
         cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:06:00Z',1,'Sys 1 a',"
