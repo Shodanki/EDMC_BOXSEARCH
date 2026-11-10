@@ -239,6 +239,9 @@ with tempfile.TemporaryDirectory() as d:
     ST.net.seed_today({"edsm": netgate.DAILY_CAP["edsm"],
                        "spansh": netgate.DAILY_CAP["spansh"]})
     ST.center = (1200.0, 0.0, 0.0)
+    # the commander flies at the sphere's edge (far outside, nothing would be
+    # fetched at all - see shells.needs_next)
+    ST.cur_pos = (1245.0, 0.0, 0.0)
     load._start_worker()
     check(Sess.log == [] and ST.horizon == ST.radius,
           "daily cap %d reached: no request, local plan" % netgate.DAILY_CAP["edsm"])
