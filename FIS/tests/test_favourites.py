@@ -137,6 +137,38 @@ class TestApiLocal(TestApi):
             self.assertFalse(json.loads(r.read())["favourite"])
 
 
+class TestMarketSnapshot(TestApi):
+    def test_k3_market_of_a_visited_carrier(self):
+        from tests.test_visiting import TRIT, GOLD, _market
+        m = _market(4711, [TRIT, GOLD])
+        m["StationName"], m["timestamp"] = "Q2W-3ER", "2026-11-01T12:00:30Z"
+        with open(os.path.join(self.jd, "Market.json"), "w", encoding="utf-8") as fh:
+            json.dump(m, fh)
+        docked = {"status": {"flags": 1}}
+        # the journal ends docked at the own carrier: that market is not the
+        # last docking -> nothing kept; once the archive says we are docked
+        # there, it is
+        self.assertFalse(self.app.snapshot_market(docked))
+        with open(os.path.join(self.jd, "Journal.2026-11-01T120000.01.log"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"timestamp": "2026-11-01T12:00:00Z", "event": "Docked", "StationName": "Q2W-3ER",
+                                 "StationType": "FleetCarrier", "MarketID": 4711, "StarSystem": "Test Alpha",
+                                 "SystemAddress": 1}) + "\n")
+        self.app.archive.refresh(force=True)
+        self.assertTrue(self.app.snapshot_market(docked))
+        self.assertFalse(self.app.snapshot_market(docked))                  # nothing new
+        snap = self.app.favourites.get("F7")["markets"]["Q2W-3ER"]
+        self.assertEqual(([b["key"] for b in snap["buys"]], [s["key"] for s in snap["sells"]]),
+                         (["tritium"], ["gold"]))
+        self.assertEqual(self._known()["met"][0]["market"]["ts"], "2026-11-01T12:00:30Z")
+
+    def test_k3_older_market_never_replaces(self):
+        st = self.app.favourites
+        self.assertTrue(st.note_market("F9", {"callsign": "A1A-1AA", "market_ts": "2026-11-02T00:00:00Z",
+                                              "buys": [], "sells": []}))
+        self.assertFalse(st.note_market("F9", {"callsign": "A1A-1AA", "market_ts": "2026-11-01T00:00:00Z",
+                                               "buys": [], "sells": []}))
+
+
 class TestApiLan(TestApi):
     lan = True
 

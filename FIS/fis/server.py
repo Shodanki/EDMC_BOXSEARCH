@@ -174,6 +174,36 @@ class App:
                 "journal_rewrites": getattr(self.live, "rewrites", 0),
                 "restarts": self.watch_restarts}
 
+    _market_sig: Any = None
+
+    def snapshot_market(self, live: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        K3: docked at someone else's carrier with its market open - keep what
+        it buys and sells (Market.json is overwritten at the next market).
+        Same rules as the CARRIER hint (shipview.visiting_carrier): docked,
+        the last docking was this market, the market younger than it.
+        Checked when Market.json or the journal archive changed.
+        """
+        jd = self.cfg.journal_dir
+        if not jd:
+            return False
+        try:
+            mt = os.path.getmtime(os.path.join(jd, "Market.json"))
+        except OSError:
+            return False
+        self.archive.refresh()
+        sig = (mt, self.archive.rev)
+        if sig == self._market_sig:
+            return False
+        from . import carriers, shipview
+        evs = self.archive.events()
+        own = carriers.own_carrier_ids(evs)["market_id"]
+        vis = shipview.visiting_carrier(self.archive, live if live is not None else self.live_state(), jd, own)
+        if not vis:
+            return False                  # not (yet) docked there: try again on the next change
+        self._market_sig = sig
+        return self.favourites.note_market(self.archive.commander()[0], vis)
+
     def watch(self) -> None:
         """Keeps the live link alive: a dead polling thread is started again;
         the state goes to /api/health and every SSE ping."""
@@ -185,6 +215,10 @@ class App:
                         print("FIS watchdog: the journal reader had stopped - restarted (%d)"
                               % self.watch_restarts, flush=True)
                         self.live.restart()
+                except Exception:
+                    pass
+                try:
+                    self.snapshot_market()
                 except Exception:
                     pass
         threading.Thread(target=run, name="fis-watchdog", daemon=True).start()
