@@ -189,6 +189,7 @@ class State:
         self.route_full = False
         self.route_feedback = ""
         self.route_started: Optional[float] = None
+        self.route_base: set = set()         # stops already done when the clock started
         self.cost_model = DEFAULT_MODEL
         self.sc_segments: List[Tuple[float, float]] = []
         self.work_dss: List[float] = []
@@ -1742,12 +1743,16 @@ def _route_progress_feedback() -> None:
         ST.route_feedback = ""
         return
     if ST.route_started is None:
+        # the clock starts here - also halfway through a system after an
+        # EDMC restart, so the stops done before it are not compared
         ST.route_started = time.time()
+        ST.route_base = set(ST.route_done)
         ST.route_feedback = ""
         return
     elapsed = time.time() - ST.route_started
     planned = sum(s.leg_s for s in route.stops
-                  if s.body.body_id in ST.route_done)
+                  if s.body.body_id in ST.route_done
+                  and s.body.body_id not in ST.route_base)
     if planned < 60 or elapsed < 60:
         ST.route_feedback = ""
         return
