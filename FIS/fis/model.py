@@ -474,7 +474,28 @@ def system_signals(rows) -> List[Dict[str, Any]]:
     return sorted(agg.values(), key=lambda x: (x["tone"] != "violet", -x["total"]))
 
 
-ATLAS_VIEWS = ("rings", "signals", "materials", "finds")
+ATLAS_VIEWS = ("rings", "signals", "materials", "finds", "bio")
+# M1: Horizons-era organics are logged with the composition scanner (codex)
+# only - the genetic sampler never analyses them, so a body whose only open
+# signals are these counts as done. Assumption, to confirm in game.
+CODEX_ONLY_GENERA = {"Brain Trees", "Anemone", "Bark Mounds", "Crystalline Shards",
+                     "Sinuous Tubers", "Amphora Plant"}
+
+
+def _bio_item(r) -> Dict[str, Any]:
+    """open/done of one body's bio signals (ATLAS BIOLOGY, M1)."""
+    sig, done_n = int(r["sig_bio"] or 0), int(r["organics"] or 0)
+    analysed = [a for a in (_json(r["bio_species"], []) or []) if isinstance(a, dict)]
+    got = {a.get("genus") for a in analysed if a.get("genus")}
+    genera = [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()]
+    missing = [g for g in genera if g not in got]
+    codex_only = [g for g in missing if g in CODEX_ONLY_GENERA]
+    open_n = max(0, sig - done_n - len(codex_only))
+    return {"key": "open" if open_n else "done", "signals": sig,
+            "analysed": min(done_n, sig), "open": open_n,
+            "missing": [g for g in missing if g not in CODEX_ONLY_GENERA],
+            "codex_only": codex_only,
+            "species": sorted({a.get("species") for a in analysed if a.get("species")})}
 
 
 def _ring_class(v: Optional[str]) -> str:
@@ -501,7 +522,7 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
     """
     view = view if view in ATLAS_VIEWS else "signals"
     rows = {"rings": db.atlas_rings, "materials": db.atlas_materials,
-            "finds": db.atlas_finds}.get(view, db.atlas_signals)(kind)
+            "finds": db.atlas_finds, "bio": db.atlas_bio}.get(view, db.atlas_signals)(kind)
     need = text = None
     if q:
         text = q.strip().lower()
@@ -520,6 +541,10 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
                       ring_class=_ring_class(r["ring_class"]))
             if r["body_id"] is not None:
                 it["body_id"] = r["body_id"]
+        elif view == "bio":
+            it.update(_bio_item(r), label=None, count=None, body_id=r["body_id"])
+            if kind in ("open", "done") and it["key"] != kind:
+                continue
         elif view == "finds":
             it.update(key=r["kind"], label=r["label"], detail=r["detail"],
                       lat=_r(r["lat"], 4), lon=_r(r["lon"], 4), last=(r["last"] or "")[:10])
@@ -539,6 +564,14 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
         items.append(it)
     items.sort(key=lambda x: (x["dist_ly"] if x["dist_ly"] is not None else 1e9,
                               -(x["count"] or 0)))
+    totals = None
+    if view == "bio":
+        # M1: the sums over everything matching (not just the shown page)
+        totals = {"bodies": len(items),
+                  "bodies_open": sum(1 for it in items if it["open"]),
+                  "signals": sum(it["signals"] for it in items),
+                  "analysed": sum(it["analysed"] for it in items),
+                  "open": sum(it["open"] for it in items)}
     out = items[:limit]
     # body names -> body_id, so a click can open the datasheet
     need = [it for it in out if "body_id" not in it and it.get("body")]
@@ -552,13 +585,21 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
         sysn = it["system"] or ""
         b = it.get("body") or ""
         it["body_short"] = b[len(sysn):].strip() if sysn and b.startswith(sysn) else b
-    return {"view": view, "kind": kind, "q": q or "", "max_ly": max_ly,
-            "total": len(items), "items": out}
+    res = {"view": view, "kind": kind, "q": q or "", "max_ly": max_ly,
+           "total": len(items), "items": out}
+    if totals is not None:
+        res["totals"] = totals
+    return res
 
 
 def build_atlas_kinds(db: Database, view: str) -> List[Dict[str, Any]]:
     """The second picker: what kinds exist in one atlas view, with counts."""
     out = []
+    if view == "bio":
+        n = {"open": 0, "done": 0}
+        for r in db.atlas_bio():
+            n[_bio_item(r)["key"]] += 1
+        return [{"key": k, "label": k, "count": n[k]} for k in ("open", "done") if n[k]]
     for r in db.atlas_kinds(view):
         label = r["label"] or r["key"]
         if view == "signals":
@@ -580,6 +621,17 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
     mats = _json(r["materials"], {}) or {}
     solid = _json(r["composition"], {}) or {}
     species = _json(r["bio_species"], []) or []
+    # ring hotspots: the journal gives each ring its own BodyID, so they are
+    # found by the ring names of this body (or by body_id when it is a ring
+    # itself) - by the planet's body_id there are none (F4)
+    ring_names = {g.get("name") for g in (_json(r["rings_json"], []) or []) if g.get("name")}
+    hotspots = [{"material": h["label"] or h["material"], "count": h["count"],
+                 "ring": h["body_name"]} for h in db.hotspots_of(id64)
+                if h["body_name"] in ring_names or h["body_id"] == body_id]
+    hs_by_ring: Dict[str, List[Dict[str, Any]]] = {}
+    for h in hotspots:
+        hs_by_ring.setdefault(h["ring"] or "", []).append(
+            {"material": h["material"], "count": h["count"]})
     out: Dict[str, Any] = {
         "id64": id64, "body_id": body_id, "system": sysname,
         "name": r["name"], "short": p.sysroute.shorten(r["name"] or "", sysname),
@@ -612,7 +664,7 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
         },
         "was_discovered": (None if r["was_discovered"] is None else bool(r["was_discovered"])),
         "reserve": (r["reserve"] or "").replace("Resources", "").strip() or None,
-        "rings": _rings(r),
+        "rings": _rings(r, hs_by_ring),
         "flags": {
             "first": r["was_discovered"] == 0,
             "first_map": r["was_mapped"] == 0 and r["kind"] == "Planet",
@@ -627,8 +679,7 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
                          "genus": s.get("genus"), "date": (s.get("ts") or "")[:10]} for s in species],
             "prediction": [],
         },
-        "hotspots": [{"material": h["label"] or h["material"], "count": h["count"],
-                      "ring": h["body_name"]} for h in db.hotspots_of(id64, body_id)],
+        "hotspots": hotspots,
         "signals": body_signals(db.signals_of(id64, body_id)),
         "materials_found": [{"label": m["label"], "category": m["category"],
                              "count": m["count"], "last": (m["last"] or "")[:10]}
@@ -727,8 +778,31 @@ def build_surface(db: Database, live: Optional[Dict[str, Any]],
     out = _build_surface(db, live, id64, body)
     life = life_support((live or {}).get("status") or {})
     if life:
-        out = dict(out, life=life)
+        out = dict(out, life=life, suit=(live or {}).get("suit"))
+    from .mining import rhino_hold
+    rh = rhino_hold(live)
+    if rh:
+        out = dict(out, rhino=rh)
     return out
+
+
+def backpack(journal_dir: Optional[str]) -> Optional[Dict[str, Any]]:
+    """M5: what you carry on foot (Backpack.json): consumables by name,
+    goods / components / data as counts."""
+    if not journal_dir:
+        return None
+    import json as _j
+    import os as _os
+    try:
+        with open(_os.path.join(journal_dir, "Backpack.json"), encoding="utf-8") as fh:
+            bp = _j.load(fh)
+    except (OSError, ValueError):
+        return None
+    count = lambda k: sum(int(i.get("Count") or 0) for i in bp.get(k) or [])   # noqa: E731
+    return {"consumables": [{"name": i.get("Name_Localised") or i.get("Name"), "count": int(i.get("Count") or 0)}
+                            for i in bp.get("Consumables") or []],
+            "items": count("Items"), "components": count("Components"), "data": count("Data"),
+            "ts": bp.get("timestamp")}
 
 
 def _build_surface(db: Database, live: Optional[Dict[str, Any]],
@@ -745,7 +819,7 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
             if last is not None:
                 id64, body = last["sys_id64"], last["body_name"]
     out: Dict[str, Any] = {"body": body, "id64": id64, "here": False, "track": [],
-                           "marks": [], "bio": [], "me": None}
+                           "marks": [], "bio": [], "me": None, "active": None}
     if not body or not id64:
         return out
     p = plugin()
@@ -772,7 +846,7 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
         if not pos or not radius:
             out["marks"] = [{"kind": m["kind"], 
                              "label": m["label"], "ts": m["ts"], "x": None, "y": None}
-                            for m in marks]
+                            for m in marks if m["kind"] != "refined"]
             return out
         lat0, lon0 = float(pos[-1]["lat"]), float(pos[-1]["lon"])
     if not radius:
@@ -791,6 +865,8 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
         seg["pts"].append([round(x, 1), round(y, 1)])
     me_xy = (0.0, 0.0) if is_here else None
     for m in marks:
+        if m["kind"] == "refined":
+            continue                 # one per tonne - shown as rigs below
         item = {"kind": m["kind"], 
                 "label": m["label"], "detail": m["detail"], "ts": m["ts"], "x": None, "y": None}
         if m["lat"] is not None:
@@ -801,7 +877,18 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
                 item["bearing"] = round((math.degrees(math.atan2(x, y)) + 360.0) % 360.0, 0)
         out["marks"].append(item)
     # where the SRV / the ship stand - the points to get back to
-    nav = p.surfacenav.body_state([dict(m) for m in marks]) if p.surfacenav else None
+    nav = p.surfacenav.body_state([dict(m) for m in marks], radius) if p.surfacenav else None
+    # Rhino rigs, where they were collected - numbered per launch, in time order
+    for r in (nav or {}).get("rigs") or []:
+        x, y = _local_xy(r["lat"], r["lon"], lat0, lon0, radius)
+        item = {"kind": "rig", "label": "Rig %d · %d t %s" % (r["n"], r["tonnes"], r["type"]),
+                "detail": r["type"], "n": r["n"], "tonnes": r["tonnes"], "ts": r["ts"],
+                "x": round(x, 1), "y": round(y, 1)}
+        if me_xy is not None:
+            item["dist_m"] = round(math.hypot(x, y), 0)
+            item["bearing"] = round((math.degrees(math.atan2(x, y)) + 360.0) % 360.0, 0)
+        out["marks"].append(item)
+    out["marks"].sort(key=lambda m: m.get("ts") or "")
     for key in ("parked", "ship"):
         v = nav[key] if nav else None
         if v is None:
@@ -809,6 +896,8 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
         x, y = _local_xy(v["lat"], v["lon"], lat0, lon0, radius)
         item = {"x": round(x, 1), "y": round(y, 1), "ts": v["ts"],
                 "label": (v["detail"] or "SRV") if key == "parked" else "ship"}
+        if key == "ship" and isinstance(v, dict) and v.get("hover"):
+            item["hover"] = True     # dropped the Rhino in a hover - last known
         if me_xy is not None:
             item["dist_m"] = round(math.hypot(x, y), 0)
             item["bearing"] = round((math.degrees(math.atan2(x, y)) + 360.0) % 360.0, 0)
@@ -838,6 +927,18 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
         if me_xy is not None and g["points"] and not g["done"]:
             g["nearest_m"] = round(min(math.hypot(px, py) for px, py in g["points"]), 0)
             g["ok"] = g["range_m"] is not None and g["nearest_m"] >= g["range_m"]
+    # E10: the species being worked on = the unfinished one with the newest
+    # log/sample mark; the map draws it bright and dims the others
+    newest: Dict[str, str] = {}
+    for m in out["marks"]:
+        if m["kind"] in ("bio_log", "bio_sample") and m["label"] and m["ts"]:
+            newest[m["label"]] = max(newest.get(m["label"], ""), str(m["ts"]))
+    open_ = [g for g in groups.values() if not g["done"] and g["species"] in newest]
+    active = max(open_, key=lambda g: newest[g["species"]]) if open_ else None
+    for g in groups.values():
+        g["active"] = g is active
+    out["active"] = ({"species": active["species"], "genus": active["genus"]}
+                     if active is not None else None)
     out["bio"] = list(groups.values())
     # initial framing: the latest visit only (3 h before the last activity);
     # older visits to the same body may lie hundreds of km away
@@ -855,6 +956,8 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
         out["me"] = {"x": 0.0, "y": 0.0, "heading": st.get("heading"), "alt": st.get("alt"),
                      "mode": ("foot" if (st.get("flags2") or 0) & 1 else
                               "srv" if (st.get("flags") or 0) & (1 << 26) else "ship")}
+        if out["me"]["mode"] == "srv":
+            out["me"]["vehicle"] = live.get("vehicle")      # "SRV Rhino", "Nomad" (M2)
     return out
 
 

@@ -12,7 +12,7 @@ import { t, N_ } from "../i18n.js";
 
 const ROLES = [["combat", N_("Combat")], ["mining", N_("Mining")], ["transport", N_("Transport")],
   ["exploration", N_("Exploration")], ["passengers", N_("Passengers")], ["sar", N_("SAR")]];
-const ROLE_HELP = { combat: N_("Combat: weapons by mount size, shield size and class, shield boosters, hull reinforcement, armour"), mining: N_("Mining: mining lasers and tools, refinery, prospector and collector limpet controllers, pulse wave scanner"), transport: N_("Transport: cargo capacity - 5 dots from 500 t"), exploration: N_("Exploration: jump range - 5 dots from 60 ly; without a fuel scoop at most 1, without a surface scanner at most 2"), passengers: N_("Passengers: passenger cabins"), sar: N_("Search and rescue: repair and fuel transfer limpets, fuel to give, fuel scoop, decontamination and collector limpets") };
+const ROLE_HELP = { combat: N_("Combat: weapons by mount size, shield size and class, shield boosters, hull reinforcement, armour"), mining: N_("Mining: mining lasers and tools, refinery, prospector and collector limpet controllers, pulse wave scanner; ground mining: at least 2 when the SRV Rhino was launched from this ship"), transport: N_("Transport: cargo capacity - 5 dots from 500 t"), exploration: N_("Exploration: jump range - 5 dots from 60 ly; without a fuel scoop at most 1, without a surface scanner at most 2, without a vehicle hangar (exobiology) at most 4, a Nomad hangar adds one"), passengers: N_("Passengers: passenger cabins"), sar: N_("Search and rescue: repair and fuel transfer limpets, fuel to give, fuel scoop, decontamination and collector limpets") };
 const SPACE = [["crew", N_("crew"), "c1"], ["cargo", N_("cargo"), "c2"], ["reserved", N_("reserved"), "c3"],
   ["ships", N_("ship packs"), "c4"], ["modules", N_("module packs"), "c5"]];
 const SERVICE = { BlackMarket: N_("Secure warehouse"), Captain: N_("Captain"), Refuel: N_("Refuel"),
@@ -24,7 +24,11 @@ const SERVICE = { BlackMarket: N_("Secure warehouse"), Captain: N_("Captain"), R
 const ACCESS = { all: N_("everyone"), friends: N_("friends"), squadron: N_("squadron"),
   squadronfriends: N_("squadron and friends"), none: N_("nobody") };
 
-let root = null, data = null, roleFilter = localStorage.getItem("fis.cag.role") || "";
+const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
+let root = null, data = null, roleFilter = store("fis.cag.role") || "";
+// E4: ship list sortable by every column, with a text filter and "on board only"
+let sortKey = store("fis.cag.sort") || "", sortDir = store("fis.cag.dir") === "asc" ? 1 : -1;
+let shipQuery = "", onBoardOnly = store("fis.cag.here") === "1";
 
 export function mount(r) { root = r; root.classList.add("carrier-view"); }
 
@@ -182,21 +186,54 @@ function airWing() {
     const best = here.filter(s => s.rating).sort((a, b) => b.rating.roles[k] - a.rating.roles[k]
       || (b.rating.primary === k) - (a.rating.primary === k))[0];
     const n = here.filter(s => s.rating && s.rating.roles[k] >= 4).length;
-    return el("button", { class: "cag-role" + (roleFilter === k ? " sel" : ""), onclick: () => { roleFilter = roleFilter === k ? "" : k; localStorage.setItem("fis.cag.role", roleFilter); render(); } },
+    return el("button", { class: "cag-role" + (roleFilter === k ? " sel" : ""), onclick: () => { roleFilter = roleFilter === k ? "" : k; store("fis.cag.role", roleFilter); render(); } },
       el("div", { class: "cr-k", text: t(label) }),
       el("div", { class: "cr-v " + (n ? "c-green" : "c-dim"), text: t("{n} ready", { n }) }),
       el("div", { class: "cr-b c-dim", text: best && best.rating.roles[k] ? (best.name || best.type_name) + " " + dots(best.rating.roles[k]) : "–" }));
   }));
+  const whereOf = (s) => s.current ? t("in use") : s.stored_at === "here" ? t("on board") : (s.system || s.location || "–") + (s.in_transit ? " ⟫" : "");
   let list = [...ships];
   if (roleFilter) list = list.filter(s => s.rating && s.rating.roles[roleFilter] > 0)
     .sort((a, b) => b.rating.roles[roleFilter] - a.rating.roles[roleFilter]);
+  if (onBoardOnly) list = list.filter(s => s.stored_at === "here" || s.current);
+  const q = shipQuery.trim().toLowerCase();
+  if (q) list = list.filter(s => [s.name, s.type_name, whereOf(s)].some(v => v && String(v).toLowerCase().includes(q)));
+  // a clicked column sorts (again: other direction); empty values always last
+  const SORT = { ship: s => (s.name || s.type_name || "").toLowerCase(), where: s => s.current ? "0" : s.stored_at === "here" ? "1" : "2" + whereOf(s).toLowerCase(),
+    hull: s => s.hull, jump: s => s.jump, cargo: s => s.cargo, fit: s => s.loadout_ts };
+  for (const [k] of ROLES) SORT[k] = s => s.rating ? s.rating.roles[k] : null;
+  if (SORT[sortKey]) {
+    const f = SORT[sortKey];
+    list.sort((a, b) => {
+      const va = f(a), vb = f(b);
+      const ea = va === null || va === undefined || va === "", eb = vb === null || vb === undefined || vb === "";
+      if (ea || eb) return ea - eb;
+      return (va < vb ? -1 : va > vb ? 1 : 0) * sortDir;
+    });
+  }
+  const sortBy = (k) => {
+    if (sortKey === k) sortDir = -sortDir;
+    else { sortKey = k; sortDir = (k === "ship" || k === "where") ? 1 : -1; }   // text A-Z, numbers high first
+    store("fis.cag.sort", sortKey); store("fis.cag.dir", sortDir > 0 ? "asc" : "desc");
+    render();
+  };
+  const th = (k, text, extra = {}) => el("th", Object.assign({ text: text + (sortKey === k ? (sortDir > 0 ? " ▲" : " ▼") : ""),
+    class: "sort-h" + (extra.class ? " " + extra.class : ""), title: (extra.title ? extra.title + " · " : "") + t("click to sort"),
+    onclick: () => sortBy(k) }));
   // role columns: the full name and how the dots are earned on hover
-  const head = el("tr", {}, ...["", t("Ship"), t("Where")].map(h => el("th", { text: h })),
-    ...ROLES.map(([k, l]) => el("th", { text: t(l).slice(0, 4), title: t(ROLE_HELP[k]), class: "role-h" })),
-    ...[t("Hull"), "ly", "t", t("Fitting")].map(h => el("th", { text: h })));
+  const head = el("tr", {}, el("th", { text: "" }), th("ship", t("Ship")), th("where", t("Where")),
+    ...ROLES.map(([k, l]) => th(k, t(l).slice(0, 4), { title: t(ROLE_HELP[k]), class: "role-h" })),
+    th("hull", t("Hull")), th("jump", "ly"), th("cargo", "t"), th("fit", t("Fitting")));
+  const search = el("input", { type: "search", class: "cag-q", placeholder: t("filter ships"), value: shipQuery,
+    oninput: (e) => { shipQuery = e.target.value; const pos = e.target.selectionStart; render();
+      const n = root.querySelector(".cag-q"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (err) { /* type=search */ } } } });
+  const here2 = el("input", { type: "checkbox", checked: onBoardOnly ? true : null,
+    onchange: (e) => { onBoardOnly = e.target.checked; store("fis.cag.here", onBoardOnly ? "1" : "0"); render(); } });
+  const tools = el("div", { class: "cag-tools" }, search, el("label", { class: "small" }, here2, " " + t("on board only")),
+    el("span", { class: "c-dim small", text: t("{n} of {m} ships", { n: list.length, m: ships.length }) }));
   const rows = list.map(s => {
     const r = s.rating;
-    const where = s.current ? t("in use") : s.stored_at === "here" ? t("on board") : (s.system || s.location || "–") + (s.in_transit ? " ⟫" : "");
+    const where = whereOf(s);
     return el("tr", { class: (s.current ? "cur " : "") + (s.stored_at === "here" || s.current ? "" : "away") },
       el("td", { class: "c-amber", text: s.current ? "▶" : "" }),
       el("td", {}, el("div", { text: s.name || s.type_name }), el("div", { class: "c-dim small", text: s.name ? s.type_name : "" })),
@@ -211,5 +248,5 @@ function airWing() {
   const note = el("div", { class: "c-dim small", text: t("Ratings 0–5 from the last known fitting (hover for the reasons). Ships without a fitting were not flown since your journals begin – fly or outfit them once.") });
   const hang = data.hangar;
   return frame(t("AIR WING"), hang ? t("{n} ships · hangar list of {d}", { n: ships.length, d: day(hang.ts) }) : String(ships.length),
-    [board, el("div", { class: "scroll cag-list" }, el("table", { class: "ns-tab cag" }, head, ...rows)), note], { cls: "ns-cag", appear: false });
+    [board, tools, el("div", { class: "scroll cag-list" }, el("table", { class: "ns-tab cag" }, head, ...rows)), note], { cls: "ns-cag", appear: false });
 }

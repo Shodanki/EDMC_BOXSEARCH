@@ -140,6 +140,15 @@ class Config:
             self.save()
         return True
 
+    def new_token(self) -> str:
+        """E15: replace the LAN token (a device that should no longer get in,
+        a token that was shown on stream). Every device needs the new
+        address once; the caller saves."""
+        old = self.token
+        while self.token == old:
+            self.token = secrets.token_urlsafe(18)
+        return self.token
+
     def save(self) -> None:
         """Write fis.ini: the dialogue's answers plus whatever else was set.
         Keys the FIS does not know are kept."""

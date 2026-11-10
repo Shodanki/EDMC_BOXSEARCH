@@ -6,18 +6,32 @@ import { t, N_, lang } from "../i18n.js";
 
 let root = null;
 let current = null;     // datasheet JSON
+let currentKey = null;  // "id64/body_id" of `current`
+let currentJson = "";   // the same as text: an unchanged answer is not drawn again
 let loading = null;
+let stale = false;      // something changed while PLANET INFO was hidden
 
 export function mount(r) { root = r; root.classList.add("planet-view"); }
 
+const keyOf = (sel) => sel ? sel.id64 + "/" + sel.body_id : null;
+
+// E3: every scan event (FSS, DSS, bio, codex - of any body, from the journal
+// and again from the plugin database) and every jump called load(); each
+// answer redrew the whole sheet with its count-up animation, which looked
+// like constant reloading. Now: hidden -> only remember that it is stale;
+// shown -> fetch, and draw only when the answer differs.
 export async function load(ctx) {
   const sel = ctx.store.selected;
-  if (!sel) { current = null; render(ctx); return; }
-  const key = sel.id64 + "/" + sel.body_id;
+  if (!sel) { current = null; currentKey = null; currentJson = ""; if (root && ctx.store.view === "planet") render(ctx); return; }
+  if (ctx.store.view !== "planet") { stale = true; return; }
+  stale = false;
+  const key = keyOf(sel);
   loading = key;
   const data = await getJSON("/api/body/" + key);
   if (loading !== key) return;           // a newer selection won
-  current = data;
+  const json = JSON.stringify(data);
+  if (key === currentKey && json === currentJson) return;   // nothing new: keep the sheet as it is
+  current = data; currentKey = key; currentJson = json;
   if (root && ctx.store.view === "planet") render(ctx);
 }
 
@@ -28,7 +42,10 @@ export function update(ctx, reason) {
     const leg = ctx.store.system.route.legs[ctx.store.system.route.next - 1];
     if (leg) { ctx.store.selected = { id64: ctx.store.system.id64, body_id: leg.body_id }; load(ctx); return; }
   }
-  if (reason === "show") render(ctx);
+  if (reason === "show") {
+    if (currentKey === keyOf(ctx.store.selected)) render(ctx);   // the known sheet at once
+    if (stale || currentKey !== keyOf(ctx.store.selected)) load(ctx);
+  }
 }
 
 const ATMO = { CarbonDioxide: "CO₂", SulphurDioxide: "SO₂", Nitrogen: "N₂", Oxygen: "O₂", Water: "H₂O",
@@ -174,9 +191,11 @@ function render(ctx) {
     atmo.push(el("h3", { text: t("Composition"), style: { marginTop: "8px" } }));
     for (const [k, v] of b.composition) atmo.push(hbar(COMPOSITION[k] ? t(COMPOSITION[k]) : k, v, 100, fmt(v, 1) + " %", "green"));
   }
-  const right = [];
+  // E2: the science report sits under the datasheet, the signals below it;
+  // the right column (atmosphere, biology, materials, rings) moves up
   const rep = reportFrame(b);
-  if (rep) right.push(rep);
+  if (rep) left.push(rep);
+  const right = [];
   if (b.kind !== "Star") right.push(frame(t("ATMOSPHERE · SURFACE"), "", atmo));
 
   // biology
@@ -202,9 +221,19 @@ function render(ctx) {
     right.push(frame(t("MATERIALS"), b.materials.length + "", mats));
   }
   if (b.rings.length || b.hotspots.length) {
-    const rr = b.rings.map(r => el("div", { class: "pl-line" }, el("span", { class: "c-cyan", text: (r.name || "").replace(b.name, "").trim() || "Ring" }),
-      el("span", { class: "c-dim", text: " · " + (r.cls || "") + " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" })));
-    for (const h of b.hotspots) rr.push(el("div", { class: "pl-line c-amber", text: "◆ " + h.material + " ×" + h.count }));
+    // E11: each ring with its own hotspots below it ("Tritium ×2, Platinum");
+    // hotspots whose ring is not in the ring list stay listed at the end
+    const hsText = (hs) => hs.map(h => h.material + (h.count > 1 ? " ×" + h.count : "")).join(", ");
+    const ringNames = new Set(b.rings.map(r => r.name));
+    const rr = [];
+    for (const r of b.rings) {
+      rr.push(el("div", { class: "pl-line" }, el("span", { class: "c-cyan", text: (r.name || "").replace(b.name, "").trim() || "Ring" }),
+        el("span", { class: "c-dim", text: " · " + (r.cls || "") + " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" })));
+      if (r.hotspots && r.hotspots.length) rr.push(el("div", { class: "pl-line pl-sub c-amber", text: "◆ " + hsText(r.hotspots) }));
+      else if (!r.belt) rr.push(el("div", { class: "pl-line pl-sub c-dim", text: t("no hotspots known - map the ring with the DSS") }));
+    }
+    const loose = b.hotspots.filter(h => !ringNames.has(h.ring));
+    if (loose.length) rr.push(el("div", { class: "pl-line c-amber", text: "◆ " + hsText(loose) }));
     right.push(frame(t("RINGS"), b.reserve ? t("reserves: {r}", { r: b.reserve }) : "", rr));
   }
 
@@ -212,7 +241,7 @@ function render(ctx) {
     const ss = b.signals.map(s => el("div", { class: "pl-line c-" + s.tone, text: "◆ " + s.label + (s.count > 1 ? " ×" + s.count : "") }));
     if (b.signals.some(s => s.kind && s.kind.startsWith("site:")))
       ss.push(el("div", { class: "c-dim small", text: t("“from pickup”: a surface site recognised by the material collected – the journal does not report it itself.") }));
-    right.push(frame(t("SIGNALS"), b.signals.length + "", ss, { kind: b.signals.some(s => s.tone === "violet") ? "disc" : "" }));
+    left.push(frame(t("SIGNALS"), b.signals.length + "", ss, { kind: b.signals.some(s => s.tone === "violet") ? "disc" : "" }));
   }
   if (b.materials_found && b.materials_found.length) {
     const mf = b.materials_found.map(m => el("div", { class: "pl-line" },

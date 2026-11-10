@@ -23,6 +23,18 @@ const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galax
 const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];
 const SOLO = (() => { const v = new URLSearchParams(location.search).get("solo"); return v && VIEWS[v] ? v : null; })();
 if (SOLO) document.body.classList.add("solo");
+// E6/P7 display profile - links made on the settings page, never typed:
+// obs=1 transparent background for an OBS browser source, kiosk=1 without
+// the solo control, scale=0.75..2 text and frame size
+const PROFILE = (() => {
+  const q = new URLSearchParams(location.search);
+  const sc = Number(q.get("scale"));
+  return { obs: q.get("obs") === "1", kiosk: q.get("kiosk") === "1" || q.get("obs") === "1",
+    scale: sc >= 0.5 && sc <= 3 ? sc : null };
+})();
+if (PROFILE.obs) document.body.classList.add("obs");
+if (PROFILE.kiosk) document.body.classList.add("kiosk");
+if (PROFILE.scale) document.documentElement.style.zoom = String(PROFILE.scale);
 
 // language first: every view renders its texts through t()
 await initLang();
@@ -95,7 +107,8 @@ const ctx = {
 const OPTS = { scan: "fis.scanlines", motion: "fis.motion", autoview: "fis.autoview" };
 function loadOpt(k, def) { const v = localStorage.getItem(OPTS[k]); return v === null ? def : v === "1"; }
 function applyOpts() {
-  document.body.classList.toggle("scanlines", document.getElementById("opt-scan").checked);
+  // OBS: never scanlines or vignette over the stream picture
+  document.body.classList.toggle("scanlines", !PROFILE.obs && document.getElementById("opt-scan").checked);
   document.body.classList.toggle("motion", document.getElementById("opt-motion").checked);
 }
 for (const [k, id] of [["scan", "opt-scan"], ["motion", "opt-motion"], ["autoview", "opt-autoview"]]) {
@@ -247,6 +260,8 @@ subscribe({
     if (autoView() && store.view !== "planet") show("tactical");
   },
   target() {
+    // E5: the SHIP sheet shows destination and locked ship - follow them
+    if (mounted.has("ship") && store.view === "ship") later("shipview", 400, () => ship.update(ctx, "data"));
     later("target", 250, async () => {
       await refresh("briefing"); await refresh("ship");
       if (autoView() && store.briefing && store.briefing.target && store.view !== "planet") show("briefing");

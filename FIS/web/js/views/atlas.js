@@ -9,11 +9,14 @@ import { getJSON } from "../api.js";
 import { el, frame, fmt } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
-const TABS = [["rings", N_("RINGS")], ["signals", N_("SIGNALS")], ["materials", N_("MATERIALS")], ["finds", N_("FINDS")]];
+const TABS = [["rings", N_("RINGS")], ["signals", N_("SIGNALS")], ["materials", N_("MATERIALS")], ["finds", N_("FINDS")],
+  ["bio", N_("BIOLOGY")]];
+// M1: bodies with bio signals from all your journals - open first by default
+const BIO_KIND = { open: N_("still open"), done: N_("all analysed") };
 const FIND_KIND = { codex: N_("codex finds"), bio_analyse: N_("biology analysed"),
   settlement: N_("settlements"), screenshot: N_("screenshots / waypoints") };
 const FIND_SHORT = { codex: N_("codex"), bio_analyse: N_("bio ✔"), settlement: N_("settlement"), screenshot: N_("screenshot") };
-const TONE = { rings: "#FFB23E", signals: "#3EF2E0", materials: "#B57CFF", finds: "#7CFF6B" };
+const TONE = { rings: "#FFB23E", signals: "#3EF2E0", materials: "#B57CFF", finds: "#7CFF6B", bio: "#C6FF4D" };
 
 let root = null, ctxRef = null, list = null, info = null, cv = null, pick = null, search = null, tabBar = null, range = null;
 const RANGES = [25, 50, 100, 250, 500, 1000, 2000, 0];     // ly, 0 = everything
@@ -57,13 +60,14 @@ async function setView(v, keepQuery) {
   state.view = v;
   localStorage.setItem("fis.atlas.view", v);
   for (const b of tabBar.querySelectorAll("button")) b.setAttribute("aria-pressed", b.dataset.v === v ? "true" : "false");
-  state.kind = localStorage.getItem("fis.atlas.kind." + v) || "";
+  const savedKind = localStorage.getItem("fis.atlas.kind." + v);
+  state.kind = savedKind !== null ? savedKind : (v === "bio" ? "open" : "");
   if (!keepQuery) { state.q = ""; search.value = ""; }
   let kinds = [];
   try { kinds = (await getJSON("/api/atlas/kinds?view=" + v)).kinds || []; } catch (e) { kinds = []; }
   pick.replaceChildren(el("option", { value: "", text: t("(all)") }),
     ...kinds.map(k => el("option", { value: k.key,
-      text: (v === "finds" && FIND_KIND[k.key] ? t(FIND_KIND[k.key]) : k.label) + " (" + k.count + ")" })));
+      text: (v === "finds" && FIND_KIND[k.key] ? t(FIND_KIND[k.key]) : v === "bio" && BIO_KIND[k.key] ? t(BIO_KIND[k.key]) : k.label) + " (" + k.count + ")" })));
   if (![...pick.options].some(o => o.value === state.kind)) state.kind = "";
   pick.value = state.kind;
   load();
@@ -85,6 +89,13 @@ function where(it) {
     return kind + (it.lat !== null && it.lat !== undefined ? fmt(it.lat, 4) + " / " + fmt(it.lon, 4) : t("no position"));
   }
   if (state.view === "rings") return it.ring_class || "";
+  if (state.view === "bio") {
+    const parts = [];
+    if (it.missing && it.missing.length) parts.push(t("to find: {g}", { g: it.missing.join(", ") }));
+    if (it.species && it.species.length) parts.push("✔ " + it.species.join(", "));
+    if (it.codex_only && it.codex_only.length) parts.push(t("codex only: {g}", { g: it.codex_only.join(", ") }));
+    return parts.join(" · ");
+  }
   if (state.view === "materials") return it.category ? it.category + (it.last ? " · " + it.last : "") : (it.last || "");
   return "";
 }
@@ -97,20 +108,25 @@ function render() {
     const hint = { rings: N_("Map a ring with the DSS – its hotspots land here."),
       signals: N_("Scan bodies with the FSS / DSS – their signals land here."),
       materials: N_("Pick up materials – where you were lands here."),
-      finds: N_("Land, log codex entries, sample or take a screenshot – the places land here.") }[state.view];
+      finds: N_("Land, log codex entries, sample or take a screenshot – the places land here."),
+      bio: N_("Scan bodies with the FSS / DSS – bodies with biological signals land here.") }[state.view];
     const why = state.q ? t("nothing matches “{q}”", { q: state.q })
       : state.max ? t("nothing within {n} ly – pick a larger distance", { n: fmt(state.max, 0) }) : t(hint);
     list.append(el("div", { class: "empty" }, why));
     drawMap(); return;
   }
   info.textContent = t("{n} of {total} · nearest first · click opens the datasheet", { n: data.items.length, total: data.total });
+  if (data.totals) info.textContent += " · " + t("bio: {o} open signals on {b} bodies · {a} of {s} analysed",
+    { o: data.totals.open, b: data.totals.bodies_open, a: data.totals.analysed, s: data.totals.signals });
   data.items.forEach((it, i) => {
     const row = el("div", { class: "at-row", "data-i": i, onclick: () => open(it),
       onmouseenter: () => setHover(i), onmouseleave: () => setHover(-1) },
       el("span", { class: "at-d", text: it.dist_ly !== null && it.dist_ly !== undefined ? fmt(it.dist_ly, 1) + " ly" : "–" }),
       el("span", { class: "at-sys", text: it.system }),
       el("span", { class: "at-body c-cyan", text: it.body_short || "" }),
-      el("span", { class: "at-lab", text: (it.label || "") + (it.count > 1 ? " ×" + it.count : "") }),
+      el("span", { class: "at-lab" + (state.view === "bio" ? (it.open ? " c-amber" : " c-green") : ""), text: state.view === "bio"
+        ? (it.open ? t("{o} of {n} open", { o: it.open, n: it.signals }) : t("all {n} done", { n: it.signals }))
+        : (it.label || "") + (it.count > 1 ? " ×" + it.count : "") }),
       el("span", { class: "at-w c-dim", text: where(it) }),
       el("button", { class: "at-copy", title: t("copy system name"), text: "⧉",
         onclick: (e) => { e.stopPropagation(); copy(it.system, e.target); } }));

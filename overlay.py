@@ -153,6 +153,8 @@ class CockpitOverlay:
     # 0 cockpit and 1-4 (side panels, comms, role panel) keep it visible.
     HIDE_FOCUS = frozenset({5, 6, 7, 8, 9, 10, 11})
     BRIEF_KEEP = 300        # a held-back briefing is shown up to 5 min later
+    TARGETS_TTL = 900       # s the overlay keeps the targets block on screen
+    TARGETS_REFRESH = 300   # s: sent again well before that runs out
 
     def __init__(self, log: Optional[logging.Logger] = None, client: Any = None):
         self.log = log or logger
@@ -166,6 +168,7 @@ class CockpitOverlay:
         self._last_targets: List[Line] = []
         self.mute_targets = False            # mining: the route block steps aside
         self._pending_brief: Optional[Tuple[List[Line], int, float]] = None
+        self._targets_t = 0.0                # when the targets block was last sent
 
     # -- game screens ------------------------------------------------------
     def set_focus(self, focus: Optional[int]) -> None:
@@ -187,7 +190,7 @@ class CockpitOverlay:
             self.clear()
             return
         if self._last_targets and not self.mute_targets:
-            self.draw("targets", self._last_targets, ttl=900)
+            self.draw("targets", self._last_targets, ttl=self.TARGETS_TTL)
         pb = self._pending_brief
         self._pending_brief = None
         if pb and time.time() - pb[2] <= self.BRIEF_KEEP:
@@ -246,6 +249,8 @@ class CockpitOverlay:
                 c.send_message("%s%s-%d" % (self.PREFIX, group, i), "", COL["dim"],
                                x, y + i * lh, ttl=1, size=self.size)
             self._drawn[group] = len(lines)
+            if group == "targets":
+                self._targets_t = time.time()
             return True
         except Exception as e:
             self.log.debug("overlay | draw %s failed: %s", group, e)
@@ -277,7 +282,19 @@ class CockpitOverlay:
             return False
         if self.hidden:
             return False                     # drawn when the screen closes
-        return self.draw("targets", lines, ttl=900)
+        return self.draw("targets", lines, ttl=self.TARGETS_TTL)
+
+    def keep_targets(self, now: Optional[float] = None) -> bool:
+        """
+        Send the targets block again before its time on screen runs out.
+        Only a route change redraws it otherwise, so on a long supercruise
+        leg, on foot or in the SRV it vanished after 15 minutes.
+        """
+        now = time.time() if now is None else now
+        if (self.mute_targets or self.hidden or not self._last_targets
+                or now - self._targets_t < self.TARGETS_REFRESH):
+            return False
+        return self.draw("targets", self._last_targets, ttl=self.TARGETS_TTL)
 
     def show_bio(self, lines: Sequence[Line], seconds: int = 8) -> bool:
         """Exobiology distance line while sampling; held back like a briefing."""
@@ -300,7 +317,7 @@ class CockpitOverlay:
         if on:
             self.clear("targets")
         elif self._last_targets and not self.hidden:
-            self.draw("targets", self._last_targets, ttl=900)
+            self.draw("targets", self._last_targets, ttl=self.TARGETS_TTL)
 
     def show_mining(self, lines: Sequence[Line], seconds: int = 30) -> bool:
         """Mining block (miningstat): at most five lines, while you mine."""
@@ -316,3 +333,40 @@ class CockpitOverlay:
             self._pending_brief = (lines, seconds, time.time())
             return False
         return self.draw("brief", lines, ttl=seconds)
+
+
+def _selftest() -> int:
+    """python overlay.py - the targets block stays on screen (fake client)."""
+    sent: List[Tuple[str, str, int]] = []
+
+    class Client:
+        def send_message(self, mid, text, colour, x, y, ttl=4, size="normal"):
+            sent.append((mid, text, ttl))
+
+    ov = CockpitOverlay(client=Client())
+    fails = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal fails
+        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
+        fails += 0 if ok else 1
+
+    ov._last_targets = [("NEXT TARGETS", COL["head"]), ("1. A 2  DSS", COL["data"])]
+    t0 = 1000.0
+    ov._targets_t = t0
+    check(not ov.keep_targets(t0 + 60), "fresh block is left alone")
+    check(ov.keep_targets(t0 + ov.TARGETS_REFRESH + 1) and sent[-1][2] == ov.TARGETS_TTL,
+          "sent again before its time on screen runs out")
+    n = len(sent)
+    ov.hidden = True
+    check(not ov.keep_targets(ov._targets_t + 9999) and len(sent) == n, "not over a map screen")
+    ov.hidden, ov.mute_targets = False, True
+    check(not ov.keep_targets(ov._targets_t + 9999), "not while mining")
+    ov.mute_targets, ov._last_targets = False, []
+    check(not ov.keep_targets(ov._targets_t + 9999), "nothing to keep")
+    print("failures: %d" % fails)
+    return fails
+
+
+if __name__ == "__main__":
+    raise SystemExit(1 if _selftest() else 0)

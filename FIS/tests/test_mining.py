@@ -44,6 +44,31 @@ class MiningTest(unittest.TestCase):
         self.assertEqual(s["last"]["materials"][0]["key"], "tritium")
         self.assertEqual(s["per_hour"], 9.0)            # 3 t in 20 minutes
 
+    def test_ground_mining_with_the_rhino(self):
+        """M2: refining while out in the SRV is a ground session of its own."""
+        evs = EVENTS[:-1] + [
+            ev("07:10", "LaunchSRV", SRVType="mev_rhino", SRVType_Localised="SRV Rhino"),
+            ev("07:12", "MiningRefined", Type="$tantalum_name;", Type_Localised="Tantalum"),
+            ev("07:13", "MiningRefined", Type="$tantalum_name;", Type_Localised="Tantalum"),
+            ev("07:20", "DockSRV", SRVType="mev_rhino", SRVType_Localised="SRV Rhino"),
+            ev("07:25", "MiningRefined", Type="$tritium_name;", Type_Localised="Tritium")]
+        hs = mining.sessions(evs, parse_ts("2026-05-30T08:00:00Z"))
+        kinds = [(h["kind"], h["vehicle"], h["main"], h["total"]) for h in hs]
+        self.assertEqual(kinds, [("space", None, "water", 1), ("space", None, "tritium", 3),
+                                 ("ground", "SRV Rhino", "tantalum", 2), ("space", None, "tritium", 1)])
+        # the Nomad (LaunchVessel) counts as a vehicle too
+        hs2 = mining.sessions([ev("09:00", "LaunchVessel", VesselType="lander01", VesselType_Localised="Nomad"),
+                               ev("09:01", "MiningRefined", Type="$gold_name;")])
+        self.assertEqual((hs2[0]["kind"], hs2[0]["vehicle"]), ("ground", "Nomad"))
+
+    def test_limpet_ratio_skips_ground(self):
+        space = {"total": 100, "kind": "space", "asteroids": 10,
+                 "drones": {"prospector": 10, "collection": 30}}
+        ground = {"total": 100, "kind": "ground", "asteroids": 0,
+                  "drones": {"prospector": 0, "collection": 1}}
+        r = mining.limpet_ratio([space, ground])["all"]
+        self.assertEqual((r["sessions"], r["ratio"]), (1, 0.4))
+
     def test_ended_and_none(self):
         s = mining.session(EVENTS, parse_ts("2026-05-30T12:00:00Z"))
         self.assertFalse(s["active"])

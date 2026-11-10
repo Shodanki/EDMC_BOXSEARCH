@@ -14,13 +14,13 @@ const COL = { ship: "#3EF2E0", srv: "#FFB23E", foot: "#7CFF6B", grid: "rgba(62,2
   dim: "#6E8F8B", violet: "#B57CFF", red: "#FF4D4D", text: "#CFEDEA" };
 const ICON = { touchdown: "▼", liftoff: "▲", srv_out: "◆", srv_in: "◇", disembark: "●", embark: "○",
   bio_log: "✚", bio_sample: "✚", bio_analyse: "✔", material: "■", codex: "★", settlement: "⌂", screenshot: "◉",
-  srv_parked: "◆" };
+  srv_parked: "◆", rig: "⬢" };
 const TONE = { bio_log: "#FFB23E", bio_sample: "#FFB23E", bio_analyse: "#7CFF6B", material: "#B57CFF",
-  codex: "#3EF2E0", settlement: "#CFEDEA", touchdown: "#3EF2E0", liftoff: "#6E8F8B" };
+  codex: "#3EF2E0", settlement: "#CFEDEA", touchdown: "#3EF2E0", liftoff: "#6E8F8B", rig: "#FFD23E" };
 const KIND = { touchdown: N_("Touchdown"), liftoff: N_("Lift-off"), srv_out: N_("SRV out"), srv_in: N_("SRV in"),
   disembark: N_("On foot"), embark: N_("Boarded"), srv_parked: N_("SRV parked"), bio_log: N_("Bio 1/3"),
   bio_sample: N_("Bio 2/3"), bio_analyse: N_("Bio 3/3"), material: N_("Material"), codex: N_("Codex"),
-  settlement: N_("Settlement"), screenshot: N_("Screenshot") };
+  settlement: N_("Settlement"), screenshot: N_("Screenshot"), rig: N_("Mining rig") };
 
 export function mount(r) {
   root = r;
@@ -100,15 +100,18 @@ function draw() {
   g.stroke();
   g.fillStyle = COL.dim; g.font = "11px monospace";
   g.fillText((step >= 1000 ? fmt(step / 1000, 1) + " km" : step + " m") + " / " + t("square") + "   N ↑", 10, H - 10);
-  // colony circles
+  // colony circles - E10: the species being worked on bright, others dimmed
+  const act = data.active;
   for (const b of data.bio) {
     if (!b.range_m) continue;
     for (const [x, y] of b.points) {
       const [px, py] = P(x, y);
       g.setLineDash([4, 4]);
-      g.strokeStyle = b.done ? "rgba(124,255,107,.35)" : "rgba(255,178,62,.55)";
+      g.lineWidth = b.active ? 2 : 1;
+      g.strokeStyle = b.done ? "rgba(124,255,107,.35)" : b.active ? "rgba(255,178,62,.95)"
+        : act ? "rgba(255,178,62,.22)" : "rgba(255,178,62,.55)";
       g.beginPath(); g.arc(px, py, b.range_m * view.zoom, 0, Math.PI * 2); g.stroke();
-      g.setLineDash([]);
+      g.setLineDash([]); g.lineWidth = 1;
     }
   }
   // track
@@ -128,13 +131,17 @@ function draw() {
   for (const m of data.marks) {
     if (m.x === null) continue;
     const [px, py] = P(m.x, m.y);
+    const hi = markActive(m, act);
+    g.globalAlpha = hi === false ? 0.3 : 1;
     g.fillStyle = TONE[m.kind] || COL.text;
-    g.fillText(ICON[m.kind] || "·", px - 4, py + 4);
+    if (hi) { g.font = "bold 15px monospace"; g.fillText(ICON[m.kind] || "·", px - 5, py + 5); g.font = "12px monospace"; }
+    else g.fillText(ICON[m.kind] || "·", px - 4, py + 4);
+    g.globalAlpha = 1;
     placed.push({ x: px - 5, y: py - 6, w: 10, h: 12 });
   }
   if (view.zoom > 0.05) {
     for (const m of [...data.marks].reverse()) {
-      if (m.x === null || !["bio_log", "bio_sample", "codex", "settlement", "material"].includes(m.kind)) continue;
+      if (m.x === null || !["bio_log", "bio_sample", "codex", "settlement", "material", "rig"].includes(m.kind)) continue;
       const txt = (m.label || "").slice(0, 26);
       const [px, py] = P(m.x, m.y);
       const key = txt + "@" + Math.round(px / 24) + "," + Math.round(py / 24);
@@ -144,7 +151,10 @@ function draw() {
         const r = { x: px + dx, y: py + dy - 11, w, h: 13 };
         if (hit(r)) continue;
         placed.push(r); seen.add(key);
-        g.fillStyle = COL.dim; g.fillText(txt, px + dx, py + dy);
+        const hi = markActive(m, act);
+        g.globalAlpha = hi === false ? 0.4 : 1;
+        g.fillStyle = hi ? COL.text : COL.dim; g.fillText(txt, px + dx, py + dy);
+        g.globalAlpha = 1;
         break;
       }
     }
@@ -190,10 +200,41 @@ function lifeSupport(L) {
       el("span", { class: L.low_health ? "c-amber" : "", text: L.health === null || L.health === undefined ? "–" : Math.round(L.health * 100) + " %" })),
     el("div", { class: "small " + (L.very_cold || L.very_hot ? "c-amber" : ""), text: t("Temperature") + ": " + temp + (tempTag ? " · " + tempTag : "") }),
     el("div", { class: "small c-dim", text: (L.breathable ? t("breathable atmosphere") : t("no breathable atmosphere"))
-      + (L.gravity !== null && L.gravity !== undefined ? " · " + fmt(L.gravity, 2) + " g" : "") }));
+      + (L.gravity !== null && L.gravity !== undefined ? " · " + fmt(L.gravity, 2) + " g" : "") }),
+    ...suitRows(data.suit, data.backpack));
+}
+
+// M5: suit, its mods and weapons (SuitLoadout) and the backpack on foot
+function suitRows(S, B) {
+  const rows = [];
+  if (S) {
+    rows.push(el("div", { class: "small" }, el("span", { class: "c-cyan", text: S.name + (S.class ? " G" + S.class : "") }),
+      el("span", { class: "c-dim", text: S.loadout ? " · " + S.loadout : "" })));
+    if (S.mods && S.mods.length) rows.push(el("div", { class: "small c-dim", text: S.mods.join(" · ") }));
+    for (const w of S.weapons || []) rows.push(el("div", { class: "small" }, "▸ " + (w.name || "?") + (w.class ? " G" + w.class : ""),
+      el("span", { class: "c-dim", text: w.mods ? " · " + t("{n} mods", { n: w.mods }) : "" })));
+  }
+  if (B) {
+    const cons = (B.consumables || []).filter(c => c.count).map(c => c.name + " ×" + c.count);
+    rows.push(el("div", { class: "small" }, el("span", { class: "c-dim", text: t("Backpack") + " " }),
+      cons.length ? cons.join(" · ") : t("no consumables")));
+    if (B.items || B.components || B.data) rows.push(el("div", { class: "small c-dim",
+      text: t("goods {i} · components {c} · data {d}", { i: B.items, c: B.components, d: B.data }) }));
+  }
+  return rows;
 }
 
 // big compass, heading up: where the parked SRV, the ship and the earlier
+// E10: true = belongs to the species being worked on (its samples, or a
+// codex entry of the same genus/species), false = another bio/codex mark
+// while one is active (drawn dimmed), null = not concerned
+function markActive(m, act) {
+  if (!act || !(m.kind.startsWith("bio_") || m.kind === "codex")) return null;
+  const lbl = (m.label || "").toLowerCase();
+  if (m.kind.startsWith("bio_")) return lbl === (act.species || "").toLowerCase();
+  return !!((act.species && lbl.includes(act.species.toLowerCase())) || (act.genus && lbl.includes(act.genus.toLowerCase())));
+}
+
 // samples lie from here - for a tablet beside the game (solo window)
 function compass(d) {
   const size = 220;
@@ -223,7 +264,9 @@ function compass(d) {
       const dist = Math.hypot(px, py), brg = (Math.atan2(px, py) * 180 / Math.PI + 360) % 360;
       const [dx, dy] = at(brg, logr(dist));
       x.fillStyle = b.range_m && dist >= b.range_m ? "#7CFF6B" : "#FFB23E";
-      x.beginPath(); x.arc(dx, dy, 3, 0, Math.PI * 2); x.fill();
+      x.globalAlpha = d.active && !b.active ? 0.3 : 1;
+      x.beginPath(); x.arc(dx, dy, b.active ? 4 : 3, 0, Math.PI * 2); x.fill();
+      x.globalAlpha = 1;
     }
   }
   // the vehicles: arrows to the rim, with the distance
@@ -251,6 +294,13 @@ function compass(d) {
   return el("div", { class: "sf-compass-box", title: t("heading up · dots: earlier samples (green = far enough) · ring 1 km") }, c);
 }
 
+// out in the Rhino: hold and how many full rigs still fit (a rig goes in whole)
+function rhinoHold(h) {
+  return el("div", { class: "small " + (h.short ? "c-amber" : "c-dim"), text: h.short
+    ? t("Rhino hold {u}/{c} t · a full rig ({r} t) no longer fits - make room before collecting", { u: h.used, c: h.capacity, r: h.rig_t })
+    : t("Rhino hold {u}/{c} t · full rigs that still fit: {n} ({r} t each)", { u: h.used, c: h.capacity, n: h.rigs_fit, r: h.rig_t }) });
+}
+
 function render() {
   if (!root) return;
   info.replaceChildren(); list.replaceChildren();
@@ -262,6 +312,8 @@ function render() {
   info.append(el("div", { class: "sf-title" }, el("span", { class: "c-cyan", text: data.short || data.body }),
     el("span", { class: "c-dim", text: " · " + (data.system || "") + (data.gravity_g !== undefined && data.gravity_g !== null ? " · " + fmt(data.gravity_g, 2) + " g" : "") })));
   info.append(el("div", { class: "c-dim small", text: data.here ? t("LIVE · you are here") : t("last visit – not live") }));
+  if (data.here && data.me && data.me.vehicle) info.append(el("div", { class: "small c-amber", text: t("in the {v}", { v: data.me.vehicle }) }));
+  if (data.here && data.rhino) info.append(rhinoHold(data.rhino));
   if (data.life) info.append(lifeSupport(data.life));
   if (data.here && data.me && (data.parked || data.ship || (data.bio || []).some(b => !b.done && b.points.length)))
     info.append(compass(data));
@@ -271,7 +323,8 @@ function render() {
     const v = data[key];
     if (!v) continue;
     const where = v.dist_m !== undefined ? fmt(v.dist_m, 0) + " m · " + fmt(v.bearing, 0) + "°" : t("position saved");
-    const what = key === "parked" ? t("{v} PARKED", { v: vehicleLabel(key, v) }) : t("SHIP LANDED");
+    const what = key === "parked" ? t("{v} PARKED", { v: vehicleLabel(key, v) })
+      : v.hover ? t("SHIP HOVERING · last known") : t("SHIP LANDED");
     info.append(el("div", { class: "sf-park " + colr }, (key === "parked" ? "◆ " : "▼ ") + what + "  " + where));
   }
   for (const b of data.bio) {
@@ -280,7 +333,9 @@ function render() {
     const txt = b.nearest_m !== undefined
       ? b.species + " " + n + "/3 · " + fmt(b.nearest_m, 0) + " m / " + (b.range_m || "?") + " m"
       : b.species + " · " + n + "/3";
-    info.append(el("div", { class: b.ok ? "c-green" : "c-amber", text: (b.ok ? "OK  " : "▲  ") + txt }));
+    info.append(el("div", { class: (b.ok ? "c-green" : "c-amber") + (b.active ? " sf-active" : data.active ? " sf-dim" : ""),
+      title: b.active ? t("species being worked on - bright on the map") : "",
+      text: (b.active ? "▶ " : "") + (b.ok ? "OK  " : "▲  ") + txt }));
   }
   const ms = [...data.marks].reverse().slice(0, 60);
   for (const m of ms) {

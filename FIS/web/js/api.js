@@ -12,6 +12,11 @@ export async function getJSON(path) {
   return r.json();
 }
 
+/** A same-site URL for <img> and links, with the LAN token when the page has one. */
+export function withToken(path) {
+  return token ? path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token) : path;
+}
+
 /** POST to the settings endpoint: the custom header keeps other sites out. */
 export async function postJSON(path, body) {
   const headers = { "Content-Type": "application/json", "X-FIS-Settings": "1" };

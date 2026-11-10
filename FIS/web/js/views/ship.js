@@ -76,7 +76,67 @@ function render() {
   // engineer's module list, which needs the room (user, 05.11.2026)
   root.append(annunciator(), el("div", { class: "sh-grid" },
     el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), jumponium()),
-    el("div", { class: "sh-col sh-right" }, report(), hazards(), engineer())));
+    el("div", { class: "sh-col sh-right" }, target(), unsold(), report(), hazards(), engineer())));
+}
+
+// ------------------------------------------------------------ unsold data (M4)
+// What a destroyed ship would cost in data: exobiology since it was sold
+// (valued from your own sales), exploration data only counted.
+function unsold() {
+  const U = data.unsold;
+  if (!U) return null;
+  const B = U.bio, X = U.exploration;
+  if (!B.count && !X.systems) return frame(t("UNSOLD DATA"), "", el("div", { class: "c-dim", text: t("Nothing unsold - all data is cashed in.") }), { appear: false });
+  const Mcr = (v) => fmt(v / 1e6, 1) + " M Cr";
+  const rows = [];
+  if (B.count) {
+    rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exobiology") + " " }),
+      el("span", { class: "c-amber", text: t("{n} analysed, not sold", { n: B.count }) + (B.value ? " · ≈ " + Mcr(B.value) : "") }),
+      B.first ? el("span", { class: "c-green", text: " · " + t("{n} first logged", { n: B.first }) }) : null));
+    if (B.unknown) rows.push(el("div", { class: "c-dim small", text: t("{n} species without a known value (never sold by you)", { n: B.unknown }) }));
+    for (const x of B.items.slice(-5)) rows.push(el("div", { class: "small" }, "◐ " + (x.variant || x.species),
+      el("span", { class: "c-dim", text: (x.system ? " · " + x.system : "") + (x.value ? " · " + Mcr(x.value) : "") })));
+  }
+  if (X.systems) rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exploration") + " " }),
+    el("span", { text: t("{s} systems · {b} bodies · {m} mapped", { s: X.systems, b: X.bodies, m: X.mapped }) })));
+  rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; exploration data only counted.") }));
+  if (U.advice === "sell") rows.push(el("div", { class: "c-red", text: t("A lot at stake - consider selling at the next station or carrier with Vista Genomics / Universal Cartographics.") }));
+  return frame(t("UNSOLD DATA"), B.value ? "≈ " + Mcr(B.value) : "", rows, { cls: "sh-unsold", appear: false, kind: U.advice ? "warn" : "" });
+}
+
+// ------------------------------------------------------------ target (E5)
+// What is selected in the game right now: destination (Status.json), FSD
+// target (galaxy map) and the locked ship as far as it is scanned.
+const LEGAL_BAD = new Set(["Wanted", "WantedEnemy", "Enemy", "Hunter", "Thargoid"]);
+function target() {
+  const T = data.target || {};
+  const rows = [];
+  const line = (k, v, cls = "") => el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: k + " " }), el("span", { class: cls, text: v }));
+  const d = T.destination;
+  if (d) {
+    const where = d.here ? t("in this system") : (d.system || t("another system"));
+    rows.push(line(t("Destination"), (d.name || d.body || "?") + " · " + where
+      + (d.here && d.arrival_ls !== null && d.arrival_ls !== undefined ? " · " + fmt(d.arrival_ls, 0) + " LS" : ""), "c-cyan"));
+  }
+  if (T.fsd && T.fsd.name && !(d && !d.here && d.system === T.fsd.name))
+    rows.push(line(t("FSD target"), T.fsd.name + (T.fsd.star_class ? " [" + T.fsd.star_class + "]" : "")
+      + (T.fsd.remaining_jumps ? " · " + t("{n} jumps left", { n: T.fsd.remaining_jumps }) : "")));
+  const sh = T.ship;
+  if (sh) {
+    rows.push(line(t("Locked"), sh.ship + (sh.pilot ? " · " + sh.pilot : "") + (sh.rank ? " (" + sh.rank + ")" : ""), "c-amber"));
+    const bits = [];
+    if (sh.legal) bits.push(el("span", { class: LEGAL_BAD.has(sh.legal) ? "c-red" : "c-green", text: sh.legal }));
+    if (sh.bounty) bits.push(el("span", { class: "c-amber", text: " · " + t("bounty {n} Cr", { n: fmt(sh.bounty, 0) }) }));
+    if (sh.faction) bits.push(el("span", { class: "c-dim", text: " · " + sh.faction }));
+    if (sh.power) bits.push(el("span", { class: "c-dim", text: " · " + sh.power }));
+    if (bits.length) rows.push(el("div", { class: "pl-line" }, ...bits));
+    if (sh.shield !== undefined || sh.hull !== undefined)
+      rows.push(line(t("Shield / hull"), (pct(sh.shield) ?? "–") + " % / " + (pct(sh.hull) ?? "–") + " %", hcls(sh.hull)));
+    if (sh.subsystem) rows.push(line(t("Subsystem"), sh.subsystem + (sh.subsystem_health !== null && sh.subsystem_health !== undefined ? " " + pct(sh.subsystem_health) + " %" : "")));
+    if ((sh.stage ?? 3) < 3) rows.push(el("div", { class: "c-dim small", text: t("Scan stage {n} of 3 - keep the target locked for more.", { n: sh.stage ?? 0 }) }));
+  }
+  if (!rows.length) rows.push(el("div", { class: "c-dim", text: t("Nothing selected - pick a target in the game.") }));
+  return frame(t("TARGET"), sh ? t("ship locked") : "", rows, { cls: "sh-tgt", appear: false });
 }
 
 // ------------------------------------------------------------ annunciator

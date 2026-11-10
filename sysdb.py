@@ -24,10 +24,12 @@ Standard library only.
 from __future__ import annotations
 
 import calendar
+import glob
 import json
 import logging
 import math
 import os
+import shutil
 import sqlite3
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -43,7 +45,7 @@ Q_CONFIRMED = 20
 Q_EXTERNAL = 30
 Q_JOURNAL = 40
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4          # 4: external_calls, fetched_shells (4.6 local-first)
 
 # Body classes that are always worth mapping (DSS)
 VALUABLE_CLASSES = {
@@ -218,14 +220,45 @@ CREATE TABLE IF NOT EXISTS surface_marks (
     body_name TEXT NOT NULL,
     kind      TEXT NOT NULL,     -- touchdown, liftoff, srv_out, srv_in, disembark,
                                  -- srv_parked, embark, bio_log, bio_sample, bio_analyse,
-                                 -- material, codex, settlement, screenshot
+                                 -- material, codex, settlement, screenshot,
+                                 -- refined (one tonne from a Rhino rig)
     label     TEXT,
     detail    TEXT,              -- genus for bio marks, category for materials
     lat REAL, lon REAL,          -- NULL when the position is unknown
     PRIMARY KEY (ts, kind, body_name, label)
 );
 CREATE INDEX IF NOT EXISTS surface_marks_body ON surface_marks(sys_id64, body_name);
+
+-- 4.6 local-first: one row per request to an outside service (netgate),
+-- kept CALL_LOG_DAYS days - shows how gently the plugin asks EDSM/Spansh.
+CREATE TABLE IF NOT EXISTS external_calls (
+    id       INTEGER PRIMARY KEY,
+    ts       REAL NOT NULL,            -- epoch seconds
+    service  TEXT NOT NULL,            -- edsm | spansh | github
+    endpoint TEXT NOT NULL,
+    status   INTEGER NOT NULL,         -- HTTP status, 0 = no answer
+    ok       INTEGER NOT NULL,
+    ms       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS external_calls_ts ON external_calls(ts);
+
+-- 4.6 local-first: which shell (centre, r_min..r_max) each online service
+-- delivered completely, and until when that counts (5-14 days, random).
+-- The systems themselves are in `systems`; this only says "asked already".
+CREATE TABLE IF NOT EXISTS fetched_shells (
+    id         INTEGER PRIMARY KEY,
+    service    TEXT NOT NULL,          -- edsm | spansh
+    cx REAL NOT NULL, cy REAL NOT NULL, cz REAL NOT NULL,
+    r_min      REAL NOT NULL,
+    r_max      REAL NOT NULL,
+    fetched_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    systems    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS fetched_shells_svc ON fetched_shells(service, expires_at);
 """
+
+CALL_LOG_DAYS = 30
 
 
 def _epoch(stamp: Optional[str]) -> Optional[float]:
@@ -242,11 +275,102 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+# One-time data repairs; each sets its meta key when done. A database that
+# still misses one of them (or has another schema version) gets a backup
+# before it is touched.
+REPAIRS = ("fix_phantoms", "fix_marks45", "fix_n1zero")
+BACKUP_KEEP = 3          # newest backups kept next to the database
+
+
+def stored_state(path: str) -> Optional[Tuple[int, Set[str]]]:
+    """(schema version, repairs done) of an existing database, read only.
+
+    None for a missing or empty file - a new database needs no backup.
+    A database without the meta table counts as schema 0.
+    """
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return None
+    cx = sqlite3.connect(path, timeout=15.0)
+    try:
+        tables = {r[0] for r in cx.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        if not tables:
+            return None
+        if "meta" not in tables:
+            return 0, set()
+        meta = dict(cx.execute("SELECT k, v FROM meta").fetchall())
+    finally:
+        cx.close()
+    try:
+        version = int(meta.get("schema") or 0)
+    except ValueError:
+        version = 0
+    return version, {k for k in REPAIRS if meta.get(k)}
+
+
+def needs_migration(state: Optional[Tuple[int, Set[str]]]) -> bool:
+    if state is None:
+        return False
+    version, done = state
+    return version != SCHEMA_VERSION or not set(REPAIRS) <= done
+
+
+def backup_database(path: str, tag: str, keep: int = BACKUP_KEEP) -> str:
+    """Copy the database (WAL included, via SQLite's backup API) to
+    <path>.<tag>-<UTC stamp>.bak and keep only the newest `keep` backups.
+    Raises OSError when the disk lacks room for the copy."""
+    size = os.path.getsize(path)
+    if os.path.exists(path + "-wal"):
+        size += os.path.getsize(path + "-wal")
+    free = shutil.disk_usage(os.path.dirname(os.path.abspath(path))).free
+    if free < size * 1.2 + 10 * 1024 * 1024:
+        raise OSError("not enough disk space for a backup (%d MB free)"
+                      % (free // (1024 * 1024)))
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    dst_path = "%s.%s-%s.bak" % (path, tag, stamp)
+    n = 1
+    while os.path.exists(dst_path):          # two migrations in one second
+        n += 1
+        dst_path = "%s.%s-%s-%d.bak" % (path, tag, stamp, n)
+    src = sqlite3.connect(path, timeout=15.0)
+    dst = sqlite3.connect(dst_path)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    old = sorted(glob.glob(glob.escape(path) + ".*.bak"),
+                 key=lambda f: (os.path.getmtime(f), f), reverse=True)
+    for f in old[max(1, keep):]:
+        try:
+            os.remove(f)
+        except OSError:
+            logger.warning("could not remove old backup %s", f)
+    return dst_path
+
+
 class SystemDB:
     """All writes are idempotent and commit-safe."""
 
     def __init__(self, path: str):
         self.path = path
+        self.backup_path: Optional[str] = None
+        try:
+            state = stored_state(path)
+        except sqlite3.Error:
+            logger.exception("could not read the database version")
+            state = (0, set())
+        if needs_migration(state):
+            # "your data": copy it before a schema change or repair touches it.
+            # The changes themselves only add tables and columns, so a failed
+            # backup is reported but does not stop the plugin.
+            try:
+                self.backup_path = backup_database(path, "schema%d" % state[0])
+                logger.info("database backup before migration: %s",
+                            os.path.basename(self.backup_path))
+            except Exception:
+                logger.exception("database backup before migration failed - "
+                                 "migrating without a backup")
         self.cx = sqlite3.connect(path, check_same_thread=False, timeout=15.0)
         self.cx.row_factory = sqlite3.Row
         self.cx.executescript(SCHEMA)
@@ -254,6 +378,8 @@ class SystemDB:
         self.cx.execute("INSERT OR REPLACE INTO meta(k,v) VALUES ('schema',?)",
                         (str(SCHEMA_VERSION),))
         self.cx.commit()
+        self.prune_external_calls()
+        self.prune_shells()
         self.sectors = SectorRegistry()
         self._load_sectors()
         # where the commander is, for MaterialCollected (which names no body)
@@ -263,6 +389,8 @@ class SystemDB:
         # journal event carries no position (ScanOrganic, MaterialCollected)
         self._pos: Optional[Dict[str, Any]] = None
         self._vehicle: Optional[str] = None     # SRV type of the last launch
+        self._refine_ts: Optional[str] = None    # same-second MiningRefined
+        self._refine_seq = 0
         self.marks_rev = 0                      # bumped on every new mark
 
     def _migrate(self) -> None:
@@ -412,6 +540,62 @@ class SystemDB:
     def set_meta(self, k: str, v: str) -> None:
         self.cx.execute("INSERT OR REPLACE INTO meta(k,v) VALUES (?,?)", (k, str(v)))
         self.cx.commit()
+
+    # ------------------------------------------------------ external calls
+    def log_external_calls(self, records: Iterable[Sequence[Any]]) -> int:
+        """Store netgate records (ts, service, endpoint, status, ok, ms)."""
+        rows = [(float(r[0]), str(r[1]), str(r[2]), int(r[3]), 1 if r[4] else 0,
+                 int(r[5])) for r in records]
+        if rows:
+            self.cx.executemany(
+                "INSERT INTO external_calls(ts, service, endpoint, status, ok, ms)"
+                " VALUES (?,?,?,?,?,?)", rows)
+            self.cx.commit()
+        return len(rows)
+
+    def external_calls_since(self, since: float,
+                             service: Optional[str] = None) -> int:
+        if service:
+            r = self.cx.execute("SELECT COUNT(*) FROM external_calls "
+                                "WHERE ts>=? AND service=?", (since, service))
+        else:
+            r = self.cx.execute("SELECT COUNT(*) FROM external_calls WHERE ts>=?",
+                                (since,))
+        return int(r.fetchone()[0])
+
+    def prune_external_calls(self, days: int = CALL_LOG_DAYS) -> int:
+        n = self.cx.execute("DELETE FROM external_calls WHERE ts<?",
+                            (time.time() - days * 86400.0,)).rowcount
+        self.cx.commit()
+        return n
+
+    # ------------------------------------------------------ fetched shells
+    def record_shell(self, service: str, center: Sequence[float], r_min: float,
+                     r_max: float, systems: int, ttl_s: float,
+                     now: Optional[float] = None) -> None:
+        now = time.time() if now is None else now
+        self.cx.execute(
+            "INSERT INTO fetched_shells(service, cx, cy, cz, r_min, r_max,"
+            " fetched_at, expires_at, systems) VALUES (?,?,?,?,?,?,?,?,?)",
+            (service, float(center[0]), float(center[1]), float(center[2]),
+             float(r_min), float(r_max), now, now + float(ttl_s), int(systems)))
+        self.cx.commit()
+
+    def valid_shells(self, service: str, now: Optional[float] = None
+                     ) -> List[Tuple[float, float, float, float, float]]:
+        """Regions (cx, cy, cz, r_min, r_max) the service delivered and that
+        are still valid."""
+        now = time.time() if now is None else now
+        return [(r[0], r[1], r[2], r[3], r[4]) for r in self.cx.execute(
+            "SELECT cx, cy, cz, r_min, r_max FROM fetched_shells"
+            " WHERE service=? AND expires_at>?", (service, now))]
+
+    def prune_shells(self, keep_days: int = 60) -> int:
+        """Forget shells that expired more than keep_days ago."""
+        n = self.cx.execute("DELETE FROM fetched_shells WHERE expires_at<?",
+                            (time.time() - keep_days * 86400.0,)).rowcount
+        self.cx.commit()
+        return n
 
     # ---------------------------------------------------------------- sectors
     def _load_sectors(self) -> None:
@@ -848,6 +1032,8 @@ class SystemDB:
                 self._mark(e, "material", self._here_body,
                            e.get("Name_Localised") or (e.get("Name") or "").capitalize(),
                            detail=e.get("Category"))
+        elif ev == "MiningRefined":
+            self._rig_refined(e)
         elif ev == "CodexEntry" and e.get("Latitude") is not None:
             body = (e.get("BodyName") or
                     self._body_name_of(e.get("SystemAddress"), e.get("BodyID")))
@@ -860,6 +1046,40 @@ class SystemDB:
         elif ev == "Screenshot" and e.get("Latitude") is not None:
             self._mark(e, "screenshot", e.get("Body"), e.get("Filename") or "",
                        lat=e.get("Latitude"), lon=e.get("Longitude"))
+
+    def _rig_refined(self, e: dict) -> None:
+        """
+        Surface mining: the Rhino collects a finished rig by driving over it,
+        and every tonne refined writes one MiningRefined - so where they are
+        written is where the rig stood. Placing a rig writes nothing at all.
+        Only in the SRV (the ship's refinery writes the same event when
+        mining asteroids). The position is the live Status.json fix or, when
+        replaying a journal, the stored surface track within 15 s.
+        """
+        stamp = e.get("timestamp")
+        t = _epoch(stamp)
+        p = self._fresh_pos(self._here_body, t) if self._here_body else None
+        if p and p.get("mode") == "srv":
+            sys_id, body, lat, lon = self._here_sys, p["body"], p["lat"], p["lon"]
+        elif t is not None:
+            r = self.cx.execute(
+                "SELECT sys_id64, body_name, lat, lon FROM surface_track WHERE mode='srv'"
+                " AND ts BETWEEN ? AND ? ORDER BY ABS(ts - ?) LIMIT 1",
+                (t - 15, t + 15, t)).fetchone()
+            if not r:
+                return
+            sys_id, body, lat, lon = r
+        else:
+            return
+        name = (e.get("Type_Localised") or
+                (e.get("Type") or "").strip("$;").replace("_name", "").capitalize() or "?")
+        # one tonne per event, sometimes two in the same second: the key
+        # holds the timestamp, so number the second one on
+        self._refine_seq = self._refine_seq + 1 if stamp == self._refine_ts else 0
+        self._refine_ts = stamp
+        label = name if not self._refine_seq else "%s#%d" % (name, self._refine_seq)
+        self._mark({"timestamp": stamp, "SystemAddress": sys_id}, "refined", body, label,
+                   detail="rig", lat=lat, lon=lon)
 
     def surface_bodies(self) -> List[sqlite3.Row]:
         """Bodies with marks or a track, most recent first."""
@@ -1936,3 +2156,76 @@ class SystemDB:
                     # thread can starve for seconds.
                     time.sleep(self.REPLAY_PAUSE)
         return res
+
+
+def _selftest() -> int:
+    """Backup before migration: new file no backup, current file no backup,
+    old schema or missing repair -> one backup, only the newest kept."""
+    import tempfile
+    fails = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal fails
+        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
+        fails += 0 if ok else 1
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "shboxsearch.sqlite")
+        baks = lambda: glob.glob(glob.escape(path) + ".*.bak")   # noqa: E731
+        db = SystemDB(path)
+        check(db.backup_path is None, "new database: no backup")
+        db.close()
+        db = SystemDB(path)
+        check(db.backup_path is None and not baks(), "current database: no backup")
+        db.cx.execute("UPDATE meta SET v='2' WHERE k='schema'")
+        db.cx.commit()
+        db.close()
+        db = SystemDB(path)
+        check(db.backup_path is not None and len(baks()) == 1,
+              "older schema: one backup")
+        old = sqlite3.connect(db.backup_path)
+        check(old.execute("SELECT v FROM meta WHERE k='schema'").fetchone()[0] == "2",
+              "backup holds the state before the migration")
+        old.close()
+        check(stored_state(path) == (SCHEMA_VERSION, set(REPAIRS)),
+              "migrated database is current")
+        db.cx.execute("DELETE FROM meta WHERE k='fix_n1zero'")
+        db.cx.commit()
+        db.close()
+        db = SystemDB(path)
+        check(db.backup_path is not None and "fix_n1zero" in stored_state(path)[1],
+              "pending repair: backup, then repair runs")
+        db.close()
+        for _ in range(4):
+            backup_database(path, "test")
+        check(len(baks()) == BACKUP_KEEP, "only the newest %d backups kept" % BACKUP_KEEP)
+        db = SystemDB(path)
+        now = time.time()
+        db.log_external_calls([(now - 40 * 86400, "edsm", "sphere", 200, True, 50),
+                               (now, "edsm", "sphere", 429, False, 30),
+                               (now, "spansh", "search", 200, True, 900)])
+        check(db.external_calls_since(now - 60) == 2
+              and db.external_calls_since(now - 60, "edsm") == 1,
+              "call log counts per service")
+        check(db.prune_external_calls() == 1 and db.external_calls_since(0) == 2,
+              "call log keeps %d days" % CALL_LOG_DAYS)
+        db.record_shell("edsm", (1, 2, 3), 0, 25, 40, 5 * 86400, now=now)
+        db.record_shell("edsm", (1, 2, 3), 25, 50, 90, 10, now=now - 86400)
+        db.record_shell("spansh", (1, 2, 3), 0, 25, 41, 9 * 86400, now=now)
+        check(db.valid_shells("edsm", now) == [(1.0, 2.0, 3.0, 0.0, 25.0)]
+              and len(db.valid_shells("spansh", now)) == 1,
+              "fetched shells: valid ones per service, expired ones not")
+        db.close()
+        legacy = os.path.join(d, "legacy.sqlite")
+        cx = sqlite3.connect(legacy)
+        cx.execute("CREATE TABLE systems (name TEXT)")
+        cx.commit()
+        cx.close()
+        check(stored_state(legacy) == (0, set()), "database without meta = schema 0")
+    print("failures: %d" % fails)
+    return fails
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.WARNING)
+    raise SystemExit(1 if _selftest() else 0)

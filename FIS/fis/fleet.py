@@ -36,7 +36,12 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "CarrierDepositFuel", "CarrierBankTransfer", "CarrierFinance", "CarrierCrewServices",
           "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
           "SAAScanComplete", "SellOrganicData",
+          # unsold data at risk (M4)
+          "ScanOrganic", "FSSDiscoveryScan", "MultiSellExplorationData", "SellExplorationData",
+          "Resurrect",
           "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked",
+          # surface vehicles: ground mining with the Rhino (M2)
+          "LaunchSRV", "DockSRV", "LaunchVessel", "DockVessel",
           "Statistics", "Rank", "Progress", "Reputation", "MarketSell", "CargoTransfer",
           # raw materials (jumponium)
           "Materials", "MaterialCollected", "MaterialDiscarded", "Synthesis", "EngineerCraft",
@@ -247,12 +252,20 @@ def _clamp(v: float) -> int:
     return int(max(0, min(5, round(v))))
 
 
-def rate_loadout(lo: Dict[str, Any]) -> Dict[str, Any]:
+def rate_loadout(lo: Dict[str, Any], vehicles: Optional[Iterable[str]] = None) -> Dict[str, Any]:
     """
     Role ratings 0-5 from a fitting, each with the facts it rests on. A rule of
     thumb for a quick look at the hangar, not a simulation: weapons by mount
     size, shield by size and class, cargo and jump range in steps.
+
+    M3: `vehicles` = surface vehicles launched from this ship so far ("SRV
+    Rhino", "SRV Scarab", "Nomad" - the fitting only says "hangar", the
+    journal's LaunchSRV says which). Exploration counts exobiology: without
+    any vehicle hangar at most 4, the Nomad hangar adds one step. Mining
+    counts ground mining: a hangar from which the Rhino was launched rates
+    at least 2 even without mining tools.
     """
+    vehicles = set(vehicles or ())
     mods = lo.get("Modules") or []
     items = [(m.get("Slot") or "", (m.get("Item") or "").lower()) for m in mods]
     weapons = [(s, i) for s, i in items if "Hardpoint" in s and not s.startswith("Tiny")
@@ -286,6 +299,15 @@ def rate_loadout(lo: Dict[str, Any]) -> Dict[str, Any]:
                                  4 if cargo < 500 else 5)
     expl = 0 if jump < 15 else (1 if jump < 25 else 2 if jump < 35 else 3 if jump < 45 else
                                 4 if jump < 60 else 5)
+    nomad_bay = has("int_mkiilargebuggybay")      # the flying Nomad needs its own bay
+    srv_bay = has("int_buggybay") or nomad_bay
+    if nomad_bay:
+        expl = min(5, expl + 1) if expl >= 2 else expl
+    elif not srv_bay:
+        expl = min(expl, 4)
+    rhino = srv_bay and any("rhino" in v.lower() for v in vehicles)
+    if rhino:
+        mine = max(mine, 2.0)
     if not has("int_fuelscoop"):
         expl = min(expl, 1)
     if not has("int_detailedsurfacescanner"):
@@ -312,10 +334,13 @@ def rate_loadout(lo: Dict[str, Any]) -> Dict[str, Any]:
         "combat": "%d weapons%s%s%s" % (len(weapons), (", " + module_name(shield)) if shield else ", no shield",
                                         (", %d boosters" % boosters) if boosters else "",
                                         (", %d HRP" % hrp) if hrp else ""),
-        "mining": ", ".join(sorted({module_name(i) for i in mining})) or "no mining tools",
+        "mining": ", ".join(sorted({module_name(i) for i in mining}
+                                   | ({"ground mining (SRV Rhino)"} if rhino else set()))) or "no mining tools",
         "transport": "%d t cargo" % cargo,
-        "exploration": "%.1f ly%s%s" % (jump, "" if has("int_fuelscoop") else ", no scoop",
-                                        ", DSS" if has("int_detailedsurfacescanner") else ", no DSS"),
+        "exploration": "%.1f ly%s%s%s" % (jump, "" if has("int_fuelscoop") else ", no scoop",
+                                          ", DSS" if has("int_detailedsurfacescanner") else ", no DSS",
+                                          ", Nomad hangar" if nomad_bay else ", SRV hangar" if srv_bay
+                                          else ", no vehicle hangar"),
         "passengers": "%d cabins" % cabins if cabins else "no cabins",
         "sar": ", ".join(x for x in (
             "rescue limpets" if mlc else ("repair limpets" if repair else ""),
@@ -519,8 +544,20 @@ class Archive:
                 continue
             entry(sid)["type"] = (lo.get("Ship") or "").lower()
             fits[sid] = lo
+        # M3: which surface vehicles each ship has launched (LaunchSRV says
+        # the type; the fitting only knows a hangar)
+        vehicles: Dict[int, set] = {}
+        cur_sid: Optional[int] = None
+        for e in evs:
+            if e["event"] == "Loadout" and e.get("ShipID") is not None:
+                cur_sid = int(e["ShipID"])
+            elif e["event"] in ("LaunchSRV", "LaunchVessel") and cur_sid is not None:
+                vehicles.setdefault(cur_sid, set()).add(
+                    e.get("SRVType_Localised") or e.get("VesselType_Localised")
+                    or e.get("SRVType") or e.get("VesselType") or "SRV")
         for sid, lo in fits.items():
             it = ships[sid]
+            it["vehicles"] = sorted(vehicles.get(sid, ()))
             it["name"] = it.get("name") or lo.get("ShipName")
             it["ident"] = lo.get("ShipIdent")
             it["loadout_ts"] = lo.get("timestamp")
@@ -529,7 +566,7 @@ class Archive:
             it["value"] = it.get("value") or ((lo.get("HullValue") or 0) + (lo.get("ModulesValue") or 0)) or None
             it["jump"] = lo.get("MaxJumpRange")
             it["cargo"] = lo.get("CargoCapacity")
-            it["rating"] = rate_loadout(lo)
+            it["rating"] = rate_loadout(lo, it["vehicles"])
             it["modules"] = len([m for m in lo.get("Modules") or [] if slot_group(m.get("Slot")) != "cosmetic"])
         if current is not None and current in ships:
             ships[current]["current"] = True

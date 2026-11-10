@@ -12,6 +12,10 @@ Ordered by priority (lower = preferred):
   20  Spansh       daily galaxy dump index, usually more complete than EDSM
   30  EDSM         sphere API, 100 ly radius cap, leaky-bucket rate limit
 
+EDSM and Spansh are asked only through netgate.Gateway: one request at a
+time, paced, Retry-After and rate-limit headers followed, honest User-Agent,
+every attempt recorded.
+
 Important: NONE of these knows about undiscovered systems. They only hold
 what the community has uploaded. The undiscovered part comes from
 boxelplan.py plus the in-game galaxy map.
@@ -24,19 +28,18 @@ import logging
 import math
 import os
 import sqlite3
+import time
+from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-logger = logging.getLogger(__name__)
+from netgate import Gateway
+from shells import edsm_queries, in_shell
 
-try:
-    import requests
-except ImportError:  # pragma: no cover
-    requests = None  # type: ignore
+logger = logging.getLogger(__name__)
 
 EDSM_SPHERE = "https://www.edsm.net/api-v1/sphere-systems"
 EDSM_CUBE = "https://www.edsm.net/api-v1/cube-systems"
 SPANSH_SEARCH = "https://spansh.co.uk/api/systems/search"
-USER_AGENT = "SHBOXSEARCH/4.3 (EDMC plugin)"
 
 ProgressCB = Optional[Callable[[str], None]]
 
@@ -48,12 +51,19 @@ def _dist(a: Sequence[float], b: Sequence[float]) -> float:
 class Source:
     name = "?"
     priority = 99
+    # did the last fetch deliver the whole region? Only then is the shell
+    # remembered as fetched (local-first: shells.py)
+    last_ok = False
+    # True when the answer was cut at a page cap (still remembered: asking
+    # again would only hit the same cap)
+    truncated = False
 
     def available(self) -> Tuple[bool, str]:
         return False, "not implemented"
 
     def fetch(self, center: Sequence[float], radius: float,
-              progress: ProgressCB = None) -> List[Dict]:
+              progress: ProgressCB = None, r_min: float = 0.0) -> List[Dict]:
+        """Systems with r_min <= distance from center <= radius."""
         return []
 
 
@@ -67,14 +77,12 @@ class EDSMSource(Source):
     MAX_SPHERE = 100.0     # API limit
     MAX_CUBE = 200.0       # API limit (edge length)
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, gateway: Gateway, timeout: int = 30):
+        self.gw = gateway
         self.timeout = timeout
-        self.s = requests.Session() if requests else None
-        if self.s:
-            self.s.headers.update({"User-Agent": USER_AGENT, "Accept": "application/json"})
 
     def available(self) -> Tuple[bool, str]:
-        return (True, "ready") if self.s else (False, "requests module missing")
+        return self.gw.status("edsm")
 
     def _parse(self, data, out: Dict[str, Dict]) -> None:
         if isinstance(data, dict):
@@ -88,39 +96,39 @@ class EDSMSource(Source):
             out[s["name"]] = {"name": s["name"], "x": float(c["x"]), "y": float(c["y"]),
                               "z": float(c["z"]), "id64": s.get("id64")}
 
-    def fetch(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
-        if not self.s:
-            return []
+    def fetch(self, center, radius, progress: ProgressCB = None,
+              r_min: float = 0.0) -> List[Dict]:
+        """One request (minRadius/radius) for a shell up to 100 ly; beyond,
+        100 ly spheres that cover the shell (shells.edsm_queries). Every
+        answer is cut back to the shell, so EDSM and Spansh deliver the
+        same space."""
+        self.last_ok = False
         out: Dict[str, Dict] = {}
-        if radius <= self.MAX_SPHERE:
-            calls = [(center, radius)]
-        else:
-            # cover the sphere with 100 ly sub-spheres on a 100 ly grid
-            step = self.MAX_SPHERE
-            calls = []
-            n = int(math.ceil(radius / step))
-            for i in range(-n, n + 1):
-                for j in range(-n, n + 1):
-                    for k in range(-n, n + 1):
-                        c = (center[0] + i * step, center[1] + j * step,
-                             center[2] + k * step)
-                        if _dist(c, center) <= radius + step * 0.87:
-                            calls.append((c, step))
-        for idx, (c, r) in enumerate(calls, 1):
+        calls = edsm_queries(center, r_min, radius)
+        complete = True
+        for idx, (c, qmin, qmax) in enumerate(calls, 1):
             if progress:
                 progress("EDSM %d/%d" % (idx, len(calls)))
+            params = {"x": round(c[0], 2), "y": round(c[1], 2), "z": round(c[2], 2),
+                      "radius": round(qmax, 1), "showCoordinates": 1, "showId": 1}
+            if qmin > 0:
+                params["minRadius"] = round(qmin, 1)
+            resp = self.gw.request("edsm", "GET", EDSM_SPHERE, "sphere-systems",
+                                   timeout=self.timeout, params=params,
+                                   headers={"Accept": "application/json"})
+            if resp is None:
+                # offline, resting or no network: stop asking EDSM for now
+                complete = False
+                break
             try:
-                resp = self.s.get(EDSM_SPHERE, timeout=self.timeout, params={
-                    "x": c[0], "y": c[1], "z": c[2], "radius": r, "showCoordinates": 1,
-                    "showId": 1})
-                if resp.status_code == 429:
-                    logger.warning("EDSM rate limit hit, aborting")
-                    break
                 resp.raise_for_status()
                 self._parse(resp.json(), out)
             except Exception as e:
+                complete = False
                 logger.warning("EDSM query failed: %s", e)
-        return [v for v in out.values() if _dist((v["x"], v["y"], v["z"]), center) <= radius]
+        self.last_ok = complete
+        return [v for v in out.values()
+                if in_shell((v["x"], v["y"], v["z"]), center, r_min, radius)]
 
 
 # ---------------------------------------------------------------------------
@@ -131,34 +139,41 @@ class SpanshSource(Source):
     name = "Spansh"
     priority = 20
     PAGE = 500
+    MAX_PAGES = 20         # per shell: 10 000 systems, far more than a 25 ly
+                           # shell holds outside the core (fair use)
 
-    def __init__(self, timeout: int = 40):
+    def __init__(self, gateway: Gateway, timeout: int = 40):
+        self.gw = gateway
         self.timeout = timeout
-        self.s = requests.Session() if requests else None
-        if self.s:
-            self.s.headers.update({"User-Agent": USER_AGENT,
-                                   "Content-Type": "application/json",
-                                   "Accept": "application/json"})
 
     def available(self) -> Tuple[bool, str]:
-        return (True, "ready (index up to 48 h old)") if self.s else (False, "requests module missing")
+        ok, why = self.gw.status("spansh")
+        return ok, (why + ", index up to 48 h old") if ok else why
 
-    def fetch(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
-        if not self.s:
-            return []
+    def fetch(self, center, radius, progress: ProgressCB = None,
+              r_min: float = 0.0) -> List[Dict]:
+        self.last_ok = False
+        self.truncated = False
         out: Dict[str, Dict] = {}
         page = 0
+        complete = False
         while True:
             body = {
-                "filters": {"distance": {"min": "0", "max": str(radius)}},
+                "filters": {"distance": {"min": str(r_min), "max": str(radius)}},
                 "sort": [{"distance": {"direction": "asc"}}],
                 "size": self.PAGE, "page": page,
                 "reference_coords": {"x": center[0], "y": center[1], "z": center[2]},
             }
             if progress:
                 progress("Spansh page %d" % (page + 1))
+            r = self.gw.request("spansh", "POST", SPANSH_SEARCH, "systems/search",
+                                data=json.dumps(body), timeout=self.timeout,
+                                headers={"Content-Type": "application/json",
+                                         "Accept": "application/json"})
+            if r is None:
+                # offline, resting or no network: stop asking Spansh for now
+                break
             try:
-                r = self.s.post(SPANSH_SEARCH, data=json.dumps(body), timeout=self.timeout)
                 r.raise_for_status()
                 data = r.json()
             except Exception as e:
@@ -166,6 +181,7 @@ class SpanshSource(Source):
                 break
             results = data.get("results") or data.get("systems") or []
             if not results:
+                complete = True
                 break
             for s in results:
                 nm = s.get("name")
@@ -174,11 +190,19 @@ class SpanshSource(Source):
                 out[nm] = {"name": nm, "x": float(s["x"]), "y": float(s["y"]),
                            "z": float(s["z"]), "id64": s.get("id64") or s.get("id")}
             if len(results) < self.PAGE:
+                complete = True
                 break
             page += 1
-            if page > 400:      # safety net
+            if page >= self.MAX_PAGES:
+                logger.warning("Spansh: shell %.0f-%.0f ly cut at %d systems "
+                               "(%d pages) - fair use cap", r_min, radius,
+                               len(out), page)
+                self.truncated = True
+                complete = True        # remembered: asking again hits the cap too
                 break
-        return list(out.values())
+        self.last_ok = complete
+        return [v for v in out.values()
+                if in_shell((v["x"], v["y"], v["z"]), center, r_min, radius)]
 
 
 # ---------------------------------------------------------------------------
@@ -213,12 +237,18 @@ class EDDiscoverySource(Source):
     #   bit 61 set (0x2000...)  standard name:
     #       n2 bits 0-15, n1 bits 16-23, mass code bits 24-27,
     #       L3 bits 28-32, L2 bits 33-37, L1 bits 38-42 (letters 1-based)
-    #   bit 60 set (0x1000...)  catalogue number ("HD 43743") - not decoded
-    #   otherwise               id into Names
+    #   bit 60 set (0x1000...)  catalogue number ("HIP 31330", "EXO 1846-031"):
+    #       value bits 0-37, digit count bits 42-45, dash position bits
+    #       38-41 (0 = none, 1 = before the first digit ...) - as in
+    #       EDDiscovery's EliteNameClassifier.cs
+    #   otherwise               id into Names; the sector ("TYC", "2MASS") is
+    #       the prefix unless it is "NoSectorName" (Sol, "15 Sagittarii")
     # edsmid is NOT a SystemAddress; the old generic path mistook it for one,
     # which is why this source returned nothing usable before 4.1.
     STD_MARKER = 1 << 61
     NUM_MARKER = 1 << 60
+    NUM_MASK = (1 << 38) - 1
+    NO_SECTOR = "NoSectorName"
 
     def __init__(self, path: Optional[str] = None):
         self.path = path or self._autodetect()
@@ -401,9 +431,78 @@ class EDDiscoverySource(Source):
             return self.calibrate(self.ref_coords, self.ref_id64)
         return True, self.reason
 
+    FRESH_DAYS = 2.0       # EDD this new counts as "current" (user, 10.11.)
+
+    def freshness(self) -> Tuple[Optional[str], Optional[float]]:
+        """(data source, Unix time of its last system update) from EDD's
+        Register table - e.g. ("SPANSH", 1762725599.0). (None, None) when
+        unknown or the file is busy."""
+        cx = self._connect()
+        if cx is None:
+            return None, None
+        try:
+            reg = {r[0]: r for r in cx.execute("SELECT * FROM Register").fetchall()}
+        except sqlite3.Error:
+            return None, None
+        finally:
+            cx.close()
+
+        def text(key: str) -> Optional[str]:
+            row = reg.get(key)
+            if not row:
+                return None
+            for v in tuple(row)[1:]:
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+            return None
+
+        src = text("DBSource")
+        stamp = text("EDSMLastSystems")
+        ts = None
+        if stamp:
+            for fmt in ("%m/%d/%Y %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%fZ",
+                        "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    ts = datetime.strptime(stamp, fmt).replace(
+                        tzinfo=timezone.utc).timestamp()
+                    break
+                except ValueError:
+                    continue
+        return (src.upper() if src else None), ts
+
+    def is_current(self, source: str, now: Optional[float] = None) -> bool:
+        """Does EDD hold the given service's data, updated within FRESH_DAYS?
+        Then that service need not be asked for the same systems again."""
+        src, ts = self.freshness()
+        now = time.time() if now is None else now
+        return bool(src == source.upper() and ts
+                    and 0 <= now - ts <= self.FRESH_DAYS * 86400.0)
+
+    @classmethod
+    def with_sector(cls, sector: Optional[str], rest: str) -> str:
+        if sector and sector != cls.NO_SECTOR:
+            return "%s %s" % (sector, rest)
+        return rest
+
+    @classmethod
+    def decode_numeric(cls, nameid: int, sector: Optional[str]) -> Optional[str]:
+        """Catalogue name ("HIP 31330", "EXO 1846-031") from a bit-60 nameid."""
+        if nameid is None or not (nameid & cls.NUM_MARKER) or nameid & cls.STD_MARKER:
+            return None
+        digits = (nameid >> 42) & 0xF
+        dash = (nameid >> 38) & 0xF
+        num = str(nameid & cls.NUM_MASK).zfill(digits)
+        if dash > 0:
+            num = num[:dash - 1] + "-" + num[dash - 1:]
+        return cls.with_sector(sector, num)
+
     @classmethod
     def decode_nameid(cls, nameid: int, sector: Optional[str]) -> Optional[str]:
-        """Rebuild a procgen name from EDD's packed nameid, or None."""
+        """Rebuild a procgen or catalogue name from EDD's packed nameid, or
+        None (then it is an id into Names)."""
+        if nameid is not None and nameid & cls.NUM_MARKER \
+                and not nameid & cls.STD_MARKER:
+            return cls.decode_numeric(nameid, sector)
         if not sector or nameid is None or not (nameid & cls.STD_MARKER):
             return None
         v = nameid & ~cls.STD_MARKER
@@ -449,7 +548,7 @@ class EDDiscoverySource(Source):
                     and nameid is not None and not (nameid & (self.STD_MARKER
                                                               | self.NUM_MARKER)):
                 n = cx.execute("SELECT Name FROM Names WHERE id=?", (nameid,)).fetchone()
-                name = n[0] if n else None
+                name = self.with_sector(sectors.get(r[3]), n[0]) if n else None
             if not name:
                 skipped += 1
                 continue
@@ -458,7 +557,16 @@ class EDDiscoverySource(Source):
             logger.info("EDD: %d systems without a decodable name skipped", skipped)
         return out
 
-    def fetch(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
+    def fetch(self, center, radius, progress: ProgressCB = None,
+              r_min: float = 0.0) -> List[Dict]:
+        rows = self._fetch_ball(center, radius, progress)
+        self.last_ok = bool(self.table)
+        if r_min > 0:
+            rows = [r for r in rows
+                    if in_shell((r["x"], r["y"], r["z"]), center, r_min, radius)]
+        return rows
+
+    def _fetch_ball(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
         cx = self._connect()
         if cx is None or not self.table:
             return []
@@ -503,11 +611,15 @@ class EDDiscoverySource(Source):
 # ---------------------------------------------------------------------------
 
 class SourceManager:
-    def __init__(self, edd_path: Optional[str] = None):
+    def __init__(self, edd_path: Optional[str] = None,
+                 gateway: Optional[Gateway] = None):
+        # one gateway for the whole plugin: pass it in so that pacing and
+        # rests survive a rebuilt SourceManager (preferences changed)
+        self.gateway = gateway or Gateway()
         self.sources: Dict[str, Source] = {
             "edd": EDDiscoverySource(edd_path),
-            "spansh": SpanshSource(),
-            "edsm": EDSMSource(),
+            "spansh": SpanshSource(self.gateway),
+            "edsm": EDSMSource(self.gateway),
         }
 
     def set_reference(self, id64: Optional[int],
@@ -524,8 +636,13 @@ class SourceManager:
         return out
 
     def fetch_all(self, center, radius, enabled: Sequence[str],
-                  progress: ProgressCB = None) -> Tuple[List[Dict], List[str]]:
-        """Query every enabled source and merge the results."""
+                  progress: ProgressCB = None,
+                  r_min: float = 0.0) -> Tuple[List[Dict], List[str]]:
+        """Query every enabled source for the shell r_min..radius and merge
+        the results. Afterwards last_ok[key] says whether a source delivered
+        the whole shell, last_count[key] how many systems it had."""
+        self.last_ok: Dict[str, bool] = {}
+        self.last_count: Dict[str, int] = {}
         merged: Dict[str, Dict] = {}
         by_id: Dict[int, Dict] = {}
         used: List[str] = []
@@ -534,14 +651,17 @@ class SourceManager:
             src = self.sources.get(key)
             if src is None:
                 continue
+            self.last_ok[key] = False
             ok, _ = src.available()
             if not ok:
                 continue
             try:
-                rows = src.fetch(center, radius, progress)
+                rows = src.fetch(center, radius, progress, r_min=r_min)
             except Exception as e:
                 logger.warning("%s: %s", src.name, e)
                 continue
+            self.last_ok[key] = bool(src.last_ok)
+            self.last_count[key] = len(rows)
             used.append("%s (%d)" % (src.name, len(rows)))
             logger.info("source %s returned %d rows", src.name, len(rows))
             for r in rows:
@@ -561,3 +681,55 @@ class SourceManager:
             if i not in known_ids:
                 merged["#%d" % i] = r
         return list(merged.values()), used
+
+
+def _selftest() -> int:
+    """python sources.py - EDD name decoding, no files, no network."""
+    fails = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal fails
+        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
+        fails += 0 if ok else 1
+
+    E = EDDiscoverySource
+    cases = [
+        (0x1000140000007a62, "HIP", "HIP 31330"),        # values from EDDSystem.sqlite
+        (0x1000100000000956, "HR", "HR 2390"),
+        ((1 << 60) | (7 << 42) | (5 << 38) | 1846031, "EXO", "EXO 1846-031"),
+        ((1 << 60) | (6 << 42) | 4321, "HD", "HD 004321"),
+    ]
+    for nid, sec, want in cases:
+        got = E.decode_nameid(nid, sec)
+        check(got == want, "catalogue name %s (got %s)" % (want, got))
+    std = (1 << 61) | (19 << 38) | (8 << 33) | (10 << 28) | (1 << 24) | 1
+    check(E.decode_nameid(std, "Synuefe") == "Synuefe SH-J b1",
+          "procgen name still decoded")
+    check(E.decode_nameid(12345, "TYC") is None, "Names id is left to the Names table")
+    check(E.with_sector("TYC", "3996-1327-1") == "TYC 3996-1327-1"
+          and E.with_sector(E.NO_SECTOR, "15 Sagittarii") == "15 Sagittarii",
+          "Names entries get their sector, except NoSectorName")
+    # EDD freshness from its Register table (layout as in EDDSystem.sqlite)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "EDDSystem.sqlite")
+        cx = sqlite3.connect(path)
+        cx.execute("CREATE TABLE Register (ID TEXT PRIMARY KEY, ValueInt INTEGER,"
+                   " ValueDouble DOUBLE, ValueString TEXT, ValueBlob BLOB)")
+        cx.execute("INSERT INTO Register VALUES ('DBSource', NULL, NULL, 'SPANSH', NULL)")
+        cx.execute("INSERT INTO Register VALUES ('EDSMLastSystems', NULL, NULL,"
+                   " '11/09/2026 21:59:59', NULL)")
+        cx.commit()
+        cx.close()
+        e = EDDiscoverySource(path)
+        src, ts = e.freshness()
+        check(src == "SPANSH" and ts == 1794261599.0, "EDD source and last update read")
+        check(e.is_current("spansh", now=ts + 86400) and not e.is_current("edsm", now=ts + 86400),
+              "EDD one day old holds Spansh's data, not EDSM's")
+        check(not e.is_current("spansh", now=ts + 3 * 86400), "three days old: not current")
+    print("failures: %d" % fails)
+    return fails
+
+
+if __name__ == "__main__":
+    raise SystemExit(1 if _selftest() else 0)

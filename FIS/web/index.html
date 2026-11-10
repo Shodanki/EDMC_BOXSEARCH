@@ -13,12 +13,13 @@
 <meta name="description" content="SHBOX FIS – flight information system. Reads game files only, no AI at runtime.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 5 5 2h9v9l-3 3H2z' fill='none' stroke='%233EF2E0' stroke-width='1.5'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/css/fis.css">
-<!-- Three.js is loaded by the browser from the CDN at runtime; without
-     internet the tactical view falls back to a 2D canvas. -->
+<!-- Three.js 0.170.0 (MIT) ships with the FIS in /vendor/three (see
+     SOURCE.md there) - no CDN, works without internet. If the module
+     cannot load, the 3D views fall back to a 2D canvas. -->
 <script type="importmap">
 { "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    "three": "/vendor/three/three.module.js",
+    "three/addons/": "/vendor/three/addons/"
 } }
 </script>
 </head>

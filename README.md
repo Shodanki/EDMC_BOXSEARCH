@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.5
+# SHBOXSEARCH v4.6
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -12,9 +12,13 @@ Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
 **SHBOX FIS** (since 4.4), a flight information system for a second screen,
 tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
-folder of this plugin. See [FIS/README.md](FIS/README.md).
-**New in 4.5:** a mining block in the cockpit overlay, your carrier's hold
-from Frontier's data, and many FIS views - see "What changed in 4.5".
+folder of this plugin. See [FIS/README.md](FIS/README.md) - with
+screenshots (demo data).
+**New in 4.6:** local first - EDSM and Spansh are asked in shells, only when
+the plan needs them, with a daily cap and an offline switch; EDDiscovery
+replaces Spansh when it is current. In the FIS: Rhino rigs and hold, the ship
+waiting at the Rhino's drop point, open bio signals, data at risk, on foot,
+a QR code for the tablet and an OBS mode - see "What changed in 4.6".
 
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
 > all. On the first start 4.1 repairs boxel records written under a wrong
@@ -70,6 +74,11 @@ The database migrates itself: new columns are added in place, nothing is
 dropped. When an update adds new per-body data, the plugin replays your
 journals once on its own (4.1 does); *Preferences -> SHBOXSEARCH -> Replay
 journals* repeats that at any time and is safe to run as often as you like.
+Since 4.6 the plugin copies the database to `shboxsearch.sqlite.schema<N>-<time>.bak`
+before it changes the schema or repairs records (the last three are kept).
+
+SHBOX FIS keeps running when EDMC is closed: after an update close its
+window (or end `python -m fis`) so it starts with the new files.
 
 
 ## Files
@@ -79,11 +88,13 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4205 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 1938 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `load.py` | 4512 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 2192 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 795 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
-| `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
-| `sources.py` | 563 | External data: EDDiscovery, Spansh, EDSM | — |
+| `boxelplan.py` | 772 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
+| `sources.py` | 735 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
+| `netgate.py` | 469 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
+| `shells.py` | 224 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
 | `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
 | `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
@@ -314,9 +325,55 @@ uploaded them. One action, a large haul.
 
 | Source | Priority | Notes |
 |---|---|---|
-| **EDDiscovery** (`EDDSystem.sqlite`) | 10 | local, no rate limit, very complete. Found automatically under `%LOCALAPPDATA%\EDDiscovery`. The current EDD layout (`SystemTable` + `Sectors` + `Names`, names packed into `nameid`) is decoded directly; older layouts fall back to runtime detection. The coordinate scale is verified against the system you are in; the status line reports `verified` or `unverified`. EDD only needs to have been run once with its system database downloaded; it may be running at the same time. |
+| **EDDiscovery** (`EDDSystem.sqlite`) | 10 | local, no rate limit, very complete. Found automatically under `%LOCALAPPDATA%\EDDiscovery`. The current EDD layout (`SystemTable` + `Sectors` + `Names`, names packed into `nameid`, catalogue names such as `HIP 31330` included) is decoded directly; older layouts fall back to runtime detection. The coordinate scale is verified against the system you are in; the status line reports `verified` or `unverified`. EDD only needs to have been run once with its system database downloaded; it may be running at the same time. |
 | **Spansh** | 20 | `POST /api/systems/search`, paged at 500. Index is rebuilt daily from the galaxy dump → up to 48 h behind. |
-| **EDSM** | 30 | `sphere-systems`, 100 ly radius cap. Larger radii are split into 100 ly sub-spheres. Leaky-bucket rate limit; HTTP 429 aborts cleanly. |
+| **EDSM** | 30 | `sphere-systems` with `minRadius`/`radius`, 100 ly cap. Shells beyond 100 ly are covered by a few 100 ly spheres and cut back to the shell. Leaky-bucket rate limit, followed through its headers. |
+
+**Fair use.** EDSM and Spansh are community services under heavy load; the
+plugin asks them as gently as it can.
+
+*Local first, in shells.* When you start a survey, the EDDiscovery file
+(local, no network) is read for the whole sphere. EDSM and Spansh are asked
+in shells around the centre, nearest first - 0-25, 25-50, 50-75, 75-100 ly
+and so on - and both get exactly the same shell. The next shell is only
+fetched when it is needed: when you come within 10 ly of the edge of what
+has been fetched, or when nothing is left to fly to inside it. The planner
+plans only inside the fetched shells, so it never sends you to a system the
+next shell would show as known (the statistics window says how far the
+online data reaches). A fetched shell is remembered per service for 5 to 14
+days, the exact time drawn at random so that many installations do not ask
+again at the same moment; a shell lying 90 % inside remembered ones - also
+from an earlier survey nearby - is not asked again. Restarting EDMC asks
+nothing. *reload online data* in the statistics window asks again on
+purpose, paced like everything else. With both online sources switched off
+or unreachable, the plan uses the local data for the whole sphere.
+
+*EDDiscovery first.* EDDiscovery's system database is a copy of Spansh's
+galaxy dump. When it was updated within the last two days, Spansh is not
+asked at all - the same systems are read from the local file instead, shell
+by shell; EDSM is still asked, because not everyone reports to every
+network. Tip: open EDDiscovery once before you start a survey (it fetches
+the latest changes), then close it - while it runs, its file can be locked.
+The plugin notices a locked file and reads it again later.
+
+*Limits.* At most 50 requests per service and UTC day (a 50 ly survey needs
+about five), at most 20 Spansh pages (10 000 systems) per shell. The
+statistics window shows *external today: EDSM n of 50 · Spansh n of 50*.
+*offline* in the plugin's settings sends nothing at all - not even the
+update check.
+
+*One polite gateway.* Every request goes through `netgate.py`:
+
+* one request at a time, never in parallel, with a pause between two requests
+  to the same service (EDSM 2 s, Spansh 1 s);
+* EDSM's rate-limit headers are followed - when few requests are left before
+  its reset, the pauses grow; at zero, EDSM is left alone until the reset;
+* HTTP 429/503: the wait from `Retry-After` (or 5 s, 10 s), at most three
+  tries; then the service is left alone until EDMC restarts. A wait longer
+  than two minutes is not slept through - the service rests until then;
+* the User-Agent names the plugin version and this repository;
+* every request is logged with time, status and duration in the database
+  (table `external_calls`, kept 30 days) and summed up in the EDMC log.
 
 Deliberately **not** used:
 
@@ -349,6 +406,11 @@ automatically clears any stale negative-cache entry for that name.
 Everything lives in `shboxsearch.sqlite` in the plugin folder (WAL mode). The
 legacy `neareststars.json` and `survey_state.json` are **read only** during
 import and left untouched.
+
+Before an update changes the database layout or repairs stored data, the
+plugin first copies the database to `shboxsearch.sqlite.schema<N>-<time>.bak`
+in the same folder (the newest three copies are kept). To go back, close EDMC
+and rename a copy to `shboxsearch.sqlite`.
 
 When EDMC is logged in to Frontier, it fetches your fleet carrier from the
 Companion API (at most every 15 minutes) and hands it to plugins. The plugin
@@ -703,11 +765,14 @@ distance     4.2 ly   uncertainty +-9 ly
 this boxel   1 candidate   odds void
 queue        973 probes (gap 0, probe 2, empty 971)
 
-[copy prefix] [not there] [boxel done] [later]
+[copy prefix] [copy bundle] [not there] [boxel done] [later]
 [replan] [copy FC] [carrier spot] [x] carrier start
 ```
 
 Clicking **Fly** or **Probe** in the main panel copies that name.
+**copy bundle** copies one prefix for several of the next probe boxels when
+they share sector, letters and mass code - `Synuefe VA-I b` lists b2, b3 and
+b17 (and the other b boxels of VA-I) in one galaxy-map search.
 
 ## 10. Preferences
 
@@ -1366,6 +1431,7 @@ tag, so the two have to be set together or the notice lies.
 | 4.4.0 | surface track and finds on bodies, exobiology sample distance in the overlay, SHBOX FIS |
 | 4.5.0 | mining block in the overlay, carrier hold from Frontier's Companion API, FIS: galaxy 3D, mining, statistics |
 | 4.5.1 | fixes: FIS keeps following a journal the game rewrote, live-link watchdog; mining block only from a prospector in a mining ship |
+| 4.6.0 | local first: online sources in shells when needed, daily cap, offline switch, EDDiscovery first; FIS: Rhino rigs and hold, open bio signals, data at risk, on foot, QR code, OBS mode |
 
 
 ---
@@ -1629,7 +1695,11 @@ Gypseeum Brain Tree         903 m  < 13
 ```
 
 * **the parked SRV** - where you left it on foot, until you get back in
-* **the parked ship** - where it touched down, until it lifts off or is sent away
+* **the parked ship** - where it touched down, until it lifts off or is sent away.
+  The Rhino is dropped by a ship hovering just above the ground, without a
+  touchdown; the ship waits at the drop point, shown as *SHIP (hover)* -
+  last known, since sending a hovering ship away writes nothing. The Nomad
+  gives no such point: the ship flies along at some 2-3 km.
 * **species not finished yet**, with the samples taken (a new Log restarts the
   count, as in the game)
 * **earlier finds on this body** - codex entries, settlements, screenshots;
@@ -1637,6 +1707,18 @@ Gypseeum Brain Tree         903 m  < 13
 * genera the detailed surface scan named that you have not started yet
 
 Switch it off under "surface compass" in the settings.
+
+*Rhino mining rigs.* Placing a rig writes nothing to the journal; collecting
+it - driving over the folded rig - writes one MiningRefined per tonne. Where
+those are written is where the rig stood, so the FIS PLANET view shows the
+collected rigs numbered per Rhino launch (*Rig 1 · 11 t Deuterium*). Tonnes
+more than 8 s or 25 m apart count as another rig. Journals from before this
+version are read once more after the update, so earlier rigs appear too.
+
+*Rhino hold.* Out in the Rhino, PLANET and MINING show its hold (72 t) and how
+many full rigs (12 t each) still fit. A rig only goes in whole, so with less
+than 12 t free the line turns amber: make room before you collect. Which
+rigs are out the game does not say - this is room, not a rig count.
 
 ### The Nomad
 
@@ -1763,3 +1845,66 @@ search-and-rescue role for the air wing and a settings page. Details:
 * FIS CARRIER: hovering a role column explains how its dots are earned; a
   commander without a carrier of their own sees the ships without a hint that
   assumes one.
+
+---
+
+## What changed in 4.6
+
+### Local first - fair use of EDSM and Spansh
+
+Both are community services under heavy load. 4.6 asks them as little as
+the survey allows (details in "External sources", *Fair use*):
+
+* **In shells, when needed.** The sphere is fetched in 25 ly shells, nearest
+  first, and the next shell only when the plan reaches it - after a jump
+  close to the edge of what is known, or when nothing is left to do inside.
+  A restart of EDMC asks nothing.
+* **Remembered, spread out.** Each shell a source delivered stays valid for
+  a random 5 to 14 days, so many installations do not ask at the same time.
+  *reload online data* asks again on purpose.
+* **EDDiscovery first.** Its system database is a copy of Spansh's dump;
+  when it was updated within two days, Spansh is not asked at all and the
+  local file is read shell by shell. A locked file (EDDiscovery running) is
+  read again later. Catalogue names (`HIP 12345`) are now read from it too.
+* **One polite gateway** for every request, the update check included:
+  pacing per service, the services' own rate-limit headers, back-off and a
+  rest for the session after repeated errors, an honest User-Agent, at most
+  50 requests per service and UTC day, at most 20 Spansh pages per shell.
+  The statistics show *external today: EDSM n of 50 · Spansh n of 50*.
+* **offline** in the settings sends nothing at all.
+* **Backups.** The database is copied before a schema change or a repair.
+* **copy bundle** copies one galaxy-map prefix for several of the next probe
+  boxels of one sector, letter group and mass code.
+* The FIS brings its own Three.js - the 3D views work without the internet.
+
+### SHBOX FIS
+
+* **Rhino** - the PLANET view numbers the mining rigs where you collected
+  them (*Rig 2 · 11 t Deuterium*), shows the Rhino's hold and how many full
+  rigs still fit, and the ship hovering at the drop point (the Rhino leaves
+  a ship that hovers; no touchdown). Ground mining is a MINING session of
+  its own, and the carrier's air wing counts Rhino and exobiology hangars.
+* **Biology** - ATLAS BIOLOGY lists the open and the finished bio signals;
+  the SYSTEM view folds finished species; the surface map highlights the
+  species you are working on.
+* **SHIP** - unsold data at risk (exobiology valued, exploration counted)
+  and the selected target (destination, FSD target, locked ship).
+* **On foot** - suit, mods, weapons and backpack in PLANET.
+* **PLANET INFO** - science report under the datasheet, ring hotspots under
+  each ring, no more reload on every scan.
+* **CARRIER** - the air wing sorts by any column and filters the ship list.
+* **Settings page** - a QR code of the home-network address for the tablet,
+  display links and an OBS mode, a new access token at a click, and a brake
+  for home-network devices (rate and wrong tokens).
+* Screenshots from demo data in [FIS/README.md](FIS/README.md).
+
+### Fixes
+
+* The NEXT TARGETS block in the overlay vanished after 15 minutes without a
+  route change (a long supercruise leg, on foot, in the SRV); it is now sent
+  again in time.
+* The route pace said "0.0x, 0 min left" after an EDMC restart halfway
+  through a system; only stops ticked since the restart are compared now.
+
+After the update the plugin replays your journals once (Rhino rigs from
+earlier outings). Close the FIS window once so it starts with the new files.

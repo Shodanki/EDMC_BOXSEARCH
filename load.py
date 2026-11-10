@@ -36,6 +36,9 @@ if _PLUGIN_DIR not in sys.path:
 from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
 from sysdb import SystemDB, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
 from sources import SourceManager                              # noqa: E402
+from netgate import Gateway                                    # noqa: E402
+import netgate                                                 # noqa: E402
+import shells                                                  # noqa: E402
 from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
                        staging_lines, tritium_systems)
 from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
@@ -43,6 +46,7 @@ from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       calibrate_from_journal, calibrate_work_from_journal,
                       leg_distance_ls,
                       plan_route, resolve_positions, shorten)
+from boxelplan import bundled_probe_prefix                   # noqa: E402
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
                        corridor_targets, set_origin)
@@ -51,7 +55,7 @@ from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E40
 import surfacenav  # noqa: E402
 import miningstat  # noqa: E402
 
-VERSION = "4.5.1"
+VERSION = "4.6.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -76,6 +80,7 @@ CFG = {
     "src_edd": "%s_src_edd" % PLUGIN_NAME,
     "src_spansh": "%s_src_spansh" % PLUGIN_NAME,
     "src_edsm": "%s_src_edsm" % PLUGIN_NAME,
+    "offline": "%s_offline" % PLUGIN_NAME,
     "edd_path": "%s_edd_path" % PLUGIN_NAME,
     "jump_range": "%s_jump_range" % PLUGIN_NAME,
     "harvest_navroute": "%s_harvest_navroute" % PLUGIN_NAME,
@@ -134,7 +139,18 @@ class State:
     def __init__(self):
         self.db: Optional[SystemDB] = None
         self.lock = threading.RLock()
-        self.sources = SourceManager()
+        # the plugin's one door to the internet - created once, so pacing
+        # and rests survive a rebuilt SourceManager
+        self.net = Gateway(VERSION)
+        self.sources = SourceManager(gateway=self.net)
+        # local-first (shells.py): how far out the online sources have been
+        # asked for the running survey; the planner plans only inside it
+        self.horizon = 0.0
+        self.fetch_lock = threading.Lock()
+        self.extending = False
+        # EDDiscovery's file was busy (EDD running) - read it again later
+        self.edd_pending = False
+        self.edd_next_try = 0.0
         self.planner: Optional[Planner] = None
 
         self.active = False
@@ -173,6 +189,7 @@ class State:
         self.route_full = False
         self.route_feedback = ""
         self.route_started: Optional[float] = None
+        self.route_base: set = set()         # stops already done when the clock started
         self.cost_model = DEFAULT_MODEL
         self.sc_segments: List[Tuple[float, float]] = []
         self.work_dss: List[float] = []
@@ -212,6 +229,7 @@ _btn_fc: Optional[tk.Button] = None
 _btn_stats: Optional[tk.Button] = None
 _btn_boxel: Optional[tk.Button] = None
 _btn_prefix: Optional[tk.Button] = None
+_btn_bundle: Optional[tk.Button] = None
 _btn_next: Optional[tk.Button] = None
 _lbl_stats = None
 _v_stats: Optional[tk.StringVar] = None
@@ -314,7 +332,14 @@ def plugin_start3(plugin_dir: str) -> str:
         logger.exception("could not open database")
         return "SHBOXSEARCH"
 
-    ST.sources = SourceManager(cfg_str(CFG["edd_path"]) or None)
+    ST.sources = SourceManager(cfg_str(CFG["edd_path"]) or None, gateway=ST.net)
+    ST.net.offline = cfg_bool(CFG["offline"], False)
+    try:
+        day0 = time.time() // 86400 * 86400
+        ST.net.seed_today({k: ST.db.external_calls_since(day0, k)
+                           for k in ("edsm", "spansh")})
+    except Exception:
+        logger.exception("could not read today's external calls")
     ST.overlay = CockpitOverlay(logger)
     _overlay_apply_settings()
 
@@ -335,7 +360,7 @@ def plugin_start3(plugin_dir: str) -> str:
         ST.radius = row["radius"] or 50.0
         logger.info("restored running survey: %s r=%.0f ly",
                     ST.start_system, ST.radius)
-        _run_async(_rebuild_plan, label="loading plan")
+        _run_async(_resume_worker, label="loading plan")
     # These read the journals to establish fuel, the work-time model and where
     # we last were. Without them the panel shows "fuel: unknown" and the map
     # has no "last here" marker until the first jump of the session.
@@ -374,6 +399,8 @@ def plugin_stop() -> None:
     _stats_window_close()
     _probe_window_close()
     _mining_window_close()
+    ST.net.stop()             # wake a waiting request; nothing more is sent
+    _flush_net_log()
     with ST.lock:
         if ST.db:
             ST.db.close()
@@ -399,26 +426,36 @@ def _run_async(fn, *args, label: str = "working", **kw) -> None:
     threading.Thread(target=wrapper, daemon=True, name="SHBOX-" + label).start()
 
 
-def _fetch_sources() -> None:
-    if not ST.center:
+def _flush_net_log() -> List[Tuple]:
+    """Move the gateway's recorded requests into the database call log
+    (on the caller's thread, under ST.lock). Returns the records."""
+    rec = ST.net.drain()
+    if rec:
+        with ST.lock:
+            if ST.db:
+                try:
+                    ST.db.log_external_calls(rec)
+                except Exception:
+                    logger.exception("could not store the external call log")
+    return rec
+
+
+def _log_net(rec: List[Tuple]) -> None:
+    """One line per fetch in the EDMC log: requests per service."""
+    if not rec:
         return
-    enabled = []
-    if cfg_bool(CFG["src_edd"], True):
-        enabled.append("edd")
-    if cfg_bool(CFG["src_spansh"], True):
-        enabled.append("spansh")
-    if cfg_bool(CFG["src_edsm"], True):
-        enabled.append("edsm")
-    if not enabled:
-        return
-    if ST.cur_id64 and ST.cur_pos:
-        ST.sources.set_reference(ST.cur_id64, ST.cur_pos)
-    logger.info("querying sources %s for r=%.0f ly around %s",
-                enabled, ST.radius, ST.center)
-    for name, ok, why in ST.sources.status():
-        logger.info("  source %-12s %-3s %s", name, "ok" if ok else "no", why)
-    rows, used = ST.sources.fetch_all(ST.center, ST.radius, enabled,
-                                      progress=lambda s: _set_status(s))
+    per: Dict[str, List[int]] = {}
+    for _ts, svc, _ep, _st, ok, ms in rec:
+        c = per.setdefault(svc, [0, 0, 0])
+        c[0] += 1
+        c[1] += 0 if ok else 1
+        c[2] += ms
+    logger.info("external requests: %s", ", ".join(
+        "%s %d (%d failed, %.1f s)" % (k, v[0], v[1], v[2] / 1000.0)
+        for k, v in sorted(per.items())))
+
+
+def _store_rows(rows: List[Dict]) -> int:
     with ST.lock:
         n = 0
         for r in rows:
@@ -430,9 +467,226 @@ def _fetch_sources() -> None:
                 ST.db.upsert(r.get("name"), source=extra, quality=Q_UNKNOWN,
                              commit=False)
         ST.db.cx.commit()
-    logger.info("sources returned %d rows from %s -> %d new systems",
-                len(rows), ", ".join(used) or "none", n)
-    _set_status("%d new systems from %s" % (n, ", ".join(used) or "no source"))
+    return n
+
+
+def _fetch_into_db(keys: List[str], r_min: float, r_max: float
+                   ) -> Tuple[int, Dict[str, bool], Dict[str, int]]:
+    """Fetch the shell r_min..r_max around the survey centre from the given
+    sources and store it. Returns (new systems, complete per source,
+    systems per source)."""
+    if ST.cur_id64 and ST.cur_pos:
+        ST.sources.set_reference(ST.cur_id64, ST.cur_pos)
+    for name, ok, why in ST.sources.status():
+        logger.info("  source %-12s %-3s %s", name, "ok" if ok else "no", why)
+    logger.info("fetching %s for %.0f-%.0f ly around %s", keys, r_min, r_max,
+                ST.start_system or ST.center)
+    rows, used = ST.sources.fetch_all(ST.center, r_max, keys,
+                                      progress=lambda m: _set_status(m), r_min=r_min)
+    ok = dict(ST.sources.last_ok)
+    cnt = dict(ST.sources.last_count)
+    _log_net(_flush_net_log())
+    n = _store_rows(rows)
+    logger.info("shell %.0f-%.0f ly: %d rows from %s -> %d new systems",
+                r_min, r_max, len(rows), ", ".join(used) or "none", n)
+    return n, ok, cnt
+
+
+def _fetch_local(r_min: float = 0.0, r_max: float = 0.0) -> bool:
+    """EDDiscovery's file is local - the whole sphere at once (or one shell),
+    no network. While EDD runs its file can be locked; then it is read again
+    later (_edd_retry). True when EDD delivered."""
+    if not (ST.center and cfg_bool(CFG["src_edd"], True)):
+        return False
+    _n, ok, _cnt = _fetch_into_db(["edd"], r_min, r_max or ST.radius)
+    if ok.get("edd"):
+        ST.edd_pending = False
+        return True
+    if not ST.edd_pending:
+        logger.info("EDDiscovery not readable now (%s) - read again later, "
+                    "no online request for it",
+                    ST.sources.sources["edd"].available()[1])
+    ST.edd_pending = True
+    ST.edd_next_try = time.time() + 60.0
+    return False
+
+
+def _edd_holds(service: str) -> bool:
+    """Is EDDiscovery's file current and built from this service's data?
+    Then the same systems are not asked online again (user, 10.11.)."""
+    if not cfg_bool(CFG["src_edd"], True) or ST.edd_pending:
+        return False
+    try:
+        return ST.sources.sources["edd"].is_current(service)
+    except Exception:
+        logger.exception("EDD freshness check failed")
+        return False
+
+
+def _edd_retry() -> None:
+    try:
+        if _fetch_local():
+            logger.info("EDDiscovery read after all - plan rebuilt")
+            _rebuild_plan()
+    finally:
+        ST.edd_retrying = False
+
+
+def _online_services() -> List[str]:
+    """Online sources switched on and willing to answer right now."""
+    out = []
+    for key in ("spansh", "edsm"):
+        if not cfg_bool(CFG["src_%s" % key], True):
+            continue
+        ok, why = ST.sources.sources[key].available()
+        if ok:
+            out.append(key)
+        else:
+            logger.info("source %s not asked: %s", key, why)
+    return out
+
+
+def _plan_radius() -> float:
+    """The planner plans only where the online sources have been asked."""
+    return min(ST.radius, ST.horizon)
+
+
+def _advance_horizon(allow_fetch: bool = True, force_to: float = 0.0) -> bool:
+    """
+    Push the horizon out shell by shell (shells.py). Shells that every
+    online source delivered within their validity cost nothing and are
+    taken at once; the first shell that needs asking is fetched (only with
+    allow_fetch), and then it stops - one shell per need. With force_to
+    every shell up to that radius is asked again (the reload button).
+    True when the horizon moved.
+    """
+    if not (ST.active and ST.center):
+        return False
+    if not ST.fetch_lock.acquire(blocking=False):
+        return False
+    try:
+        center = ST.center
+        moved = False
+        services = _online_services()
+        edd_spansh = "spansh" in services and _edd_holds("spansh")
+        if edd_spansh:
+            services = [k for k in services if k != "spansh"]
+            logger.info("horizon: Spansh not asked - EDDiscovery is current and "
+                        "holds Spansh's data")
+        if not services:
+            logger.info("horizon: no online source to ask - planning on local "
+                        "data to %.0f ly", ST.radius)
+        for a, b in shells.shells_for(ST.radius):
+            if b <= ST.horizon + 1e-6:
+                continue
+            forced = b <= force_to + 1e-6
+            if edd_spansh:
+                # Spansh's systems come from EDD's file for this shell - local
+                with ST.lock:
+                    sp = ST.db.valid_shells("spansh")
+                if forced or not shells.is_fresh(center, a, b, sp):
+                    _fetch_local(a, b)
+            if not services:
+                ST.horizon = b
+                moved = True
+                continue
+            with ST.lock:
+                regions = {k: ST.db.valid_shells(k) for k in services}
+            todo = [k for k in services
+                    if forced or not shells.is_fresh(center, a, b, regions[k])]
+            if not todo:
+                ST.horizon = b
+                moved = True
+                logger.info("horizon: shell %.0f-%.0f ly fetched before and "
+                            "still valid - no request", a, b)
+                continue
+            if not allow_fetch:
+                break
+            n, ok, cnt = _fetch_into_db(todo, a, b)
+            if ST.center != center:            # a new survey started meanwhile
+                return moved
+            with ST.lock:
+                for k in todo:
+                    if ok.get(k):
+                        ST.db.record_shell(k, center, a, b, cnt.get(k, 0),
+                                           shells.ttl_seconds())
+            missing = [k for k in todo if not ok.get(k)]
+            if missing:
+                logger.info("horizon: %s did not deliver %.0f-%.0f ly completely"
+                            " - asked again when needed", ", ".join(missing), a, b)
+            ST.horizon = b
+            moved = True
+            _set_status("online data to %.0f of %.0f ly | %d new systems"
+                        % (b, ST.radius, n))
+            if not forced or b >= force_to - 1e-6:
+                break
+        return moved
+    finally:
+        ST.fetch_lock.release()
+
+
+def _external_today_line() -> str:
+    """'external today: EDSM 2 of 50 · Spansh 3 of 50' (+ offline / EDD)."""
+    if ST.net.offline:
+        line = "external today: offline mode - nothing is sent"
+    else:
+        line = "external today: " + " · ".join(
+            "%s %d of %d" % (name, ST.net.today(k), netgate.DAILY_CAP[k])
+            for k, name in (("edsm", "EDSM"), ("spansh", "Spansh")))
+    if ST.edd_pending:
+        line += " | EDDiscovery busy - read again later"
+    elif _edd_holds("spansh"):
+        line += " | Spansh covered by EDDiscovery (current)"
+    return line
+
+
+def _maybe_extend() -> None:
+    """Fetch the next shell when it is needed: nothing left to fly to inside
+    the horizon, or the commander near its edge. Also reads a busy
+    EDDiscovery file again (local, at most once a minute)."""
+    if not (ST.active and ST.center):
+        return
+    if ST.edd_pending and not getattr(ST, "edd_retrying", False) \
+            and time.time() >= ST.edd_next_try:
+        ST.edd_retrying = True
+        ST.edd_next_try = time.time() + 60.0
+        _run_async(_edd_retry, label="EDDiscovery")
+    if ST.extending:
+        return
+    left = len(ST.flight) + len(ST.probe)
+    if shells.needs_next(ST.horizon, ST.radius, ST.center, ST.cur_pos, left):
+        ST.extending = True
+        _run_async(_extend_worker, label="next shell")
+
+
+def _extend_worker() -> None:
+    try:
+        moved = _advance_horizon(True)
+    finally:
+        ST.extending = False
+    if moved:
+        _rebuild_plan()
+
+
+def _resume_worker() -> None:
+    """EDMC start with a running survey: no request on the way in - only
+    shells still valid count; the plan asks for more when it needs it."""
+    ST.horizon = 0.0
+    _advance_horizon(allow_fetch=False)
+    _rebuild_plan()
+
+
+def _reload_online() -> None:
+    """Reload button: ask the sources again for every shell up to the
+    current horizon, paced like always."""
+    if not (ST.active and ST.center):
+        _set_status("no active survey")
+        return
+    old = max(ST.horizon, shells.SHELL_STEP)
+    ST.horizon = 0.0
+    _fetch_local()
+    _advance_horizon(True, force_to=old)
+    _rebuild_plan()
 
 
 def _update_route_targets() -> None:
@@ -478,9 +732,21 @@ def _copy_route_target() -> None:
 def _rebuild_plan() -> None:
     if not (ST.center and ST.planner):
         return
+    if ST.active and ST.horizon <= 0.0:
+        # nothing asked yet (new survey, or every shell expired): no plan
+        # rather than one from nothing - the first shell is fetched now
+        ST.flight, ST.probe, ST.plan_counts = [], [], {}
+        ST.plan_info = "online data not asked yet - fetching the first shell"
+        ST.stats_lines = ["online data: not asked yet - the first shell "
+                          "(0-%.0f ly) is being fetched"
+                          % min(ST.radius, shells.SHELL_STEP)]
+        logger.info("plan: %s", ST.plan_info)
+        _ui(_stats_window_refresh)
+        _maybe_extend()
+        return
     with ST.lock:
         plan = ST.planner.build(
-            ST.center, ST.radius,
+            ST.center, _plan_radius(),
             masscodes=get_masscodes(),
             probe_depth=max(0, cfg_int(CFG["probe_depth"], 2)),
             include_empty=cfg_bool(CFG["include_empty"], True),
@@ -507,9 +773,16 @@ def _rebuild_plan() -> None:
         logger.exception("tritium summary failed")
     if ST.fuel.capacity:
         ST.stats_lines.append(ST.fuel.summary())
+    if ST.horizon < ST.radius - 1e-6:
+        ST.stats_lines.append("online data: asked to %.0f of %.0f ly - the next "
+                              "shell is fetched when needed" % (ST.horizon, ST.radius))
+    else:
+        ST.stats_lines.append("online data: whole sphere (%.0f ly) asked" % ST.radius)
+    ST.stats_lines.append(_external_today_line())
     for line in ST.stats_lines:
         logger.info("stats | %s", line)
-    if ST.stats.get("finished") and not ST.finished_announced:
+    if ST.stats.get("finished") and not ST.finished_announced \
+            and ST.horizon >= ST.radius - 1e-6:
         ST.finished_announced = True
         logger.info("AREA COMPLETE: sphere r=%.0f ly around %s is exhausted",
                     ST.radius, ST.start_system)
@@ -518,6 +791,7 @@ def _rebuild_plan() -> None:
     logger.info("plan rebuilt: %d flight targets, %d probes | %s",
                 len(ST.flight), len(ST.probe), ST.plan_counts)
     _update_route_targets()
+    _maybe_extend()
 
 
 def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, float, float]]]:
@@ -638,6 +912,26 @@ def _overlay_apply_settings() -> None:
     ov.position = pos if pos in OVERLAY_POSITIONS else "top-left"
     if not ov.enabled:
         ov.clear()
+
+
+OVERLAY_KEEP_MS = 60_000      # look once a minute whether the targets block needs sending
+
+
+def _overlay_keepalive() -> None:
+    """Once a minute: keep the targets block on screen (it has a time to
+    live and nothing else redraws it between route changes)."""
+    try:
+        ov = getattr(ST, "overlay", None)
+        if ov is not None and ov.enabled:
+            ov.keep_targets()
+    except Exception:
+        logger.debug("overlay keep-alive failed", exc_info=True)
+    finally:
+        if _frame is not None:
+            try:
+                _frame.after(OVERLAY_KEEP_MS, _overlay_keepalive)
+            except Exception:
+                pass                         # EDMC is closing
 
 
 def _overlay_targets() -> None:
@@ -1449,12 +1743,16 @@ def _route_progress_feedback() -> None:
         ST.route_feedback = ""
         return
     if ST.route_started is None:
+        # the clock starts here - also halfway through a system after an
+        # EDMC restart, so the stops done before it are not compared
         ST.route_started = time.time()
+        ST.route_base = set(ST.route_done)
         ST.route_feedback = ""
         return
     elapsed = time.time() - ST.route_started
     planned = sum(s.leg_s for s in route.stops
-                  if s.body.body_id in ST.route_done)
+                  if s.body.body_id in ST.route_done
+                  and s.body.body_id not in ST.route_base)
     if planned < 60 or elapsed < 60:
         ST.route_feedback = ""
         return
@@ -1797,15 +2095,17 @@ def _check_for_update(force: bool = False) -> None:
                 return
         except ValueError:
             pass
-    try:
-        import requests
-    except ImportError:
+    if not ST.net.usable:
         logger.info("update check: 'requests' not available in this EDMC build")
         return
     try:
-        r = requests.get(RELEASES_API, timeout=10,
-                         headers={"Accept": "application/vnd.github+json",
-                                  "User-Agent": "SHBOXSEARCH/%s" % VERSION})
+        r = ST.net.request("github", "GET", RELEASES_API, "releases/latest",
+                           timeout=10,
+                           headers={"Accept": "application/vnd.github+json"})
+        _flush_net_log()
+        if r is None:
+            logger.info("update check: no answer (offline, resting or no network)")
+            return
         cfg_set(CFG["update_checked"], str(int(time.time())))
         if r.status_code == 403:
             logger.info("update check: rate limited by GitHub, trying again tomorrow")
@@ -2293,7 +2593,9 @@ def _start_survey() -> None:
 
 
 def _start_worker() -> None:
-    _fetch_sources()
+    ST.horizon = 0.0
+    _fetch_local()
+    _advance_horizon(allow_fetch=True)
     _rebuild_plan()
 
 
@@ -2382,6 +2684,23 @@ def _copy_prefix() -> None:
         _copy(boxel_prefix(t.boxel_key))
     else:
         _set_status("no boxel prefix for this candidate")
+
+
+def _copy_bundle() -> None:
+    """Copy one prefix for several of the next probe boxels (same sector,
+    letters and mass code) - one paste in the galaxy map lists them all."""
+    prefix, keys = bundled_probe_prefix(ST.probe, 5)
+    if not prefix:
+        _set_status("no probe boxels to bundle")
+        return
+    _copy(prefix)
+    if len(keys) > 1:
+        tails = ", ".join(k[len(prefix):] or k.split()[-1] for k in keys)
+        _set_status("'%s' lists the next %d probe boxels (%s) - and the other "
+                    "boxels starting with it" % (prefix, len(keys), tails))
+    else:
+        _set_status("only one of the next boxels in this group - '%s' copied"
+                    % prefix)
 
 
 def _probe_skip() -> None:
@@ -2481,6 +2800,10 @@ def _stats_window_open() -> None:
     tk.Button(bar, text="refresh",
               command=lambda: _run_async(_rebuild_plan, label="stats")).pack(
         side=tk.LEFT)
+    tk.Button(bar, text="reload online data",
+              command=lambda: _run_async(_reload_online,
+                                         label="reload online data")).pack(
+        side=tk.LEFT, padx=(4, 0))
     tk.Button(bar, text="close", command=_stats_window_close).pack(
         side=tk.LEFT, padx=(4, 0))
     _stats_window_refresh()
@@ -2761,6 +3084,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 if ST.active:
                     threading.Thread(target=_update_route_targets, daemon=True,
                                      name="SHBOX-navroute").start()
+                    _maybe_extend()
             _request_route()
             _ui(_refresh)
 
@@ -3161,6 +3485,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     theme.update(_frame)
     # SHBOX FIS along with EDMC, when ticked in the settings
     _frame.after(FIS_AUTOSTART_DELAY_MS, _fis_autostart)
+    _frame.after(OVERLAY_KEEP_MS, _overlay_keepalive)
     return _frame
 
 
@@ -3472,7 +3797,7 @@ def _probe_window_close() -> None:
         except Exception:
             pass
     _probe_win = None
-    _btn_prefix = _btn_absent = _btn_boxel = _btn_skip = None
+    _btn_prefix = _btn_bundle = _btn_absent = _btn_boxel = _btn_skip = None
     _refresh()
 
 
@@ -3493,9 +3818,11 @@ def _probe_window_open() -> None:
                                                padx=10, pady=(8, 6))
     bar = tk.Frame(_probe_win)
     bar.grid(row=1, column=0, sticky=tk.EW, padx=10, pady=(0, 4))
-    global _btn_prefix, _btn_absent, _btn_boxel, _btn_skip
+    global _btn_prefix, _btn_bundle, _btn_absent, _btn_boxel, _btn_skip
     _btn_prefix = tk.Button(bar, text="copy prefix", command=_copy_prefix)
     _btn_prefix.pack(side=tk.LEFT)
+    _btn_bundle = tk.Button(bar, text="copy bundle", command=_copy_bundle)
+    _btn_bundle.pack(side=tk.LEFT, padx=(4, 0))
     _btn_absent = tk.Button(bar, text="not there", command=_probe_absent)
     _btn_absent.pack(side=tk.LEFT, padx=(4, 0))
     _btn_boxel = tk.Button(bar, text="boxel done", command=_boxel_done)
@@ -3694,7 +4021,7 @@ def _refresh() -> None:
             _btn_fc.config(state=tk.NORMAL if ST.carrier else tk.DISABLED)
         # These live in the probe window and vanish when it closes.
         state = tk.NORMAL if (ST.active and ST.probe) else tk.DISABLED
-        for b in (_btn_absent, _btn_skip, _btn_boxel, _btn_prefix):
+        for b in (_btn_absent, _btn_skip, _btn_boxel, _btn_prefix, _btn_bundle):
             if b is None:
                 continue
             try:
@@ -3822,6 +4149,10 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
         right, text="Spansh", variable=_p["spansh"]))
     field(right, "right", "", nb.Checkbutton(
         right, text="EDSM", variable=_p["edsm"]))
+    _p["offline"] = tk.IntVar(value=1 if cfg_bool(CFG["offline"], False) else 0)
+    field(right, "right", "", nb.Checkbutton(
+        right, text="offline - no online requests at all (EDSM, Spansh, "
+                    "update check)", variable=_p["offline"]))
 
     _p["eddpath"] = tk.StringVar(value=cfg_str(CFG["edd_path"]))
     nb.Label(right, text="EDDSystem.sqlite").grid(
@@ -3988,6 +4319,8 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["src_edd"], bool(_p["edd"].get()))
         cfg_set(CFG["src_spansh"], bool(_p["spansh"].get()))
         cfg_set(CFG["src_edsm"], bool(_p["edsm"].get()))
+        cfg_set(CFG["offline"], bool(_p["offline"].get()))
+        ST.net.offline = bool(_p["offline"].get())
         cfg_set(CFG["edd_path"], _p["eddpath"].get())
         cfg_set(CFG["harvest_navroute"], bool(_p["navroute"].get()))
         cfg_set(CFG["harvest_destination"], bool(_p["dest"].get()))
@@ -4019,7 +4352,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
             _carrier_var.set(_p["carrier_start"].get())
         cfg_set(CFG["debug"], bool(_p["debug"].get()))
         logger.setLevel(logging.DEBUG if _p["debug"].get() else logging.INFO)
-        ST.sources = SourceManager(_p["eddpath"].get() or None)
+        ST.sources = SourceManager(_p["eddpath"].get() or None, gateway=ST.net)
         if _radius_var:
             _radius_var.set(_p["radius"].get())
         if ST.active:
@@ -4101,7 +4434,9 @@ def _first_run_migration() -> None:
 
 # Releases that need one full journal replay to fill what they store new.
 # upgrade_44b: barycentre parents (binary moons placed far from their planet)
-REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44", "upgrade_44b")
+# upgrade_46_rigs: Rhino rig collection points from MiningRefined + the track
+REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44", "upgrade_44b",
+               "upgrade_46_rigs")
 
 
 def _upgrade_replay() -> None:
@@ -4177,7 +4512,7 @@ def _export_csv() -> None:
     if not p:
         return
     with ST.lock:
-        plan = ST.planner.build(ST.center, ST.radius, masscodes=get_masscodes(),
+        plan = ST.planner.build(ST.center, _plan_radius(), masscodes=get_masscodes(),
                                 probe_depth=cfg_int(CFG["probe_depth"], 2),
                                 include_empty=cfg_bool(CFG["include_empty"], True))
     n = Planner.export_csv(plan, p)
@@ -4193,7 +4528,7 @@ def _export_prefixes() -> None:
     if not p:
         return
     with ST.lock:
-        plan = ST.planner.build(ST.center, ST.radius, masscodes=get_masscodes(),
+        plan = ST.planner.build(ST.center, _plan_radius(), masscodes=get_masscodes(),
                                 probe_depth=cfg_int(CFG["probe_depth"], 2),
                                 include_empty=cfg_bool(CFG["include_empty"], True))
     rows = Planner.boxel_prefixes(plan, limit=100000)

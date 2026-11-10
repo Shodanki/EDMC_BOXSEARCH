@@ -14,9 +14,42 @@ own database and maths.
 **It only reads.** The plugin database (opened read-only), the game's journal
 and its state files (`Status.json`, `NavRoute.json`, `ModulesInfo.json`,
 `Cargo.json`, ...). It sends nothing to the game, automates nothing and talks
-to no service on the internet - except that your *browser* loads the 3D
-library Three.js from a CDN; without internet the tactical view falls back to
-a 2D map.
+to no service on the internet. The 3D library Three.js (0.170.0, MIT) ships
+with it in `web/vendor/three` - licence and origin in `SOURCE.md` there - so
+the 3D views work offline too. The QR code on the settings page is drawn
+with Project Nayuki's QR Code generator (`fis/vendor/qrcodegen.py`, MIT,
+licence header kept - origin in `fis/vendor/SOURCE.md`).
+
+## Screenshots
+
+Demo data: a copy of a real plugin database with the commander's current
+area, carrier, earnings and surface tracks removed; commander and ship are
+called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English.
+
+**SYSTEM** - the system in 3D with Kepler orbits, flight plan legs, bio and
+first-footfall marks, and a rule-based system report.
+
+![SYSTEM view](docs/screenshots/demo_system.png)
+
+**GALAXY** - the survey sphere and its boxels in 3D, flight path, known
+systems; the focus panel and flight log on the right.
+
+![GALAXY view in 3D](docs/screenshots/demo_galaxy.png)
+
+**PLANET INFO** - datasheet, science report, atmosphere and surface, biology
+of the selected body.
+
+![PLANET INFO view](docs/screenshots/demo_planetinfo.png)
+
+**SHIP** - status lamps from `Status.json`, schematic cutaway, damage and
+function report, engineer view of power and module health.
+
+![SHIP view](docs/screenshots/demo_ship.png)
+
+**ATLAS** - signals, rings, materials and finds of every known body, nearest
+first, with a top view around you.
+
+![ATLAS view](docs/screenshots/demo_atlas.png)
 
 ## Start
 
@@ -55,6 +88,13 @@ Choose "this PC and devices in the home network" in the first-start questions.
 * At every start the console prints the addresses of this PC, e.g.
   `http://192.168.1.20:8770/?token=...`. The footer in the browser shows the
   address (never the token).
+* The **settings page** (on the game PC) shows the addresses with a **QR
+  code** next to them - point the tablet camera at it instead of typing the
+  token. Only the game PC gets the QR code; other devices are refused.
+  **New access token** there locks out every device with the old one.
+* Devices in the home network are braked: at most 120 requests in 10 s,
+  and after 20 wrong tokens in 10 minutes nothing for 10 minutes. The game
+  PC itself is never braked.
 * **Firewall:** the FIS checks - read only - whether an enabled Windows
   Firewall rule allows TCP on its port (any rule, whatever its name). If not, it
   asks **once** whether to create the rule "SHBOX FIS": only with your yes,
@@ -71,12 +111,21 @@ header and footer, for a second screen or a tablet. **⛶** or key **F** goes
 full screen (browsers allow that only after a click or key press). On an iPad
 or iPhone, "Add to Home Screen" opens the FIS without browser bars.
 
+### Display links and OBS
+
+The settings page (game PC) has **DISPLAY LINKS**: pick a view, tick **OBS
+browser source** (transparent background, no scanlines, no window control)
+or **without the window control** (a wall screen), choose the size (75-200 %)
+and copy or open the address. In OBS: *Sources → + → Browser*, paste the
+address, set width and height. With the home network on, the address
+contains the access token - keep it out of the stream picture.
+
 ## Views
 
 | Key | View | What it shows |
 |---|---|---|
 | 1 | **BRIEFING** | the jump target: distance, star and scoopable, whether any database knows it, what the neighbours in its boxel held, fuel after the jump, open boxel candidates, the plotted route |
-| 2 | **PLANET** | the surface of a body: your track (ship, SRV, on foot), finds, colony circles for exobiology sampling, where the SRV is parked |
+| 2 | **PLANET** | the surface of a body: your track (ship, SRV, on foot), finds, colony circles for exobiology sampling, where the SRV is parked or the ship waits, Rhino mining rigs (Rig 1, 2 ... per launch, with tonnes) |
 | 3 | **SYSTEM** | the current system in 3D at its Kepler positions, the course line in the plugin's order with leg times, your last position fix, biology per body |
 | 4 | **GALAXY** | your flight path through the galaxy over time, the carrier's path and where it is now (with a pending jump), survey spheres with the status of every boxel, visited systems, notable finds; flat map or 3D with a replay of the flight path; starts on your system, a click moves the focus, a double click opens the system as a detail window |
 | 5 | **PLANET INFO** | datasheet of a body: gravity, temperature, atmosphere, volcanism, materials, rings and hotspots, signals, species, genus forecast |

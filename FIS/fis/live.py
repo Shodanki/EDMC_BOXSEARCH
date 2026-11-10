@@ -85,6 +85,9 @@ def empty_state() -> Dict[str, Any]:
         "ship": {},
         "system": {},           # name, id64, pos, ts
         "target": None,         # FSDTarget: name, id64, star_class, remaining_jumps
+        "ship_target": None,    # ShipTargeted: the locked ship, as far as scanned (E5)
+        "vehicle": None,        # surface vehicle out now: "SRV Rhino", "Nomad" ... (M2)
+        "suit": None,           # SuitLoadout: suit, class, mods, weapons (M5)
         "navroute": [],         # NavRoute.json hops
         "fuel": {},             # main, reservoir
         "status": {},           # Status.json, decoded
@@ -96,6 +99,34 @@ def empty_state() -> Dict[str, Any]:
         "journal": None,        # file being followed
         "last_event": None, "last_event_ts": None,
     }
+
+
+# M5: the journal's localised suit names are sometimes left as "$...;"
+SUITS = {"explorationsuit": "Artemis Suit", "utilitysuit": "Maverick Suit",
+         "tacticalsuit": "Dominator Suit", "flightsuit": "Flight Suit"}
+SUIT_MODS = {
+    "suit_increasedbatterycapacity": "Improved Battery Capacity", "suit_nightvision": "Night Vision",
+    "suit_increasedsprintduration": "Increased Sprint Duration", "suit_improvedjumpassist": "Improved Jump Assist",
+    "suit_backpackcapacity": "Extra Backpack Capacity", "suit_increasedammoreserves": "Extra Ammo Capacity",
+    "suit_improvedradar": "Enhanced Tracking", "suit_increasedo2capacity": "Increased Air Reserves",
+    "suit_quieterfootsteps": "Quieter Footsteps", "suit_reducedtoolbatteryconsumption": "Reduced Tool Battery Usage",
+    "suit_increasedmeleedamage": "Added Melee Damage", "suit_increasedshieldregen": "Faster Shield Regen",
+    "suit_increasedarmour": "Damage Resistance"}
+
+
+def suit_from(e: Dict[str, Any]) -> Dict[str, Any]:
+    """SuitLoadout / SwitchSuitLoadout -> what the FIS shows on foot."""
+    key = (e.get("SuitName") or "").lower()
+    base, _, cls = key.partition("_class")
+    name = e.get("SuitName_Localised") or ""
+    if not name or name.startswith("$"):
+        name = SUITS.get(base, base.replace("suit", " suit").strip().title() or "Suit")
+    mods = [SUIT_MODS.get(m, m.replace("suit_", "").replace("_", " ")) for m in e.get("SuitMods") or []]
+    weapons = [{"slot": m.get("SlotName"), "name": m.get("ModuleName_Localised") or m.get("ModuleName"),
+                "class": m.get("Class"), "mods": len(m.get("WeaponMods") or [])}
+               for m in e.get("Modules") or []]
+    return {"name": name, "class": int(cls) if cls.isdigit() else None, "mods": mods,
+            "loadout": e.get("LoadoutName"), "weapons": weapons}
 
 
 class LiveTracker:
@@ -148,6 +179,8 @@ class LiveTracker:
                 s["commander"] = e.get("Name")
             elif ev == "LoadGame":
                 s["commander"] = e.get("Commander") or s["commander"]
+                s["ship_target"] = None      # new game session: no lock yet
+                s["vehicle"] = None
                 s["ship"].update(type=e.get("Ship"), name=e.get("ShipName"),
                                  ident=e.get("ShipIdent"))
                 if e.get("FuelCapacity"):
@@ -178,6 +211,7 @@ class LiveTracker:
                         s["jumps"].append([float(d), float(u)])
                         del s["jumps"][:-60]
                 s["jumping"] = None
+                s["ship_target"] = None      # a lock never survives a jump
                 if s["target"] and s["target"].get("id64") == new_id:
                     s["target"] = None
                 if e.get("BodyID") is not None and e.get("BodyType") not in (None, "Star", "Null") \
@@ -196,6 +230,21 @@ class LiveTracker:
                     if s["target"] and s["target"].get("id64") == e.get("SystemAddress"):
                         s["target"]["star_class"] = e.get("StarClass")
                     out = "target"
+            elif ev in ("SuitLoadout", "SwitchSuitLoadout"):
+                s["suit"] = suit_from(e)
+            elif ev in ("LaunchSRV", "LaunchVessel"):
+                s["vehicle"] = (e.get("SRVType_Localised") or e.get("VesselType_Localised")
+                                or e.get("SRVType") or e.get("VesselType") or "SRV")
+                out = "status"
+            elif ev in ("DockSRV", "DockVessel", "SRVDestroyed"):
+                s["vehicle"] = None
+                out = "status"
+            elif ev == "ShipTargeted":
+                s["ship_target"] = self._ship_target(e, s.get("ship_target"), ts)
+                out = "target"
+            elif ev in ("SupercruiseEntry", "Died", "Shutdown") and s.get("ship_target"):
+                s["ship_target"] = None
+                out = "target"
             elif ev == "FSDTarget":
                 s["target"] = {"name": e.get("Name"), "id64": e.get("SystemAddress"),
                                "star_class": e.get("StarClass"),
@@ -253,6 +302,39 @@ class LiveTracker:
         if out:
             self._emit(out, {"event": ev, "ts": ts,
                              "system_id64": self.state["system"].get("id64")})
+        return out
+
+    @staticmethod
+    def _ship_target(e: Dict[str, Any], prev: Optional[Dict[str, Any]],
+                     ts: Optional[float]) -> Optional[Dict[str, Any]]:
+        """ShipTargeted -> what the scan has revealed so far. The game sends
+        one event per scan stage (0: ship, 1: pilot and rank, 2: shield and
+        hull, 3: faction, legal state, bounty, subsystem); later stages of
+        the same ship keep what earlier ones told."""
+        if not e.get("TargetLocked"):
+            return None
+        ship_key = e.get("Ship")
+        out: Dict[str, Any] = {}
+        if prev and prev.get("ship_key") == ship_key and                 (e.get("PilotName") is None or prev.get("pilot_key") in (None, e.get("PilotName"))):
+            out.update(prev)
+        out.update({"ship_key": ship_key, "ts": ts,
+                    "ship": e.get("Ship_Localised") or (ship_key or "").replace("_", " ").title(),
+                    "stage": e.get("ScanStage")})
+        for key, src in (("pilot", "PilotName_Localised"), ("pilot_key", "PilotName"),
+                         ("rank", "PilotRank"), ("faction", "Faction"),
+                         ("legal", "LegalStatus"), ("bounty", "Bounty"), ("power", "Power"),
+                         ("squadron", "SquadronID")):
+            if e.get(src) is not None:
+                out[key] = e.get(src)
+        if out.get("pilot") is None and out.get("pilot_key"):
+            out["pilot"] = out["pilot_key"]
+        for key, src in (("shield", "ShieldHealth"), ("hull", "HullHealth")):
+            if e.get(src) is not None:
+                out[key] = float(e.get(src)) / 100.0       # journal: 0..100
+        if e.get("Subsystem"):
+            out["subsystem"] = e.get("Subsystem_Localised") or e.get("Subsystem")
+            out["subsystem_health"] = (float(e["SubsystemHealth"]) / 100.0
+                                       if e.get("SubsystemHealth") is not None else None)
         return out
 
     def _fix_from(self, e: Dict[str, Any], ts: Optional[float]) -> Optional[Dict[str, Any]]:

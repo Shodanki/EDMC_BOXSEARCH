@@ -246,6 +246,7 @@ body.motion .blink { animation: pulse 0.9s steps(2) infinite; }
 .pl-name { font-size: 26px; color: var(--text); letter-spacing: .06em; }
 .pl-flags { display: flex; flex-wrap: wrap; align-content: flex-start; max-width: 50%; justify-content: flex-end; }
 .pl-line { margin: 3px 0; }
+.pl-sub { margin: 0 0 5px 14px; }
 .small { font-size: 11px; margin-top: 6px; }
 
 @media (max-width: 1100px) {
@@ -523,10 +524,19 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .st-set { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0 2px; font-size: 13px; }
 .st-url { display: flex; gap: 8px; align-items: center; margin: 4px 0; font-size: 12px; }
 .st-url code { color: #3EF2E0; word-break: break-all; }
+.st-url.on code { text-decoration: underline; }
+.st-lan { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.st-urls { flex: 1 1 240px; min-width: 0; }
+.st-qrbox { margin: 4px 0; text-align: center; }
+.st-qr { display: block; width: 180px; height: 180px; background: #FFFFFF; padding: 0; image-rendering: pixelated; }
 #foot-settings { color: #6E8F8B; text-decoration: none; margin-left: 8px; font-size: 14px; }
 #foot-settings:hover { color: #3EF2E0; }
 .lay-phone .st-grid { grid-template-columns: 1fr; }
 .role-h { cursor: help; text-decoration: underline dotted rgba(62,242,224,.4); }
+.sort-h { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-h:hover { color: #3EF2E0; }
+.cag-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.cag-q { min-width: 160px; flex: 0 1 240px; }
 /* MINING */
 .mh-row { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; }
 .mh-bar { position: relative; display: flex; height: 16px; background: rgba(62,242,224,.06); border: 1px solid rgba(62,242,224,.25); }
@@ -587,3 +597,14 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .sr-line { font-size: 12.5px; line-height: 1.45; padding-left: 10px; text-indent: -10px; }
 .sr-line::before { content: "▸ "; color: #3EF2E0; }
 .sr-line.c-red::before { color: #FF4D4D; } .sr-line.c-amber::before { color: #FFB23E; } .sr-line.c-green::before { color: #7CFF6B; }
+.sf-active { font-weight: bold; }
+.sf-dim { opacity: .55; }
+.bio-body.bio-done { opacity: .5; }
+
+/* ---------------------------------------------------------------- display profiles (E6/P7)
+   obs: browser source in OBS - transparent page, frames slightly see-through;
+   kiosk: no solo control (a wall display, a stream) */
+html:has(body.obs), body.obs { background: transparent !important; }
+body.obs .frame > .frame-in { background: linear-gradient(180deg, rgba(12,23,22,.82), rgba(8,16,15,.82)); }
+body.obs #solo-ctl, body.kiosk #solo-ctl { display: none; }
+body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }

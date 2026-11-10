@@ -68,6 +68,67 @@ class SurfaceTest(unittest.TestCase):
         self.assertAlmostEqual(codex["dist_m"], 0.0137 * math.pi / 180 * 1e6, delta=3)
         self.assertEqual(s["me"]["mode"], "srv")
 
+    def test_rhino_from_hovering_ship(self):
+        # the Rhino is dropped by a ship hovering just above the ground: no
+        # Touchdown, the ship waits at the drop point - shown as last known
+        cx = sqlite3.connect(self.path)
+        cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:06:00Z',1,'Sys 1 a',"
+                   "'srv_out','SRV Rhino',NULL,0,0.01)")
+        cx.commit()
+        cx.close()
+        live = {"system": {"id64": 1}, "status": {"body_name": "Sys 1 a", "lat": 0.0,
+                "lon": 0.0337, "radius": 1000000.0, "heading": 90, "alt": 1, "flags": 1 << 26,
+                "flags2": 0}}
+        s = self.model.build_surface(self.db, live)
+        self.assertTrue(s["ship"]["hover"])
+        self.assertEqual(round(s["ship"]["bearing"]), 270)
+        self.assertAlmostEqual(s["ship"]["dist_m"], 0.0237 * math.pi / 180 * 1e6, delta=3)
+        # back in the ship: nothing left to point at
+        cx = sqlite3.connect(self.path)
+        cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:09:00Z',1,'Sys 1 a',"
+                   "'srv_in','SRV Rhino',NULL,0,0.01)")
+        cx.commit()
+        cx.close()
+        self.assertNotIn("ship", self.model.build_surface(self.db, live))
+
+    def test_rhino_rigs(self):
+        # one "refined" mark per tonne; the view gets one numbered rig each
+        cx = sqlite3.connect(self.path)
+        cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:06:00Z',1,'Sys 1 a',"
+                   "'srv_out','SRV Rhino',NULL,0,0.0)")
+        for i in range(11):
+            cx.execute("INSERT INTO surface_marks VALUES (?,1,'Sys 1 a','refined','Deuterium',"
+                       "'rig',0,0.01)", ("2026-11-05T10:10:%02dZ" % i,))
+        for i in range(3):
+            cx.execute("INSERT INTO surface_marks VALUES (?,1,'Sys 1 a','refined','Deuterium',"
+                       "'rig',0,0.02)", ("2026-11-05T10:20:%02dZ" % i,))
+        cx.commit()
+        cx.close()
+        live = {"system": {"id64": 1}, "status": {"body_name": "Sys 1 a", "lat": 0.0,
+                "lon": 0.0337, "radius": 1000000.0, "heading": 90, "alt": 1, "flags": 1 << 26,
+                "flags2": 0}}
+        s = self.model.build_surface(self.db, live)
+        rigs = [m for m in s["marks"] if m["kind"] == "rig"]
+        self.assertEqual([m["label"] for m in rigs], ["Rig 1 · 11 t Deuterium", "Rig 2 · 3 t Deuterium"])
+        self.assertFalse([m for m in s["marks"] if m["kind"] == "refined"])
+        self.assertAlmostEqual(rigs[0]["dist_m"], 0.0237 * math.pi / 180 * 1e6, delta=3)
+
+    def test_rhino_hold(self):
+        from fis.mining import rhino_hold
+        base = {"system": {"id64": 1}, "vehicle": "SRV Rhino",
+                "status": {"body_name": "Sys 1 a", "lat": 0.0, "lon": 0.0, "radius": 1000000.0,
+                           "heading": 0, "alt": 1, "flags": 1 << 26, "flags2": 0}}
+        base["status"]["cargo"] = 40.0
+        self.assertEqual(rhino_hold(base)["rigs_fit"], 2)           # 32 t free
+        base["status"]["cargo"] = 67.0
+        h = self.model.build_surface(self.db, base)["rhino"]
+        self.assertEqual((h["free"], h["rigs_fit"], h["short"]), (5, 0, True))
+        # Cargo.json of the SRV when Status has no figure
+        base["status"].pop("cargo")
+        self.assertEqual(rhino_hold(base, {"Vessel": "SRV", "Count": 60})["rigs_fit"], 1)
+        self.assertIsNone(rhino_hold(dict(base, vehicle="SRV Scarab"), {"Vessel": "SRV", "Count": 1}))
+        self.assertNotIn("rhino", self.model.build_surface(self.db, dict(base, vehicle=None)))
+
     def test_parked_srv_and_restarted_log(self):
         cx = sqlite3.connect(self.path)
         cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:06:00Z',1,'Sys 1 a',"
@@ -87,6 +148,32 @@ class SurfaceTest(unittest.TestCase):
         bio = s["bio"][0]
         self.assertEqual((len(bio["points"]), bio["samples"]), (1, 1))
         self.assertLess(bio["nearest_m"], 100)
+
+    def test_active_species(self):
+        """E10: the unfinished species with the newest log/sample is active."""
+        cx = sqlite3.connect(self.path)
+        rows = [("2026-11-05T10:10:00Z", "bio_log", "Stratum Tectonicas", "Stratum", 0.05),
+                ("2026-11-05T10:20:00Z", "bio_log", "Fonticulua Campestris", "Fonticulua", 0.06),
+                ("2026-11-05T10:30:00Z", "bio_sample", "Stratum Tectonicas", "Stratum", 0.07),
+                # an analysed species never is the active one, however new
+                ("2026-11-05T10:40:00Z", "bio_log", "Tussock Ignis", "Tussock", 0.08),
+                ("2026-11-05T10:41:00Z", "bio_sample", "Tussock Ignis", "Tussock", 0.081),
+                ("2026-11-05T10:42:00Z", "bio_analyse", "Tussock Ignis", "Tussock", 0.082)]
+        for ts, kind, label, genus, lon in rows:
+            cx.execute("INSERT INTO surface_marks VALUES (?,1,'Sys 1 a',?,?,?,0,?)",
+                       (ts, kind, label, genus, lon))
+        cx.commit()
+        cx.close()
+        live = {"system": {"id64": 1}, "status": {"body_name": "Sys 1 a", "lat": 0.0,
+                "lon": 0.07, "radius": 1000000.0, "heading": 90, "alt": 0, "flags": 0,
+                "flags2": 1}}
+        s = self.model.build_surface(self.db, live)
+        self.assertEqual(s["active"], {"species": "Stratum Tectonicas", "genus": "Stratum"})
+        act = [b["species"] for b in s["bio"] if b["active"]]
+        self.assertEqual(act, ["Stratum Tectonicas"])
+        # nothing open -> no active species
+        s2 = self.model.build_surface(self.db, {"system": {"id64": 1}, "status": {}})
+        self.assertIn("active", s2)
 
     def test_atlas_finds(self):
         a = self.model.build_atlas(self.db, "finds", None, (0.0, 0.0, 0.0), 10)
