@@ -12,7 +12,8 @@ Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
 **SHBOX FIS** (since 4.4), a flight information system for a second screen,
 tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
-folder of this plugin. See [FIS/README.md](FIS/README.md).
+folder of this plugin. See [FIS/README.md](FIS/README.md) - with
+screenshots (demo data).
 **New in 4.5:** a mining block in the cockpit overlay, your carrier's hold
 from Frontier's data, and many FIS views - see "What changed in 4.5".
 

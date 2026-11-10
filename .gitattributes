@@ -8,5 +8,6 @@
 
 # not part of the download (GitHub "Download ZIP" / release archives)
 FIS/tests export-ignore
+FIS/docs export-ignore
 tests export-ignore
 .github export-ignore

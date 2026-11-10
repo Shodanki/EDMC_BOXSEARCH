@@ -18,6 +18,37 @@ to no service on the internet. The 3D library Three.js (0.170.0, MIT) ships
 with it in `web/vendor/three` - licence and origin in `SOURCE.md` there - so
 the 3D views work offline too.
 
+## Screenshots
+
+Demo data: a copy of a real plugin database with the commander's current
+area, carrier, earnings and surface tracks removed; commander and ship are
+called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English.
+
+**SYSTEM** - the system in 3D with Kepler orbits, flight plan legs, bio and
+first-footfall marks, and a rule-based system report.
+
+![SYSTEM view](docs/screenshots/demo_system.png)
+
+**GALAXY** - the survey sphere and its boxels in 3D, flight path, known
+systems; the focus panel and flight log on the right.
+
+![GALAXY view in 3D](docs/screenshots/demo_galaxy.png)
+
+**PLANET INFO** - datasheet, science report, atmosphere and surface, biology
+of the selected body.
+
+![PLANET INFO view](docs/screenshots/demo_planetinfo.png)
+
+**SHIP** - status lamps from `Status.json`, schematic cutaway, damage and
+function report, engineer view of power and module health.
+
+![SHIP view](docs/screenshots/demo_ship.png)
+
+**ATLAS** - signals, rings, materials and finds of every known body, nearest
+first, with a top view around you.
+
+![ATLAS view](docs/screenshots/demo_atlas.png)
+
 ## Start
 
 You need **Python 3.11 or newer** (python.org; 3.10 works, but cannot read the
