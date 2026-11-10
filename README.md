@@ -79,11 +79,11 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4391 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `load.py` | 4403 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
 | `sysdb.py` | 2192 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 795 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
-| `sources.py` | 595 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
+| `sources.py` | 657 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
 | `netgate.py` | 431 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
 | `shells.py` | 224 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
@@ -316,7 +316,7 @@ uploaded them. One action, a large haul.
 
 | Source | Priority | Notes |
 |---|---|---|
-| **EDDiscovery** (`EDDSystem.sqlite`) | 10 | local, no rate limit, very complete. Found automatically under `%LOCALAPPDATA%\EDDiscovery`. The current EDD layout (`SystemTable` + `Sectors` + `Names`, names packed into `nameid`) is decoded directly; older layouts fall back to runtime detection. The coordinate scale is verified against the system you are in; the status line reports `verified` or `unverified`. EDD only needs to have been run once with its system database downloaded; it may be running at the same time. |
+| **EDDiscovery** (`EDDSystem.sqlite`) | 10 | local, no rate limit, very complete. Found automatically under `%LOCALAPPDATA%\EDDiscovery`. The current EDD layout (`SystemTable` + `Sectors` + `Names`, names packed into `nameid`, catalogue names such as `HIP 31330` included) is decoded directly; older layouts fall back to runtime detection. The coordinate scale is verified against the system you are in; the status line reports `verified` or `unverified`. EDD only needs to have been run once with its system database downloaded; it may be running at the same time. |
 | **Spansh** | 20 | `POST /api/systems/search`, paged at 500. Index is rebuilt daily from the galaxy dump → up to 48 h behind. |
 | **EDSM** | 30 | `sphere-systems` with `minRadius`/`radius`, 100 ly cap. Shells beyond 100 ly are covered by a few 100 ly spheres and cut back to the shell. Leaky-bucket rate limit, followed through its headers. |
 

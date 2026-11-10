@@ -224,12 +224,18 @@ class EDDiscoverySource(Source):
     #   bit 61 set (0x2000...)  standard name:
     #       n2 bits 0-15, n1 bits 16-23, mass code bits 24-27,
     #       L3 bits 28-32, L2 bits 33-37, L1 bits 38-42 (letters 1-based)
-    #   bit 60 set (0x1000...)  catalogue number ("HD 43743") - not decoded
-    #   otherwise               id into Names
+    #   bit 60 set (0x1000...)  catalogue number ("HIP 31330", "EXO 1846-031"):
+    #       value bits 0-37, digit count bits 42-45, dash position bits
+    #       38-41 (0 = none, 1 = before the first digit ...) - as in
+    #       EDDiscovery's EliteNameClassifier.cs
+    #   otherwise               id into Names; the sector ("TYC", "2MASS") is
+    #       the prefix unless it is "NoSectorName" (Sol, "15 Sagittarii")
     # edsmid is NOT a SystemAddress; the old generic path mistook it for one,
     # which is why this source returned nothing usable before 4.1.
     STD_MARKER = 1 << 61
     NUM_MARKER = 1 << 60
+    NUM_MASK = (1 << 38) - 1
+    NO_SECTOR = "NoSectorName"
 
     def __init__(self, path: Optional[str] = None):
         self.path = path or self._autodetect()
@@ -413,8 +419,30 @@ class EDDiscoverySource(Source):
         return True, self.reason
 
     @classmethod
+    def with_sector(cls, sector: Optional[str], rest: str) -> str:
+        if sector and sector != cls.NO_SECTOR:
+            return "%s %s" % (sector, rest)
+        return rest
+
+    @classmethod
+    def decode_numeric(cls, nameid: int, sector: Optional[str]) -> Optional[str]:
+        """Catalogue name ("HIP 31330", "EXO 1846-031") from a bit-60 nameid."""
+        if nameid is None or not (nameid & cls.NUM_MARKER) or nameid & cls.STD_MARKER:
+            return None
+        digits = (nameid >> 42) & 0xF
+        dash = (nameid >> 38) & 0xF
+        num = str(nameid & cls.NUM_MASK).zfill(digits)
+        if dash > 0:
+            num = num[:dash - 1] + "-" + num[dash - 1:]
+        return cls.with_sector(sector, num)
+
+    @classmethod
     def decode_nameid(cls, nameid: int, sector: Optional[str]) -> Optional[str]:
-        """Rebuild a procgen name from EDD's packed nameid, or None."""
+        """Rebuild a procgen or catalogue name from EDD's packed nameid, or
+        None (then it is an id into Names)."""
+        if nameid is not None and nameid & cls.NUM_MARKER \
+                and not nameid & cls.STD_MARKER:
+            return cls.decode_numeric(nameid, sector)
         if not sector or nameid is None or not (nameid & cls.STD_MARKER):
             return None
         v = nameid & ~cls.STD_MARKER
@@ -460,7 +488,7 @@ class EDDiscoverySource(Source):
                     and nameid is not None and not (nameid & (self.STD_MARKER
                                                               | self.NUM_MARKER)):
                 n = cx.execute("SELECT Name FROM Names WHERE id=?", (nameid,)).fetchone()
-                name = n[0] if n else None
+                name = self.with_sector(sectors.get(r[3]), n[0]) if n else None
             if not name:
                 skipped += 1
                 continue
@@ -593,3 +621,37 @@ class SourceManager:
             if i not in known_ids:
                 merged["#%d" % i] = r
         return list(merged.values()), used
+
+
+def _selftest() -> int:
+    """python sources.py - EDD name decoding, no files, no network."""
+    fails = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal fails
+        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
+        fails += 0 if ok else 1
+
+    E = EDDiscoverySource
+    cases = [
+        (0x1000140000007a62, "HIP", "HIP 31330"),        # values from EDDSystem.sqlite
+        (0x1000100000000956, "HR", "HR 2390"),
+        ((1 << 60) | (7 << 42) | (5 << 38) | 1846031, "EXO", "EXO 1846-031"),
+        ((1 << 60) | (6 << 42) | 4321, "HD", "HD 004321"),
+    ]
+    for nid, sec, want in cases:
+        got = E.decode_nameid(nid, sec)
+        check(got == want, "catalogue name %s (got %s)" % (want, got))
+    std = (1 << 61) | (19 << 38) | (8 << 33) | (10 << 28) | (1 << 24) | 1
+    check(E.decode_nameid(std, "Synuefe") == "Synuefe SH-J b1",
+          "procgen name still decoded")
+    check(E.decode_nameid(12345, "TYC") is None, "Names id is left to the Names table")
+    check(E.with_sector("TYC", "3996-1327-1") == "TYC 3996-1327-1"
+          and E.with_sector(E.NO_SECTOR, "15 Sagittarii") == "15 Sagittarii",
+          "Names entries get their sector, except NoSectorName")
+    print("failures: %d" % fails)
+    return fails
+
+
+if __name__ == "__main__":
+    raise SystemExit(1 if _selftest() else 0)
