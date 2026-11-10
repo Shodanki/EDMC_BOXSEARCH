@@ -246,6 +246,7 @@ body.motion .blink { animation: pulse 0.9s steps(2) infinite; }
 .pl-name { font-size: 26px; color: var(--text); letter-spacing: .06em; }
 .pl-flags { display: flex; flex-wrap: wrap; align-content: flex-start; max-width: 50%; justify-content: flex-end; }
 .pl-line { margin: 3px 0; }
+.pl-sub { margin: 0 0 5px 14px; }
 .small { font-size: 11px; margin-top: 6px; }
 
 @media (max-width: 1100px) {

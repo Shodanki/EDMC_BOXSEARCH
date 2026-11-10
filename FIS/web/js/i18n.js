@@ -157,6 +157,7 @@ const DE = /*DE*/{
   "BIOLOGY": "BIOLOGIE",
   "MATERIALS": "MATERIALIEN",
   "RINGS": "RINGE",
+  "no hotspots known - map the ring with the DSS": "keine Hotspots bekannt – Ring mit dem DSS kartieren",
   "“from pickup”: a surface site recognised by the material collected – the journal does not report it itself.": "„from pickup“: Oberflächen-Fundstelle, erkannt am eingesammelten Material – das Journal meldet sie selbst nicht.",
   "COLLECTED HERE": "GESAMMELT HIER",
   "{n} bio signal": "{n} Bio-Signal",

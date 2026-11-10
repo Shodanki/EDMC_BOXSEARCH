@@ -202,9 +202,19 @@ function render(ctx) {
     right.push(frame(t("MATERIALS"), b.materials.length + "", mats));
   }
   if (b.rings.length || b.hotspots.length) {
-    const rr = b.rings.map(r => el("div", { class: "pl-line" }, el("span", { class: "c-cyan", text: (r.name || "").replace(b.name, "").trim() || "Ring" }),
-      el("span", { class: "c-dim", text: " · " + (r.cls || "") + " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" })));
-    for (const h of b.hotspots) rr.push(el("div", { class: "pl-line c-amber", text: "◆ " + h.material + " ×" + h.count }));
+    // E11: each ring with its own hotspots below it ("Tritium ×2, Platinum");
+    // hotspots whose ring is not in the ring list stay listed at the end
+    const hsText = (hs) => hs.map(h => h.material + (h.count > 1 ? " ×" + h.count : "")).join(", ");
+    const ringNames = new Set(b.rings.map(r => r.name));
+    const rr = [];
+    for (const r of b.rings) {
+      rr.push(el("div", { class: "pl-line" }, el("span", { class: "c-cyan", text: (r.name || "").replace(b.name, "").trim() || "Ring" }),
+        el("span", { class: "c-dim", text: " · " + (r.cls || "") + " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" })));
+      if (r.hotspots && r.hotspots.length) rr.push(el("div", { class: "pl-line pl-sub c-amber", text: "◆ " + hsText(r.hotspots) }));
+      else if (!r.belt) rr.push(el("div", { class: "pl-line pl-sub c-dim", text: t("no hotspots known - map the ring with the DSS") }));
+    }
+    const loose = b.hotspots.filter(h => !ringNames.has(h.ring));
+    if (loose.length) rr.push(el("div", { class: "pl-line c-amber", text: "◆ " + hsText(loose) }));
     right.push(frame(t("RINGS"), b.reserve ? t("reserves: {r}", { r: b.reserve }) : "", rr));
   }
 
