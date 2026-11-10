@@ -116,6 +116,25 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(m["roles"]["mining"], 5)
         self.assertLessEqual(m["roles"]["exploration"], 1)   # no scoop
 
+    def test_vehicle_hangar_and_rhino(self):
+        """M3: exobiology (vehicle hangar, Nomad best) and ground mining."""
+        base = [{"Slot": "Slot01", "Item": "int_fuelscoop_size5_class5"},
+                {"Slot": "Slot02", "Item": "int_detailedsurfacescanner_tiny"}]
+        bay = [{"Slot": "Slot03", "Item": "int_buggybay_size2_class2"}]
+        nomad = [{"Slot": "Slot03", "Item": "int_mkiilargebuggybay_size4_class3_free"}]
+        r = lambda mods, jump, veh=(): fl.rate_loadout({"Modules": mods, "MaxJumpRange": jump}, veh)
+        self.assertEqual(r(base, 70.0)["roles"]["exploration"], 4)         # no hangar: max 4
+        self.assertEqual(r(base + bay, 70.0)["roles"]["exploration"], 5)
+        self.assertEqual(r(base + bay, 50.0)["roles"]["exploration"], 4)
+        self.assertEqual(r(base + nomad, 50.0)["roles"]["exploration"], 5)  # Nomad: one step more
+        self.assertIn("Nomad hangar", r(base + nomad, 50.0)["why"]["exploration"])
+        # ground mining only when the Rhino was launched from that ship
+        self.assertEqual(r(base + bay, 50.0)["roles"]["mining"], 0)
+        m = r(base + bay, 50.0, ["SRV Rhino"])
+        self.assertEqual(m["roles"]["mining"], 2)
+        self.assertIn("SRV Rhino", m["why"]["mining"])
+        self.assertEqual(r(base, 50.0, ["SRV Rhino"])["roles"]["mining"], 0)   # no hangar now
+
     def test_module_names(self):
         self.assertEqual(fl.module_name("int_shieldgenerator_size6_class2"), "Shield Generator 6D")
         self.assertEqual(fl.module_name("hpt_pulselaser_fixed_small"), "Pulse Laser (F) S")
