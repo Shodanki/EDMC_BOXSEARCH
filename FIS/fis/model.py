@@ -779,6 +779,10 @@ def build_surface(db: Database, live: Optional[Dict[str, Any]],
     life = life_support((live or {}).get("status") or {})
     if life:
         out = dict(out, life=life, suit=(live or {}).get("suit"))
+    from .mining import rhino_hold
+    rh = rhino_hold(live)
+    if rh:
+        out = dict(out, rhino=rh)
     return out
 
 

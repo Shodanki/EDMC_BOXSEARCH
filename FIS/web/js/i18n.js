@@ -238,6 +238,8 @@ const DE = /*DE*/{
   "SHIP LANDED": "SCHIFF GELANDET",
   "SHIP HOVERING · last known": "SCHIFF SCHWEBT · zuletzt bekannt",
   "Mining rig": "Mining-Rig",
+  "Rhino hold {u}/{c} t · a full rig ({r} t) no longer fits - make room before collecting": "Rhino-Laderaum {u}/{c} t · ein volles Rig ({r} t) passt nicht mehr – vor dem Einsammeln Platz schaffen",
+  "Rhino hold {u}/{c} t · full rigs that still fit: {n} ({r} t each)": "Rhino-Laderaum {u}/{c} t · volle Rigs, die noch passen: {n} (je {r} t)",
   "{s} analysed": "{s} analysiert",
   "no position": "ohne Position",
   "Distance scale": "Entfernungsskala",

@@ -67,6 +67,13 @@ function render() {
 // marked) and the refining of the last 10 minutes (one tick per tonne - the
 // game writes nothing about the refinery's bins, only each finished tonne)
 const GOOD_COL = ["#7CFF6B", "#FFB23E", "#B57CFF", "#4FA3FF", "#E8A06A"];
+// out in the Rhino: hold and how many full rigs still fit (a rig goes in whole)
+function rhinoHold(h) {
+  return el("div", { class: "small " + (h.short ? "c-amber" : "c-dim"), text: h.short
+    ? t("Rhino hold {u}/{c} t · a full rig ({r} t) no longer fits - make room before collecting", { u: h.used, c: h.capacity, r: h.rig_t })
+    : t("Rhino hold {u}/{c} t · full rigs that still fit: {n} ({r} t each)", { u: h.used, c: h.capacity, n: h.rigs_fit, r: h.rig_t }) });
+}
+
 function liveStatus() {
   const L = live;
   if (!L || !L.capacity) return frame(t("MINING STATUS"), "", el("div", { class: "c-dim", text: t("no data yet") }), { appear: false });
@@ -88,6 +95,7 @@ function liveStatus() {
       el("span", { class: L.rate_h ? "c-green" : "c-dim", text: L.rate_h ? t("{r} t/h now", { r: fmt(L.rate_h, 0) }) : t("nothing refined in 10 min") }),
       el("span", { class: "c-dim", text: t("now") })),
   ];
+  if (L.rhino) rows.unshift(rhinoHold(L.rhino));
   if (L.target_name) rows.push(el("div", { class: "small", text: t("Target") + ": " + L.target_name }));
   // how far cargo space and limpets go
   const est = [];

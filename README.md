@@ -1706,6 +1706,11 @@ collected rigs numbered per Rhino launch (*Rig 1 · 11 t Deuterium*). Tonnes
 more than 8 s or 25 m apart count as another rig. Journals from before this
 version are read once more after the update, so earlier rigs appear too.
 
+*Rhino hold.* Out in the Rhino, PLANET and MINING show its hold (72 t) and how
+many full rigs (12 t each) still fit. A rig only goes in whole, so with less
+than 12 t free the line turns amber: make room before you collect. Which
+rigs are out the game does not say - this is room, not a rig count.
+
 ### The Nomad
 
 The flying SRV is launched with `LaunchVessel` and lands with its own

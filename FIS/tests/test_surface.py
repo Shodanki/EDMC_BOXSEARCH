@@ -113,6 +113,22 @@ class SurfaceTest(unittest.TestCase):
         self.assertFalse([m for m in s["marks"] if m["kind"] == "refined"])
         self.assertAlmostEqual(rigs[0]["dist_m"], 0.0237 * math.pi / 180 * 1e6, delta=3)
 
+    def test_rhino_hold(self):
+        from fis.mining import rhino_hold
+        base = {"system": {"id64": 1}, "vehicle": "SRV Rhino",
+                "status": {"body_name": "Sys 1 a", "lat": 0.0, "lon": 0.0, "radius": 1000000.0,
+                           "heading": 0, "alt": 1, "flags": 1 << 26, "flags2": 0}}
+        base["status"]["cargo"] = 40.0
+        self.assertEqual(rhino_hold(base)["rigs_fit"], 2)           # 32 t free
+        base["status"]["cargo"] = 67.0
+        h = self.model.build_surface(self.db, base)["rhino"]
+        self.assertEqual((h["free"], h["rigs_fit"], h["short"]), (5, 0, True))
+        # Cargo.json of the SRV when Status has no figure
+        base["status"].pop("cargo")
+        self.assertEqual(rhino_hold(base, {"Vessel": "SRV", "Count": 60})["rigs_fit"], 1)
+        self.assertIsNone(rhino_hold(dict(base, vehicle="SRV Scarab"), {"Vessel": "SRV", "Count": 1}))
+        self.assertNotIn("rhino", self.model.build_surface(self.db, dict(base, vehicle=None)))
+
     def test_parked_srv_and_restarted_log(self):
         cx = sqlite3.connect(self.path)
         cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:06:00Z',1,'Sys 1 a',"

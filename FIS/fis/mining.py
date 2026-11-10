@@ -57,6 +57,33 @@ VEHICLE_OUT = ("LaunchSRV", "LaunchVessel")
 VEHICLE_IN = ("DockSRV", "DockVessel")
 
 
+RHINO_CAPACITY_T = 72   # the SRV Rhino's hold (Frontier)
+RIG_FULL_T = 12         # a full rig: 12 chunks since 4.4.1.1, one tonne each
+
+
+def rhino_hold(live: Optional[Dict[str, Any]], cargo: Optional[Dict[str, Any]] = None
+               ) -> Optional[Dict[str, Any]]:
+    """
+    Out in the Rhino: how full its hold is and how many full rigs still fit.
+    A rig is only taken in whole - with less room than a full rig the
+    commander has to throw cargo out first. Which rigs are out the game
+    does not say (placing one writes nothing), so this counts full rigs
+    that would fit. None when not in the Rhino.
+    """
+    live = live or {}
+    if "rhino" not in (live.get("vehicle") or "").lower():
+        return None
+    used = (live.get("status") or {}).get("cargo")
+    if used is None and cargo and cargo.get("Vessel") == "SRV":
+        used = cargo.get("Count")
+    if used is None:
+        return None
+    used = int(round(float(used)))
+    free = max(0, RHINO_CAPACITY_T - used)
+    return {"capacity": RHINO_CAPACITY_T, "used": used, "free": free, "rig_t": RIG_FULL_T,
+            "rigs_fit": free // RIG_FULL_T, "short": free < RIG_FULL_T}
+
+
 def _vehicle_name(e: Dict[str, Any]) -> str:
     """'SRV Rhino', 'SRV Scarab', 'Nomad' ... from LaunchSRV / LaunchVessel."""
     return (e.get("SRVType_Localised") or e.get("VesselType_Localised")
@@ -259,6 +286,9 @@ def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
                            "limpets": limpets, "goods": goods, "used": used, "free": max(0, cap - used) if cap else None,
                            "target": _target_material(live),
                            "target_name": (((live.get("status") or {}).get("destination") or {}).get("name"))}
+    rh = rhino_hold(live, cargo)
+    if rh:
+        out["rhino"] = rh
     if s:
         recent = [t for t in s["ticks"] if now - t <= RATE_WINDOW_S]
         out["active"] = s["active"]
