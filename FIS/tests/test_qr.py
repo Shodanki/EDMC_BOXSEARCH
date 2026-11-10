@@ -105,5 +105,54 @@ class TestQrEndpoint(_Base):
             Handler.LOCAL = old
 
 
+
+class TestNewToken(_Base):
+    """E15: a new access token from the settings page locks out the old one."""
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.cfg.lan = True
+        cls.cfg.token = "old-token"
+        cls.cfg.ini_path = os.path.join(cls.tmp, "fis.ini")
+        cls.app = App(cls.cfg, live=fed_tracker(cls.tmp), db=cls.db)
+        cls.srv = make_server(cls.app, host="127.0.0.1", port=0)
+        cls.cfg.port = cls.srv.server_address[1]
+        cls.base = "http://127.0.0.1:%d" % cls.cfg.port
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def test_renew(self):
+        import json
+        req = urllib.request.Request(self.base + "/api/settings", data=json.dumps({"new_token": True}).encode(),
+                                     headers={"Content-Type": "application/json", "X-FIS-Settings": "1",
+                                              "Origin": self.base}, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            d = json.loads(r.read())
+        self.assertTrue(d["token_changed"])
+        new = self.cfg.token
+        self.assertNotEqual(new, "old-token")
+        self.assertIn("token=" + new, d["lan_urls"][0])
+        with open(self.cfg.ini_path, encoding="utf-8") as fh:
+            self.assertIn(new, fh.read())
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(self.base + "/api/health?token=old-token", timeout=5)
+        self.assertEqual(cm.exception.code, 401)
+        cm.exception.close()
+        with urllib.request.urlopen(self.base + "/api/health?token=" + new, timeout=5) as r:
+            self.assertEqual(r.status, 200)
+        # without the settings header nobody can renew it
+        req2 = urllib.request.Request(self.base + "/api/settings", data=b'{"new_token": true}',
+                                      headers={"Content-Type": "application/json"}, method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req2, timeout=5)
+        self.assertEqual(cm.exception.code, 403)
+        cm.exception.close()
+        self.assertEqual(self.cfg.token, new)
+
+
 if __name__ == "__main__":
     unittest.main()

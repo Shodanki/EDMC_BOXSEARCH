@@ -294,10 +294,15 @@ class Handler(BaseHTTPRequestHandler):
         cfg.lan = bool(body.get("lan", cfg.lan))
         if cfg.lan:
             cfg.ensure_token(save=False)
+        changed = False
+        if body.get("new_token") is True and cfg.lan:
+            cfg.new_token()
+            changed = True
         cfg.setup_done = True
         cfg.save()
         out = self._settings()
         out["saved"] = True
+        out["token_changed"] = changed
         out["restart"] = cfg.lan != self.app.lan_at_start
         return self._json(out)
 

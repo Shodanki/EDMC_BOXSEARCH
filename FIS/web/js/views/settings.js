@@ -21,6 +21,18 @@ export async function update(ctx, reason) {
   render();
 }
 
+async function renewToken() {
+  if (!window.confirm(t("Create a new access token? Devices with the old one are locked out until they open the new address."))) return;
+  try {
+    const d = await postJSON("/api/settings", { new_token: true });
+    const tok = d.lan_urls && d.lan_urls.length ? new URL(d.lan_urls[0]).searchParams.get("token") : null;
+    // this page too needs the new token: reload with it (sets the cookie again)
+    if (d.token_changed && tok) { location.href = location.pathname + "?token=" + encodeURIComponent(tok) + "#settings"; return; }
+    data = d; msg = t("Saved.");
+  } catch (e) { msg = t("Could not save: {e}", { e: e.message }); }
+  render();
+}
+
 function render() {
   root.replaceChildren();
   if (!data || data.error) {
@@ -62,6 +74,9 @@ function render() {
       el("button", { text: "QR", title: t("Show this address as QR code"), onclick: () => { qrIndex = i; render(); } }))));
     lanRows.push(el("div", { class: "st-lan" }, el("figure", { class: "st-qrbox" }, qr,
       el("figcaption", { class: "c-dim small", text: t("Scan with the tablet camera") })), list));
+    // E15: a new token locks out every device that has the old one
+    lanRows.push(el("div", { class: "st-url" }, el("button", { text: t("New access token"), onclick: renewToken }),
+      el("span", { class: "c-dim small", text: t("All devices then need the new address or QR code once.") })));
     if (data.running_lan === false) lanRows.push(el("div", { class: "c-amber small", text: t("Not active yet - restart the FIS.") }));
     if (data.firewall === "") lanRows.push(el("div", { class: "c-amber small", text: t("No firewall rule lets other devices in - fis_settings.bat can add one (Windows asks for permission).") }));
     else if (data.firewall) lanRows.push(el("div", { class: "c-green small", text: t("Firewall rule: {r}", { r: data.firewall }) }));
