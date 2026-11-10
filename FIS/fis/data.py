@@ -158,6 +158,16 @@ class Database:
                % ",".join("?" * len(kinds)))
         return self.query(sql, tuple(kinds))
 
+    # M1: bodies with biological signals (the plugin imported all journals)
+    def atlas_bio(self, kind: Optional[str] = None) -> List[sqlite3.Row]:
+        """All bodies with bio signals; open/done is decided by the model
+        (codex-only genera such as Brain Trees never count as analysed)."""
+        if not self.has_table("bodies"):
+            return []
+        return self.query("SELECT b.sys_id64, b.body_id, b.name body_name, b.sig_bio, b.organics, "
+                          "b.genuses, b.bio_species, 1 count, s.name sys_name, s.x, s.y, s.z "
+                          "FROM bodies b " + self._BEST_SYS + "b.sys_id64 WHERE b.sig_bio > 0")
+
     def atlas_kinds(self, view: str) -> List[sqlite3.Row]:
         """What the second picker offers per atlas view, with counts."""
         if view == "rings" and self.has_table("hotspots"):

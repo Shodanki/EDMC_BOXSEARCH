@@ -599,3 +599,4 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .sr-line.c-red::before { color: #FF4D4D; } .sr-line.c-amber::before { color: #FFB23E; } .sr-line.c-green::before { color: #7CFF6B; }
 .sf-active { font-weight: bold; }
 .sf-dim { opacity: .55; }
+.bio-body.bio-done { opacity: .5; }

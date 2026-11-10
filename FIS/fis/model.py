@@ -474,7 +474,28 @@ def system_signals(rows) -> List[Dict[str, Any]]:
     return sorted(agg.values(), key=lambda x: (x["tone"] != "violet", -x["total"]))
 
 
-ATLAS_VIEWS = ("rings", "signals", "materials", "finds")
+ATLAS_VIEWS = ("rings", "signals", "materials", "finds", "bio")
+# M1: Horizons-era organics are logged with the composition scanner (codex)
+# only - the genetic sampler never analyses them, so a body whose only open
+# signals are these counts as done. Assumption, to confirm in game.
+CODEX_ONLY_GENERA = {"Brain Trees", "Anemone", "Bark Mounds", "Crystalline Shards",
+                     "Sinuous Tubers", "Amphora Plant"}
+
+
+def _bio_item(r) -> Dict[str, Any]:
+    """open/done of one body's bio signals (ATLAS BIOLOGY, M1)."""
+    sig, done_n = int(r["sig_bio"] or 0), int(r["organics"] or 0)
+    analysed = [a for a in (_json(r["bio_species"], []) or []) if isinstance(a, dict)]
+    got = {a.get("genus") for a in analysed if a.get("genus")}
+    genera = [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()]
+    missing = [g for g in genera if g not in got]
+    codex_only = [g for g in missing if g in CODEX_ONLY_GENERA]
+    open_n = max(0, sig - done_n - len(codex_only))
+    return {"key": "open" if open_n else "done", "signals": sig,
+            "analysed": min(done_n, sig), "open": open_n,
+            "missing": [g for g in missing if g not in CODEX_ONLY_GENERA],
+            "codex_only": codex_only,
+            "species": sorted({a.get("species") for a in analysed if a.get("species")})}
 
 
 def _ring_class(v: Optional[str]) -> str:
@@ -501,7 +522,7 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
     """
     view = view if view in ATLAS_VIEWS else "signals"
     rows = {"rings": db.atlas_rings, "materials": db.atlas_materials,
-            "finds": db.atlas_finds}.get(view, db.atlas_signals)(kind)
+            "finds": db.atlas_finds, "bio": db.atlas_bio}.get(view, db.atlas_signals)(kind)
     need = text = None
     if q:
         text = q.strip().lower()
@@ -520,6 +541,10 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
                       ring_class=_ring_class(r["ring_class"]))
             if r["body_id"] is not None:
                 it["body_id"] = r["body_id"]
+        elif view == "bio":
+            it.update(_bio_item(r), label=None, count=None, body_id=r["body_id"])
+            if kind in ("open", "done") and it["key"] != kind:
+                continue
         elif view == "finds":
             it.update(key=r["kind"], label=r["label"], detail=r["detail"],
                       lat=_r(r["lat"], 4), lon=_r(r["lon"], 4), last=(r["last"] or "")[:10])
@@ -539,6 +564,14 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
         items.append(it)
     items.sort(key=lambda x: (x["dist_ly"] if x["dist_ly"] is not None else 1e9,
                               -(x["count"] or 0)))
+    totals = None
+    if view == "bio":
+        # M1: the sums over everything matching (not just the shown page)
+        totals = {"bodies": len(items),
+                  "bodies_open": sum(1 for it in items if it["open"]),
+                  "signals": sum(it["signals"] for it in items),
+                  "analysed": sum(it["analysed"] for it in items),
+                  "open": sum(it["open"] for it in items)}
     out = items[:limit]
     # body names -> body_id, so a click can open the datasheet
     need = [it for it in out if "body_id" not in it and it.get("body")]
@@ -552,13 +585,21 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
         sysn = it["system"] or ""
         b = it.get("body") or ""
         it["body_short"] = b[len(sysn):].strip() if sysn and b.startswith(sysn) else b
-    return {"view": view, "kind": kind, "q": q or "", "max_ly": max_ly,
-            "total": len(items), "items": out}
+    res = {"view": view, "kind": kind, "q": q or "", "max_ly": max_ly,
+           "total": len(items), "items": out}
+    if totals is not None:
+        res["totals"] = totals
+    return res
 
 
 def build_atlas_kinds(db: Database, view: str) -> List[Dict[str, Any]]:
     """The second picker: what kinds exist in one atlas view, with counts."""
     out = []
+    if view == "bio":
+        n = {"open": 0, "done": 0}
+        for r in db.atlas_bio():
+            n[_bio_item(r)["key"]] += 1
+        return [{"key": k, "label": k, "count": n[k]} for k in ("open", "done") if n[k]]
     for r in db.atlas_kinds(view):
         label = r["label"] or r["key"]
         if view == "signals":

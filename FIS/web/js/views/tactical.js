@@ -263,15 +263,21 @@ function renderSide() {
     let nDone = 0, nOpen = 0;
     for (const b of sys.bio) {
       const rows = [];
+      // M1: what is still to do comes first; analysed species fold into one
+      // line (names on hover) so finished work does not crowd the list
+      const done = b.species.filter(s => s.state === "done");
       for (const s of b.species) {
-        if (s.state === "done") nDone++; else nOpen++;
-        rows.push(el("div", { class: "bio-sp " + (s.state === "done" ? "c-green" : "c-amber"),
-          text: (s.state === "done" ? "✔ " : "◐ " + s.samples + "/3 ") + s.species }));
+        if (s.state === "done") { nDone++; continue; }
+        nOpen++;
+        rows.push(el("div", { class: "bio-sp c-amber", text: "◐ " + s.samples + "/3 " + s.species }));
       }
       for (const g of b.missing) { nOpen++; rows.push(el("div", { class: "bio-sp c-violet", text: "? " + t("{g} – not found yet", { g }) })); }
+      if (done.length) rows.push(el("div", { class: "bio-sp c-green" + (rows.length ? " small" : ""), title: done.map(s => s.species).join(", "),
+        text: "✔ " + (done.length === 1 ? done[0].species : t("{n} analysed", { n: done.length })) }));
       if (!b.species.length && !b.missing.length)
         rows.push(el("div", { class: "bio-sp c-dim", text: b.hint || t("FSS count only – the DSS names the genera") }));
-      box.append(el("div", { class: "bio-body", onclick: () => { ctxRef.select(sys.id64, b.body_id, false); focusGroupOf(b.body_id); } },
+      const finished = done.length && done.length === b.species.length && !b.missing.length && done.length >= b.signals;
+      box.append(el("div", { class: "bio-body" + (finished ? " bio-done" : ""), onclick: () => { ctxRef.select(sys.id64, b.body_id, false); focusGroupOf(b.body_id); } },
         el("div", { class: "bio-h" }, el("span", { class: "c-cyan", text: b.short }),
           el("span", { class: "c-dim", text: "  Bio ×" + b.signals + " · " + fmt(b.arrival_ls, 0) + " LS" })),
         ...rows));
