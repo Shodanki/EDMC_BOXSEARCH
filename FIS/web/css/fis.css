@@ -523,6 +523,11 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .st-set { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0 2px; font-size: 13px; }
 .st-url { display: flex; gap: 8px; align-items: center; margin: 4px 0; font-size: 12px; }
 .st-url code { color: #3EF2E0; word-break: break-all; }
+.st-url.on code { text-decoration: underline; }
+.st-lan { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.st-urls { flex: 1 1 240px; min-width: 0; }
+.st-qrbox { margin: 4px 0; text-align: center; }
+.st-qr { display: block; width: 180px; height: 180px; background: #FFFFFF; padding: 0; image-rendering: pixelated; }
 #foot-settings { color: #6E8F8B; text-decoration: none; margin-left: 8px; font-size: 14px; }
 #foot-settings:hover { color: #3EF2E0; }
 .lay-phone .st-grid { grid-template-columns: 1fr; }

@@ -1,0 +1,109 @@
+"""E1: QR code of the home-network address on the settings page."""
+
+import os
+import threading
+import unittest
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+
+from fis import qr, setup
+from fis.server import App, Handler, make_server
+from fis.vendor.qrcodegen import QrCode
+
+from .test_api import _Base, fed_tracker
+
+SVG_NS = "{http://www.w3.org/2000/svg}"
+
+
+def modules_from_svg(text):
+    """Read the dark modules back out of our SVG path (x, y without border)."""
+    root = ET.fromstring(text)
+    path = root.find(SVG_NS + "path")
+    dark = set()
+    for cmd in path.get("d").split():
+        x, y = cmd[1:].split("h")[0].split(",")
+        dark.add((int(x) - qr.BORDER, int(y) - qr.BORDER))
+    return root, dark
+
+
+class TestQrSvg(unittest.TestCase):
+    def test_well_formed_and_content(self):
+        text = "http://192.168.178.20:8765/?token=AbC_-123"
+        root, dark = modules_from_svg(qr.svg(text))
+        self.assertEqual(root.tag, SVG_NS + "svg")
+        code = QrCode.encode_text(text, QrCode.Ecc.MEDIUM)
+        n = code.get_size()
+        self.assertEqual(root.get("viewBox"), "0 0 %d %d" % (n + 8, n + 8))
+        want = {(x, y) for y in range(n) for x in range(n) if code.get_module(x, y)}
+        self.assertEqual(dark, want)
+
+    def test_vendor_kept_licence_and_source(self):
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        vend = os.path.join(here, "fis", "vendor")
+        with open(os.path.join(vend, "qrcodegen.py"), encoding="utf-8") as fh:
+            head = fh.read(1500)
+        self.assertIn("Copyright (c) Project Nayuki. (MIT License)", head)
+        self.assertIn("Permission is hereby granted", head)
+        with open(os.path.join(vend, "SOURCE.md"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn("nayuki.io", src)
+        self.assertIn("MIT", src)
+
+
+class TestQrEndpoint(_Base):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.cfg.lan = True
+        cls.cfg.token = "qr-token"
+        cls.app = App(cls.cfg, live=fed_tracker(cls.tmp), db=cls.db)
+        cls.srv = make_server(cls.app, host="127.0.0.1", port=0)
+        cls.cfg.port = cls.srv.server_address[1]
+        cls.base = "http://127.0.0.1:%d" % cls.cfg.port
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+        cls.cfg.lan = False
+        cls.cfg.token = ""
+
+    def _get(self, q=""):
+        return urllib.request.urlopen(self.base + "/api/settings/qr?token=qr-token" + q, timeout=5)
+
+    def test_svg_is_the_address(self):
+        with self._get() as r:
+            self.assertTrue(r.headers["Content-Type"].startswith("image/svg+xml"))
+            body = r.read().decode("utf-8")
+        urls = setup.lan_urls(self.cfg.port, self.cfg.token)
+        self.assertEqual(body, qr.svg(urls[0]))
+        self.assertIn("token=qr-token", urls[0])
+        ET.fromstring(body)
+        # another address of the list, and a wrong index falls back to the first
+        with self._get("&i=%d" % (len(urls) - 1)) as r:
+            self.assertEqual(r.read().decode("utf-8"), qr.svg(urls[-1]))
+        with self._get("&i=99") as r:
+            self.assertEqual(r.read().decode("utf-8"), qr.svg(urls[0]))
+
+    def test_needs_token(self):
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(self.base + "/api/settings/qr", timeout=5)
+        self.assertEqual(cm.exception.code, 401)
+        cm.exception.close()
+
+    def test_refused_from_lan(self):
+        old = Handler.LOCAL
+        Handler.LOCAL = ()          # every caller now looks like a LAN device
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                self._get()
+            self.assertEqual(cm.exception.code, 403)
+            cm.exception.close()
+        finally:
+            Handler.LOCAL = old
+
+
+if __name__ == "__main__":
+    unittest.main()

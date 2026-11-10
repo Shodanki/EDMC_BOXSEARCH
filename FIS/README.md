@@ -16,7 +16,9 @@ and its state files (`Status.json`, `NavRoute.json`, `ModulesInfo.json`,
 `Cargo.json`, ...). It sends nothing to the game, automates nothing and talks
 to no service on the internet. The 3D library Three.js (0.170.0, MIT) ships
 with it in `web/vendor/three` - licence and origin in `SOURCE.md` there - so
-the 3D views work offline too.
+the 3D views work offline too. The QR code on the settings page is drawn
+with Project Nayuki's QR Code generator (`fis/vendor/qrcodegen.py`, MIT,
+licence header kept - origin in `fis/vendor/SOURCE.md`).
 
 ## Screenshots
 
@@ -86,6 +88,9 @@ Choose "this PC and devices in the home network" in the first-start questions.
 * At every start the console prints the addresses of this PC, e.g.
   `http://192.168.1.20:8770/?token=...`. The footer in the browser shows the
   address (never the token).
+* The **settings page** (on the game PC) shows the addresses with a **QR
+  code** next to them - point the tablet camera at it instead of typing the
+  token. Only the game PC gets the QR code; other devices are refused.
 * **Firewall:** the FIS checks - read only - whether an enabled Windows
   Firewall rule allows TCP on its port (any rule, whatever its name). If not, it
   asks **once** whether to create the rule "SHBOX FIS": only with your yes,

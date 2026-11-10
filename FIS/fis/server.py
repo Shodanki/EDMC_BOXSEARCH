@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import config as config_mod
 from . import __version__, setup
+from . import qr as qr_mod
 from .config import WEB_DIR, Config
 from .data import Database
 from .live import Hub, LiveTracker
@@ -340,6 +341,20 @@ class Handler(BaseHTTPRequestHandler):
             if not self._local():
                 return self._error(403, "settings only on the game PC")
             return self._json(self._settings())
+        if path == "/api/settings/qr":
+            # the tablet address WITH token as QR code - same rule as the
+            # settings: only the game PC itself ever sees it
+            if not self._local():
+                return self._error(403, "settings only on the game PC")
+            urls = self._settings()["lan_urls"]
+            if not urls:
+                return self._error(404, "home network is off")
+            try:
+                i = int((qs.get("i") or ["0"])[0])
+            except ValueError:
+                i = 0
+            text = urls[i] if 0 <= i < len(urls) else urls[0]
+            return self._send(200, qr_mod.svg(text).encode("utf-8"), "image/svg+xml; charset=utf-8")
         if path == "/api/config":
             # addresses for other devices, never the token (that stays on this PC)
             return self._json({"language": app.cfg.language, "lan": app.cfg.lan,
