@@ -237,7 +237,35 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
                    for k in ("Items", "Components", "Consumables", "Data")},
         "balance": st.get("balance"),
     }
+    out["target"] = build_target(live, db)
     return out
+
+
+def build_target(live: Dict[str, Any], db: Any = None) -> Dict[str, Any]:
+    """E5: what is selected right now - the destination of Status.json (a
+    body, station or signal in this system, or another system), the FSD
+    target of the galaxy map and the locked ship (ShipTargeted), read only."""
+    st = live.get("status") or {}
+    cur = live.get("system") or {}
+    dest = st.get("destination") or None
+    d_out = None
+    if dest and (dest.get("system") or dest.get("name")):
+        here = dest.get("system") is not None and dest.get("system") == cur.get("id64")
+        d_out = {"name": dest.get("name"), "here": here, "body_id": dest.get("body")}
+        if here and dest.get("body") is not None and db is not None:
+            try:
+                row = db.body(int(cur["id64"]), int(dest["body"]))
+            except Exception:
+                row = None
+            if row is not None:
+                d_out["body"] = row["name"]
+                d_out["arrival_ls"] = row["arrival_ls"]
+        if not here:
+            fsd = live.get("target") or {}
+            if fsd.get("id64") is not None and fsd.get("id64") == dest.get("system"):
+                d_out["system"] = fsd.get("name")
+    return {"destination": d_out, "fsd": live.get("target"),
+            "ship": live.get("ship_target"), "system": cur.get("name")}
 
 
 def _ship_tritium(journal_dir: Optional[str]) -> Optional[int]:

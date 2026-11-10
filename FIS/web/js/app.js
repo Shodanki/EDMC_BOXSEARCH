@@ -247,6 +247,8 @@ subscribe({
     if (autoView() && store.view !== "planet") show("tactical");
   },
   target() {
+    // E5: the SHIP sheet shows destination and locked ship - follow them
+    if (mounted.has("ship") && store.view === "ship") later("shipview", 400, () => ship.update(ctx, "data"));
     later("target", 250, async () => {
       await refresh("briefing"); await refresh("ship");
       if (autoView() && store.briefing && store.briefing.target && store.view !== "planet") show("briefing");

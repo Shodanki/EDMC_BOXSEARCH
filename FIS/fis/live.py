@@ -85,6 +85,7 @@ def empty_state() -> Dict[str, Any]:
         "ship": {},
         "system": {},           # name, id64, pos, ts
         "target": None,         # FSDTarget: name, id64, star_class, remaining_jumps
+        "ship_target": None,    # ShipTargeted: the locked ship, as far as scanned (E5)
         "navroute": [],         # NavRoute.json hops
         "fuel": {},             # main, reservoir
         "status": {},           # Status.json, decoded
@@ -148,6 +149,7 @@ class LiveTracker:
                 s["commander"] = e.get("Name")
             elif ev == "LoadGame":
                 s["commander"] = e.get("Commander") or s["commander"]
+                s["ship_target"] = None      # new game session: no lock yet
                 s["ship"].update(type=e.get("Ship"), name=e.get("ShipName"),
                                  ident=e.get("ShipIdent"))
                 if e.get("FuelCapacity"):
@@ -178,6 +180,7 @@ class LiveTracker:
                         s["jumps"].append([float(d), float(u)])
                         del s["jumps"][:-60]
                 s["jumping"] = None
+                s["ship_target"] = None      # a lock never survives a jump
                 if s["target"] and s["target"].get("id64") == new_id:
                     s["target"] = None
                 if e.get("BodyID") is not None and e.get("BodyType") not in (None, "Star", "Null") \
@@ -196,6 +199,12 @@ class LiveTracker:
                     if s["target"] and s["target"].get("id64") == e.get("SystemAddress"):
                         s["target"]["star_class"] = e.get("StarClass")
                     out = "target"
+            elif ev == "ShipTargeted":
+                s["ship_target"] = self._ship_target(e, s.get("ship_target"), ts)
+                out = "target"
+            elif ev in ("SupercruiseEntry", "Died", "Shutdown") and s.get("ship_target"):
+                s["ship_target"] = None
+                out = "target"
             elif ev == "FSDTarget":
                 s["target"] = {"name": e.get("Name"), "id64": e.get("SystemAddress"),
                                "star_class": e.get("StarClass"),
@@ -253,6 +262,39 @@ class LiveTracker:
         if out:
             self._emit(out, {"event": ev, "ts": ts,
                              "system_id64": self.state["system"].get("id64")})
+        return out
+
+    @staticmethod
+    def _ship_target(e: Dict[str, Any], prev: Optional[Dict[str, Any]],
+                     ts: Optional[float]) -> Optional[Dict[str, Any]]:
+        """ShipTargeted -> what the scan has revealed so far. The game sends
+        one event per scan stage (0: ship, 1: pilot and rank, 2: shield and
+        hull, 3: faction, legal state, bounty, subsystem); later stages of
+        the same ship keep what earlier ones told."""
+        if not e.get("TargetLocked"):
+            return None
+        ship_key = e.get("Ship")
+        out: Dict[str, Any] = {}
+        if prev and prev.get("ship_key") == ship_key and                 (e.get("PilotName") is None or prev.get("pilot_key") in (None, e.get("PilotName"))):
+            out.update(prev)
+        out.update({"ship_key": ship_key, "ts": ts,
+                    "ship": e.get("Ship_Localised") or (ship_key or "").replace("_", " ").title(),
+                    "stage": e.get("ScanStage")})
+        for key, src in (("pilot", "PilotName_Localised"), ("pilot_key", "PilotName"),
+                         ("rank", "PilotRank"), ("faction", "Faction"),
+                         ("legal", "LegalStatus"), ("bounty", "Bounty"), ("power", "Power"),
+                         ("squadron", "SquadronID")):
+            if e.get(src) is not None:
+                out[key] = e.get(src)
+        if out.get("pilot") is None and out.get("pilot_key"):
+            out["pilot"] = out["pilot_key"]
+        for key, src in (("shield", "ShieldHealth"), ("hull", "HullHealth")):
+            if e.get(src) is not None:
+                out[key] = float(e.get(src)) / 100.0       # journal: 0..100
+        if e.get("Subsystem"):
+            out["subsystem"] = e.get("Subsystem_Localised") or e.get("Subsystem")
+            out["subsystem_health"] = (float(e["SubsystemHealth"]) / 100.0
+                                       if e.get("SubsystemHealth") is not None else None)
         return out
 
     def _fix_from(self, e: Dict[str, Any], ts: Optional[float]) -> Optional[Dict[str, Any]]:
