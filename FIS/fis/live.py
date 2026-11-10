@@ -22,6 +22,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
+from . import combat
+
 
 def parse_ts(stamp: Optional[str]) -> Optional[float]:
     if not stamp:
@@ -101,6 +103,7 @@ def empty_state() -> Dict[str, Any]:
         "jumps": [],            # (distance ly, fuel used t) for the fuel model
         "loadout": None,        # last Loadout event, full (modules, health, ammo)
         "alerts": [],           # ship alerts of this session: heat, breach, AFMU ...
+        "combat_hits": {},      # M8: last time of each combat event (fis/combat.py)
         "journal": None,        # file being followed
         "last_event": None, "last_event_ts": None,
     }
@@ -297,6 +300,8 @@ class LiveTracker:
                 if ev == "RefuelAll":
                     s["fuel"]["main"] = s["ship"]["fuel_capacity"]
                 out = "status"
+            if combat.note_event(s.setdefault("combat_hits", {}), e, ts):
+                out = out or "status"
             if ev in FIX_EVENTS:
                 fx = self._fix_from(e, ts)
                 if fx:

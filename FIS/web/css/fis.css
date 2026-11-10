@@ -147,6 +147,13 @@ body.motion .frame.appear > .frame-in { animation: frame-fill var(--t-draw) ease
 .sb-cell .v { overflow: hidden; text-overflow: ellipsis; }
 .sb-target .v { max-width: 24ch; color: var(--amber); }
 .sb-system .v { max-width: 24ch; color: var(--cyan); }
+/* M8: combat mode - only tokens, so a theme decides how loud it gets */
+.sb-combat .v { font: 600 11px var(--font-display); letter-spacing: .14em; padding: 1px 6px; border: 1px solid currentColor; }
+.sb-combat.ready .v { color: var(--amber); }
+.sb-combat.alert .v { color: var(--white); background: rgba(var(--red-rgb), .75); border-color: var(--red); animation: annblink 1s steps(2) infinite; }
+body.combat-alert .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--red-rgb), .8); }
+body.combat-ready .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--amber-rgb), .6); }
+@media (prefers-reduced-motion: reduce) { .sb-combat.alert .v { animation: none; } }
 .bar { width: 90px; height: 8px; border: 1px solid var(--line-dim); position: relative; background: #050909; }
 .bar > i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--green); box-shadow: 0 0 6px rgba(var(--green-rgb), .5); transition: width .4s; }
 .bar.warn > i { background: var(--amber); }

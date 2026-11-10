@@ -229,6 +229,31 @@ function renderShipBar() {
   else if (flags.includes("supercruise")) focus += " · SC";
   if (flags.includes("scooping")) focus += " · SCOOP";
   document.getElementById("sb-focus").textContent = focus;
+  renderCombat(s.combat);
+}
+
+// M8: combat mode - ALERT (shot at, interdicted) or READY (hardpoints out).
+// The body class lets a theme repaint the whole FIS (T1 tokens); the state
+// ends by itself at `until`, so a quiet game still calms the display down.
+const COMBAT_WHY = { attacked: N_("under attack"), shields_down: N_("shields down"), hull_hit: N_("hull hit"),
+  interdicted: N_("interdicted"), interdicted_now: N_("interdiction"), danger: N_("danger"),
+  hardpoints: N_("hardpoints out"), target: N_("target locked") };
+function renderCombat(c) {
+  const level = c && c.level;
+  document.body.classList.toggle("combat-alert", level === "alert");
+  document.body.classList.toggle("combat-ready", level === "ready");
+  const cell = document.getElementById("sb-combat");
+  if (!cell) return;
+  cell.hidden = !level;
+  cell.className = "sb-cell sb-combat " + (level || "");
+  if (level) {
+    document.getElementById("sb-combat-v").textContent = (level === "alert" ? t("COMBAT") : t("WEAPONS READY"));
+    cell.title = (c.reasons || []).map(r => t(COMBAT_WHY[r] || r)).join(" · ");
+  }
+  if (c && c.until) {
+    const ms = c.until * 1000 - Date.now() + 500;
+    if (ms > 0 && ms < 120000) later("combat", ms, () => refresh("ship"));
+  }
 }
 
 function tickClock() {

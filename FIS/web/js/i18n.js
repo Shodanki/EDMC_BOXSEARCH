@@ -899,5 +899,13 @@ const DE = /*DE*/{
   "KNOWN CARRIERS": "BEKANNTE TRÄGER",
   "{f} favourites · {n} known": "{f} Favoriten · {n} bekannt",
   "favourite": "Favorit",
-  "last seen {d}": "zuletzt gesehen {d}"
+  "last seen {d}": "zuletzt gesehen {d}",
+  "hull hit": "Rumpftreffer",
+  "interdicted": "abgefangen",
+  "interdiction": "Abfangversuch",
+  "danger": "Gefahr",
+  "hardpoints out": "Waffen ausgefahren",
+  "target locked": "Ziel erfasst",
+  "COMBAT": "KAMPF",
+  "WEAPONS READY": "WAFFEN BEREIT"
 }/*END*/;

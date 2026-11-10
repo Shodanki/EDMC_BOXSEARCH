@@ -1405,6 +1405,8 @@ def build_ship(live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "jumping": live.get("jumping"),
         "status_ts": st.get("ts"),
     }
+    from .combat import combat_state
+    out["combat"] = combat_state(live, time.time())          # M8
     if ship.get("fuel_capacity"):
         fs = _fuel_state(live)
         out["fuel"].update(pct=_r(fs.pct, 1), jumps_left=fs.jumps_left,
