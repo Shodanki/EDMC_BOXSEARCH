@@ -88,7 +88,7 @@ def _positions(archive: fl.Archive, db: Optional[Database] = None):
 def carrier_path(archive: fl.Archive, db: Optional[Database] = None) -> List[Dict[str, Any]]:
     """Positions the carrier went through (systems with known coordinates)."""
     seq: List[Dict[str, Any]] = []
-    for e in archive.events():
+    for e in archive.own_carrier_events():
         if e["event"] in ("CarrierJump", "CarrierLocation") and e.get("StarSystem"):
             if seq and seq[-1]["name"] == e["StarSystem"]:
                 continue
@@ -117,7 +117,7 @@ def carrier_now(archive: fl.Archive, db: Optional[Database] = None,
     ident: Dict[str, Any] = {}
     cur: Optional[Dict[str, Any]] = None
     req: Optional[Dict[str, Any]] = None
-    for e in archive.events():
+    for e in archive.own_carrier_events():
         ev = e["event"]
         if ev == "CarrierStats":
             ident = {"name": e.get("Name"), "callsign": e.get("Callsign")}

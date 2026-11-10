@@ -46,6 +46,19 @@ class GalaxyTest(unittest.TestCase):
         self.assertFalse(now["expected"])
         self.assertNotIn("jump", now)
 
+    def test_ride_on_a_strangers_carrier(self):
+        # docked at someone else's carrier, aboard on foot when it jumps:
+        # the own carrier stays where it is (and the path does not grow)
+        with open(os.path.join(self.tmp.name, "Journal.2026-01-30T080000.01.log"), "w", encoding="utf-8") as fh:
+            fh.write('{"timestamp":"2026-01-30T08:00:00Z","event":"Docked","StationName":"Q2W-3ER",'
+                     '"StationType":"FleetCarrier","MarketID":4711,"StarSystem":"Beta","SystemAddress":2}\n'
+                     '{"timestamp":"2026-01-30T08:20:00Z","event":"CarrierJump","Docked":false,"OnFoot":true,'
+                     '"StarSystem":"Alpha","SystemAddress":1,"StarPos":[0,0,0]}\n')
+        ar = fl.Archive(self.tmp.name)
+        self.assertEqual(self.galaxy.carrier_now(ar)["system"], "Beta")
+        self.assertEqual([c["name"] for c in self.galaxy.carrier_path(ar)], ["Alpha", "Beta"])
+        self.assertEqual(ar.carrier()["location"]["StarSystem"], "Beta")
+
     def test_carrier_jump_pending_and_expected(self):
         from fis.live import parse_ts
         with open(os.path.join(self.tmp.name, "Journal.2026-01-30T090000.01.log"), "w", encoding="utf-8") as fh:

@@ -627,8 +627,17 @@ class Archive:
         return last
 
     # ------------------------------------------------------------ carrier
-    def carrier(self) -> Optional[Dict[str, Any]]:
+    def own_carrier_events(self) -> List[Dict[str, Any]]:
+        """events() without the CarrierJumps of someone else's carrier: riding
+        along on a stranger's carrier (docked or aboard on foot) writes a
+        CarrierJump too, and that moved "your" carrier in CARRIER and GALAXY
+        - for a commander without a carrier it even invented one."""
+        from .carriers import own_jump_flags
         evs = self.events()
+        return [e for e, foreign in zip(evs, own_jump_flags(evs)) if not foreign]
+
+    def carrier(self) -> Optional[Dict[str, Any]]:
+        evs = self.own_carrier_events()
         stats = loc = None
         pos: Dict[str, Any] = {}
         jumps: List[Dict[str, Any]] = []
