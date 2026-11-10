@@ -107,6 +107,15 @@ header and footer, for a second screen or a tablet. **⛶** or key **F** goes
 full screen (browsers allow that only after a click or key press). On an iPad
 or iPhone, "Add to Home Screen" opens the FIS without browser bars.
 
+### Display links and OBS
+
+The settings page (game PC) has **DISPLAY LINKS**: pick a view, tick **OBS
+browser source** (transparent background, no scanlines, no window control)
+or **without the window control** (a wall screen), choose the size (75-200 %)
+and copy or open the address. In OBS: *Sources → + → Browser*, paste the
+address, set width and height. With the home network on, the address
+contains the access token - keep it out of the stream picture.
+
 ## Views
 
 | Key | View | What it shows |

@@ -7,6 +7,11 @@ import { el, frame } from "../ui.js";
 import { t } from "../i18n.js";
 
 let root = null, data = null, msg = "", qrIndex = 0;
+// E6/P7: display links - one view alone, for OBS, a wall screen or a tablet
+const LINK_VIEWS = [["briefing", "BRIEFING"], ["surface", "PLANET"], ["tactical", "SYSTEM"], ["galaxy", "GALAXY"],
+  ["planet", "PLANET INFO"], ["atlas", "ATLAS"], ["ship", "SHIP"], ["carrier", "CARRIER"], ["mining", "MINING"],
+  ["statistics", "STATISTICS"]];
+const link = { view: "briefing", obs: false, kiosk: false, scale: "1" };
 
 export function mount(r) { root = r; root.classList.add("settings-view"); }
 
@@ -63,6 +68,46 @@ function render() {
   }
   root.append(el("div", { class: "st-grid" },
     frame(t("SETTINGS"), t("only on this PC"), rows, { appear: false }),
+    frame(t("DISPLAY LINKS"), t("one view alone"), linkRows(), { appear: false }),
     data.lan ? frame(t("HOME NETWORK"), "", lanRows.length ? lanRows : el("div", { class: "c-dim", text: t("Save to create the address.") }), { appear: false }) : null,
     el("div", { class: "c-dim small", text: t("Stored in {f}.", { f: data.ini }) })));
 }
+
+// The address of one view with a display profile - made here so nobody has
+// to type URL parameters. With the home network on, the game PC needs the
+// token too (taken from the first home-network address).
+function linkUrl() {
+  const q = new URLSearchParams({ solo: link.view });
+  if (link.obs) q.set("obs", "1");
+  else if (link.kiosk) q.set("kiosk", "1");
+  if (link.scale !== "1") q.set("scale", link.scale);
+  if (data.lan && data.lan_urls && data.lan_urls.length) {
+    const tok = new URL(data.lan_urls[0]).searchParams.get("token");
+    if (tok) q.set("token", tok);
+  }
+  return "http://127.0.0.1:" + data.port + "/?" + q.toString();
+}
+
+function linkRows() {
+  const view = el("select", { class: "lay-pick", onchange: (e) => { link.view = e.target.value; render(); } },
+    ...LINK_VIEWS.map(([v, l]) => el("option", { value: v, text: t(l), selected: v === link.view ? true : null })));
+  const obs = el("input", { type: "checkbox", checked: link.obs ? true : null, onchange: (e) => { link.obs = e.target.checked; render(); } });
+  const kiosk = el("input", { type: "checkbox", checked: link.kiosk || link.obs ? true : null, disabled: link.obs ? true : null,
+    onchange: (e) => { link.kiosk = e.target.checked; render(); } });
+  const scale = el("select", { class: "lay-pick", onchange: (e) => { link.scale = e.target.value; render(); } },
+    ...["0.75", "1", "1.25", "1.5", "2"].map(v => el("option", { value: v, text: Math.round(Number(v) * 100) + " %", selected: v === link.scale ? true : null })));
+  const u = linkUrl();
+  return [
+    el("label", { class: "st-set" }, el("span", { text: t("View") }), view),
+    el("label", { class: "st-set" }, el("span", { text: t("OBS browser source (transparent, no scanlines)") }), obs),
+    el("label", { class: "st-set" }, el("span", { text: t("Without the window control (wall screen)") }), kiosk),
+    el("label", { class: "st-set" }, el("span", { text: t("Size") }), scale),
+    el("div", { class: "st-url" }, el("code", { text: u }),
+      el("button", { text: t("copy"), onclick: () => navigator.clipboard && navigator.clipboard.writeText(u) }),
+      el("button", { text: t("open link"), onclick: () => window.open(u, "_blank") })),
+    el("div", { class: "c-dim small", text: link.obs
+      ? t("In OBS: Sources → + → Browser, paste the address, set width and height (e.g. 800 × 600). Contains the token when the home network is on - do not show it on stream.")
+      : t("Open it in a second window, on a second screen or bookmark it.") }),
+  ];
+}
+

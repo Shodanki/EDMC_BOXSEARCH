@@ -600,3 +600,11 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .sf-active { font-weight: bold; }
 .sf-dim { opacity: .55; }
 .bio-body.bio-done { opacity: .5; }
+
+/* ---------------------------------------------------------------- display profiles (E6/P7)
+   obs: browser source in OBS - transparent page, frames slightly see-through;
+   kiosk: no solo control (a wall display, a stream) */
+html:has(body.obs), body.obs { background: transparent !important; }
+body.obs .frame > .frame-in { background: linear-gradient(180deg, rgba(12,23,22,.82), rgba(8,16,15,.82)); }
+body.obs #solo-ctl, body.kiosk #solo-ctl { display: none; }
+body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
