@@ -6,18 +6,32 @@ import { t, N_, lang } from "../i18n.js";
 
 let root = null;
 let current = null;     // datasheet JSON
+let currentKey = null;  // "id64/body_id" of `current`
+let currentJson = "";   // the same as text: an unchanged answer is not drawn again
 let loading = null;
+let stale = false;      // something changed while PLANET INFO was hidden
 
 export function mount(r) { root = r; root.classList.add("planet-view"); }
 
+const keyOf = (sel) => sel ? sel.id64 + "/" + sel.body_id : null;
+
+// E3: every scan event (FSS, DSS, bio, codex - of any body, from the journal
+// and again from the plugin database) and every jump called load(); each
+// answer redrew the whole sheet with its count-up animation, which looked
+// like constant reloading. Now: hidden -> only remember that it is stale;
+// shown -> fetch, and draw only when the answer differs.
 export async function load(ctx) {
   const sel = ctx.store.selected;
-  if (!sel) { current = null; render(ctx); return; }
-  const key = sel.id64 + "/" + sel.body_id;
+  if (!sel) { current = null; currentKey = null; currentJson = ""; if (root && ctx.store.view === "planet") render(ctx); return; }
+  if (ctx.store.view !== "planet") { stale = true; return; }
+  stale = false;
+  const key = keyOf(sel);
   loading = key;
   const data = await getJSON("/api/body/" + key);
   if (loading !== key) return;           // a newer selection won
-  current = data;
+  const json = JSON.stringify(data);
+  if (key === currentKey && json === currentJson) return;   // nothing new: keep the sheet as it is
+  current = data; currentKey = key; currentJson = json;
   if (root && ctx.store.view === "planet") render(ctx);
 }
 
@@ -28,7 +42,10 @@ export function update(ctx, reason) {
     const leg = ctx.store.system.route.legs[ctx.store.system.route.next - 1];
     if (leg) { ctx.store.selected = { id64: ctx.store.system.id64, body_id: leg.body_id }; load(ctx); return; }
   }
-  if (reason === "show") render(ctx);
+  if (reason === "show") {
+    if (currentKey === keyOf(ctx.store.selected)) render(ctx);   // the known sheet at once
+    if (stale || currentKey !== keyOf(ctx.store.selected)) load(ctx);
+  }
 }
 
 const ATMO = { CarbonDioxide: "CO₂", SulphurDioxide: "SO₂", Nitrogen: "N₂", Oxygen: "O₂", Water: "H₂O",
