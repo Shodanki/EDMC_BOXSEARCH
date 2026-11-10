@@ -913,6 +913,26 @@ def _overlay_apply_settings() -> None:
         ov.clear()
 
 
+OVERLAY_KEEP_MS = 60_000      # look once a minute whether the targets block needs sending
+
+
+def _overlay_keepalive() -> None:
+    """Once a minute: keep the targets block on screen (it has a time to
+    live and nothing else redraws it between route changes)."""
+    try:
+        ov = getattr(ST, "overlay", None)
+        if ov is not None and ov.enabled:
+            ov.keep_targets()
+    except Exception:
+        logger.debug("overlay keep-alive failed", exc_info=True)
+    finally:
+        if _frame is not None:
+            try:
+                _frame.after(OVERLAY_KEEP_MS, _overlay_keepalive)
+            except Exception:
+                pass                         # EDMC is closing
+
+
 def _overlay_targets() -> None:
     ov = getattr(ST, "overlay", None)
     if ov is None or not ov.enabled:
@@ -3460,6 +3480,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     theme.update(_frame)
     # SHBOX FIS along with EDMC, when ticked in the settings
     _frame.after(FIS_AUTOSTART_DELAY_MS, _fis_autostart)
+    _frame.after(OVERLAY_KEEP_MS, _overlay_keepalive)
     return _frame
 
 

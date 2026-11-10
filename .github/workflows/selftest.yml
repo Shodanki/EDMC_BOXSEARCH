@@ -23,6 +23,8 @@ jobs:
         run: python surfacenav.py
       - name: mining overlay self test
         run: python miningstat.py
+      - name: cockpit overlay self test
+        run: python overlay.py
       - name: database backup self test
         run: python sysdb.py
       - name: network gateway self test (no network)
