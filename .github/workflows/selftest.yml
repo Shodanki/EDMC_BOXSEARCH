@@ -23,6 +23,8 @@ jobs:
         run: python surfacenav.py
       - name: mining overlay self test
         run: python miningstat.py
+      - name: database backup self test
+        run: python sysdb.py
       - name: plain-python modules import without EDMC
         run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat; print('imports ok')"
       - name: FIS tests (flight information system)

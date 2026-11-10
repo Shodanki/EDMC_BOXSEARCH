@@ -24,10 +24,12 @@ Standard library only.
 from __future__ import annotations
 
 import calendar
+import glob
 import json
 import logging
 import math
 import os
+import shutil
 import sqlite3
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -242,11 +244,102 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+# One-time data repairs; each sets its meta key when done. A database that
+# still misses one of them (or has another schema version) gets a backup
+# before it is touched.
+REPAIRS = ("fix_phantoms", "fix_marks45", "fix_n1zero")
+BACKUP_KEEP = 3          # newest backups kept next to the database
+
+
+def stored_state(path: str) -> Optional[Tuple[int, Set[str]]]:
+    """(schema version, repairs done) of an existing database, read only.
+
+    None for a missing or empty file - a new database needs no backup.
+    A database without the meta table counts as schema 0.
+    """
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return None
+    cx = sqlite3.connect(path, timeout=15.0)
+    try:
+        tables = {r[0] for r in cx.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        if not tables:
+            return None
+        if "meta" not in tables:
+            return 0, set()
+        meta = dict(cx.execute("SELECT k, v FROM meta").fetchall())
+    finally:
+        cx.close()
+    try:
+        version = int(meta.get("schema") or 0)
+    except ValueError:
+        version = 0
+    return version, {k for k in REPAIRS if meta.get(k)}
+
+
+def needs_migration(state: Optional[Tuple[int, Set[str]]]) -> bool:
+    if state is None:
+        return False
+    version, done = state
+    return version != SCHEMA_VERSION or not set(REPAIRS) <= done
+
+
+def backup_database(path: str, tag: str, keep: int = BACKUP_KEEP) -> str:
+    """Copy the database (WAL included, via SQLite's backup API) to
+    <path>.<tag>-<UTC stamp>.bak and keep only the newest `keep` backups.
+    Raises OSError when the disk lacks room for the copy."""
+    size = os.path.getsize(path)
+    if os.path.exists(path + "-wal"):
+        size += os.path.getsize(path + "-wal")
+    free = shutil.disk_usage(os.path.dirname(os.path.abspath(path))).free
+    if free < size * 1.2 + 10 * 1024 * 1024:
+        raise OSError("not enough disk space for a backup (%d MB free)"
+                      % (free // (1024 * 1024)))
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    dst_path = "%s.%s-%s.bak" % (path, tag, stamp)
+    n = 1
+    while os.path.exists(dst_path):          # two migrations in one second
+        n += 1
+        dst_path = "%s.%s-%s-%d.bak" % (path, tag, stamp, n)
+    src = sqlite3.connect(path, timeout=15.0)
+    dst = sqlite3.connect(dst_path)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    old = sorted(glob.glob(glob.escape(path) + ".*.bak"),
+                 key=lambda f: (os.path.getmtime(f), f), reverse=True)
+    for f in old[max(1, keep):]:
+        try:
+            os.remove(f)
+        except OSError:
+            logger.warning("could not remove old backup %s", f)
+    return dst_path
+
+
 class SystemDB:
     """All writes are idempotent and commit-safe."""
 
     def __init__(self, path: str):
         self.path = path
+        self.backup_path: Optional[str] = None
+        try:
+            state = stored_state(path)
+        except sqlite3.Error:
+            logger.exception("could not read the database version")
+            state = (0, set())
+        if needs_migration(state):
+            # "your data": copy it before a schema change or repair touches it.
+            # The changes themselves only add tables and columns, so a failed
+            # backup is reported but does not stop the plugin.
+            try:
+                self.backup_path = backup_database(path, "schema%d" % state[0])
+                logger.info("database backup before migration: %s",
+                            os.path.basename(self.backup_path))
+            except Exception:
+                logger.exception("database backup before migration failed - "
+                                 "migrating without a backup")
         self.cx = sqlite3.connect(path, check_same_thread=False, timeout=15.0)
         self.cx.row_factory = sqlite3.Row
         self.cx.executescript(SCHEMA)
@@ -1936,3 +2029,59 @@ class SystemDB:
                     # thread can starve for seconds.
                     time.sleep(self.REPLAY_PAUSE)
         return res
+
+
+def _selftest() -> int:
+    """Backup before migration: new file no backup, current file no backup,
+    old schema or missing repair -> one backup, only the newest kept."""
+    import tempfile
+    fails = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal fails
+        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
+        fails += 0 if ok else 1
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "shboxsearch.sqlite")
+        baks = lambda: glob.glob(glob.escape(path) + ".*.bak")   # noqa: E731
+        db = SystemDB(path)
+        check(db.backup_path is None, "new database: no backup")
+        db.close()
+        db = SystemDB(path)
+        check(db.backup_path is None and not baks(), "current database: no backup")
+        db.cx.execute("UPDATE meta SET v='2' WHERE k='schema'")
+        db.cx.commit()
+        db.close()
+        db = SystemDB(path)
+        check(db.backup_path is not None and len(baks()) == 1,
+              "older schema: one backup")
+        old = sqlite3.connect(db.backup_path)
+        check(old.execute("SELECT v FROM meta WHERE k='schema'").fetchone()[0] == "2",
+              "backup holds the state before the migration")
+        old.close()
+        check(stored_state(path) == (SCHEMA_VERSION, set(REPAIRS)),
+              "migrated database is current")
+        db.cx.execute("DELETE FROM meta WHERE k='fix_n1zero'")
+        db.cx.commit()
+        db.close()
+        db = SystemDB(path)
+        check(db.backup_path is not None and "fix_n1zero" in stored_state(path)[1],
+              "pending repair: backup, then repair runs")
+        db.close()
+        for _ in range(4):
+            backup_database(path, "test")
+        check(len(baks()) == BACKUP_KEEP, "only the newest %d backups kept" % BACKUP_KEEP)
+        legacy = os.path.join(d, "legacy.sqlite")
+        cx = sqlite3.connect(legacy)
+        cx.execute("CREATE TABLE systems (name TEXT)")
+        cx.commit()
+        cx.close()
+        check(stored_state(legacy) == (0, set()), "database without meta = schema 0")
+    print("failures: %d" % fails)
+    return fails
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.WARNING)
+    raise SystemExit(1 if _selftest() else 0)

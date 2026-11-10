@@ -350,6 +350,11 @@ Everything lives in `shboxsearch.sqlite` in the plugin folder (WAL mode). The
 legacy `neareststars.json` and `survey_state.json` are **read only** during
 import and left untouched.
 
+Before an update changes the database layout or repairs stored data, the
+plugin first copies the database to `shboxsearch.sqlite.schema<N>-<time>.bak`
+in the same folder (the newest three copies are kept). To go back, close EDMC
+and rename a copy to `shboxsearch.sqlite`.
+
 When EDMC is logged in to Frontier, it fetches your fleet carrier from the
 Companion API (at most every 15 minutes) and hands it to plugins. The plugin
 keeps the latest answer as it is in `capi_fleetcarrier.json` in the plugin
