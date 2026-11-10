@@ -28,6 +28,8 @@ import logging
 import math
 import os
 import sqlite3
+import time
+from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from netgate import Gateway
@@ -52,6 +54,9 @@ class Source:
     # did the last fetch deliver the whole region? Only then is the shell
     # remembered as fetched (local-first: shells.py)
     last_ok = False
+    # True when the answer was cut at a page cap (still remembered: asking
+    # again would only hit the same cap)
+    truncated = False
 
     def available(self) -> Tuple[bool, str]:
         return False, "not implemented"
@@ -134,6 +139,8 @@ class SpanshSource(Source):
     name = "Spansh"
     priority = 20
     PAGE = 500
+    MAX_PAGES = 20         # per shell: 10 000 systems, far more than a 25 ly
+                           # shell holds outside the core (fair use)
 
     def __init__(self, gateway: Gateway, timeout: int = 40):
         self.gw = gateway
@@ -146,6 +153,7 @@ class SpanshSource(Source):
     def fetch(self, center, radius, progress: ProgressCB = None,
               r_min: float = 0.0) -> List[Dict]:
         self.last_ok = False
+        self.truncated = False
         out: Dict[str, Dict] = {}
         page = 0
         complete = False
@@ -185,7 +193,12 @@ class SpanshSource(Source):
                 complete = True
                 break
             page += 1
-            if page > 400:      # safety net
+            if page >= self.MAX_PAGES:
+                logger.warning("Spansh: shell %.0f-%.0f ly cut at %d systems "
+                               "(%d pages) - fair use cap", r_min, radius,
+                               len(out), page)
+                self.truncated = True
+                complete = True        # remembered: asking again hits the cap too
                 break
         self.last_ok = complete
         return [v for v in out.values()
@@ -418,6 +431,53 @@ class EDDiscoverySource(Source):
             return self.calibrate(self.ref_coords, self.ref_id64)
         return True, self.reason
 
+    FRESH_DAYS = 2.0       # EDD this new counts as "current" (user, 10.11.)
+
+    def freshness(self) -> Tuple[Optional[str], Optional[float]]:
+        """(data source, Unix time of its last system update) from EDD's
+        Register table - e.g. ("SPANSH", 1762725599.0). (None, None) when
+        unknown or the file is busy."""
+        cx = self._connect()
+        if cx is None:
+            return None, None
+        try:
+            reg = {r[0]: r for r in cx.execute("SELECT * FROM Register").fetchall()}
+        except sqlite3.Error:
+            return None, None
+        finally:
+            cx.close()
+
+        def text(key: str) -> Optional[str]:
+            row = reg.get(key)
+            if not row:
+                return None
+            for v in tuple(row)[1:]:
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+            return None
+
+        src = text("DBSource")
+        stamp = text("EDSMLastSystems")
+        ts = None
+        if stamp:
+            for fmt in ("%m/%d/%Y %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%fZ",
+                        "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    ts = datetime.strptime(stamp, fmt).replace(
+                        tzinfo=timezone.utc).timestamp()
+                    break
+                except ValueError:
+                    continue
+        return (src.upper() if src else None), ts
+
+    def is_current(self, source: str, now: Optional[float] = None) -> bool:
+        """Does EDD hold the given service's data, updated within FRESH_DAYS?
+        Then that service need not be asked for the same systems again."""
+        src, ts = self.freshness()
+        now = time.time() if now is None else now
+        return bool(src == source.upper() and ts
+                    and 0 <= now - ts <= self.FRESH_DAYS * 86400.0)
+
     @classmethod
     def with_sector(cls, sector: Optional[str], rest: str) -> str:
         if sector and sector != cls.NO_SECTOR:
@@ -649,6 +709,24 @@ def _selftest() -> int:
     check(E.with_sector("TYC", "3996-1327-1") == "TYC 3996-1327-1"
           and E.with_sector(E.NO_SECTOR, "15 Sagittarii") == "15 Sagittarii",
           "Names entries get their sector, except NoSectorName")
+    # EDD freshness from its Register table (layout as in EDDSystem.sqlite)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "EDDSystem.sqlite")
+        cx = sqlite3.connect(path)
+        cx.execute("CREATE TABLE Register (ID TEXT PRIMARY KEY, ValueInt INTEGER,"
+                   " ValueDouble DOUBLE, ValueString TEXT, ValueBlob BLOB)")
+        cx.execute("INSERT INTO Register VALUES ('DBSource', NULL, NULL, 'SPANSH', NULL)")
+        cx.execute("INSERT INTO Register VALUES ('EDSMLastSystems', NULL, NULL,"
+                   " '11/09/2026 21:59:59', NULL)")
+        cx.commit()
+        cx.close()
+        e = EDDiscoverySource(path)
+        src, ts = e.freshness()
+        check(src == "SPANSH" and ts == 1794261599.0, "EDD source and last update read")
+        check(e.is_current("spansh", now=ts + 86400) and not e.is_current("edsm", now=ts + 86400),
+              "EDD one day old holds Spansh's data, not EDSM's")
+        check(not e.is_current("spansh", now=ts + 3 * 86400), "three days old: not current")
     print("failures: %d" % fails)
     return fails
 

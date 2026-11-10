@@ -79,12 +79,12 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4403 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `load.py` | 4491 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
 | `sysdb.py` | 2192 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 795 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
-| `sources.py` | 657 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
-| `netgate.py` | 431 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
+| `sources.py` | 735 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
+| `netgate.py` | 469 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
 | `shells.py` | 224 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
 | `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
@@ -338,6 +338,20 @@ from an earlier survey nearby - is not asked again. Restarting EDMC asks
 nothing. *reload online data* in the statistics window asks again on
 purpose, paced like everything else. With both online sources switched off
 or unreachable, the plan uses the local data for the whole sphere.
+
+*EDDiscovery first.* EDDiscovery's system database is a copy of Spansh's
+galaxy dump. When it was updated within the last two days, Spansh is not
+asked at all - the same systems are read from the local file instead, shell
+by shell; EDSM is still asked, because not everyone reports to every
+network. Tip: open EDDiscovery once before you start a survey (it fetches
+the latest changes), then close it - while it runs, its file can be locked.
+The plugin notices a locked file and reads it again later.
+
+*Limits.* At most 50 requests per service and UTC day (a 50 ly survey needs
+about five), at most 20 Spansh pages (10 000 systems) per shell. The
+statistics window shows *external today: EDSM n of 50 · Spansh n of 50*.
+*offline* in the plugin's settings sends nothing at all - not even the
+update check.
 
 *One polite gateway.* Every request goes through `netgate.py`:
 

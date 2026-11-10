@@ -175,6 +175,69 @@ with tempfile.TemporaryDirectory() as d:
     load._start_worker()
     check(Sess.log and all(s == "spansh" for s, _, _ in Sess.log),
           "EDSM off: only Spansh asked")
+    cfg[load.CFG["src_edsm"]] = True
+
+    # 8) EDDiscovery current (its source is Spansh): Spansh is not asked,
+    #    its systems come from EDD's file; EDSM is still asked (L4e)
+    class FakeEDD:
+        name, priority, last_ok, truncated = "EDDiscovery", 10, False, False
+        busy, current, reads = False, True, []
+
+        def available(self):
+            return (False, "EDD database busy") if self.busy else (True, "ok")
+
+        def set_reference(self, *a):
+            pass
+
+        def is_current(self, service, now=None):
+            return self.current and service == "spansh"
+
+        def fetch(self, center, radius, progress=None, r_min=0.0):
+            self.reads.append((r_min, radius))
+            self.last_ok = not self.busy
+            if self.busy:
+                return []
+            return [{"name": n, "x": x[0], "y": x[1], "z": x[2], "id64": None}
+                    for n, x in GAL if r_min <= math.dist(x, center) <= radius]
+
+    edd = FakeEDD()
+    ST.sources.sources["edd"] = edd
+    cfg[load.CFG["src_edd"]] = True
+    Sess.log.clear()
+    ST.center = (400.0, 0.0, 0.0)
+    load._start_worker()
+    check(Sess.log and all(svc == "edsm" for svc, _, _ in Sess.log),
+          "EDD current: only EDSM asked, Spansh's data from EDD")
+    check(any(r == (0.0, 25.0) for r in edd.reads),
+          "EDD read locally for the shell instead")
+    check("Spansh covered by EDDiscovery" in load._external_today_line(),
+          "statistics say so")
+
+    # 9) EDDiscovery busy (EDD running): noted, read again later - no
+    #    online request instead of it
+    edd.busy, edd.reads = True, []
+    Sess.log.clear()
+    ST.center = (800.0, 0.0, 0.0)
+    load._start_worker()
+    check(ST.edd_pending and ("spansh", 0.0, 25.0) in Sess.log,
+          "EDD busy: noted; not current any more, so Spansh is asked")
+    edd.busy = False
+    ST.edd_next_try = 0.0
+    ST.edd_retrying = False
+    load._maybe_extend()
+    check(not ST.edd_pending and edd.reads[-1] == (0.0, ST.radius),
+          "EDD free again: read on the next plan, locally")
+    cfg[load.CFG["src_edd"]] = False
+
+    # 10) daily cap reached: nothing is sent, the plan uses local data
+    Sess.log.clear()
+    ST.net.seed_today({"edsm": netgate.DAILY_CAP["edsm"],
+                       "spansh": netgate.DAILY_CAP["spansh"]})
+    ST.center = (1200.0, 0.0, 0.0)
+    load._start_worker()
+    check(Sess.log == [] and ST.horizon == ST.radius,
+          "daily cap %d reached: no request, local plan" % netgate.DAILY_CAP["edsm"])
+    check("50 of 50" in load._external_today_line(), "statistics show the count")
     ST.db.close()
 
 print("failures: %d" % fails)

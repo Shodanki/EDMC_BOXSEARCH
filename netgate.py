@@ -17,6 +17,9 @@ plugin makes goes through one Gateway, which keeps them polite:
   service rests until then and the caller gets nothing;
 * an honest User-Agent with the plugin version and the repository address,
   so the operators can see who asks and reach us;
+* at most DAILY_CAP requests per service and UTC day (EDSM, Spansh: 50 -
+  a 50 ly survey needs about 5); then the service rests until midnight UTC;
+* an offline switch: nothing is sent at all;
 * every attempt is recorded (time, service, endpoint, HTTP status, ok,
   duration) for the call log in the database.
 
@@ -51,6 +54,7 @@ MAX_WAIT = 120.0          # longer waits are not slept through
 MAX_REST = 3600.0         # a rate-limit reset further away than this is capped
 RETRY_STATUS = (429, 503)
 SESSION_REST = float("inf")
+DAILY_CAP = {"edsm": 50, "spansh": 50}   # requests per UTC day (user, 10.11.)
 
 
 def user_agent(version: str) -> str:
@@ -114,6 +118,7 @@ class Gateway:
         self._rest_why: Dict[str, str] = {}
         self.records: List[Tuple[float, str, str, int, bool, int]] = []
         self.calls: Dict[str, int] = {}       # this session, per service
+        self._day: Dict[str, Tuple[int, int]] = {}  # service -> (UTC day, count)
         self.offline = False
 
     # ----------------------------------------------------------- status
@@ -136,6 +141,18 @@ class Gateway:
         return "%s - resting until %s UTC" % (
             why, time.strftime("%H:%M", time.gmtime(until)))
 
+    def today(self, service: str) -> int:
+        """Requests to the service on the current UTC day."""
+        day, n = self._day.get(service, (-1, 0))
+        return n if day == int(self._clock() // 86400) else 0
+
+    def seed_today(self, counts: Dict[str, int]) -> None:
+        """Counts from the database call log, so an EDMC restart does not
+        reset the daily cap."""
+        day = int(self._clock() // 86400)
+        for svc, n in counts.items():
+            self._day[svc] = (day, max(int(n), self.today(svc)))
+
     def status(self, service: str) -> Tuple[bool, str]:
         if not self.usable:
             return False, "requests module missing"
@@ -144,6 +161,9 @@ class Gateway:
         why = self.resting(service)
         if why:
             return False, why
+        cap = DAILY_CAP.get(service)
+        if cap:
+            return True, "ready (%d of %d today)" % (self.today(service), cap)
         return True, "ready (%d calls this session)" % self.calls.get(service, 0)
 
     def drain(self) -> List[Tuple[float, str, str, int, bool, int]]:
@@ -187,6 +207,7 @@ class Gateway:
             self.records.append((self._clock(), service, endpoint, int(status),
                                  bool(ok), ms))
         self.calls[service] = self.calls.get(service, 0) + 1
+        self._day[service] = (int(self._clock() // 86400), self.today(service) + 1)
 
     def _pace_from_headers(self, service: str, resp: Any) -> None:
         """Follow X-Rate-Limit-Remaining / -Reset (EDSM sends them)."""
@@ -228,6 +249,11 @@ class Gateway:
             attempt = 0
             while True:
                 if self._stop.is_set() or self.resting(service):
+                    return None
+                cap = DAILY_CAP.get(service)
+                if cap and self.today(service) >= cap:
+                    midnight = (int(self._clock() // 86400) + 1) * 86400.0
+                    self._rest(service, midnight, "daily cap of %d requests reached" % cap)
                     return None
                 gap = self._next_ok.get(service, 0.0) - self._clock()
                 if gap > 0 and not self._wait(gap):
@@ -388,6 +414,18 @@ def _selftest() -> int:
     gw.request("edsm", "GET", "u", "sphere")
     check(gw.request("edsm", "GET", "u", "sphere") is None and len(sess.sent) == 1,
           "1 left for 50 min: rests instead of sleeping in the worker")
+
+    gw, sess, clock = _make([_FakeResp()] * (DAILY_CAP["edsm"] + 1))
+    gw.seed_today({"edsm": DAILY_CAP["edsm"] - 2})
+    r1 = gw.request("edsm", "GET", "u", "sphere")
+    r2 = gw.request("edsm", "GET", "u", "sphere")
+    r3 = gw.request("edsm", "GET", "u", "sphere")
+    check(r1 is not None and r2 is not None and r3 is None and len(sess.sent) == 2
+          and "daily cap" in (gw.resting("edsm") or ""),
+          "daily cap %d: counted across restarts, then rests" % DAILY_CAP["edsm"])
+    clock.t = (int(clock.t // 86400) + 1) * 86400.0 + 1
+    check(gw.request("edsm", "GET", "u", "sphere") is not None and gw.today("edsm") == 1,
+          "a new UTC day: asked again, count starts at 1")
 
     gw, sess, clock = _make([ConnectionError("no route")])
     r = gw.request("spansh", "POST", "u", "search")

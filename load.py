@@ -37,6 +37,7 @@ from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
 from sysdb import SystemDB, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
 from sources import SourceManager                              # noqa: E402
 from netgate import Gateway                                    # noqa: E402
+import netgate                                                 # noqa: E402
 import shells                                                  # noqa: E402
 from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
                        staging_lines, tritium_systems)
@@ -78,6 +79,7 @@ CFG = {
     "src_edd": "%s_src_edd" % PLUGIN_NAME,
     "src_spansh": "%s_src_spansh" % PLUGIN_NAME,
     "src_edsm": "%s_src_edsm" % PLUGIN_NAME,
+    "offline": "%s_offline" % PLUGIN_NAME,
     "edd_path": "%s_edd_path" % PLUGIN_NAME,
     "jump_range": "%s_jump_range" % PLUGIN_NAME,
     "harvest_navroute": "%s_harvest_navroute" % PLUGIN_NAME,
@@ -145,6 +147,9 @@ class State:
         self.horizon = 0.0
         self.fetch_lock = threading.Lock()
         self.extending = False
+        # EDDiscovery's file was busy (EDD running) - read it again later
+        self.edd_pending = False
+        self.edd_next_try = 0.0
         self.planner: Optional[Planner] = None
 
         self.active = False
@@ -325,6 +330,13 @@ def plugin_start3(plugin_dir: str) -> str:
         return "SHBOXSEARCH"
 
     ST.sources = SourceManager(cfg_str(CFG["edd_path"]) or None, gateway=ST.net)
+    ST.net.offline = cfg_bool(CFG["offline"], False)
+    try:
+        day0 = time.time() // 86400 * 86400
+        ST.net.seed_today({k: ST.db.external_calls_since(day0, k)
+                           for k in ("edsm", "spansh")})
+    except Exception:
+        logger.exception("could not read today's external calls")
     ST.overlay = CockpitOverlay(logger)
     _overlay_apply_settings()
 
@@ -477,10 +489,44 @@ def _fetch_into_db(keys: List[str], r_min: float, r_max: float
     return n, ok, cnt
 
 
-def _fetch_local() -> None:
-    """EDDiscovery's file is local - the whole sphere at once, no network."""
-    if ST.center and cfg_bool(CFG["src_edd"], True):
-        _fetch_into_db(["edd"], 0.0, ST.radius)
+def _fetch_local(r_min: float = 0.0, r_max: float = 0.0) -> bool:
+    """EDDiscovery's file is local - the whole sphere at once (or one shell),
+    no network. While EDD runs its file can be locked; then it is read again
+    later (_edd_retry). True when EDD delivered."""
+    if not (ST.center and cfg_bool(CFG["src_edd"], True)):
+        return False
+    _n, ok, _cnt = _fetch_into_db(["edd"], r_min, r_max or ST.radius)
+    if ok.get("edd"):
+        ST.edd_pending = False
+        return True
+    if not ST.edd_pending:
+        logger.info("EDDiscovery not readable now (%s) - read again later, "
+                    "no online request for it",
+                    ST.sources.sources["edd"].available()[1])
+    ST.edd_pending = True
+    ST.edd_next_try = time.time() + 60.0
+    return False
+
+
+def _edd_holds(service: str) -> bool:
+    """Is EDDiscovery's file current and built from this service's data?
+    Then the same systems are not asked online again (user, 10.11.)."""
+    if not cfg_bool(CFG["src_edd"], True) or ST.edd_pending:
+        return False
+    try:
+        return ST.sources.sources["edd"].is_current(service)
+    except Exception:
+        logger.exception("EDD freshness check failed")
+        return False
+
+
+def _edd_retry() -> None:
+    try:
+        if _fetch_local():
+            logger.info("EDDiscovery read after all - plan rebuilt")
+            _rebuild_plan()
+    finally:
+        ST.edd_retrying = False
 
 
 def _online_services() -> List[str]:
@@ -519,16 +565,28 @@ def _advance_horizon(allow_fetch: bool = True, force_to: float = 0.0) -> bool:
         center = ST.center
         moved = False
         services = _online_services()
+        edd_spansh = "spansh" in services and _edd_holds("spansh")
+        if edd_spansh:
+            services = [k for k in services if k != "spansh"]
+            logger.info("horizon: Spansh not asked - EDDiscovery is current and "
+                        "holds Spansh's data")
+        if not services:
+            logger.info("horizon: no online source to ask - planning on local "
+                        "data to %.0f ly", ST.radius)
         for a, b in shells.shells_for(ST.radius):
             if b <= ST.horizon + 1e-6:
                 continue
-            if not services:
-                ST.horizon = ST.radius
-                moved = True
-                logger.info("horizon: no online source to ask - planning on "
-                            "local data to %.0f ly", ST.radius)
-                break
             forced = b <= force_to + 1e-6
+            if edd_spansh:
+                # Spansh's systems come from EDD's file for this shell - local
+                with ST.lock:
+                    sp = ST.db.valid_shells("spansh")
+                if forced or not shells.is_fresh(center, a, b, sp):
+                    _fetch_local(a, b)
+            if not services:
+                ST.horizon = b
+                moved = True
+                continue
             with ST.lock:
                 regions = {k: ST.db.valid_shells(k) for k in services}
             todo = [k for k in services
@@ -564,10 +622,33 @@ def _advance_horizon(allow_fetch: bool = True, force_to: float = 0.0) -> bool:
         ST.fetch_lock.release()
 
 
+def _external_today_line() -> str:
+    """'external today: EDSM 2 of 50 · Spansh 3 of 50' (+ offline / EDD)."""
+    if ST.net.offline:
+        line = "external today: offline mode - nothing is sent"
+    else:
+        line = "external today: " + " · ".join(
+            "%s %d of %d" % (name, ST.net.today(k), netgate.DAILY_CAP[k])
+            for k, name in (("edsm", "EDSM"), ("spansh", "Spansh")))
+    if ST.edd_pending:
+        line += " | EDDiscovery busy - read again later"
+    elif _edd_holds("spansh"):
+        line += " | Spansh covered by EDDiscovery (current)"
+    return line
+
+
 def _maybe_extend() -> None:
     """Fetch the next shell when it is needed: nothing left to fly to inside
-    the horizon, or the commander near its edge."""
-    if not (ST.active and ST.center) or ST.extending:
+    the horizon, or the commander near its edge. Also reads a busy
+    EDDiscovery file again (local, at most once a minute)."""
+    if not (ST.active and ST.center):
+        return
+    if ST.edd_pending and not getattr(ST, "edd_retrying", False) \
+            and time.time() >= ST.edd_next_try:
+        ST.edd_retrying = True
+        ST.edd_next_try = time.time() + 60.0
+        _run_async(_edd_retry, label="EDDiscovery")
+    if ST.extending:
         return
     left = len(ST.flight) + len(ST.probe)
     if shells.needs_next(ST.horizon, ST.radius, ST.center, ST.cur_pos, left):
@@ -694,6 +775,7 @@ def _rebuild_plan() -> None:
                               "shell is fetched when needed" % (ST.horizon, ST.radius))
     else:
         ST.stats_lines.append("online data: whole sphere (%.0f ly) asked" % ST.radius)
+    ST.stats_lines.append(_external_today_line())
     for line in ST.stats_lines:
         logger.info("stats | %s", line)
     if ST.stats.get("finished") and not ST.finished_announced \
@@ -4020,6 +4102,10 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
         right, text="Spansh", variable=_p["spansh"]))
     field(right, "right", "", nb.Checkbutton(
         right, text="EDSM", variable=_p["edsm"]))
+    _p["offline"] = tk.IntVar(value=1 if cfg_bool(CFG["offline"], False) else 0)
+    field(right, "right", "", nb.Checkbutton(
+        right, text="offline - no online requests at all (EDSM, Spansh, "
+                    "update check)", variable=_p["offline"]))
 
     _p["eddpath"] = tk.StringVar(value=cfg_str(CFG["edd_path"]))
     nb.Label(right, text="EDDSystem.sqlite").grid(
@@ -4186,6 +4272,8 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["src_edd"], bool(_p["edd"].get()))
         cfg_set(CFG["src_spansh"], bool(_p["spansh"].get()))
         cfg_set(CFG["src_edsm"], bool(_p["edsm"].get()))
+        cfg_set(CFG["offline"], bool(_p["offline"].get()))
+        ST.net.offline = bool(_p["offline"].get())
         cfg_set(CFG["edd_path"], _p["eddpath"].get())
         cfg_set(CFG["harvest_navroute"], bool(_p["navroute"].get()))
         cfg_set(CFG["harvest_destination"], bool(_p["dest"].get()))
