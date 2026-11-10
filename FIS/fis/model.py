@@ -152,7 +152,8 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
                  filters: Sequence[str] = ("todo",),
                  now: Optional[float] = None,
                  cost_model: Any = None,
-                 order_model: Any = None) -> Dict[str, Any]:
+                 order_model: Any = None,
+                 skip_arrival: bool = False) -> Dict[str, Any]:
     """Everything TAKTIK needs: bodies at Kepler positions, orbits, route, fix."""
     p = plugin()
     sr = p.sysroute
@@ -207,10 +208,12 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
     # order with the model the plugin uses, times with the measured one
     cm = cost_model or sr.DEFAULT_MODEL
     om = order_model or cm
-    route = sr.plan_route(name or "", bodies, model=om, filters=flist)
+    route = sr.plan_route(name or "", bodies, model=om, filters=flist,
+                          skip_arrival=skip_arrival)
     full = False
     if not route.stops and "all" not in flist:
-        route = sr.plan_route(name or "", bodies, model=om, filters=["all"])
+        route = sr.plan_route(name or "", bodies, model=om, filters=["all"],
+                              skip_arrival=skip_arrival)
     if om is not cm:
         _recost(route, cm)
         full = True

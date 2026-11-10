@@ -529,7 +529,9 @@ Synuefe VC-J b42-3: 29 stops, 11408 LS, about 82 min
 
 By default only bodies that still need something are routed — DSS outstanding,
 bio signals unsampled, first discovery. A preference switches to routing every
-body.
+body. The run starts at the arrival star, so its start is a deliberate step;
+*start the route at the arrival star* switched off leaves it out and the
+route begins with the first planned body (the FIS follows the same setting).
 
 ### The route window
 

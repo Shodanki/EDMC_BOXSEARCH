@@ -120,11 +120,13 @@ class App:
         # positions move along their orbits; a 30 s bucket is plenty
         sig = (self.db.mtime(), int(time.time() // 30), cur.get("id64"),
                fx.get("body_id"), fx.get("body"),
-               int((fx.get("ts") or 0) // 60), id(self.calib.model))
+               int((fx.get("ts") or 0) // 60), id(self.calib.model),
+               tuple(self.cfg.filters), self.cfg.skip_arrival)
         self.calib.maybe_refresh()
         cm, om = self.calib.model, self.calib.order_model
         out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
-            self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om))
+            self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om,
+            skip_arrival=self.cfg.skip_arrival))
         return self._with_carrier(out, id64)
 
     def _with_carrier(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:

@@ -521,12 +521,18 @@ def body_matches(b: Body, filters: Sequence[str]) -> bool:
     return False
 
 
+def is_arrival_star(b: Body) -> bool:
+    """The star the jump drops you at: a star 0 LS from the arrival point."""
+    return b.kind == "Star" and b.arrival_ls < 1.0
+
+
 def plan_route(system: str, bodies: Dict[int, Body],
                model: CostModel = DEFAULT_MODEL,
                start: Sequence[float] = (0.0, 0.0, 0.0),
                only_work: bool = True,
                group_moons: bool = True,
-               filters: Optional[Sequence[str]] = None) -> SystemRoute:
+               filters: Optional[Sequence[str]] = None,
+               skip_arrival: bool = False) -> SystemRoute:
     """
     Order the bodies into a short route.
 
@@ -538,6 +544,9 @@ def plan_route(system: str, bodies: Dict[int, Body],
     group_moons keeps a planet and its moons together as one cluster. They sit
     within a few light seconds of each other, so splitting them up is always a
     loss, and clustering shrinks the problem the optimiser has to solve.
+
+    skip_arrival leaves out the star you arrive at (0 LS) - the route then
+    starts with the first planned body instead of the arrival star.
     """
     resolve_positions(bodies)
 
@@ -547,6 +556,8 @@ def plan_route(system: str, bodies: Dict[int, Body],
         targets = [b for b in bodies.values()
                    if (b.has_work if only_work else b.kind in ("Planet", "Star"))]
     targets = [b for b in targets if not is_secondary_star(b)]
+    if skip_arrival:
+        targets = [b for b in targets if not is_arrival_star(b)]
     skipped = len(bodies) - len(targets)
     if not targets:
         return SystemRoute(system, [], skipped, model)
@@ -793,3 +804,34 @@ def shorten(name: str, system: str) -> str:
         rest = name[len(system):].strip()
         return rest if rest else "(main star)"
     return name or "?"
+
+
+def _selftest() -> int:
+    """python sysroute.py - the arrival star can be left out (R2)."""
+    fails = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal fails
+        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
+        fails += 0 if ok else 1
+
+    bodies = {
+        0: Body(0, "Sys A", kind="Star", arrival_ls=0.0),
+        1: Body(1, "Sys A 1", kind="Planet", arrival_ls=120.0, parent_id=0),
+        2: Body(2, "Sys A 2", kind="Planet", arrival_ls=900.0, parent_id=0),
+        3: Body(3, "Sys B", kind="Star", arrival_ls=5000.0),
+    }
+    names = lambda r: [s.body.name for s in r.stops]   # noqa: E731
+    full = plan_route("Sys", bodies, filters=[F_ALL])
+    check("Sys A" in names(full), "by default the arrival star is a stop")
+    short = plan_route("Sys", bodies, filters=[F_ALL], skip_arrival=True)
+    check("Sys A" not in names(short) and len(short.stops) == len(full.stops) - 1,
+          "skip_arrival: the route starts with the first planned body")
+    check(is_arrival_star(bodies[0]) and not is_arrival_star(bodies[3]),
+          "only the star at 0 LS counts as the arrival star")
+    print("failures: %d" % fails)
+    return fails
+
+
+if __name__ == "__main__":
+    raise SystemExit(1 if _selftest() else 0)

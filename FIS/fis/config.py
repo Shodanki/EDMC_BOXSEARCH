@@ -9,7 +9,7 @@ import configparser
 import os
 import secrets
 import sys
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INI_PATH = os.path.join(ROOT, "fis.ini")
@@ -75,12 +75,9 @@ class Config:
                 return pf
         return [f.strip() for f in self.route_filters.split(",") if f.strip()]
 
-    def plugin_filters(self) -> Optional[List[str]]:
-        """
-        The plugin's route filters, read (only read) from EDMC's config.toml,
-        combined like the plugin does: "route every body" wins, otherwise the
-        chosen filters, otherwise "still outstanding". None if not readable.
-        """
+    def _plugin_settings(self) -> Optional[Dict[str, Any]]:
+        """The plugin's settings in EDMC's config.toml - read only, cached
+        while the file is unchanged. None if not readable."""
         try:
             st = os.stat(self.edmc_config)
         except OSError:
@@ -97,13 +94,29 @@ class Config:
         # EDMC 6 keeps everything under [settings]; older files at the top level
         if isinstance(data.get("settings"), dict):
             data = data["settings"]
+        self._pf_cache = (sig, data)
+        return data
+
+    def plugin_filters(self) -> Optional[List[str]]:
+        """
+        The plugin's route filters, combined like the plugin does: "route
+        every body" wins, otherwise the chosen filters, otherwise "still
+        outstanding". None if EDMC's config is not readable.
+        """
+        data = self._plugin_settings()
+        if data is None:
+            return None
         if str(data.get("shboxsearch_route_all", "")).lower() in ("true", "1"):
-            out = ["all"]
-        else:
-            raw = str(data.get("shboxsearch_filters", "") or "")
-            out = [f.strip() for f in raw.split(",") if f.strip() in PLUGIN_FILTERS] or ["todo"]
-        self._pf_cache = (sig, out)
-        return out
+            return ["all"]
+        raw = str(data.get("shboxsearch_filters", "") or "")
+        return [f.strip() for f in raw.split(",") if f.strip() in PLUGIN_FILTERS] or ["todo"]
+
+    @property
+    def skip_arrival(self) -> bool:
+        """R2: the plugin's "start the route at the arrival star" switched
+        off - the route then starts with the first planned body."""
+        data = self._plugin_settings() if self.route_source == "plugin" else None
+        return str((data or {}).get("shboxsearch_route_arrival", "true")).lower() in ("false", "0")
 
     # ------------------------------------------------------------------ ini
     def load(self, path: Optional[str] = None) -> "Config":

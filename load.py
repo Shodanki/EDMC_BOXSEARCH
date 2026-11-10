@@ -90,6 +90,7 @@ CFG = {
     "show_stats": "%s_show_stats" % PLUGIN_NAME,
     "show_route": "%s_show_route" % PLUGIN_NAME,
     "route_all": "%s_route_all" % PLUGIN_NAME,
+    "route_arrival": "%s_route_arrival" % PLUGIN_NAME,
     "route_top": "%s_route_top" % PLUGIN_NAME,
     "route_map": "%s_route_map" % PLUGIN_NAME,
     "filters": "%s_filters" % PLUGIN_NAME,
@@ -1058,15 +1059,17 @@ def _rebuild_route() -> None:
     except Exception:
         logger.debug("bio hints failed", exc_info=True)
     filters = [F_ALL] if cfg_bool(CFG["route_all"], False) else get_filters()
+    # R2: start the run at the arrival star (default) or with the first body
+    skip_arrival = not cfg_bool(CFG["route_arrival"], True)
     route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
-                       filters=filters)
+                       filters=filters, skip_arrival=skip_arrival)
     ST.route_full = False
     if not route.stops and F_ALL not in filters:
         # Nothing outstanding - show the complete tour anyway rather than an
         # empty window. Useful when revisiting a system, and it makes clear
         # that the system really is finished rather than unknown.
         route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
-                           filters=[F_ALL])
+                           filters=[F_ALL], skip_arrival=skip_arrival)
         ST.route_full = True
     for s in route.stops:
         if s.body.bio_hint and s.body.wants_bio:
@@ -4182,6 +4185,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     _p["route_top"] = tk.IntVar(value=1 if cfg_bool(CFG["route_top"], True) else 0)
     _p["route_map"] = tk.IntVar(value=1 if cfg_bool(CFG["route_map"], True) else 0)
     _p["route_all"] = tk.IntVar(value=1 if cfg_bool(CFG["route_all"], False) else 0)
+    _p["route_arrival"] = tk.IntVar(value=1 if cfg_bool(CFG["route_arrival"], True) else 0)
     _p["show_route"] = tk.IntVar(value=1 if cfg_bool(CFG["show_route"], True) else 0)
     field(right, "right", "", nb.Checkbutton(
         right, text="keep windows on top", variable=_p["route_top"]))
@@ -4189,6 +4193,8 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
         right, text="draw the system map", variable=_p["route_map"]))
     field(right, "right", "", nb.Checkbutton(
         right, text="route every body", variable=_p["route_all"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="start the route at the arrival star", variable=_p["route_arrival"]))
     field(right, "right", "", nb.Checkbutton(
         right, text="show the route line in the panel", variable=_p["show_route"]))
 
@@ -4328,6 +4334,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["carrier_start"], bool(_p["carrier_start"].get()))
         cfg_set(CFG["show_route"], bool(_p["show_route"].get()))
         cfg_set(CFG["route_all"], bool(_p["route_all"].get()))
+        cfg_set(CFG["route_arrival"], bool(_p["route_arrival"].get()))
         cfg_set(CFG["route_top"], bool(_p["route_top"].get()))
         cfg_set(CFG["route_map"], bool(_p["route_map"].get()))
         cfg_set(CFG["map_size"], _p["map_size"].get())
