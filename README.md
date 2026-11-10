@@ -1686,7 +1686,11 @@ Gypseeum Brain Tree         903 m  < 13
 ```
 
 * **the parked SRV** - where you left it on foot, until you get back in
-* **the parked ship** - where it touched down, until it lifts off or is sent away
+* **the parked ship** - where it touched down, until it lifts off or is sent away.
+  The Rhino is dropped by a ship hovering just above the ground, without a
+  touchdown; the ship waits at the drop point, shown as *SHIP (hover)* -
+  last known, since sending a hovering ship away writes nothing. The Nomad
+  gives no such point: the ship flies along at some 2-3 km.
 * **species not finished yet**, with the samples taken (a new Log restarts the
   count, as in the game)
 * **earlier finds on this body** - codex entries, settlements, screenshots;

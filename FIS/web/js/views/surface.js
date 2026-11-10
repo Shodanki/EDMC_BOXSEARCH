@@ -315,7 +315,8 @@ function render() {
     const v = data[key];
     if (!v) continue;
     const where = v.dist_m !== undefined ? fmt(v.dist_m, 0) + " m · " + fmt(v.bearing, 0) + "°" : t("position saved");
-    const what = key === "parked" ? t("{v} PARKED", { v: vehicleLabel(key, v) }) : t("SHIP LANDED");
+    const what = key === "parked" ? t("{v} PARKED", { v: vehicleLabel(key, v) })
+      : v.hover ? t("SHIP HOVERING · last known") : t("SHIP LANDED");
     info.append(el("div", { class: "sf-park " + colr }, (key === "parked" ? "◆ " : "▼ ") + what + "  " + where));
   }
   for (const b of data.bio) {

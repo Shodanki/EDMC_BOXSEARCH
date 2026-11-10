@@ -90,7 +90,13 @@ def body_state(marks: Iterable[Any]) -> Dict[str, Any]:
 
     parked   the SRV left standing (Disembark from the SRV, not yet re-entered)
     ship     the ship standing on the ground (Touchdown by the ship, not yet
-             lifted off or dismissed)
+             lifted off or dismissed) - or, with "hover": True, hovering
+             where it dropped the Rhino: the Rhino is launched from a ship
+             that hovers just above the ground and stays there without a
+             Touchdown. The Nomad gives no such point - the ship follows it
+             at some 2-3 km - and a drop from a landed ship keeps the
+             Touchdown. Last known only: sending a hovering ship away
+             writes nothing.
     species  one entry per species: samples taken since its last Log (the
              game restarts the count on a new Log), positions, analysed
     sites    positioned finds worth returning to, close ones merged
@@ -110,6 +116,16 @@ def body_state(marks: Iterable[Any]) -> Dict[str, Any]:
             ship = m if lat is not None else ship
         elif kind == "liftoff" and detail != "srv":
             ship = None
+        elif kind == "srv_out":
+            vehicle = (_g(m, "label") or "").lower()
+            if "nomad" in vehicle:
+                ship = None              # the ship flies along with the Nomad
+            elif "rhino" in vehicle and ship is None and lat is not None:
+                ship = {"ts": _g(m, "ts"), "kind": "srv_out", "label": _g(m, "label"),
+                        "detail": "hover", "lat": lat, "lon": lon, "hover": True}
+        back_aboard = kind == "srv_in" or (kind == "embark" and _g(m, "label") != "SRV")
+        if back_aboard and isinstance(ship, dict) and ship.get("hover"):
+            ship = None                  # back on board the hovering ship
         elif kind.startswith("bio_"):
             name = _g(m, "label") or "?"
             s = species.get(name)
@@ -186,7 +202,9 @@ def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
                           float(p["lat"]), float(p["lon"]), c_warn)[1])
     if st["ship"] is not None:
         p = st["ship"]
-        rows.append(entry("SHIP", float(p["lat"]), float(p["lon"]), c_warn)[1])
+        hover = isinstance(p, dict) and p.get("hover")
+        rows.append(entry("SHIP (hover)" if hover else "SHIP", float(p["lat"]),
+                          float(p["lon"]), c_warn)[1])
     bio = []
     for s in summ["in_progress"]:
         if s["points"]:
@@ -256,6 +274,34 @@ def _selftest() -> None:
     marks.append({"ts": "6", "kind": "bio_log", "label": "Roseum Brain Tree",
                   "detail": "Brain Trees", "lat": 0.01, "lon": 0.0})
     assert body_state(marks)["species"][0]["samples"] == 1
+    # the Rhino: dropped from a hovering ship - no Touchdown, the ship stays
+    rh = [{"ts": "1", "kind": "srv_out", "label": "SRV Rhino", "detail": None,
+           "lat": -26.05, "lon": 143.60}]
+    s = body_state(rh)["ship"]
+    assert s and s["hover"] and s["lat"] == -26.05, s
+    lines = compass_lines({"lat": -26.06, "lon": 143.61, "heading": 0}, rh, 492617.0)
+    assert any(l[0].startswith("SHIP (hover)") for l in lines), lines
+    assert body_state(rh + [{"ts": "2", "kind": "srv_in", "label": "SRV Rhino",
+                             "detail": None, "lat": 0.0, "lon": 0.0}])["ship"] is None
+    # on foot from the Rhino and back into it: the ship still hovers
+    foot = rh + [{"ts": "2", "kind": "srv_parked", "label": "SRV", "detail": "SRV Rhino",
+                  "lat": -26.0, "lon": 143.7},
+                 {"ts": "3", "kind": "embark", "label": "SRV", "detail": None,
+                  "lat": -26.0, "lon": 143.7}]
+    assert body_state(foot)["ship"]["hover"]
+    # a Rhino out of a landed ship: the Touchdown stays the ship's point
+    td = [{"ts": "0", "kind": "touchdown", "label": "b", "detail": "ship", "lat": 1.0, "lon": 2.0}]
+    s = body_state(td + rh)["ship"]
+    assert s["kind"] == "touchdown" and not (isinstance(s, dict) and s.get("hover")), s
+    # the Nomad: the ship flies along - no point to show
+    assert body_state([{"ts": "1", "kind": "srv_out", "label": "Nomad", "detail": None,
+                        "lat": 1.0, "lon": 1.0}])["ship"] is None
+    # sent away / recalled: Liftoff or Touchdown without the player win
+    assert body_state(rh + [{"ts": "2", "kind": "liftoff", "label": "b", "detail": "auto",
+                             "lat": -26.05, "lon": 143.60}])["ship"] is None
+    s = body_state(rh + [{"ts": "2", "kind": "touchdown", "label": "b", "detail": "auto",
+                          "lat": -26.2, "lon": 143.7}])["ship"]
+    assert s["lat"] == -26.2 and s["kind"] == "touchdown", s
     print("surfacenav selftest ok")
 
 

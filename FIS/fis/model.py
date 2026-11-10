@@ -879,6 +879,8 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
         x, y = _local_xy(v["lat"], v["lon"], lat0, lon0, radius)
         item = {"x": round(x, 1), "y": round(y, 1), "ts": v["ts"],
                 "label": (v["detail"] or "SRV") if key == "parked" else "ship"}
+        if key == "ship" and isinstance(v, dict) and v.get("hover"):
+            item["hover"] = True     # dropped the Rhino in a hover - last known
         if me_xy is not None:
             item["dist_m"] = round(math.hypot(x, y), 0)
             item["bearing"] = round((math.degrees(math.atan2(x, y)) + 360.0) % 360.0, 0)
