@@ -20,6 +20,16 @@ replaces Spansh when it is current. In the FIS: Rhino rigs and hold, the ship
 waiting at the Rhino's drop point, open bio signals, data at risk, on foot,
 a QR code for the tablet and an OBS mode - see "What changed in 4.6".
 
+**What you need**
+
+| | | |
+|---|---|---|
+| **EDMC** (Elite Dangerous Market Connector) 5.10 or newer | required | the plugin runs inside it; tested against 6.1.2 / Python 3.13 |
+| **Elite Dangerous: Odyssey** | required | the plugin reads its journals and status files |
+| **EDDiscovery** | recommended | its system database is the local source: while it is current the plugin does not ask Spansh at all, EDSM once per shell (see *Fair use*). Open it now and then so its data stays current, then close it |
+| **Python 3.11 or newer** (python.org) | for SHBOX FIS only | the flight information system runs on it; the plugin itself needs nothing beyond EDMC |
+| **EDMCModernOverlay** | optional | for the cockpit overlay (route targets, surface compass, mining block) |
+
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
 > all. On the first start 4.1 repairs boxel records written under a wrong
 > naming rule and replays your journals once in the background to fill the
