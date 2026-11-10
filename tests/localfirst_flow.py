@@ -1,0 +1,171 @@
+"""
+Local-first flow test (4.6, L2/L3): load.py against a fake galaxy - no
+network, no EDMC (its modules are stubbed). Survey start asks the nearest
+shell only, the next shell when needed, valid shells are never asked
+again, reload/offline/EDSM-off behave.
+
+    python tests/localfirst_flow.py      (from the plugin folder)
+"""
+import json
+import math
+import os
+import random
+import sys
+import tempfile
+import time
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+for m in ("config", "theme", "myNotebook", "monitor", "l10n", "companion", "plug",
+          "EDMCLogging", "ttkHyperlinkLabel"):
+    sys.modules[m] = mock.MagicMock()
+try:                                  # CI images may lack Tk; no window is opened
+    import tkinter  # noqa: F401
+except ImportError:
+    for m in ("tkinter", "tkinter.filedialog", "tkinter.ttk"):
+        sys.modules[m] = mock.MagicMock()
+
+import netgate  # noqa: E402
+netgate.MIN_INTERVAL = {"edsm": 0.0, "spansh": 0.0, "github": 0.0}
+import load  # noqa: E402
+import shells  # noqa: E402
+from sysdb import SystemDB  # noqa: E402
+from boxelplan import Planner  # noqa: E402
+
+random.seed(4)
+GAL = []
+for i in range(400):
+    r = 60 * random.random() ** (1 / 3)
+    d = [random.gauss(0, 1) for _ in range(3)]
+    n = math.sqrt(sum(v * v for v in d))
+    GAL.append(("Fake %d" % i, [r * v / n for v in d]))
+
+
+class Resp:
+    def __init__(self, body):
+        self.status_code = 200
+        self.headers = {}
+        self._b = body
+
+    def json(self):
+        return self._b
+
+    def raise_for_status(self):
+        pass
+
+
+class Sess:
+    log = []
+
+    def __init__(self):
+        self.headers = {}
+
+    def request(self, method, url, **kw):
+        if "edsm" in url:
+            p = kw["params"]
+            c = (p["x"], p["y"], p["z"])
+            lo, hi = p.get("minRadius", 0), p["radius"]
+            Sess.log.append(("edsm", lo, hi))
+            out = [{"name": n, "coords": {"x": x[0], "y": x[1], "z": x[2]}}
+                   for n, x in GAL if lo <= math.dist(x, c) <= hi]
+            return Resp(out)
+        body = json.loads(kw["data"])
+        f = body["filters"]["distance"]
+        lo, hi = float(f["min"]), float(f["max"])
+        Sess.log.append(("spansh", lo, hi))
+        rc = body["reference_coords"]
+        c = (rc["x"], rc["y"], rc["z"])
+        out = [{"name": n, "x": x[0], "y": x[1], "z": x[2]}
+               for n, x in GAL if lo <= math.dist(x, c) <= hi]
+        return Resp({"results": out[:500]})
+
+
+cfg = {load.CFG["src_edd"]: False}
+load.cfg_bool = lambda k, d=False: cfg.get(k, d)
+load.cfg_int = lambda k, d=0: d
+load._set_status = lambda m: None
+load._ui = lambda f, *a, **k: None
+load._update_route_targets = lambda: None
+ran = []
+load._run_async = lambda fn, *a, label="", **kw: ran.append(label) or fn(*a, **kw)
+ST = load.ST
+ST.net._factory = Sess
+
+fails = 0
+
+
+def check(ok, what):
+    global fails
+    print("  [%s] %s" % ("OK" if ok else "FAIL", what))
+    fails += 0 if ok else 1
+
+
+with tempfile.TemporaryDirectory() as d:
+    ST.db = SystemDB(os.path.join(d, "t.sqlite"))
+    ST.planner = Planner(ST.db)
+    ST.active, ST.center, ST.radius, ST.start_system = True, (0.0, 0.0, 0.0), 50.0, "Fake 0"
+    ST.cur_pos = (0.0, 0.0, 0.0)
+
+    # 1) start: shell 0-25 from both; plan finds nothing left (fake names)
+    #    -> extends once more to 25-50, then stops at the radius
+    load._start_worker()
+    check(Sess.log[:2] == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)],
+          "start: first shell 0-25 ly from Spansh and EDSM")
+    check(ST.horizon == 25.0 and len(Sess.log) == 2 and ST.flight,
+          "targets left inside 25 ly: the next shell waits")
+    ST.cur_pos = (16.0, 0.0, 0.0)
+    load._maybe_extend()
+    check(ST.horizon == 50.0 and ("spansh", 25.0, 50.0) in Sess.log
+          and ("edsm", 25.0, 50.0) in Sess.log and len(Sess.log) == 4,
+          "10 ly from the edge -> next shell 25-50, then stop at 50 ly")
+    ST.cur_pos = (0.0, 0.0, 0.0)
+    n_db = ST.db.cx.execute("SELECT COUNT(*) FROM systems").fetchone()[0]
+    inside = sum(1 for _, x in GAL if math.dist(x, (0, 0, 0)) <= 50)
+    check(n_db == inside, "every system of the sphere stored once (%d)" % inside)
+    check(len(ST.db.valid_shells("edsm")) == 2 and len(ST.db.valid_shells("spansh")) == 2,
+          "both shells remembered per service")
+    calls = ST.db.external_calls_since(0)
+    check(calls == 4, "call log: 4 requests")
+
+    # 2) EDMC restart with the survey running: valid shells, no request
+    Sess.log.clear()
+    load._resume_worker()
+    check(Sess.log == [] and ST.horizon == 50.0, "restart: shells still valid - no request")
+
+    # 3) shells expire -> restart plans nothing until asked, then asks shell 1
+    ST.db.cx.execute("UPDATE fetched_shells SET expires_at=?", (time.time() - 1,))
+    ST.db.cx.commit()
+    load._resume_worker()
+    check(Sess.log[:2] == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)],
+          "expired: asked again, nearest shell first")
+
+    # 4) reload button: every shell to the horizon again, paced
+    Sess.log.clear()
+    load._reload_online()
+    check(("spansh", 0.0, 25.0) in Sess.log and ("edsm", 25.0, 50.0) in Sess.log,
+          "reload: shells up to the horizon asked again")
+
+    # 5) offline: nothing sent, the plan uses local data to the radius
+    Sess.log.clear()
+    ST.net.offline = True
+    load._start_worker()
+    check(Sess.log == [] and ST.horizon == 50.0, "offline: no request, horizon = sphere")
+    ST.net.offline = False
+
+    # 6) a new survey 3 ly away: its shells count as fetched (>= 90 %)
+    Sess.log.clear()
+    ST.center = (3.0, 0.0, 0.0)
+    load._start_worker()
+    check(Sess.log == [], "survey 3 ly away: shells already valid - no request")
+
+    # 7) EDSM switched off: only Spansh asked
+    Sess.log.clear()
+    cfg[load.CFG["src_edsm"]] = False
+    ST.center = (200.0, 0.0, 0.0)
+    load._start_worker()
+    check(Sess.log and all(s == "spansh" for s, _, _ in Sess.log),
+          "EDSM off: only Spansh asked")
+    ST.db.close()
+
+print("failures: %d" % fails)
+sys.exit(1 if fails else 0)

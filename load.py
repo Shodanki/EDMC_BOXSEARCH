@@ -37,6 +37,7 @@ from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
 from sysdb import SystemDB, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
 from sources import SourceManager                              # noqa: E402
 from netgate import Gateway                                    # noqa: E402
+import shells                                                  # noqa: E402
 from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
                        staging_lines, tritium_systems)
 from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
@@ -139,6 +140,11 @@ class State:
         # and rests survive a rebuilt SourceManager
         self.net = Gateway(VERSION)
         self.sources = SourceManager(gateway=self.net)
+        # local-first (shells.py): how far out the online sources have been
+        # asked for the running survey; the planner plans only inside it
+        self.horizon = 0.0
+        self.fetch_lock = threading.Lock()
+        self.extending = False
         self.planner: Optional[Planner] = None
 
         self.active = False
@@ -339,7 +345,7 @@ def plugin_start3(plugin_dir: str) -> str:
         ST.radius = row["radius"] or 50.0
         logger.info("restored running survey: %s r=%.0f ly",
                     ST.start_system, ST.radius)
-        _run_async(_rebuild_plan, label="loading plan")
+        _run_async(_resume_worker, label="loading plan")
     # These read the journals to establish fuel, the work-time model and where
     # we last were. Without them the panel shows "fuel: unknown" and the map
     # has no "last here" marker until the first jump of the session.
@@ -419,37 +425,22 @@ def _flush_net_log() -> List[Tuple]:
     return rec
 
 
-def _fetch_sources() -> None:
-    if not ST.center:
+def _log_net(rec: List[Tuple]) -> None:
+    """One line per fetch in the EDMC log: requests per service."""
+    if not rec:
         return
-    enabled = []
-    if cfg_bool(CFG["src_edd"], True):
-        enabled.append("edd")
-    if cfg_bool(CFG["src_spansh"], True):
-        enabled.append("spansh")
-    if cfg_bool(CFG["src_edsm"], True):
-        enabled.append("edsm")
-    if not enabled:
-        return
-    if ST.cur_id64 and ST.cur_pos:
-        ST.sources.set_reference(ST.cur_id64, ST.cur_pos)
-    logger.info("querying sources %s for r=%.0f ly around %s",
-                enabled, ST.radius, ST.center)
-    for name, ok, why in ST.sources.status():
-        logger.info("  source %-12s %-3s %s", name, "ok" if ok else "no", why)
-    rows, used = ST.sources.fetch_all(ST.center, ST.radius, enabled,
-                                      progress=lambda s: _set_status(s))
-    rec = _flush_net_log()
-    if rec:
-        per: Dict[str, List[int]] = {}
-        for _ts, svc, _ep, _st, ok, ms in rec:
-            c = per.setdefault(svc, [0, 0, 0])
-            c[0] += 1
-            c[1] += 0 if ok else 1
-            c[2] += ms
-        logger.info("external requests: %s", ", ".join(
-            "%s %d (%d failed, %.1f s)" % (k, v[0], v[1], v[2] / 1000.0)
-            for k, v in sorted(per.items())))
+    per: Dict[str, List[int]] = {}
+    for _ts, svc, _ep, _st, ok, ms in rec:
+        c = per.setdefault(svc, [0, 0, 0])
+        c[0] += 1
+        c[1] += 0 if ok else 1
+        c[2] += ms
+    logger.info("external requests: %s", ", ".join(
+        "%s %d (%d failed, %.1f s)" % (k, v[0], v[1], v[2] / 1000.0)
+        for k, v in sorted(per.items())))
+
+
+def _store_rows(rows: List[Dict]) -> int:
     with ST.lock:
         n = 0
         for r in rows:
@@ -461,9 +452,157 @@ def _fetch_sources() -> None:
                 ST.db.upsert(r.get("name"), source=extra, quality=Q_UNKNOWN,
                              commit=False)
         ST.db.cx.commit()
-    logger.info("sources returned %d rows from %s -> %d new systems",
-                len(rows), ", ".join(used) or "none", n)
-    _set_status("%d new systems from %s" % (n, ", ".join(used) or "no source"))
+    return n
+
+
+def _fetch_into_db(keys: List[str], r_min: float, r_max: float
+                   ) -> Tuple[int, Dict[str, bool], Dict[str, int]]:
+    """Fetch the shell r_min..r_max around the survey centre from the given
+    sources and store it. Returns (new systems, complete per source,
+    systems per source)."""
+    if ST.cur_id64 and ST.cur_pos:
+        ST.sources.set_reference(ST.cur_id64, ST.cur_pos)
+    for name, ok, why in ST.sources.status():
+        logger.info("  source %-12s %-3s %s", name, "ok" if ok else "no", why)
+    logger.info("fetching %s for %.0f-%.0f ly around %s", keys, r_min, r_max,
+                ST.start_system or ST.center)
+    rows, used = ST.sources.fetch_all(ST.center, r_max, keys,
+                                      progress=lambda m: _set_status(m), r_min=r_min)
+    ok = dict(ST.sources.last_ok)
+    cnt = dict(ST.sources.last_count)
+    _log_net(_flush_net_log())
+    n = _store_rows(rows)
+    logger.info("shell %.0f-%.0f ly: %d rows from %s -> %d new systems",
+                r_min, r_max, len(rows), ", ".join(used) or "none", n)
+    return n, ok, cnt
+
+
+def _fetch_local() -> None:
+    """EDDiscovery's file is local - the whole sphere at once, no network."""
+    if ST.center and cfg_bool(CFG["src_edd"], True):
+        _fetch_into_db(["edd"], 0.0, ST.radius)
+
+
+def _online_services() -> List[str]:
+    """Online sources switched on and willing to answer right now."""
+    out = []
+    for key in ("spansh", "edsm"):
+        if not cfg_bool(CFG["src_%s" % key], True):
+            continue
+        ok, why = ST.sources.sources[key].available()
+        if ok:
+            out.append(key)
+        else:
+            logger.info("source %s not asked: %s", key, why)
+    return out
+
+
+def _plan_radius() -> float:
+    """The planner plans only where the online sources have been asked."""
+    return min(ST.radius, ST.horizon)
+
+
+def _advance_horizon(allow_fetch: bool = True, force_to: float = 0.0) -> bool:
+    """
+    Push the horizon out shell by shell (shells.py). Shells that every
+    online source delivered within their validity cost nothing and are
+    taken at once; the first shell that needs asking is fetched (only with
+    allow_fetch), and then it stops - one shell per need. With force_to
+    every shell up to that radius is asked again (the reload button).
+    True when the horizon moved.
+    """
+    if not (ST.active and ST.center):
+        return False
+    if not ST.fetch_lock.acquire(blocking=False):
+        return False
+    try:
+        center = ST.center
+        moved = False
+        services = _online_services()
+        for a, b in shells.shells_for(ST.radius):
+            if b <= ST.horizon + 1e-6:
+                continue
+            if not services:
+                ST.horizon = ST.radius
+                moved = True
+                logger.info("horizon: no online source to ask - planning on "
+                            "local data to %.0f ly", ST.radius)
+                break
+            forced = b <= force_to + 1e-6
+            with ST.lock:
+                regions = {k: ST.db.valid_shells(k) for k in services}
+            todo = [k for k in services
+                    if forced or not shells.is_fresh(center, a, b, regions[k])]
+            if not todo:
+                ST.horizon = b
+                moved = True
+                logger.info("horizon: shell %.0f-%.0f ly fetched before and "
+                            "still valid - no request", a, b)
+                continue
+            if not allow_fetch:
+                break
+            n, ok, cnt = _fetch_into_db(todo, a, b)
+            if ST.center != center:            # a new survey started meanwhile
+                return moved
+            with ST.lock:
+                for k in todo:
+                    if ok.get(k):
+                        ST.db.record_shell(k, center, a, b, cnt.get(k, 0),
+                                           shells.ttl_seconds())
+            missing = [k for k in todo if not ok.get(k)]
+            if missing:
+                logger.info("horizon: %s did not deliver %.0f-%.0f ly completely"
+                            " - asked again when needed", ", ".join(missing), a, b)
+            ST.horizon = b
+            moved = True
+            _set_status("online data to %.0f of %.0f ly | %d new systems"
+                        % (b, ST.radius, n))
+            if not forced:
+                break
+        return moved
+    finally:
+        ST.fetch_lock.release()
+
+
+def _maybe_extend() -> None:
+    """Fetch the next shell when it is needed: nothing left to fly to inside
+    the horizon, or the commander near its edge."""
+    if not (ST.active and ST.center) or ST.extending:
+        return
+    left = len(ST.flight) + len(ST.probe)
+    if shells.needs_next(ST.horizon, ST.radius, ST.center, ST.cur_pos, left):
+        ST.extending = True
+        _run_async(_extend_worker, label="next shell")
+
+
+def _extend_worker() -> None:
+    try:
+        moved = _advance_horizon(True)
+    finally:
+        ST.extending = False
+    if moved:
+        _rebuild_plan()
+
+
+def _resume_worker() -> None:
+    """EDMC start with a running survey: no request on the way in - only
+    shells still valid count; the plan asks for more when it needs it."""
+    ST.horizon = 0.0
+    _advance_horizon(allow_fetch=False)
+    _rebuild_plan()
+
+
+def _reload_online() -> None:
+    """Reload button: ask the sources again for every shell up to the
+    current horizon, paced like always."""
+    if not (ST.active and ST.center):
+        _set_status("no active survey")
+        return
+    old = max(ST.horizon, shells.SHELL_STEP)
+    ST.horizon = 0.0
+    _fetch_local()
+    _advance_horizon(True, force_to=old)
+    _rebuild_plan()
 
 
 def _update_route_targets() -> None:
@@ -511,7 +650,7 @@ def _rebuild_plan() -> None:
         return
     with ST.lock:
         plan = ST.planner.build(
-            ST.center, ST.radius,
+            ST.center, _plan_radius(),
             masscodes=get_masscodes(),
             probe_depth=max(0, cfg_int(CFG["probe_depth"], 2)),
             include_empty=cfg_bool(CFG["include_empty"], True),
@@ -538,9 +677,15 @@ def _rebuild_plan() -> None:
         logger.exception("tritium summary failed")
     if ST.fuel.capacity:
         ST.stats_lines.append(ST.fuel.summary())
+    if ST.horizon < ST.radius - 1e-6:
+        ST.stats_lines.append("online data: asked to %.0f of %.0f ly - the next "
+                              "shell is fetched when needed" % (ST.horizon, ST.radius))
+    else:
+        ST.stats_lines.append("online data: whole sphere (%.0f ly) asked" % ST.radius)
     for line in ST.stats_lines:
         logger.info("stats | %s", line)
-    if ST.stats.get("finished") and not ST.finished_announced:
+    if ST.stats.get("finished") and not ST.finished_announced \
+            and ST.horizon >= ST.radius - 1e-6:
         ST.finished_announced = True
         logger.info("AREA COMPLETE: sphere r=%.0f ly around %s is exhausted",
                     ST.radius, ST.start_system)
@@ -549,6 +694,7 @@ def _rebuild_plan() -> None:
     logger.info("plan rebuilt: %d flight targets, %d probes | %s",
                 len(ST.flight), len(ST.probe), ST.plan_counts)
     _update_route_targets()
+    _maybe_extend()
 
 
 def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, float, float]]]:
@@ -2326,7 +2472,9 @@ def _start_survey() -> None:
 
 
 def _start_worker() -> None:
-    _fetch_sources()
+    ST.horizon = 0.0
+    _fetch_local()
+    _advance_horizon(allow_fetch=True)
     _rebuild_plan()
 
 
@@ -2514,6 +2662,10 @@ def _stats_window_open() -> None:
     tk.Button(bar, text="refresh",
               command=lambda: _run_async(_rebuild_plan, label="stats")).pack(
         side=tk.LEFT)
+    tk.Button(bar, text="reload online data",
+              command=lambda: _run_async(_reload_online,
+                                         label="reload online data")).pack(
+        side=tk.LEFT, padx=(4, 0))
     tk.Button(bar, text="close", command=_stats_window_close).pack(
         side=tk.LEFT, padx=(4, 0))
     _stats_window_refresh()
@@ -2794,6 +2946,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 if ST.active:
                     threading.Thread(target=_update_route_targets, daemon=True,
                                      name="SHBOX-navroute").start()
+                    _maybe_extend()
             _request_route()
             _ui(_refresh)
 
@@ -4210,7 +4363,7 @@ def _export_csv() -> None:
     if not p:
         return
     with ST.lock:
-        plan = ST.planner.build(ST.center, ST.radius, masscodes=get_masscodes(),
+        plan = ST.planner.build(ST.center, _plan_radius(), masscodes=get_masscodes(),
                                 probe_depth=cfg_int(CFG["probe_depth"], 2),
                                 include_empty=cfg_bool(CFG["include_empty"], True))
     n = Planner.export_csv(plan, p)
@@ -4226,7 +4379,7 @@ def _export_prefixes() -> None:
     if not p:
         return
     with ST.lock:
-        plan = ST.planner.build(ST.center, ST.radius, masscodes=get_masscodes(),
+        plan = ST.planner.build(ST.center, _plan_radius(), masscodes=get_masscodes(),
                                 probe_depth=cfg_int(CFG["probe_depth"], 2),
                                 include_empty=cfg_bool(CFG["include_empty"], True))
     rows = Planner.boxel_prefixes(plan, limit=100000)

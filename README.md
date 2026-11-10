@@ -79,12 +79,13 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4238 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 2142 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `load.py` | 4391 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 2192 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 795 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 705 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
-| `sources.py` | 566 | External data: EDDiscovery, Spansh, EDSM | `netgate` |
-| `netgate.py` | 405 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
+| `sources.py` | 595 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
+| `netgate.py` | 431 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
+| `shells.py` | 224 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
 | `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
 | `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
 | `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
@@ -317,11 +318,28 @@ uploaded them. One action, a large haul.
 |---|---|---|
 | **EDDiscovery** (`EDDSystem.sqlite`) | 10 | local, no rate limit, very complete. Found automatically under `%LOCALAPPDATA%\EDDiscovery`. The current EDD layout (`SystemTable` + `Sectors` + `Names`, names packed into `nameid`) is decoded directly; older layouts fall back to runtime detection. The coordinate scale is verified against the system you are in; the status line reports `verified` or `unverified`. EDD only needs to have been run once with its system database downloaded; it may be running at the same time. |
 | **Spansh** | 20 | `POST /api/systems/search`, paged at 500. Index is rebuilt daily from the galaxy dump → up to 48 h behind. |
-| **EDSM** | 30 | `sphere-systems`, 100 ly radius cap. Larger radii are split into 100 ly sub-spheres. Leaky-bucket rate limit, followed through its headers. |
+| **EDSM** | 30 | `sphere-systems` with `minRadius`/`radius`, 100 ly cap. Shells beyond 100 ly are covered by a few 100 ly spheres and cut back to the shell. Leaky-bucket rate limit, followed through its headers. |
 
 **Fair use.** EDSM and Spansh are community services under heavy load; the
-plugin asks them as gently as it can. They are only asked when you start a
-survey, and every request goes through one gateway (`netgate.py`):
+plugin asks them as gently as it can.
+
+*Local first, in shells.* When you start a survey, the EDDiscovery file
+(local, no network) is read for the whole sphere. EDSM and Spansh are asked
+in shells around the centre, nearest first - 0-25, 25-50, 50-75, 75-100 ly
+and so on - and both get exactly the same shell. The next shell is only
+fetched when it is needed: when you come within 10 ly of the edge of what
+has been fetched, or when nothing is left to fly to inside it. The planner
+plans only inside the fetched shells, so it never sends you to a system the
+next shell would show as known (the statistics window says how far the
+online data reaches). A fetched shell is remembered per service for 5 to 14
+days, the exact time drawn at random so that many installations do not ask
+again at the same moment; a shell lying 90 % inside remembered ones - also
+from an earlier survey nearby - is not asked again. Restarting EDMC asks
+nothing. *reload online data* in the statistics window asks again on
+purpose, paced like everything else. With both online sources switched off
+or unreachable, the plan uses the local data for the whole sphere.
+
+*One polite gateway.* Every request goes through `netgate.py`:
 
 * one request at a time, never in parallel, with a pause between two requests
   to the same service (EDSM 2 s, Spansh 1 s);

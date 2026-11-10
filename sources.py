@@ -31,6 +31,7 @@ import sqlite3
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from netgate import Gateway
+from shells import edsm_queries, in_shell
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +49,16 @@ def _dist(a: Sequence[float], b: Sequence[float]) -> float:
 class Source:
     name = "?"
     priority = 99
+    # did the last fetch deliver the whole region? Only then is the shell
+    # remembered as fetched (local-first: shells.py)
+    last_ok = False
 
     def available(self) -> Tuple[bool, str]:
         return False, "not implemented"
 
     def fetch(self, center: Sequence[float], radius: float,
-              progress: ProgressCB = None) -> List[Dict]:
+              progress: ProgressCB = None, r_min: float = 0.0) -> List[Dict]:
+        """Systems with r_min <= distance from center <= radius."""
         return []
 
 
@@ -86,39 +91,39 @@ class EDSMSource(Source):
             out[s["name"]] = {"name": s["name"], "x": float(c["x"]), "y": float(c["y"]),
                               "z": float(c["z"]), "id64": s.get("id64")}
 
-    def fetch(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
+    def fetch(self, center, radius, progress: ProgressCB = None,
+              r_min: float = 0.0) -> List[Dict]:
+        """One request (minRadius/radius) for a shell up to 100 ly; beyond,
+        100 ly spheres that cover the shell (shells.edsm_queries). Every
+        answer is cut back to the shell, so EDSM and Spansh deliver the
+        same space."""
+        self.last_ok = False
         out: Dict[str, Dict] = {}
-        if radius <= self.MAX_SPHERE:
-            calls = [(center, radius)]
-        else:
-            # cover the sphere with 100 ly sub-spheres on a 100 ly grid
-            step = self.MAX_SPHERE
-            calls = []
-            n = int(math.ceil(radius / step))
-            for i in range(-n, n + 1):
-                for j in range(-n, n + 1):
-                    for k in range(-n, n + 1):
-                        c = (center[0] + i * step, center[1] + j * step,
-                             center[2] + k * step)
-                        if _dist(c, center) <= radius + step * 0.87:
-                            calls.append((c, step))
-        for idx, (c, r) in enumerate(calls, 1):
+        calls = edsm_queries(center, r_min, radius)
+        complete = True
+        for idx, (c, qmin, qmax) in enumerate(calls, 1):
             if progress:
                 progress("EDSM %d/%d" % (idx, len(calls)))
+            params = {"x": round(c[0], 2), "y": round(c[1], 2), "z": round(c[2], 2),
+                      "radius": round(qmax, 1), "showCoordinates": 1, "showId": 1}
+            if qmin > 0:
+                params["minRadius"] = round(qmin, 1)
             resp = self.gw.request("edsm", "GET", EDSM_SPHERE, "sphere-systems",
-                                   timeout=self.timeout, params={
-                                       "x": c[0], "y": c[1], "z": c[2], "radius": r,
-                                       "showCoordinates": 1, "showId": 1},
+                                   timeout=self.timeout, params=params,
                                    headers={"Accept": "application/json"})
             if resp is None:
                 # offline, resting or no network: stop asking EDSM for now
+                complete = False
                 break
             try:
                 resp.raise_for_status()
                 self._parse(resp.json(), out)
             except Exception as e:
+                complete = False
                 logger.warning("EDSM query failed: %s", e)
-        return [v for v in out.values() if _dist((v["x"], v["y"], v["z"]), center) <= radius]
+        self.last_ok = complete
+        return [v for v in out.values()
+                if in_shell((v["x"], v["y"], v["z"]), center, r_min, radius)]
 
 
 # ---------------------------------------------------------------------------
@@ -138,12 +143,15 @@ class SpanshSource(Source):
         ok, why = self.gw.status("spansh")
         return ok, (why + ", index up to 48 h old") if ok else why
 
-    def fetch(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
+    def fetch(self, center, radius, progress: ProgressCB = None,
+              r_min: float = 0.0) -> List[Dict]:
+        self.last_ok = False
         out: Dict[str, Dict] = {}
         page = 0
+        complete = False
         while True:
             body = {
-                "filters": {"distance": {"min": "0", "max": str(radius)}},
+                "filters": {"distance": {"min": str(r_min), "max": str(radius)}},
                 "sort": [{"distance": {"direction": "asc"}}],
                 "size": self.PAGE, "page": page,
                 "reference_coords": {"x": center[0], "y": center[1], "z": center[2]},
@@ -165,6 +173,7 @@ class SpanshSource(Source):
                 break
             results = data.get("results") or data.get("systems") or []
             if not results:
+                complete = True
                 break
             for s in results:
                 nm = s.get("name")
@@ -173,11 +182,14 @@ class SpanshSource(Source):
                 out[nm] = {"name": nm, "x": float(s["x"]), "y": float(s["y"]),
                            "z": float(s["z"]), "id64": s.get("id64") or s.get("id")}
             if len(results) < self.PAGE:
+                complete = True
                 break
             page += 1
             if page > 400:      # safety net
                 break
-        return list(out.values())
+        self.last_ok = complete
+        return [v for v in out.values()
+                if in_shell((v["x"], v["y"], v["z"]), center, r_min, radius)]
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +469,16 @@ class EDDiscoverySource(Source):
             logger.info("EDD: %d systems without a decodable name skipped", skipped)
         return out
 
-    def fetch(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
+    def fetch(self, center, radius, progress: ProgressCB = None,
+              r_min: float = 0.0) -> List[Dict]:
+        rows = self._fetch_ball(center, radius, progress)
+        self.last_ok = bool(self.table)
+        if r_min > 0:
+            rows = [r for r in rows
+                    if in_shell((r["x"], r["y"], r["z"]), center, r_min, radius)]
+        return rows
+
+    def _fetch_ball(self, center, radius, progress: ProgressCB = None) -> List[Dict]:
         cx = self._connect()
         if cx is None or not self.table:
             return []
@@ -527,8 +548,13 @@ class SourceManager:
         return out
 
     def fetch_all(self, center, radius, enabled: Sequence[str],
-                  progress: ProgressCB = None) -> Tuple[List[Dict], List[str]]:
-        """Query every enabled source and merge the results."""
+                  progress: ProgressCB = None,
+                  r_min: float = 0.0) -> Tuple[List[Dict], List[str]]:
+        """Query every enabled source for the shell r_min..radius and merge
+        the results. Afterwards last_ok[key] says whether a source delivered
+        the whole shell, last_count[key] how many systems it had."""
+        self.last_ok: Dict[str, bool] = {}
+        self.last_count: Dict[str, int] = {}
         merged: Dict[str, Dict] = {}
         by_id: Dict[int, Dict] = {}
         used: List[str] = []
@@ -537,14 +563,17 @@ class SourceManager:
             src = self.sources.get(key)
             if src is None:
                 continue
+            self.last_ok[key] = False
             ok, _ = src.available()
             if not ok:
                 continue
             try:
-                rows = src.fetch(center, radius, progress)
+                rows = src.fetch(center, radius, progress, r_min=r_min)
             except Exception as e:
                 logger.warning("%s: %s", src.name, e)
                 continue
+            self.last_ok[key] = bool(src.last_ok)
+            self.last_count[key] = len(rows)
             used.append("%s (%d)" % (src.name, len(rows)))
             logger.info("source %s returned %d rows", src.name, len(rows))
             for r in rows:
