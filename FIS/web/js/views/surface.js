@@ -284,6 +284,7 @@ function render() {
   info.append(el("div", { class: "sf-title" }, el("span", { class: "c-cyan", text: data.short || data.body }),
     el("span", { class: "c-dim", text: " · " + (data.system || "") + (data.gravity_g !== undefined && data.gravity_g !== null ? " · " + fmt(data.gravity_g, 2) + " g" : "") })));
   info.append(el("div", { class: "c-dim small", text: data.here ? t("LIVE · you are here") : t("last visit – not live") }));
+  if (data.here && data.me && data.me.vehicle) info.append(el("div", { class: "small c-amber", text: t("in the {v}", { v: data.me.vehicle }) }));
   if (data.life) info.append(lifeSupport(data.life));
   if (data.here && data.me && (data.parked || data.ship || (data.bio || []).some(b => !b.done && b.points.length)))
     info.append(compass(data));

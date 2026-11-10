@@ -918,6 +918,8 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
         out["me"] = {"x": 0.0, "y": 0.0, "heading": st.get("heading"), "alt": st.get("alt"),
                      "mode": ("foot" if (st.get("flags2") or 0) & 1 else
                               "srv" if (st.get("flags") or 0) & (1 << 26) else "ship")}
+        if out["me"]["mode"] == "srv":
+            out["me"]["vehicle"] = live.get("vehicle")      # "SRV Rhino", "Nomad" (M2)
     return out
 
 

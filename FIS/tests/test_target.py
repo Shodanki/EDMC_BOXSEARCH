@@ -53,6 +53,20 @@ class TestShipTargeted(unittest.TestCase):
             self.assertIsNone(self.lt.snapshot()["ship_target"], clear["event"])
 
 
+class TestVehicle(unittest.TestCase):
+    """M2: which surface vehicle is out (LaunchSRV / LaunchVessel)."""
+    def test_launch_and_dock(self):
+        lt = LiveTracker(".")
+        lt.feed(ev("LaunchSRV", SRVType="mev_rhino", SRVType_Localised="SRV Rhino"))
+        self.assertEqual(lt.snapshot()["vehicle"], "SRV Rhino")
+        lt.feed(ev("DockSRV", SRVType="mev_rhino"))
+        self.assertIsNone(lt.snapshot()["vehicle"])
+        lt.feed(ev("LaunchVessel", VesselType="lander01", VesselType_Localised="Nomad"))
+        self.assertEqual(lt.snapshot()["vehicle"], "Nomad")
+        lt.feed(ev("SRVDestroyed"))
+        self.assertIsNone(lt.snapshot()["vehicle"])
+
+
 class FakeDb:
     def body(self, id64, body_id):
         return {"name": "Sol 3", "arrival_ls": 499.0} if (id64, body_id) == (10477373803, 3) else None

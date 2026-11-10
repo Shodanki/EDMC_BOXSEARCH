@@ -37,6 +37,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
           "SAAScanComplete", "SellOrganicData",
           "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked",
+          # surface vehicles: ground mining with the Rhino (M2)
+          "LaunchSRV", "DockSRV", "LaunchVessel", "DockVessel",
           "Statistics", "Rank", "Progress", "Reputation", "MarketSell", "CargoTransfer",
           # raw materials (jumponium)
           "Materials", "MaterialCollected", "MaterialDiscarded", "Synthesis", "EngineerCraft",

@@ -53,22 +53,48 @@ def _asteroid(e: Dict[str, Any]) -> Dict[str, Any]:
             "motherlode": e.get("MotherlodeMaterial_Localised") or e.get("MotherlodeMaterial")}
 
 
+VEHICLE_OUT = ("LaunchSRV", "LaunchVessel")
+VEHICLE_IN = ("DockSRV", "DockVessel")
+
+
+def _vehicle_name(e: Dict[str, Any]) -> str:
+    """'SRV Rhino', 'SRV Scarab', 'Nomad' ... from LaunchSRV / LaunchVessel."""
+    return (e.get("SRVType_Localised") or e.get("VesselType_Localised")
+            or e.get("SRVType") or e.get("VesselType") or "SRV")
+
+
 def _runs(events: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
     """Mining events in runs without a break longer than GAP_S; only runs
     that refined or prospected something (repair, fuel or research limpets
-    are no mining)."""
-    mev = [e for e in events if (e["event"] in EVENTS or e["event"] == "Docked") and parse_ts(e.get("timestamp"))
-           and (e["event"] != "LaunchDrone" or (e.get("Type") or "").lower() in ("prospector", "collection"))]
+    are no mining). Refining while out in a surface vehicle (the Rhino's
+    mining tool) is ground mining (M2): such events carry `_vehicle`, and a
+    change between ship and vehicle starts a new run."""
     runs: List[List[Dict[str, Any]]] = []
     cur: List[Dict[str, Any]] = []
-    for e in mev:
-        if e["event"] == "Docked":             # docking at a station or carrier ends a session
+    vehicle: Optional[str] = None
+    for e in events:
+        ev = e["event"]
+        if ev in VEHICLE_OUT:
+            vehicle = _vehicle_name(e)
+            continue
+        if ev in VEHICLE_IN:
+            vehicle = None
+            continue
+        if not ((ev in EVENTS or ev == "Docked") and parse_ts(e.get("timestamp"))):
+            continue
+        if ev == "LaunchDrone" and (e.get("Type") or "").lower() not in ("prospector", "collection"):
+            continue
+        if ev == "Docked":                     # docking at a station or carrier ends a session
+            vehicle = None
             if cur:
                 cur[-1] = dict(cur[-1], _docked=True)
                 runs.append(cur)
                 cur = []
             continue
-        if cur and parse_ts(e["timestamp"]) - parse_ts(cur[-1]["timestamp"]) > GAP_S:
+        if vehicle and ev == "MiningRefined":
+            e = dict(e, _vehicle=vehicle)
+        if cur and (parse_ts(e["timestamp"]) - parse_ts(cur[-1]["timestamp"]) > GAP_S
+                    or bool(e.get("_vehicle")) != bool(cur[-1].get("_vehicle"))):
             runs.append(cur)
             cur = []
         cur.append(e)
@@ -122,7 +148,9 @@ def _summary(run: List[Dict[str, Any]], now: Optional[float] = None) -> Dict[str
         b = max(asteroids, key=share)
         if share(b) > 0:
             best = dict(b, share=share(b))
+    vehicles = sorted({e["_vehicle"] for e in run if e.get("_vehicle")})
     return {
+        "kind": "ground" if vehicles else "space", "vehicle": vehicles[-1] if vehicles else None,
         "start": start, "end": end, "active": active, "minutes": round(hours * 60),
         "refined": out_ref, "total": total, "per_hour": round(total / hours, 1),
         "per_min": round(total / (hours * 60), 2), "main": main,
@@ -164,7 +192,8 @@ def room_for(free: int, ratio: float) -> int:
 def limpet_ratio(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Limpets launched per refined tonne over your sessions, overall and
     per hull type, with what it rests on."""
-    use = [r for r in runs if r["total"] >= MIN_TONNES and (r["drones"]["prospector"] + r["drones"]["collection"])]
+    use = [r for r in runs if r["total"] >= MIN_TONNES and r.get("kind") != "ground"
+           and (r["drones"]["prospector"] + r["drones"]["collection"])]
     def agg(lst):
         lim = sum(r["drones"]["prospector"] + r["drones"]["collection"] for r in lst)
         t = sum(r["total"] for r in lst)

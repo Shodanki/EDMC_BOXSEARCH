@@ -122,14 +122,17 @@ function session() {
   if (!m) return frame(t("MINING"), "", el("div", { class: "c-dim", text: t("No mining in the journals yet.") }), { appear: false });
   const rock = (a) => a.materials.slice(0, 3).map(x => x.name + " " + fmt(x.pct, 1) + " %").join(" · ")
     + (a.content ? " · " + t(CONTENT[a.content]) : "") + (a.motherlode ? " · ◆ " + a.motherlode : "");
-  return frame(t("MINING"), m.active ? t("active") : stamp(m.end), [
+  // M2: ground mining (SRV Rhino) has no limpets and no asteroids
+  const ground = m.kind === "ground";
+  return frame(t("MINING"), (ground ? t("ground · {v}", { v: m.vehicle || "SRV" }) + " · " : "") + (m.active ? t("active") : stamp(m.end)), [
     el("div", { class: "gal-big" }, el("span", { class: "c-cyan", text: fmt(m.total, 0) + " t" }),
       el("span", { class: "c-dim", text: "  " + t("{h} t/h · {m} per minute · {n} min", { h: fmt(m.per_hour, 1), m: fmt(m.per_min, 2), n: m.minutes }) })),
     ...m.refined.map(r => el("div", { class: "cg" }, el("span", { text: r.name }),
       el("span", { class: "num", text: fmt(r.count, 0) + " t · " + fmt(r.per_hour, 1) + " t/h" }))),
-    el("div", { class: "small", text: t("Limpets: {p} prospector · {c} collector launched · {l} on board",
+    ground ? el("div", { class: "small c-dim", text: t("Ground mining from the surface vehicle - no limpets; not counted in the limpet advice.") }) : null,
+    ground ? null : el("div", { class: "small", text: t("Limpets: {p} prospector · {c} collector launched · {l} on board",
       { p: m.drones.prospector, c: m.drones.collection, l: data.limpets }) }),
-    el("div", { class: "small c-dim", text: t("{n} asteroids prospected · {ml} motherlodes · {c} cracked",
+    ground ? null : el("div", { class: "small c-dim", text: t("{n} asteroids prospected · {ml} motherlodes · {c} cracked",
       { n: m.asteroids, ml: m.motherlodes, c: m.cracked }) }),
     m.last ? el("div", { class: "small", text: t("Last rock") + ": " + rock(m.last)
       + (m.last.remaining !== null && m.last.remaining !== undefined && m.last.remaining < 100 ? " · " + t("{r} % left", { r: fmt(m.last.remaining, 0) }) : "") }) : null,
@@ -242,6 +245,6 @@ function history() {
     el("tr", {}, ...[t("Date"), "min", t("Good"), "t", "t/h"].map(h => el("th", { text: h }))),
     ...data.sessions.map(s => el("tr", { class: s.active ? "c-cyan" : "" },
       el("td", { text: stamp(s.start) }), el("td", { class: "num", text: fmt(s.minutes, 0) }),
-      el("td", { text: s.main_name || "–" }), el("td", { class: "num", text: fmt(s.total, 0) }),
+      el("td", { text: (s.main_name || "–") + (s.kind === "ground" ? " · " + (s.vehicle || "SRV") : "") }), el("td", { class: "num", text: fmt(s.total, 0) }),
       el("td", { class: "num", text: fmt(s.per_hour, 0) })))), { appear: false });
 }

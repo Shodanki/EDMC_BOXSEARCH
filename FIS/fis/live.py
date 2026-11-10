@@ -86,6 +86,7 @@ def empty_state() -> Dict[str, Any]:
         "system": {},           # name, id64, pos, ts
         "target": None,         # FSDTarget: name, id64, star_class, remaining_jumps
         "ship_target": None,    # ShipTargeted: the locked ship, as far as scanned (E5)
+        "vehicle": None,        # surface vehicle out now: "SRV Rhino", "Nomad" ... (M2)
         "navroute": [],         # NavRoute.json hops
         "fuel": {},             # main, reservoir
         "status": {},           # Status.json, decoded
@@ -150,6 +151,7 @@ class LiveTracker:
             elif ev == "LoadGame":
                 s["commander"] = e.get("Commander") or s["commander"]
                 s["ship_target"] = None      # new game session: no lock yet
+                s["vehicle"] = None
                 s["ship"].update(type=e.get("Ship"), name=e.get("ShipName"),
                                  ident=e.get("ShipIdent"))
                 if e.get("FuelCapacity"):
@@ -199,6 +201,13 @@ class LiveTracker:
                     if s["target"] and s["target"].get("id64") == e.get("SystemAddress"):
                         s["target"]["star_class"] = e.get("StarClass")
                     out = "target"
+            elif ev in ("LaunchSRV", "LaunchVessel"):
+                s["vehicle"] = (e.get("SRVType_Localised") or e.get("VesselType_Localised")
+                                or e.get("SRVType") or e.get("VesselType") or "SRV")
+                out = "status"
+            elif ev in ("DockSRV", "DockVessel", "SRVDestroyed"):
+                s["vehicle"] = None
+                out = "status"
             elif ev == "ShipTargeted":
                 s["ship_target"] = self._ship_target(e, s.get("ship_target"), ts)
                 out = "target"
