@@ -533,6 +533,10 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 #foot-settings:hover { color: #3EF2E0; }
 .lay-phone .st-grid { grid-template-columns: 1fr; }
 .role-h { cursor: help; text-decoration: underline dotted rgba(62,242,224,.4); }
+.sort-h { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-h:hover { color: #3EF2E0; }
+.cag-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.cag-q { min-width: 160px; flex: 0 1 240px; }
 /* MINING */
 .mh-row { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; }
 .mh-bar { position: relative; display: flex; height: 16px; background: rgba(62,242,224,.06); border: 1px solid rgba(62,242,224,.25); }
