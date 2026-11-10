@@ -48,6 +48,7 @@ JITTER = 0.2              # pause * (1 .. 1.2)
 MAX_ATTEMPTS = 3          # tries on 429 / 503
 BACKOFF_BASE = 5.0        # 5, 10, 20 ... seconds
 MAX_WAIT = 120.0          # longer waits are not slept through
+MAX_REST = 3600.0         # a rate-limit reset further away than this is capped
 RETRY_STATUS = (429, 503)
 SESSION_REST = float("inf")
 
@@ -197,10 +198,20 @@ class Gateway:
         if remaining is None or reset is None or reset <= 0:
             return
         now = self._clock()
+        # EDMC reads Reset as a Unix time, EDDI as seconds to go - accept both
+        if reset > 1_000_000_000:
+            reset = int(reset - now)
+            if reset <= 0:
+                return
+        reset = min(reset, MAX_REST)
         if remaining <= 0:
             self._rest(service, now + reset, "rate limit used up")
             return
         spread = reset / float(remaining)
+        if spread > MAX_WAIT:
+            # too slow to wait for in a worker: rest instead of sleeping
+            self._rest(service, now + spread, "rate limit nearly used up")
+            return
         if spread > MIN_INTERVAL.get(service, DEFAULT_INTERVAL):
             self._next_ok[service] = max(self._next_ok.get(service, 0.0),
                                          now + spread)
@@ -290,7 +301,7 @@ class _FakeSession:
 
 class _FakeClock:
     def __init__(self) -> None:
-        self.t = 1_000_000.0
+        self.t = 1_700_000_000.0   # a realistic Unix time
 
     def __call__(self) -> float:
         return self.t
@@ -362,6 +373,21 @@ def _selftest() -> int:
           "10 requests left for 100 s: next one 10 s later")
     check(gw.request("edsm", "GET", "u", "sphere") is None and len(sess.sent) == 2,
           "limit used up: rests until the reset")
+
+    gw, sess, clock = _make([
+        _FakeResp(200, {"X-Rate-Limit-Remaining": "20",
+                        "X-Rate-Limit-Reset": str(1_700_000_000 + 200)}),
+        _FakeResp()])
+    gw.request("edsm", "GET", "u", "sphere")
+    gw.request("edsm", "GET", "u", "sphere")
+    gap = sess.sent[1][0] - sess.sent[0][0]
+    check(9.9 <= gap <= 10.1, "Reset as Unix time (EDMC style): 20 left for 200 s -> 10 s")
+    gw, sess, clock = _make([
+        _FakeResp(200, {"X-Rate-Limit-Remaining": "1", "X-Rate-Limit-Reset": "3000"}),
+        _FakeResp()])
+    gw.request("edsm", "GET", "u", "sphere")
+    check(gw.request("edsm", "GET", "u", "sphere") is None and len(sess.sent) == 1,
+          "1 left for 50 min: rests instead of sleeping in the worker")
 
     gw, sess, clock = _make([ConnectionError("no route")])
     r = gw.request("spansh", "POST", "u", "search")
