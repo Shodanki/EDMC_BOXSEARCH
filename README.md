@@ -1898,5 +1898,13 @@ the survey allows (details in "External sources", *Fair use*):
   for home-network devices (rate and wrong tokens).
 * Screenshots from demo data in [FIS/README.md](FIS/README.md).
 
+### Fixes
+
+* The NEXT TARGETS block in the overlay vanished after 15 minutes without a
+  route change (a long supercruise leg, on foot, in the SRV); it is now sent
+  again in time.
+* The route pace said "0.0x, 0 min left" after an EDMC restart halfway
+  through a system; only stops ticked since the restart are compared now.
+
 After the update the plugin replays your journals once (Rhino rigs from
 earlier outings). Close the FIS window once so it starts with the new files.
