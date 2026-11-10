@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 Local-first flow test (4.6, L2/L3): load.py against a fake galaxy - no
 network, no EDMC (its modules are stubbed). Survey start asks the nearest

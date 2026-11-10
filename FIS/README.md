@@ -18,7 +18,8 @@ to no service on the internet. The 3D library Three.js (0.170.0, MIT) ships
 with it in `web/vendor/three` - licence and origin in `SOURCE.md` there - so
 the 3D views work offline too. The QR code on the settings page is drawn
 with Project Nayuki's QR Code generator (`fis/vendor/qrcodegen.py`, MIT,
-licence header kept - origin in `fis/vendor/SOURCE.md`).
+licence header kept - origin in `fis/vendor/SOURCE.md`). The FIS itself is
+under the Mozilla Public License 2.0 like the plugin (`LICENSE` in the plugin folder).
 
 ## Screenshots
 

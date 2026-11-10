@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 SHBOXSEARCH v4.0 - systematic sphere survey for Elite Dangerous
 ===============================================================
@@ -8,7 +13,7 @@ deliberately hunting for systems that appear in no database at all.
 Documentation: see README.md in the plugin folder.
 
 Tested against EDMC 6.1.2 / Python 3.13.
-MIT License (c) 2025-2026
+Licence: MPL-2.0 (see LICENSE); 4.6 and earlier were released under MIT.
 """
 
 from __future__ import annotations

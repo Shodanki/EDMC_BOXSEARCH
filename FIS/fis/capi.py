@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 The carrier as Frontier's Companion API sees it: the file the plugin writes
 when EDMC hands over /fleetcarrier (capi_fleetcarrier.json next to the

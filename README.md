@@ -27,6 +27,14 @@ a QR code for the tablet and an OBS mode - see "What changed in 4.6".
 
 Repository: <https://github.com/Shodanki/EDMC_BOXSEARCH>
 
+**Licence:** [Mozilla Public License 2.0](LICENSE) since 4.7 - use, change and
+share it freely; whoever passes on a changed file of this project keeps that
+file open under the same licence (files of your own next to it are yours).
+4.6 and earlier were released under MIT and stay MIT. Third-party parts keep
+their own licence: Three.js 0.170.0 (MIT, `FIS/web/vendor/three`) and
+Project Nayuki's QR Code generator (MIT, `FIS/fis/vendor`) - origin and
+licence text in the `SOURCE.md` / `LICENSE` files there.
+
 Provided **as is**. The plugin checks once a day whether a newer release is
 tagged and says so - it never replaces its own files. Updating stays a
 deliberate act, because the thing worth protecting here is a database that
