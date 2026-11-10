@@ -562,6 +562,14 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .sort-h:hover { color: var(--cyan); }
 .cag-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
 .cag-q { min-width: 160px; flex: 0 1 240px; }
+/* K4: known carriers - favourites first */
+.kc-row { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; border-bottom: 1px solid rgba(var(--cyan-rgb), .06); }
+.kc-row.fav { background: rgba(var(--amber-rgb), .04); }
+.kc-main { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.kc-act { display: flex; gap: 4px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
+.fav-star { background: none; border: 0; color: var(--dim); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.fav-star.on { color: var(--amber); }
+.poi-fav { color: var(--amber); }
 /* MINING */
 .mh-row { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; }
 .mh-bar { position: relative; display: flex; height: 16px; background: rgba(var(--cyan-rgb), .06); border: 1px solid rgba(var(--cyan-rgb), .25); }

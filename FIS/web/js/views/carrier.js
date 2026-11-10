@@ -11,8 +11,8 @@
 // journal (CarrierStats, jumps, transfers); the weekly cost is an estimate
 // from the balance over time and says so.
 
-import { getJSON } from "../api.js";
-import { el, frame, fmt, withPopout } from "../ui.js";
+import { getJSON, postJSON } from "../api.js";
+import { el, frame, fmt, withPopout, copyText } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const ROLES = [["combat", N_("Combat")], ["mining", N_("Mining")], ["transport", N_("Transport")],
@@ -30,7 +30,7 @@ const ACCESS = { all: N_("everyone"), friends: N_("friends"), squadron: N_("squa
   squadronfriends: N_("squadron and friends"), none: N_("nobody") };
 
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
-let root = null, data = null, roleFilter = store("fis.cag.role") || "";
+let root = null, data = null, known = null, knownQuery = "", knownMsg = "", showAllSeen = false, roleFilter = store("fis.cag.role") || "";
 // E4: ship list sortable by every column, with a text filter and "on board only"
 let sortKey = store("fis.cag.sort") || "", sortDir = store("fis.cag.dir") === "asc" ? 1 : -1;
 let shipQuery = "", onBoardOnly = store("fis.cag.here") === "1";
@@ -40,7 +40,9 @@ export function mount(r) { root = r; root.classList.add("carrier-view"); }
 export async function update(ctx, reason) {
   if (!root) return;
   if (reason !== "show" && reason !== "data" && data) return;
-  try { data = await getJSON("/api/carrier"); } catch (e) { data = null; }
+  const [d, k] = await Promise.all([getJSON("/api/carrier").catch(() => null),
+    getJSON("/api/carriers/known").catch(() => null)]);
+  data = d; known = k;
   render();
 }
 
@@ -77,6 +79,78 @@ function visiting() {
   return frame(t("DOCKED AT A CARRIER"), (v.callsign || "") + (v.system ? " · " + v.system : ""), rows, { appear: false });
 }
 
+// K4: other carriers you know - favourites first (★), then the ones you
+// docked at or started something from, then the newest FSS sightings
+const HOW = { docked: N_("docked"), sighted: N_("seen in the FSS"), jump: N_("jumped with you aboard") };
+
+function since(ts) { const ms = Date.parse(ts || ""); return isNaN(ms) ? "?" : age((Date.now() - ms) / 1000); }
+
+async function star(c, on, note) {
+  knownMsg = "";
+  try {
+    const body = { callsign: c.callsign, on };
+    if (note !== undefined) body.note = note;
+    await postJSON("/api/carriers/favourite", body);
+    known = await getJSON("/api/carriers/known");
+  } catch (e) { knownMsg = t("Could not save: {e}", { e: e.message }); }
+  render();
+}
+
+function carrierRow(c) {
+  const what = [];
+  if (c.docked_n) what.push(t("docked {n}×", { n: c.docked_n }));
+  for (const s of (c.started || []).slice(-2).reverse()) {
+    what.push((s.kind === "cg" ? t("CG") : t("mission")) + ": " + (s.name || "?")
+      + (s.commodity ? " · " + s.commodity + (s.count ? " " + fmt(s.count, 0) + " t" : "") : "")
+      + (s.to ? " → " + s.to : ""));
+  }
+  const m = c.market;
+  const buys = m && m.buys && m.buys.length ? m.buys.slice(0, 3).map(b => b.name + " " + fmt(b.demand, 0) + " t").join(" · ") : "";
+  const btn = el("button", { class: "fav-star" + (c.favourite ? " on" : ""), text: c.favourite ? "★" : "☆",
+    title: c.favourite ? t("remove from favourites") : t("mark as favourite"), onclick: () => star(c, !c.favourite) });
+  const noteBtn = c.favourite ? el("button", { text: "✎", title: t("note"),
+    onclick: () => { const v = window.prompt(t("Note for {c}", { c: c.callsign }), c.note || ""); if (v !== null) star(c, true, v); } }) : null;
+  return el("div", { class: "kc-row" + (c.favourite ? " fav" : "") }, btn,
+    el("div", { class: "kc-main" },
+      el("div", {}, el("span", { class: "c-cyan", text: c.name || "?" }), el("span", { class: "c-dim", text: "  " + c.callsign }),
+        c.note ? el("span", { class: "c-amber small", text: "  " + c.note }) : null),
+      el("div", { class: "small" }, el("span", { text: c.system || t("position unknown") }),
+        el("span", { class: "c-dim", text: "  " + t(HOW[c.how] || "seen in the FSS") + " " + since(c.ts)
+          + (c.dist_ly !== null && c.dist_ly !== undefined ? " · " + fmt(c.dist_ly, 1) + " ly" : "")
+          + (c.from_store ? " · " + t("stored") : "") })),
+      what.length ? el("div", { class: "small c-dim", text: what.join(" · ") }) : null,
+      buys ? el("div", { class: "small" }, el("span", { class: "c-green", text: t("bought") + ": " }), buys,
+        el("span", { class: "c-dim", text: "  (" + t("market of {d}", { d: day(m.ts) }) + ")" })) : null),
+    el("div", { class: "kc-act" }, noteBtn,
+      el("button", { text: t("copy system"), disabled: c.system ? null : true,
+        title: t("copy the system name - paste it in the galaxy map to plot the jump"),
+        onclick: (e) => copyText(c.system, e.currentTarget) })));
+}
+
+function knownCarriers() {
+  const k = known;
+  const q = knownQuery.trim().toLowerCase();
+  const match = (c) => !q || [c.callsign, c.name, c.system, c.note].some(v => v && String(v).toLowerCase().includes(q));
+  const fav = k.favourites.filter(match), met = k.met.filter(match), seen = k.sighted.filter(match);
+  const rows = [];
+  const search = el("input", { type: "search", class: "cag-q kc-q", placeholder: t("filter carriers"), value: knownQuery,
+    oninput: (e) => { knownQuery = e.target.value; const pos = e.target.selectionStart; render();
+      const n = root.querySelector(".kc-q"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (err) { /* type=search */ } } } });
+  rows.push(el("div", { class: "cag-tools" }, search));
+  if (knownMsg) rows.push(el("div", { class: "c-red small", text: knownMsg }));
+  rows.push(el("div", { class: "sr-h", text: t("FAVOURITES") }));
+  rows.push(...(fav.length ? fav.map(carrierRow) : [el("div", { class: "c-dim small", text: t("None yet - mark a carrier with ☆.") })]));
+  if (met.length) { rows.push(el("div", { class: "sr-h", text: t("DOCKED OR STARTED FROM") })); rows.push(...met.map(carrierRow)); }
+  if (seen.length) {
+    rows.push(el("div", { class: "sr-h", text: t("SEEN IN PASSING") }));
+    rows.push(...(showAllSeen ? seen : seen.slice(0, 8)).map(carrierRow));
+    if (seen.length > 8) rows.push(el("button", { text: showAllSeen ? t("fewer") : t("show {n} more", { n: seen.length - 8 }),
+      onclick: () => { showAllSeen = !showAllSeen; render(); } }));
+  }
+  rows.push(el("div", { class: "c-dim small", text: t("Last known positions from your own journals; the market is the one you last opened there. Nothing is fetched online.") }));
+  return frame(t("KNOWN CARRIERS"), t("{f} favourites · {n} known", { f: k.counts.favourites, n: k.counts.known }), rows, { cls: "ns-known", appear: false });
+}
+
 function render() {
   if (!root) return;
   root.replaceChildren();
@@ -84,12 +158,15 @@ function render() {
   if (!data || data.empty) {
     root.append(frame(t("CARRIER"), "", el("div", { class: "empty" }, t("NO CARRIER DATA"), el("br"),
       el("span", { class: "c-dim", text: t("No carrier of your own known yet - your ships are listed below. If you own one, open the carrier management once.") }))));
+    if (known) root.append(knownCarriers());
     if (data && data.fleet && data.fleet.length) root.append(airWing());
     return;
   }
   root.append(el("div", { class: "ns-grid" },
     el("div", { class: "ns-col" }, ident(), position(), tritium()),
-    el("div", { class: "ns-col" }, hold(), finance(), services())), airWing());
+    el("div", { class: "ns-col" }, hold(), finance(), services())));
+  if (known) root.append(knownCarriers());
+  root.append(airWing());
 }
 
 function ident() {
