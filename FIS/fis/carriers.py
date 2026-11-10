@@ -246,3 +246,26 @@ def build_known(archive: Any, store: Any, live: Optional[Dict[str, Any]] = None,
     return {"commander": name, "favourites": fav_items, "met": met,
             "sighted": [item(cs) for cs in seen[:max(0, sighted)]],
             "counts": {"known": len(known), "favourites": len(favs), "sighted": len(seen)}}
+
+
+def mark_favourite_pois(poi: List[Dict[str, Any]], favs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """K4: SYSTEM points of interest - your favourite carriers get a star and
+    come first among the carriers (the view shows only the newest few).
+    Returns a new list; the cached system stays untouched."""
+    if not favs:
+        return poi
+    out = []
+    for p in poi:
+        if p.get("kind") == "carrier":
+            nm = p.get("name") or ""
+            cs = nm if is_callsign(nm) else (parse_signal(nm) or {}).get("callsign")
+            if cs in favs:
+                p = dict(p, favourite=True, callsign=cs)
+        out.append(p)
+    first = [i for i, p in enumerate(out) if p.get("kind") == "carrier"]
+    if first:
+        cars = [out[i] for i in first]
+        cars.sort(key=lambda p: not p.get("favourite"))          # stable: newest first stays
+        for i, p in zip(first, cars):
+            out[i] = p
+    return out

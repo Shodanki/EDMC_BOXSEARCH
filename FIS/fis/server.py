@@ -135,7 +135,20 @@ class App:
         out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
             self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om,
             skip_arrival=self.cfg.skip_arrival, archive=self.archive))
-        return self._with_carrier(out, id64)
+        return self._with_favourites(self._with_carrier(out, id64))
+
+    def _with_favourites(self, out: Dict[str, Any]) -> Dict[str, Any]:
+        """K4: a star at your favourite carriers among the points of interest."""
+        if not out.get("poi"):
+            return out
+        try:
+            from .carriers import mark_favourite_pois
+            favs = self.favourites.get(self.archive.commander()[0])["favourites"]
+        except Exception:
+            return out
+        if not favs:
+            return out
+        return dict(out, poi=mark_favourite_pois(out["poi"], favs))
 
     def _with_carrier(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
         """Your carrier, when it is in this system or jumping here."""

@@ -226,6 +226,7 @@ function poiFrame(sys) {
     if (p.docked) bits.push(t("docked"));
     if (p.seen) bits.push(t("seen {d}", { d: String(p.seen).slice(0, 10) }));
     return el("div", { class: "sr-line" },
+      p.favourite ? el("span", { class: "poi-fav", title: t("favourite"), text: "★ " }) : null,
       el("span", { class: "c-cyan", text: (POI_ICON[p.kind] || "·") + " " + p.name }),
       el("span", { class: "c-dim small", text: "  " + bits.join(" · ") }));
   });

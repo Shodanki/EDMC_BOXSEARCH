@@ -92,6 +92,19 @@ class TestKnown(unittest.TestCase):
         self.assertEqual(len(k["Q2W-3ER"]["started"]), 2)
         self.assertEqual(k["Q2W-3ER"]["how"], "jump")
 
+    def test_favourite_pois(self):
+        poi = [{"kind": "station", "name": "Test Port"},
+               {"kind": "carrier", "name": "NEW ONE A1B-2C3"},
+               {"kind": "carrier", "name": "BLUE HERON Q2W-3ER"},
+               {"kind": "carrier", "name": "Z9Z-9ZZ"},
+               {"kind": "beacon", "name": "Nav Beacon"}]
+        out = ca.mark_favourite_pois(poi, {"Q2W-3ER": {}, "Z9Z-9ZZ": {}})
+        self.assertEqual([p["name"] for p in out],
+                         ["Test Port", "BLUE HERON Q2W-3ER", "Z9Z-9ZZ", "NEW ONE A1B-2C3", "Nav Beacon"])
+        self.assertEqual([bool(p.get("favourite")) for p in out], [False, True, True, False, False])
+        self.assertNotIn("favourite", poi[2])                     # the cached list is untouched
+        self.assertIs(ca.mark_favourite_pois(poi, {}), poi)
+
 
 if __name__ == "__main__":
     unittest.main()

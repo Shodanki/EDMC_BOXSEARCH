@@ -133,6 +133,9 @@ class TestApiLocal(TestApi):
         # a favourite the journal no longer has keeps its stored position
         stored = self.app.favourites.get("F7")["favourites"]["Q2W-3ER"]
         self.assertEqual(stored["system"], "Test Beta")
+        # SYSTEM points of interest: the star travels with the system data
+        out = self.app._with_favourites({"poi": [{"kind": "carrier", "name": "BLUE HERON Q2W-3ER"}]})
+        self.assertTrue(out["poi"][0]["favourite"])
         with self._post({"callsign": "Q2W-3ER", "on": False}, {"X-FIS-Settings": "1"}) as r:
             self.assertFalse(json.loads(r.read())["favourite"])
 
