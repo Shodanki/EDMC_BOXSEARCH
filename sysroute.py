@@ -521,6 +521,23 @@ def body_matches(b: Body, filters: Sequence[str]) -> bool:
     return False
 
 
+PACE_MIN_LEG_S = 20.0   # legs planned shorter than this say nothing about pace
+
+
+def pace_ratio(legs: Sequence[Tuple[float, float]]) -> Optional[float]:
+    """
+    R1: how the commander's pace compares with the estimate, from
+    (planned s, actual s) per leg - the median ratio, so one leg with a
+    repair, a landing or a body mapped on the side does not decide it.
+    None with fewer than two usable legs.
+    """
+    r = sorted(a / p for p, a in legs if p >= PACE_MIN_LEG_S and a > 0)
+    if len(r) < 2:
+        return None
+    n = len(r)
+    return r[n // 2] if n % 2 else (r[n // 2 - 1] + r[n // 2]) / 2.0
+
+
 def is_arrival_star(b: Body) -> bool:
     """The star the jump drops you at: a star 0 LS from the arrival point."""
     return b.kind == "Star" and b.arrival_ls < 1.0
@@ -829,6 +846,12 @@ def _selftest() -> int:
           "skip_arrival: the route starts with the first planned body")
     check(is_arrival_star(bodies[0]) and not is_arrival_star(bodies[3]),
           "only the star at 0 LS counts as the arrival star")
+    # R1: today's legs - mapping a few minutes each, one with 13 min of repairs
+    legs = [(240, 300), (100, 150), (200, 260), (250, 1030), (60, 90), (300, 330)]
+    r = pace_ratio(legs)
+    check(r is not None and 1.2 <= r <= 1.5, "median pace ignores the repair leg (%.2f)" % (r or 0))
+    check(pace_ratio([(240, 300)]) is None, "one leg is not enough")
+    check(pace_ratio([(5, 300), (240, 240), (200, 200)]) == 1.0, "legs under 20 s are left out")
     print("failures: %d" % fails)
     return fails
 

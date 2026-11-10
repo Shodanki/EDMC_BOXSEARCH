@@ -605,17 +605,22 @@ route | reached AB 1 c (mapped), 6 of 32 done
 The manual checkbox stays for what the journal cannot see — a body you looked
 at and decided to skip.
 
-From the first tick the plugin also measures itself. Elapsed time against the
-legs already completed gives an honest correction for the rest:
+From the first tick the plugin also measures itself, leg by leg: the time
+from one tick to the next against the planned time of the stop just reached
+(taken at the tick, while it still holds its work - mapping, samples). The
+median of those ratios gives an honest correction for the rest:
 
 ```
-actual pace 2.4x the estimate - remaining is more like 409 min
+actual pace 1.4x the estimate - remaining is more like 61 min
 ```
 
-That line appears in the window header and in the log. It is the only check the
-plugin can make on its own model without guessing, and it is the one that tells
-you whether the remaining minutes mean anything. Ticks and the clock reset when
-you jump to a different system.
+The median keeps one odd leg - repairs, a landing, a body mapped on the
+side - from deciding it; it needs two legs. That line appears in the window
+header and in the log. It is the only check the plugin can make on its own
+model without guessing, and it is the one that tells you whether the
+remaining minutes mean anything. Ticks and the clock reset when you jump to a
+different system; after an EDMC restart the clock starts again at the next
+tick.
 
 ### Systems you were already in
 

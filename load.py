@@ -44,7 +44,7 @@ from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
 from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       F_ALL, F_OUTSTANDING, bodies_from_rows,
                       calibrate_from_journal, calibrate_work_from_journal,
-                      leg_distance_ls,
+                      leg_distance_ls, pace_ratio,
                       plan_route, resolve_positions, shorten)
 from boxelplan import bundled_probe_prefix                   # noqa: E402
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
@@ -190,7 +190,7 @@ class State:
         self.route_full = False
         self.route_feedback = ""
         self.route_started: Optional[float] = None
-        self.route_base: set = set()         # stops already done when the clock started
+        self.route_legs: List[Tuple[float, float]] = []   # R1: (planned s, actual s) per leg
         self.cost_model = DEFAULT_MODEL
         self.sc_segments: List[Tuple[float, float]] = []
         self.work_dss: List[float] = []
@@ -1726,47 +1726,48 @@ def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
             logger.info("route | reached %s (%s), %d of %d done",
                         st.body.short, reason, len(ST.route_done),
                         len(ST.route.stops))
-            _route_progress_feedback()
+            _route_progress_feedback(st)
             _ui(_route_window_refresh)
             _ui(_refresh)
             return
 
 
-def _route_progress_feedback() -> None:
+def _route_progress_feedback(stop: Any = None) -> None:
     """
-    Compare the estimate against what actually happened.
+    Compare the estimate against what actually happened - leg by leg.
 
-    The first stop starts the clock. From then on the elapsed time is measured
-    against the sum of the legs already ticked off, which is the only honest
-    check the plugin can make on its own model - and it is the one that tells
-    you whether the remaining minutes are worth anything.
+    Each tick measures the time since the previous tick against the planned
+    time of the stop just reached, taken now, while it still holds its work
+    (once a body is mapped the rebuilt route plans no work for it, so a sum
+    over the rebuilt route made every pace look slow). The pace is the
+    median of those ratios (sysroute.pace_ratio): a leg with repairs, a
+    landing or a body mapped on the side does not decide it. The first tick
+    - also halfway through a system after an EDMC restart - starts the
+    clock.
     """
     route = ST.route
+    now = time.time()
     if route is None or not ST.route_done:
         ST.route_feedback = ""
         return
     if ST.route_started is None:
-        # the clock starts here - also halfway through a system after an
-        # EDMC restart, so the stops done before it are not compared
-        ST.route_started = time.time()
-        ST.route_base = set(ST.route_done)
+        ST.route_started = now
+        ST.route_legs = []
         ST.route_feedback = ""
         return
-    elapsed = time.time() - ST.route_started
-    planned = sum(s.leg_s for s in route.stops
-                  if s.body.body_id in ST.route_done
-                  and s.body.body_id not in ST.route_base)
-    if planned < 60 or elapsed < 60:
+    if stop is not None:
+        ST.route_legs.append((stop.leg_s, now - ST.route_started))
+    ST.route_started = now                   # the next leg starts here
+    ratio = pace_ratio(ST.route_legs)
+    if ratio is None:
         ST.route_feedback = ""
         return
-    ratio = elapsed / planned
     left = sum(s.leg_s for s in route.stops
                if s.body.body_id not in ST.route_done)
     ST.route_feedback = ("actual pace %.1fx the estimate - "
                          "remaining is more like %.0f min"
                          % (ratio, left * ratio / 60.0))
-    logger.info("route | %s (elapsed %.0f min vs planned %.0f min)",
-                ST.route_feedback, elapsed / 60.0, planned / 60.0)
+    logger.info("route | %s (median of %d legs)", ST.route_feedback, len(ST.route_legs))
 
 
 def _route_tick(body_id: int) -> None:
@@ -1780,7 +1781,8 @@ def _route_tick(body_id: int) -> None:
     done = body_id not in ST.route_done
     if done:
         ST.route_done.add(body_id)
-        _route_progress_feedback()
+        _route_progress_feedback(next((s for s in (ST.route.stops if ST.route else [])
+                                       if s.body.body_id == body_id), None))
     else:
         ST.route_done.discard(body_id)
     if ST.db and ST.cur_id64:
