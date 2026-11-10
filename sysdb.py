@@ -360,6 +360,7 @@ class SystemDB:
     def __init__(self, path: str):
         self.path = path
         self.backup_path: Optional[str] = None
+        self._dock_market_id: Optional[int] = None
         try:
             state = stored_state(path)
         except sqlite3.Error:
@@ -1109,6 +1110,7 @@ class SystemDB:
         ev = entry.get("event")
         n = 0
         self._track_location(ev, entry)
+        self._note_dock(ev, entry)
         try:
             self._surface_event(ev, entry)
         except Exception:
@@ -1121,6 +1123,12 @@ class SystemDB:
                                 id64=entry.get("SystemAddress"), quality=Q_JOURNAL,
                                 source="journal", visited=True)
                     n += 1
+                # CarrierJump is caught here, so the carrier branch below only
+                # ever saw CarrierLocation: riding along on the own carrier
+                # left it in the old system until the next login.
+                if ev == "CarrierJump" and self._own_carrier_event(ev, entry):
+                    self.set_carrier(entry.get("StarSystem"), entry.get("SystemAddress"),
+                                     tuple(pos[:3]) if pos and len(pos) >= 3 else None)
 
             elif ev == "FSDTarget":
                 nm = entry.get("Name") or entry.get("StarSystem")
@@ -1316,7 +1324,7 @@ class SystemDB:
                                       else None)
                     n += 1
 
-            elif ev in ("CarrierJump", "CarrierLocation"):
+            elif ev == "CarrierLocation" and self._own_carrier_event(ev, entry):
                 nm = entry.get("StarSystem")
                 pos = entry.get("StarPos")
                 a = entry.get("SystemAddress")
@@ -1331,11 +1339,14 @@ class SystemDB:
                                      tuple(pos[:3]) if pos and len(pos) >= 3 else None)
                     n += 1
 
-            elif ev == "CarrierStats":
+            elif ev == "CarrierStats" and entry.get("CarrierType", "FleetCarrier") == "FleetCarrier":
+                if entry.get("CarrierID"):
+                    self.set_meta("carrier_market_id", entry["CarrierID"])
                 self.set_meta("carrier_callsign", entry.get("Callsign") or "")
                 self.set_meta("carrier_name", entry.get("Name") or "")
 
-            elif ev == "Docked" and entry.get("StationType") == "FleetCarrier":
+            elif (ev == "Docked" and entry.get("StationType") == "FleetCarrier"
+                  and self._own_carrier_event(ev, entry)):
                 nm = entry.get("StarSystem")
                 if nm:
                     self.set_carrier(nm, entry.get("SystemAddress"),
@@ -1502,6 +1513,42 @@ class SystemDB:
         return self.cx.execute("SELECT * FROM survey WHERE id=1").fetchone()
 
     # --------------------------------------------------------------- carrier
+    def _own_carrier_event(self, ev: str, entry: dict) -> bool:
+        """
+        Is this carrier event about the commander's OWN fleet carrier?
+
+        Up to 4.7 every Docked at a fleet carrier and every CarrierJump moved
+        "my carrier": docking at someone else's carrier (or riding along on
+        it) overwrote the own carrier's position and callsign - and a
+        commander without a carrier got a stranger's carrier as his own.
+        The own carrier is known by its CarrierID (= MarketID) from
+        CarrierLocation / CarrierStats, which the game writes for owners at
+        every login. Without that ID nothing but CarrierLocation counts.
+        """
+        if ev == "CarrierLocation":
+            if entry.get("CarrierType", "FleetCarrier") != "FleetCarrier":
+                return False             # squadron carrier, not the own one
+            if entry.get("CarrierID"):
+                self.set_meta("carrier_market_id", entry["CarrierID"])
+            return True
+        own = self.get_meta("carrier_market_id")
+        mid = entry.get("MarketID")
+        if ev == "CarrierJump" and not mid:
+            mid = self._dock_market_id     # on foot aboard: no MarketID
+        if own and mid:
+            return str(mid) == str(own)
+        if not own and ev == "Docked":
+            cs = self.get_meta("carrier_callsign")
+            return bool(cs) and entry.get("StationName") == cs
+        return False
+
+    def _note_dock(self, ev: str, entry: dict) -> None:
+        """Remember where the commander is docked (for CarrierJump on foot)."""
+        if ev == "Docked" or (ev == "Location" and entry.get("Docked")):
+            self._dock_market_id = entry.get("MarketID")
+        elif ev in ("Undocked", "FSDJump", "Died", "LoadGame", "Shutdown"):
+            self._dock_market_id = None
+
     def set_carrier(self, name: str, id64: Optional[int] = None,
                     coords: Optional[Sequence[float]] = None,
                     callsign: Optional[str] = None,
@@ -2227,6 +2274,35 @@ def _selftest() -> int:
         cx.commit()
         cx.close()
         check(stored_state(legacy) == (0, set()), "database without meta = schema 0")
+        db = SystemDB(os.path.join(d, "carrier.sqlite"))
+        db.ingest_journal_event({"event": "Docked", "StationType": "FleetCarrier",
+                                 "StationName": "ZZZ-001", "MarketID": 1001,
+                                 "StarSystem": "Test Alpha", "SystemAddress": 11})
+        check(db.get_carrier() is None, "docking at a stranger's carrier: no own carrier")
+        db.ingest_journal_event({"event": "CarrierLocation", "CarrierType": "FleetCarrier",
+                                 "CarrierID": 2002, "StarSystem": "Test Home",
+                                 "SystemAddress": 22})
+        db.ingest_journal_event({"event": "CarrierStats", "CarrierID": 2002,
+                                 "Callsign": "OWN-002", "Name": "TEST OWN"})
+        db.ingest_journal_event({"event": "Docked", "StationType": "FleetCarrier",
+                                 "StationName": "ZZZ-001", "MarketID": 1001,
+                                 "StarSystem": "Test Alpha", "SystemAddress": 11})
+        db.ingest_journal_event({"event": "Disembark", "OnStation": True})
+        db.ingest_journal_event({"event": "CarrierJump", "OnFoot": True, "Docked": False,
+                                 "StarSystem": "Test Beta", "SystemAddress": 33,
+                                 "StarPos": [1.0, 2.0, 3.0]})
+        c = db.get_carrier()
+        check(c and c["system"] == "Test Home" and c["callsign"] == "OWN-002",
+              "stranger's carrier (docked, jump on foot) leaves the own carrier alone")
+        db.ingest_journal_event({"event": "Undocked"})
+        db.ingest_journal_event({"event": "Docked", "StationType": "FleetCarrier",
+                                 "StationName": "OWN-002", "MarketID": 2002,
+                                 "StarSystem": "Test Home", "SystemAddress": 22})
+        db.ingest_journal_event({"event": "CarrierJump", "OnFoot": True, "Docked": False,
+                                 "StarSystem": "Test Gamma", "SystemAddress": 44,
+                                 "StarPos": [4.0, 5.0, 6.0]})
+        check(db.get_carrier()["system"] == "Test Gamma", "own carrier jump while aboard counts")
+        db.close()
     print("failures: %d" % fails)
     return fails
 
