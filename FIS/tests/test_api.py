@@ -298,6 +298,25 @@ class TestServer(_Base):
             self.assertEqual(cm.exception.code, 404, p)
             cm.exception.close()
 
+    def test_static_stays_in_the_web_folder(self):
+        # S1 (CodeQL path-injection): raw paths, not cleaned up by urllib
+        import http.client
+        port = self.srv.server_address[1]
+        for p in ("/../fis/config.py", "/%2e%2e/fis/config.py", "/js/../../fis/server.py",
+                  "/..%5Cfis%5Cconfig.py", "/C:/Windows/win.ini", "//etc/passwd"):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("GET", p)
+            r = c.getresponse()
+            r.read()
+            self.assertEqual(r.status, 404, p)
+            c.close()
+
+    def test_static_types(self):
+        for p, want in (("/", "text/html; charset=utf-8"), ("/js/i18n.js", "text/javascript; charset=utf-8"),
+                        ("/vendor/three/LICENSE", "application/octet-stream")):
+            st, h, _b = self.get(p)
+            self.assertEqual((st, h.get("Content-Type")), (200, want), p)
+
     def test_sse(self):
         req = urllib.request.Request(self.base + "/api/events")
         r = urllib.request.urlopen(req, timeout=5)
@@ -440,6 +459,20 @@ class TestLanToken(_Base):
                                      headers={"X-FIS-Token": "secret-token"})
         with urllib.request.urlopen(req, timeout=5) as r:
             self.assertEqual(r.status, 200)
+
+    def test_page_cookie_is_the_stored_token(self):
+        # the cookie carries the stored token - nothing a request sends ends
+        # up in a header (S1: CodeQL http-response-splitting)
+        with urllib.request.urlopen(self.base + "/?token=secret-token", timeout=5) as r:
+            self.assertIn("fis_token=secret-token;", r.headers.get("Set-Cookie", ""))
+        import http.client
+        c = http.client.HTTPConnection("127.0.0.1", self.srv.server_address[1], timeout=5)
+        c.request("GET", "/?token=secret-token%0d%0aX-Evil:%201")
+        r = c.getresponse()
+        r.read()
+        self.assertEqual(r.status, 401)               # not the stored token
+        self.assertIsNone(r.getheader("X-Evil"))
+        c.close()
 
 
 if __name__ == "__main__":

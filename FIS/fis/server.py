@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import hmac
 import json
-import mimetypes
 import os
 import queue
 import re
@@ -28,10 +27,6 @@ from . import qr as qr_mod
 from .config import WEB_DIR, Config
 from .data import Database
 from .live import Hub, LiveTracker
-
-mimetypes.add_type("text/javascript", ".js")
-mimetypes.add_type("text/css", ".css")
-mimetypes.add_type("image/svg+xml", ".svg")
 
 _RE_SYS = re.compile(r"^/api/system/(\d+)$")
 _RE_BODY = re.compile(r"^/api/body/(\d+)/(\d+)$")
@@ -555,23 +550,37 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(("event: %s\ndata: %s\n\n" % (event, payload)).encode("utf-8"))
         self.wfile.flush()
 
+    # what the web folder holds; anything else is served as plain bytes
+    STATIC_TYPES = {
+        ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+        ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
+        ".md": "text/markdown; charset=utf-8", ".txt": "text/plain; charset=utf-8",
+        ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon",
+        ".woff2": "font/woff2",
+    }
+
     def _static(self, path: str, qs: Dict[str, Any]) -> None:
         if path in ("", "/"):
             path = "/index.html"
         root = os.path.realpath(self.app.web_dir)
-        full = os.path.realpath(os.path.join(root, path.lstrip("/").replace("/", os.sep)))
-        if not (full == root or full.startswith(root + os.sep)) or not os.path.isfile(full):
+        # normalise first, then require the result to lie inside the web
+        # folder - and once more after resolving links
+        full = os.path.normpath(os.path.join(root, path.lstrip("/").replace("/", os.sep)))
+        if not full.startswith(root + os.sep):
+            return self._error(404, "not found")
+        full = os.path.realpath(full)
+        if not full.startswith(root + os.sep) or not os.path.isfile(full):
             return self._error(404, "not found")
         with open(full, "rb") as fh:
             body = fh.read()
-        ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
-        if ctype.startswith("text/") or ctype.endswith("javascript"):
-            ctype += "; charset=utf-8"
+        ctype = self.STATIC_TYPES.get(os.path.splitext(full)[1].lower(), "application/octet-stream")
         extra = {}
-        tok = (qs.get("token") or [""])[0]
-        if self.app.cfg.lan and tok:
-            # remember the token for the module and API requests of this page
-            extra["Set-Cookie"] = "fis_token=%s; Path=/; SameSite=Strict; HttpOnly" % tok
+        cfg = self.app.cfg
+        if cfg.lan and cfg.token and (qs.get("token") or [""])[0]:
+            # remember the token for the module and API requests of this
+            # page - the stored one: the request's token was checked equal
+            # to it, and nothing a request sends ends up in a header
+            extra["Set-Cookie"] = "fis_token=%s; Path=/; SameSite=Strict; HttpOnly" % cfg.token
         self._send(200, body, ctype, extra)
 
 
