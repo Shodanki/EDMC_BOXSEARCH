@@ -1699,6 +1699,13 @@ Gypseeum Brain Tree         903 m  < 13
 
 Switch it off under "surface compass" in the settings.
 
+*Rhino mining rigs.* Placing a rig writes nothing to the journal; collecting
+it - driving over the folded rig - writes one MiningRefined per tonne. Where
+those are written is where the rig stood, so the FIS PLANET view shows the
+collected rigs numbered per Rhino launch (*Rig 1 · 11 t Deuterium*). Tonnes
+more than 8 s or 25 m apart count as another rig. Journals from before this
+version are read once more after the update, so earlier rigs appear too.
+
 ### The Nomad
 
 The flying SRV is launched with `LaunchVessel` and lands with its own

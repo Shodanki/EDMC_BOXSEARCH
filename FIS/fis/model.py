@@ -842,7 +842,7 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
         if not pos or not radius:
             out["marks"] = [{"kind": m["kind"], 
                              "label": m["label"], "ts": m["ts"], "x": None, "y": None}
-                            for m in marks]
+                            for m in marks if m["kind"] != "refined"]
             return out
         lat0, lon0 = float(pos[-1]["lat"]), float(pos[-1]["lon"])
     if not radius:
@@ -861,6 +861,8 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
         seg["pts"].append([round(x, 1), round(y, 1)])
     me_xy = (0.0, 0.0) if is_here else None
     for m in marks:
+        if m["kind"] == "refined":
+            continue                 # one per tonne - shown as rigs below
         item = {"kind": m["kind"], 
                 "label": m["label"], "detail": m["detail"], "ts": m["ts"], "x": None, "y": None}
         if m["lat"] is not None:
@@ -871,7 +873,18 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
                 item["bearing"] = round((math.degrees(math.atan2(x, y)) + 360.0) % 360.0, 0)
         out["marks"].append(item)
     # where the SRV / the ship stand - the points to get back to
-    nav = p.surfacenav.body_state([dict(m) for m in marks]) if p.surfacenav else None
+    nav = p.surfacenav.body_state([dict(m) for m in marks], radius) if p.surfacenav else None
+    # Rhino rigs, where they were collected - numbered per launch, in time order
+    for r in (nav or {}).get("rigs") or []:
+        x, y = _local_xy(r["lat"], r["lon"], lat0, lon0, radius)
+        item = {"kind": "rig", "label": "Rig %d · %d t %s" % (r["n"], r["tonnes"], r["type"]),
+                "detail": r["type"], "n": r["n"], "tonnes": r["tonnes"], "ts": r["ts"],
+                "x": round(x, 1), "y": round(y, 1)}
+        if me_xy is not None:
+            item["dist_m"] = round(math.hypot(x, y), 0)
+            item["bearing"] = round((math.degrees(math.atan2(x, y)) + 360.0) % 360.0, 0)
+        out["marks"].append(item)
+    out["marks"].sort(key=lambda m: m.get("ts") or "")
     for key in ("parked", "ship"):
         v = nav[key] if nav else None
         if v is None:

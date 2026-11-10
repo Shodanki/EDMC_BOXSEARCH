@@ -220,7 +220,8 @@ CREATE TABLE IF NOT EXISTS surface_marks (
     body_name TEXT NOT NULL,
     kind      TEXT NOT NULL,     -- touchdown, liftoff, srv_out, srv_in, disembark,
                                  -- srv_parked, embark, bio_log, bio_sample, bio_analyse,
-                                 -- material, codex, settlement, screenshot
+                                 -- material, codex, settlement, screenshot,
+                                 -- refined (one tonne from a Rhino rig)
     label     TEXT,
     detail    TEXT,              -- genus for bio marks, category for materials
     lat REAL, lon REAL,          -- NULL when the position is unknown
@@ -388,6 +389,8 @@ class SystemDB:
         # journal event carries no position (ScanOrganic, MaterialCollected)
         self._pos: Optional[Dict[str, Any]] = None
         self._vehicle: Optional[str] = None     # SRV type of the last launch
+        self._refine_ts: Optional[str] = None    # same-second MiningRefined
+        self._refine_seq = 0
         self.marks_rev = 0                      # bumped on every new mark
 
     def _migrate(self) -> None:
@@ -1029,6 +1032,8 @@ class SystemDB:
                 self._mark(e, "material", self._here_body,
                            e.get("Name_Localised") or (e.get("Name") or "").capitalize(),
                            detail=e.get("Category"))
+        elif ev == "MiningRefined":
+            self._rig_refined(e)
         elif ev == "CodexEntry" and e.get("Latitude") is not None:
             body = (e.get("BodyName") or
                     self._body_name_of(e.get("SystemAddress"), e.get("BodyID")))
@@ -1041,6 +1046,40 @@ class SystemDB:
         elif ev == "Screenshot" and e.get("Latitude") is not None:
             self._mark(e, "screenshot", e.get("Body"), e.get("Filename") or "",
                        lat=e.get("Latitude"), lon=e.get("Longitude"))
+
+    def _rig_refined(self, e: dict) -> None:
+        """
+        Surface mining: the Rhino collects a finished rig by driving over it,
+        and every tonne refined writes one MiningRefined - so where they are
+        written is where the rig stood. Placing a rig writes nothing at all.
+        Only in the SRV (the ship's refinery writes the same event when
+        mining asteroids). The position is the live Status.json fix or, when
+        replaying a journal, the stored surface track within 15 s.
+        """
+        stamp = e.get("timestamp")
+        t = _epoch(stamp)
+        p = self._fresh_pos(self._here_body, t) if self._here_body else None
+        if p and p.get("mode") == "srv":
+            sys_id, body, lat, lon = self._here_sys, p["body"], p["lat"], p["lon"]
+        elif t is not None:
+            r = self.cx.execute(
+                "SELECT sys_id64, body_name, lat, lon FROM surface_track WHERE mode='srv'"
+                " AND ts BETWEEN ? AND ? ORDER BY ABS(ts - ?) LIMIT 1",
+                (t - 15, t + 15, t)).fetchone()
+            if not r:
+                return
+            sys_id, body, lat, lon = r
+        else:
+            return
+        name = (e.get("Type_Localised") or
+                (e.get("Type") or "").strip("$;").replace("_name", "").capitalize() or "?")
+        # one tonne per event, sometimes two in the same second: the key
+        # holds the timestamp, so number the second one on
+        self._refine_seq = self._refine_seq + 1 if stamp == self._refine_ts else 0
+        self._refine_ts = stamp
+        label = name if not self._refine_seq else "%s#%d" % (name, self._refine_seq)
+        self._mark({"timestamp": stamp, "SystemAddress": sys_id}, "refined", body, label,
+                   detail="rig", lat=lat, lon=lon)
 
     def surface_bodies(self) -> List[sqlite3.Row]:
         """Bodies with marks or a track, most recent first."""

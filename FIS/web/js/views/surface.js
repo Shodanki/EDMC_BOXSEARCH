@@ -14,13 +14,13 @@ const COL = { ship: "#3EF2E0", srv: "#FFB23E", foot: "#7CFF6B", grid: "rgba(62,2
   dim: "#6E8F8B", violet: "#B57CFF", red: "#FF4D4D", text: "#CFEDEA" };
 const ICON = { touchdown: "▼", liftoff: "▲", srv_out: "◆", srv_in: "◇", disembark: "●", embark: "○",
   bio_log: "✚", bio_sample: "✚", bio_analyse: "✔", material: "■", codex: "★", settlement: "⌂", screenshot: "◉",
-  srv_parked: "◆" };
+  srv_parked: "◆", rig: "⬢" };
 const TONE = { bio_log: "#FFB23E", bio_sample: "#FFB23E", bio_analyse: "#7CFF6B", material: "#B57CFF",
-  codex: "#3EF2E0", settlement: "#CFEDEA", touchdown: "#3EF2E0", liftoff: "#6E8F8B" };
+  codex: "#3EF2E0", settlement: "#CFEDEA", touchdown: "#3EF2E0", liftoff: "#6E8F8B", rig: "#FFD23E" };
 const KIND = { touchdown: N_("Touchdown"), liftoff: N_("Lift-off"), srv_out: N_("SRV out"), srv_in: N_("SRV in"),
   disembark: N_("On foot"), embark: N_("Boarded"), srv_parked: N_("SRV parked"), bio_log: N_("Bio 1/3"),
   bio_sample: N_("Bio 2/3"), bio_analyse: N_("Bio 3/3"), material: N_("Material"), codex: N_("Codex"),
-  settlement: N_("Settlement"), screenshot: N_("Screenshot") };
+  settlement: N_("Settlement"), screenshot: N_("Screenshot"), rig: N_("Mining rig") };
 
 export function mount(r) {
   root = r;
@@ -141,7 +141,7 @@ function draw() {
   }
   if (view.zoom > 0.05) {
     for (const m of [...data.marks].reverse()) {
-      if (m.x === null || !["bio_log", "bio_sample", "codex", "settlement", "material"].includes(m.kind)) continue;
+      if (m.x === null || !["bio_log", "bio_sample", "codex", "settlement", "material", "rig"].includes(m.kind)) continue;
       const txt = (m.label || "").slice(0, 26);
       const [px, py] = P(m.x, m.y);
       const key = txt + "@" + Math.round(px / 24) + "," + Math.round(py / 24);

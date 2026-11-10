@@ -21,7 +21,9 @@ No EDMC imports, so it can be tested on its own and the FIS can use it too.
 
 from __future__ import annotations
 
+import calendar
 import math
+import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 Line = Tuple[str, str]
@@ -84,7 +86,7 @@ def fmt_dist(m: float) -> str:
     return "%d km" % round(m / 1000.0)
 
 
-def body_state(marks: Iterable[Any]) -> Dict[str, Any]:
+def body_state(marks: Iterable[Any], radius: Optional[float] = None) -> Dict[str, Any]:
     """
     Replay the marks of one body in time order.
 
@@ -100,8 +102,15 @@ def body_state(marks: Iterable[Any]) -> Dict[str, Any]:
     species  one entry per species: samples taken since its last Log (the
              game restarts the count on a new Log), positions, analysed
     sites    positioned finds worth returning to, close ones merged
+    rigs     Rhino mining rigs, where they were collected (driving over a
+             folded rig writes one MiningRefined per tonne; placing one
+             writes nothing): n = 1, 2 ... per Rhino launch, tonnes, type.
+             Tonnes more than RIG_GAP_S apart, or (with the body radius)
+             more than RIG_SPREAD_M apart, are another rig.
     """
     parked = ship = None
+    rigs: List[Dict[str, Any]] = []
+    outing = 0
     species: Dict[str, Dict[str, Any]] = {}
     sites: List[Dict[str, Any]] = []
     for m in sorted(marks, key=lambda r: _g(r, "ts") or ""):
@@ -116,8 +125,25 @@ def body_state(marks: Iterable[Any]) -> Dict[str, Any]:
             ship = m if lat is not None else ship
         elif kind == "liftoff" and detail != "srv":
             ship = None
+        elif kind == "refined" and lat is not None:
+            t = _ts(_g(m, "ts"))
+            last = rigs[-1] if rigs else None
+            same = (last is not None and last["outing"] == outing
+                    and t - last["last_t"] <= RIG_GAP_S
+                    and (not radius or surface_distance_m(last["lat"], last["lon"], float(lat),
+                                                          float(lon), radius) <= RIG_SPREAD_M))
+            if same:
+                last["tonnes"] += 1
+                last["last_t"] = t
+            else:
+                n = sum(1 for r in rigs if r["outing"] == outing) + 1
+                rigs.append({"n": n, "outing": outing, "lat": float(lat), "lon": float(lon),
+                             "ts": _g(m, "ts"), "last_t": t, "tonnes": 1,
+                             "type": (_g(m, "label") or "?").split("#")[0]})
         elif kind == "srv_out":
             vehicle = (_g(m, "label") or "").lower()
+            if "rhino" in vehicle:
+                outing += 1
             if "nomad" in vehicle:
                 ship = None              # the ship flies along with the Nomad
             elif "rhino" in vehicle and ship is None and lat is not None:
@@ -145,7 +171,22 @@ def body_state(marks: Iterable[Any]) -> Dict[str, Any]:
                           "detail": detail, "lat": float(lat), "lon": float(lon),
                           "ts": _g(m, "ts")})
     return {"parked": parked, "ship": ship, "species": list(species.values()),
-            "sites": sites}
+            "sites": sites, "rigs": rigs}
+
+
+RIG_GAP_S = 8.0       # one rig's tonnes come 1-2 s apart (11 t in some 13 s)
+RIG_SPREAD_M = 25.0   # rigs stand well apart (seen: 76 m); driving over one is metres
+
+
+def _ts(stamp: Any) -> float:
+    """Journal timestamp to seconds; plain numbers pass (tests)."""
+    try:
+        return float(calendar.timegm(time.strptime(str(stamp)[:19], "%Y-%m-%dT%H:%M:%S")))
+    except (ValueError, TypeError):
+        try:
+            return float(stamp)
+        except (ValueError, TypeError):
+            return 0.0
 
 
 def _merge_sites(sites: List[Dict[str, Any]], radius: float) -> List[Dict[str, Any]]:
@@ -302,6 +343,28 @@ def _selftest() -> None:
     s = body_state(rh + [{"ts": "2", "kind": "touchdown", "label": "b", "detail": "auto",
                           "lat": -26.2, "lon": 143.7}])["ship"]
     assert s["lat"] == -26.2 and s["kind"] == "touchdown", s
+    # Rhino rigs: tonnes close in time and place are one rig; numbered per launch
+    def iso(sec):
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(1794330000 + sec))
+
+    def ref(sec, lat, lon, label="Deuterium"):
+        return {"ts": iso(sec), "kind": "refined", "label": label, "detail": "rig",
+                "lat": lat, "lon": lon}
+
+    rr = [{"ts": iso(10), "kind": "srv_out", "label": "SRV Rhino", "lat": 0.0, "lon": 0.0}]
+    rr += [ref(100 + i, 0.0, 0.0001) for i in range(11)]
+    rr.append(ref(105, 0.0, 0.0001, "Deuterium#1"))       # two in the same second
+    rr += [ref(300 + i, 0.0005, 0.0008) for i in range(11)]
+    rr.append(ref(312, 0.01, 0.0))                          # 2 s later but 4 km off
+    rigs = body_state(rr, 492617.0)["rigs"]
+    got = [(r["n"], r["tonnes"], r["type"]) for r in rigs]
+    assert got == [(1, 12, "Deuterium"), (2, 11, "Deuterium"), (3, 1, "Deuterium")], got
+    # without the radius only time splits
+    assert [r["tonnes"] for r in body_state(rr)["rigs"]] == [12, 12]
+    rr.append({"ts": iso(900), "kind": "srv_out", "label": "SRV Rhino", "lat": 0.0, "lon": 0.0})
+    rr.append(ref(1000, 0.02, 0.0, "Gold"))
+    last = body_state(rr, 492617.0)["rigs"][-1]
+    assert (last["n"], last["type"], last["outing"]) == (1, "Gold", 2), last
     print("surfacenav selftest ok")
 
 

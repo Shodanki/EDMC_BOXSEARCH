@@ -237,6 +237,7 @@ const DE = /*DE*/{
   "{v} PARKED": "{v} GEPARKT",
   "SHIP LANDED": "SCHIFF GELANDET",
   "SHIP HOVERING · last known": "SCHIFF SCHWEBT · zuletzt bekannt",
+  "Mining rig": "Mining-Rig",
   "{s} analysed": "{s} analysiert",
   "no position": "ohne Position",
   "Distance scale": "Entfernungsskala",

@@ -4408,7 +4408,9 @@ def _first_run_migration() -> None:
 
 # Releases that need one full journal replay to fill what they store new.
 # upgrade_44b: barycentre parents (binary moons placed far from their planet)
-REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44", "upgrade_44b")
+# upgrade_46_rigs: Rhino rig collection points from MiningRefined + the track
+REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44", "upgrade_44b",
+               "upgrade_46_rigs")
 
 
 def _upgrade_replay() -> None:
