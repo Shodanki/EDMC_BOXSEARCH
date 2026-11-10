@@ -907,5 +907,10 @@ const DE = /*DE*/{
   "hardpoints out": "Waffen ausgefahren",
   "target locked": "Ziel erfasst",
   "COMBAT": "KAMPF",
-  "WEAPONS READY": "WAFFEN BEREIT"
+  "WEAPONS READY": "WAFFEN BEREIT",
+  "APP": "APP",
+  "Running as an app.": "Läuft als App.",
+  "Own window and taskbar icon; the FIS service must be running, as for the browser.": "Eigenes Fenster und Taskleisten-Symbol; der FIS-Dienst muss laufen, wie für den Browser.",
+  "install as app": "als App installieren",
+  "If no button shows: the browser menu offers \"Install SHBOX FIS\" (Chrome, Edge).": "Wenn kein Knopf erscheint: Das Browser-Menü bietet „SHBOX FIS installieren“ (Chrome, Edge)."
 }/*END*/;

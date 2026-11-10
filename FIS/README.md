@@ -112,6 +112,17 @@ header and footer, for a second screen or a tablet. **⛶** or key **F** goes
 full screen (browsers allow that only after a click or key press). On an iPad
 or iPhone, "Add to Home Screen" opens the FIS without browser bars.
 
+On the game PC the FIS can also be **installed as an app** (Chrome, Edge):
+settings page → APP → *install as app*, or the browser menu. It then opens in
+its own window with a taskbar icon. Nothing is stored offline - the FIS
+service has to run as usual, and an update shows at the next start. Browsers
+offer this only on the PC itself (localhost), not over the home network.
+
+While you fight, the status bar says so: **WEAPONS READY** (amber, hardpoints
+out) or **COMBAT** (red, under attack, shields down, hull hit, interdiction) -
+from Status.json and the journal; it calms down by itself 30 s after the
+last hit.
+
 ### Display links and OBS
 
 The settings page (game PC) has **DISPLAY LINKS**: pick a view, tick **OBS

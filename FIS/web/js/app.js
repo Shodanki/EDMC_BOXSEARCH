@@ -38,6 +38,18 @@ const PROFILE = (() => {
     scale: sc >= 0.5 && sc <= 3 ? sc : null };
 })();
 if (PROFILE.obs) document.body.classList.add("obs");
+// M12: the FIS as an installed app (own window, taskbar icon) - only on the
+// game PC: browsers allow it on localhost, not on plain http in the home
+// network. No service worker: nothing is cached, an update is live at once.
+const ON_THIS_PC = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+if (ON_THIS_PC && !SOLO && !PROFILE.obs) {
+  const link = document.createElement("link");
+  link.rel = "manifest"; link.href = "/manifest.webmanifest";
+  link.crossOrigin = "use-credentials";        // LAN mode: the token cookie goes along
+  document.head.append(link);
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); window.fisInstall = e; });
+  window.addEventListener("appinstalled", () => { window.fisInstall = null; });
+}
 if (PROFILE.kiosk) document.body.classList.add("kiosk");
 if (PROFILE.scale) document.documentElement.style.zoom = String(PROFILE.scale);
 

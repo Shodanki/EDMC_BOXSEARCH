@@ -1,0 +1,13 @@
+{
+  "name": "SHBOX FIS",
+  "short_name": "FIS",
+  "description": "Flight information system for Elite Dangerous - reads your own journals, on this PC.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#05080A",
+  "theme_color": "#05080A",
+  "icons": [
+    {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}
+  ]
+}

@@ -89,8 +89,26 @@ function render() {
   root.append(el("div", { class: "st-grid" },
     frame(t("SETTINGS"), t("only on this PC"), rows, { appear: false }),
     frame(t("DISPLAY LINKS"), t("one view alone"), linkRows(), { appear: false }),
+    frame(t("APP"), t("only on this PC"), appRows(), { appear: false }),
     data.lan ? frame(t("HOME NETWORK"), "", lanRows.length ? lanRows : el("div", { class: "c-dim", text: t("Save to create the address.") }), { appear: false }) : null,
     el("div", { class: "c-dim small", text: t("Stored in {f}.", { f: data.ini }) })));
+}
+
+// M12: install the FIS as an app - own window and taskbar icon, nothing cached
+function appRows() {
+  const standalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+  if (standalone) return [el("div", { class: "c-green small", text: t("Running as an app.") })];
+  const rows = [el("div", { class: "c-dim small", text: t("Own window and taskbar icon; the FIS service must be running, as for the browser.") })];
+  if (window.fisInstall) {
+    rows.push(el("button", { text: t("install as app"), onclick: async () => {
+      const p = window.fisInstall; window.fisInstall = null;
+      try { await p.prompt(); } catch (e) { /* refused or gone */ }
+      render();
+    } }));
+  } else {
+    rows.push(el("div", { class: "c-dim small", text: t("If no button shows: the browser menu offers \"Install SHBOX FIS\" (Chrome, Edge).") }));
+  }
+  return rows;
 }
 
 // The address of one view with a display profile - made here so nobody has
