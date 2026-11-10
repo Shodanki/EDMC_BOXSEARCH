@@ -14,9 +14,9 @@ own database and maths.
 **It only reads.** The plugin database (opened read-only), the game's journal
 and its state files (`Status.json`, `NavRoute.json`, `ModulesInfo.json`,
 `Cargo.json`, ...). It sends nothing to the game, automates nothing and talks
-to no service on the internet - except that your *browser* loads the 3D
-library Three.js from a CDN; without internet the tactical view falls back to
-a 2D map.
+to no service on the internet. The 3D library Three.js (0.170.0, MIT) ships
+with it in `web/vendor/three` - licence and origin in `SOURCE.md` there - so
+the 3D views work offline too.
 
 ## Start
 
