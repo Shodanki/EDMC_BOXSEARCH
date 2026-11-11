@@ -20,6 +20,8 @@
 <meta name="description" content="SHBOX FIS – flight information system. Reads game files only, no AI at runtime.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 5 5 2h9v9l-3 3H2z' fill='none' stroke='%233EF2E0' stroke-width='1.5'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/css/fis.css">
+<!-- the theme is set before any view module runs (H1) -->
+<script src="/js/theme-boot.js"></script>
 <!-- Three.js 0.170.0 (MIT) ships with the FIS in /vendor/three (see
      SOURCE.md there) - no CDN, works without internet. If the module
      cannot load, the 3D views fall back to a 2D canvas. -->
@@ -80,6 +82,8 @@
     <label><input type="checkbox" id="opt-scan" checked> Scanlines</label>
     <label><input type="checkbox" id="opt-motion" checked> <span data-i18n="Animation">Animation</span></label>
     <label><input type="checkbox" id="opt-autoview" checked> <span data-i18n="Auto view">Auto view</span></label>
+    <select id="opt-theme" class="lay-pick" aria-label="Theme" title="Theme"></select>
+    <input type="color" id="opt-accent" title="Accent colour" hidden>
     <span id="lang" class="lang" role="group" aria-label="Language"><button data-lang="en">EN</button><button data-lang="de">DE</button></span>
     <a id="foot-settings" href="#settings" data-i18n-title="Settings" title="Settings">⚙</a>
   </span>

@@ -6,7 +6,7 @@
 // SHBOX FIS – application shell: state, view switching, ship bar, live push.
 
 import { getJSON, subscribe } from "./api.js";
-import { fmt } from "./ui.js";
+import { fmt, el } from "./ui.js";
 import { initLang, t, N_, lang, setLang, locale, applyStatic } from "./i18n.js";
 import * as layout from "./layout.js";
 import * as fullscreen from "./fullscreen.js";
@@ -56,6 +56,23 @@ if (PROFILE.scale) document.documentElement.style.zoom = String(PROFILE.scale);
 // language first: every view renders its texts through t()
 await initLang();
 applyStatic();
+// H1: theme per browser - theme-boot.js applied it before the views loaded,
+// so a change reloads the page (canvas colours are read on load)
+{
+  const THEMES = [["standard", N_("Theme: standard")], ["console", N_("Theme: Federation console")],
+    ["industrial", N_("Theme: Belt industrial")], ["station", N_("Theme: Station era")],
+    ["next", N_("Theme: Next (own accent)")]];
+  const sel = document.getElementById("opt-theme"), acc = document.getElementById("opt-accent");
+  const cur = document.documentElement.getAttribute("data-theme") || "standard";
+  for (const [k, label] of THEMES) sel.append(el("option", { value: k, text: t(label) }));
+  sel.value = cur;
+  acc.hidden = cur !== "next";
+  try { acc.value = (localStorage.getItem("fis.accent") || "#ff8a2a").toLowerCase(); } catch (e) { /* default */ }
+  const save = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } };
+  sel.addEventListener("change", () => { save("fis.theme", sel.value); location.reload(); });
+  acc.addEventListener("change", () => { save("fis.accent", acc.value); location.reload(); });
+}
+
 for (const b of document.querySelectorAll("#lang button")) {
   b.setAttribute("aria-pressed", b.dataset.lang === lang() ? "true" : "false");
   b.addEventListener("click", () => setLang(b.dataset.lang));

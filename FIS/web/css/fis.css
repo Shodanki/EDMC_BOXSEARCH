@@ -51,6 +51,99 @@
   --t-draw: 600ms;
 }
 
+/* H1 themes: each overrides only the T1 tokens; per browser (theme-boot.js).
+   Own names - no trademarked looks. "next" = standard with the browser's
+   own accent colour (set inline by theme-boot.js). */
+:root[data-theme="console"] {
+  --bg: #000000;
+  --bg-1: #0A0A12;
+  --bg-2: #141322;
+  --cyan: #FF9C63;
+  --green: #99CC66;
+  --amber: #FFCC66;
+  --red: #E05050;
+  --violet: #CC99CC;
+  --text: #FFE3C8;
+  --dim: #9C8CAA;
+  --faint: #342A40;
+  --blue: #9999FF;
+  --gold: #FFCC00;
+  --ink: #000000;
+  --bg-glow: #0D0918;
+  --panel: #09070F;
+  --white: #FFFFFF;
+  --cyan-rgb: 255, 156, 99;
+  --green-rgb: 153, 204, 102;
+  --amber-rgb: 255, 204, 102;
+  --red-rgb: 224, 80, 80;
+  --violet-rgb: 204, 153, 204;
+  --dim-rgb: 156, 140, 170;
+  --bg-rgb: 0, 0, 0;
+  --bg-1-rgb: 10, 10, 18;
+  --bg-2-rgb: 20, 19, 34;
+  --white-rgb: 255, 255, 255;
+  --text-rgb: 255, 227, 200;
+}
+:root[data-theme="industrial"] {
+  --bg: #0B0D0E;
+  --bg-1: #121517;
+  --bg-2: #1A1E21;
+  --cyan: #4FB3A9;
+  --green: #9BC53D;
+  --amber: #F0A830;
+  --red: #E2533B;
+  --violet: #B48EAD;
+  --text: #D8D4CC;
+  --dim: #7F8781;
+  --faint: #2C3234;
+  --blue: #5B9BD5;
+  --gold: #E8C547;
+  --ink: #0B0D0E;
+  --bg-glow: #161B1D;
+  --panel: #0E1112;
+  --white: #F4F1EA;
+  --cyan-rgb: 79, 179, 169;
+  --green-rgb: 155, 197, 61;
+  --amber-rgb: 240, 168, 48;
+  --red-rgb: 226, 83, 59;
+  --violet-rgb: 180, 142, 173;
+  --dim-rgb: 127, 135, 129;
+  --bg-rgb: 11, 13, 14;
+  --bg-1-rgb: 18, 21, 23;
+  --bg-2-rgb: 26, 30, 33;
+  --white-rgb: 244, 241, 234;
+  --text-rgb: 216, 212, 204;
+}
+:root[data-theme="station"] {
+  --bg: #02060C;
+  --bg-1: #06101C;
+  --bg-2: #0B1A2B;
+  --cyan: #5FA8FF;
+  --green: #6CE28E;
+  --amber: #FFC857;
+  --red: #FF5A5F;
+  --violet: #A78BFA;
+  --text: #D3E4FF;
+  --dim: #6F86A6;
+  --faint: #1E2C40;
+  --blue: #8AB6FF;
+  --gold: #FFD166;
+  --ink: #02060C;
+  --bg-glow: #0A1626;
+  --panel: #050D18;
+  --white: #FFFFFF;
+  --cyan-rgb: 95, 168, 255;
+  --green-rgb: 108, 226, 142;
+  --amber-rgb: 255, 200, 87;
+  --red-rgb: 255, 90, 95;
+  --violet-rgb: 167, 139, 250;
+  --dim-rgb: 111, 134, 166;
+  --bg-rgb: 2, 6, 12;
+  --bg-1-rgb: 6, 16, 28;
+  --bg-2-rgb: 11, 26, 43;
+  --white-rgb: 255, 255, 255;
+  --text-rgb: 211, 228, 255;
+}
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {

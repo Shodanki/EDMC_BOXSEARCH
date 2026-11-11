@@ -125,6 +125,14 @@ hardpoints out with the HUD in combat mode) or **COMBAT** (red, blinking:
 under attack, shields down, hull hit, interdiction - whatever the HUD); it
 calms down by itself 30 s after the last hit.
 
+### Themes
+
+The footer picks a theme for this browser (the tablet and the PC can differ):
+*standard*, *Federation console* (warm console colours), *Belt industrial*
+(worn metal, teal and brass), *Station era* (blue consoles) and *Next* with an
+accent colour of your own. A theme repaints the interface only - stars and
+planets keep their real colours. Changing it reloads the page.
+
 ### Display links and OBS
 
 The settings page (game PC) has **DISPLAY LINKS**: pick a view, tick **OBS
