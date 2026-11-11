@@ -49,7 +49,7 @@ from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
 from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       F_ALL, F_OUTSTANDING, bodies_from_rows,
                       calibrate_from_journal, calibrate_work_from_journal,
-                      leg_distance_ls, pace_ratio,
+                      leg_distance_ls, pace_ratio, spread_points,
                       plan_route, resolve_positions, shorten)
 from boxelplan import bundled_probe_prefix                   # noqa: E402
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
@@ -1592,6 +1592,15 @@ def _route_map_draw() -> None:
     fg = col.get("fg") or "#ff8000"
     dim = col.get("bg") or "#101010"
 
+    # E17: bodies that land on one spot (the planets of a far companion
+    # star on the log scale) are pulled apart on screen - planets 14 px,
+    # moons stay near theirs; drawn and labelled where they ended up
+    raw = {st.body.body_id: project(st.body.pos) for st in route.stops if st.body.pos}
+    screen = spread_points(raw, 14.0)
+
+    def project_stop(st) -> Tuple[float, float]:
+        return screen.get(st.body.body_id) or project(st.body.pos)
+
     # range rings
     for frac, lbl in ((1.0, "%.0f LS" % rmax), (0.5, "")):
         rr = math.log10(1.0 + rmax * frac) / math.log10(1.0 + rmax) * span
@@ -1616,7 +1625,7 @@ def _route_map_draw() -> None:
             and ST.last_body_sys == ST.cur_id64):
         for st in route.stops:
             if st.body.body_id == ST.last_body_id and st.body.pos:
-                last_pos = project(st.body.pos)
+                last_pos = project_stop(st)
                 break
 
     # route legs
@@ -1624,7 +1633,7 @@ def _route_map_draw() -> None:
     for i, st in enumerate(route.stops):
         if not st.body.pos:
             continue
-        p = project(st.body.pos)
+        p = project_stop(st)
         done = st.body.body_id in ST.route_done
         _route_map.create_line(prev[0], prev[1], p[0], p[1], fill=fg,
                                width=1, dash=(1, 3) if done else None,
@@ -1652,7 +1661,7 @@ def _route_map_draw() -> None:
     for st in route.stops:
         if not st.body.pos:
             continue
-        x, y = project(st.body.pos)
+        x, y = project_stop(st)
         done = st.body.body_id in ST.route_done
         r = 2.0 if st.is_moon else 4.0
         if done:
@@ -1666,7 +1675,7 @@ def _route_map_draw() -> None:
         # their planet and would just pile more text into the same spot.
         if not st.body.pos or st.is_moon:
             continue
-        x, y = project(st.body.pos)
+        x, y = project_stop(st)
         px, py, anchor = free_spot(x, y, 4.0)
         _route_map.create_text(px, py, text=st.body.short[:10], fill=fg,
                                anchor=anchor, font=_FONT_SMALL)

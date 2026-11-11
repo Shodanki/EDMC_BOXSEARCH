@@ -526,6 +526,44 @@ def body_matches(b: Body, filters: Sequence[str]) -> bool:
     return False
 
 
+def spread_points(points: Dict[int, Tuple[float, float]], min_d: float = 12.0,
+                  rounds: int = 40, fixed: Sequence[int] = ()) -> Dict[int, Tuple[float, float]]:
+    """
+    E17: pull apart map points that sit on top of each other (screen
+    space). The planets of a far companion star all land on one spot of a
+    log-scaled map; a few rounds of pairwise pushing give each its own
+    place while points that are already apart do not move. `fixed` keys
+    (the arrival star) stay put. The map is schematic anyway - direction
+    and order are kept, distances inside a tight cluster are not.
+    """
+    pts = {k: [float(x), float(y)] for k, (x, y) in points.items()}
+    keys = sorted(pts)
+    fix = set(fixed)
+    for _ in range(max(0, rounds)):
+        moved = False
+        for i, a in enumerate(keys):
+            for b in keys[i + 1:]:
+                pa, pb = pts[a], pts[b]
+                dx, dy = pb[0] - pa[0], pb[1] - pa[1]
+                d = math.hypot(dx, dy)
+                if d >= min_d:
+                    continue
+                if d < 1e-6:                     # exactly on top: a fixed direction per body
+                    dx, dy, d = math.cos(b * 2.399963), math.sin(b * 2.399963), 1.0
+                push = (min_d - d) / 2.0
+                ux, uy = dx / d, dy / d
+                wa = 0.0 if a in fix else (1.0 if b in fix else 0.5)
+                wb = 0.0 if b in fix else (1.0 if a in fix else 0.5)
+                pa[0] -= ux * push * 2 * wa
+                pa[1] -= uy * push * 2 * wa
+                pb[0] += ux * push * 2 * wb
+                pb[1] += uy * push * 2 * wb
+                moved = True
+        if not moved:
+            break
+    return {k: (round(v[0], 1), round(v[1], 1)) for k, v in pts.items()}
+
+
 PACE_MIN_LEG_S = 20.0   # legs planned shorter than this say nothing about pace
 
 
@@ -851,6 +889,16 @@ def _selftest() -> int:
           "skip_arrival: the route starts with the first planned body")
     check(is_arrival_star(bodies[0]) and not is_arrival_star(bodies[3]),
           "only the star at 0 LS counts as the arrival star")
+    # E17: a cluster of five points on one spot spreads out, lone points stay
+    pts = {1: (100.0, 100.0), 2: (100.0, 100.0), 3: (101.0, 100.0), 4: (100.0, 101.0),
+           5: (100.5, 100.5), 9: (300.0, 50.0), 0: (200.0, 200.0)}
+    out = spread_points(pts, 12.0, fixed=[0])
+    near = [(a, b) for a in (1, 2, 3, 4, 5) for b in (1, 2, 3, 4, 5)
+            if a < b and math.hypot(out[a][0] - out[b][0], out[a][1] - out[b][1]) < 11.0]
+    check(not near, "a cluster on one spot is pulled apart (%s)" % near)
+    check(out[9] == (300.0, 50.0) and out[0] == (200.0, 200.0), "lone and fixed points stay")
+    check(max(math.hypot(out[k][0] - 100, out[k][1] - 100) for k in (1, 2, 3, 4, 5)) < 40,
+          "the cluster stays where it was")
     # R1: today's legs - mapping a few minutes each, one with 13 min of repairs
     legs = [(240, 300), (100, 150), (200, 260), (250, 1030), (60, 90), (300, 330)]
     r = pace_ratio(legs)
