@@ -170,6 +170,8 @@ class State:
         self.plan_info: str = ""
 
         self.cur_system: Optional[str] = None
+        self.cmdr: Optional[str] = None          # commander of the last journal event
+        self.awaiting_position = False           # commander switched: no system until Location
         self.cur_id64: Optional[int] = None
         self.cur_pos: Optional[Tuple[float, float, float]] = None
         self.max_jump: Optional[float] = None
@@ -839,9 +841,37 @@ def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, floa
     return None
 
 
+def _commander_switched() -> None:
+    """
+    Another commander logged in on this PC (two accounts share one journal
+    folder and this database). Everything that belongs to where the last
+    one was - system, route, ticks, last body - is dropped, and nothing is
+    guessed from older journals (they are the other commander's): the new
+    commander's Location, FSDJump or CarrierJump sets the system again.
+    Before, the route was built for the previous commander's system for a
+    while (10.11.: ~16 s, two rebuilds in parallel).
+    """
+    ST.awaiting_position = True
+    ST.cur_system = None
+    ST.cur_id64 = None
+    ST.cur_pos = None
+    ST.route = None
+    ST.route_lines = []
+    ST.route_done = set()
+    ST.route_started = None
+    ST.route_legs = []
+    ST.route_feedback = ""
+    ST.last_body_id = None
+    ST.last_body_sys = None
+    ST.last_body_name = ""
+    logger.info("commander changed - waiting for the new commander's position")
+    _ui(_route_window_refresh)
+    _ui(_refresh)
+
+
 def _resolve_current_system() -> None:
     """Establish the current system if no jump has been seen this session."""
-    if ST.cur_id64 or not ST.db:
+    if ST.cur_id64 or not ST.db or ST.awaiting_position:
         return
     found = _current_system_from_journal()
     if found:
@@ -2990,6 +3020,10 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
     if not ST.db:
         return
     ev = entry.get("event")
+    if cmdr and cmdr != ST.cmdr:
+        if ST.cmdr is not None:
+            _commander_switched()
+        ST.cmdr = cmdr
     try:
         # Before the dispatch chain: any event naming a body updates where we
         # are. Putting this inside the chain meant whichever branch matched
@@ -3071,6 +3105,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 pass
 
         if ev in ("FSDJump", "Location", "CarrierJump"):
+            ST.awaiting_position = False
             if entry.get("SystemAddress") != ST.cur_id64:
                 ST.route_done.clear()
                 ST.route_started = None
@@ -3127,7 +3162,9 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 pos = entry.get("StarPos")
                 if pos and len(pos) >= 3:
                     ST.cur_pos = (pos[0], pos[1], pos[2])
-            _run_async(_recheck_route, "game restart", label="route recheck")
+                ST.awaiting_position = False
+            if not ST.awaiting_position:
+                _run_async(_recheck_route, "game restart", label="route recheck")
             route = state.get("NavRoute") if state else None
             if route and cfg_bool(CFG["harvest_navroute"], True):
                 with ST.lock:

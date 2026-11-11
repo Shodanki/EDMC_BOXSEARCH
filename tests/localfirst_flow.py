@@ -246,6 +246,23 @@ with tempfile.TemporaryDirectory() as d:
     check(Sess.log == [] and ST.horizon == ST.radius,
           "daily cap %d reached: no request, local plan" % netgate.DAILY_CAP["edsm"])
     check("50 of 50" in load._external_today_line(), "statistics show the count")
+
+    # 11) a second commander on this PC: nothing of the first one's place stays
+    ST.cmdr, ST.cur_system, ST.cur_id64 = "Alpha", "Old System", 4711
+    ST.route_done = {3, 4}
+    load.journal_entry("Beta", False, None, None,
+                       {"event": "LoadGame", "timestamp": "2026-11-11T07:00:00Z"}, {})
+    load.journal_entry("Beta", False, None, None, {"event": "StartUp"}, {})
+    check(ST.cur_id64 is None and ST.awaiting_position and not ST.route_done
+          and "route recheck" not in ran[-1:],
+          "commander switch: old system and ticks dropped, no route for it")
+    load._resolve_current_system()
+    check(ST.cur_id64 is None, "and nothing guessed from the other commander's journals")
+    load.journal_entry("Beta", False, None, None,
+                       {"event": "Location", "StarSystem": "New System", "SystemAddress": 815,
+                        "StarPos": [1.0, 2.0, 3.0], "timestamp": "2026-11-11T07:00:05Z"}, {})
+    check(ST.cur_id64 == 815 and not ST.awaiting_position,
+          "the new commander's Location sets the system")
     ST.db.close()
 
 print("failures: %d" % fails)
