@@ -281,11 +281,16 @@ class TestModel(_Base):
                      "SignalType": "NavBeacon", "timestamp": "2026-11-03T10:00:00Z"},
                     {"event": "FSSSignalDiscovered", "SystemAddress": 42, "SignalName": "Elsewhere",
                      "SignalType": "Outpost", "timestamp": "2026-11-03T10:00:00Z"},
+                    # 11.11.: docked at the carrier seen in the FSS - one line, name and callsign
+                    {"event": "Docked", "SystemAddress": a, "StationName": "X1Y-2Z3",
+                     "StationType": "FleetCarrier", "timestamp": "2026-11-02T10:00:00Z"},
                 ]
         poi = self.model.system_poi(self.db, fx.SYS_ID, Ar())
         self.assertEqual([(p["kind"], p["name"]) for p in poi],
                          [("station", "Test Port"), ("carrier", "New Carrier A1B-2C3"),
                           ("carrier", "Old Carrier X1Y-2Z3"), ("beacon", "Beacon")])
+        self.assertTrue(poi[2]["docked"])
+        self.assertEqual(poi[2]["seen"], "2026-11-02T10:00:00Z")
         port = poi[0]
         self.assertTrue(port["docked"])
         self.assertEqual(port["dist_ls"], 512)

@@ -259,6 +259,31 @@ def system_poi(db: Database, id64: int, archive: Any = None) -> List[Dict[str, A
         pois[("settlement", (r["label"] or "") + "@" + body)] = {
             "kind": "settlement", "type": "Settlement", "name": r["label"] or "?", "body": short,
             "body_name": body, "lat": _r(r["lat"], 4), "lon": _r(r["lon"], 4), "seen": r["ts"]}
+    # a carrier seen in the FSS ("NAME K7Q-12Z") and docked at ("K7Q-12Z")
+    # is one carrier: one line with name and callsign (11.11.)
+    from .carriers import is_callsign, parse_signal
+    merged: Dict[str, Dict[str, Any]] = {}
+    for key in [k for k in pois if k[0] == "carrier"]:
+        p = pois.pop(key)
+        nm = p["name"]
+        cs = nm if is_callsign(nm) else (parse_signal(nm) or {}).get("callsign")
+        if not cs:
+            pois[key] = p
+            continue
+        m = merged.get(cs)
+        if m is None:
+            merged[cs] = p
+            continue
+        for k, v in p.items():
+            if k == "name":
+                if len(v) > len(m["name"]):
+                    m["name"] = v                      # the one with the name
+            elif k == "seen":
+                m["seen"] = max(m.get("seen") or "", v or "")
+            elif m.get(k) is None:
+                m[k] = v
+    for cs, p in merged.items():
+        pois[("carrier", cs)] = p
     out = list(pois.values())
     # by kind; carriers come and go - the latest sightings first
     carriers = sorted((p for p in out if p["kind"] == "carrier"),
