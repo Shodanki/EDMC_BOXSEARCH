@@ -1011,5 +1011,12 @@ const DE = /*DE*/{
   "{n} rocks · 1 ring": "{n} Brocken · 1 Ring",
   "1 body": "1 Körper",
   "refuel at the target": "am Ziel tanken",
-  "CARRIERS AT THE TARGET": "TRÄGER AM ZIEL"
+  "CARRIERS AT THE TARGET": "TRÄGER AM ZIEL",
+  "no docking for you": "kein Andocken für dich",
+  "services": "Dienste",
+  "when you docked, {d}": "beim Andocken, {d}",
+  "sold": "verkauft",
+  "open system": "System öffnen",
+  "show the system with everything known about it": "das System mit allem Bekannten zeigen",
+  "MY CARRIER": "MEIN TRÄGER"
 }/*END*/;

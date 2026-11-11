@@ -92,6 +92,41 @@ class TestKnown(unittest.TestCase):
         self.assertEqual(len(k["Q2W-3ER"]["started"]), 2)
         self.assertEqual(k["Q2W-3ER"]["how"], "jump")
 
+    def test_known_with_services_access_and_link(self):
+        # 11.11.: KNOWN CARRIERS shows what a carrier offers, whether you may
+        # dock, and links to the system when the database knows its bodies
+        class Arc:
+            def commander(self):
+                return ("F7", "Tester")
+
+            def events(self):
+                evs = list(EVS)
+                evs[5] = dict(evs[5], StationServices=["dock", "refuel", "vistagenomics"])
+                return evs + [_e("01T10:05:30", "Market", MarketID=4711, StationName="Q2W-3ER",
+                                 StationType="FleetCarrier", CarrierDockingAccess="all")]
+
+        class Store:
+            def get(self, fid):
+                return {"favourites": {}, "markets": {}}
+
+        class Db:
+            def system_by_id64(self, i):
+                return {"id64": i} if i == 2 else None
+
+            def system_by_name(self, n):
+                return None
+
+            def bodies_of(self, i):
+                return [1] if i == 2 else []
+
+        k = ca.build_known(Arc(), Store(), None, db=Db())
+        c = next(i for i in k["met"] if i["callsign"] == "Q2W-3ER")
+        self.assertEqual(c["services"], ["dock", "refuel", "vistagenomics"])
+        self.assertEqual(c["services_ts"], "2026-11-01T10:05:00Z")
+        self.assertEqual(c["access"]["state"], "dock")
+        self.assertEqual(c["system_id64"], 2)                    # Test Beta (carrier jumped there)
+        self.assertIsNone(ca.build_known(Arc(), Store(), None)["met"][0]["system_id64"])
+
     def test_favourite_pois(self):
         poi = [{"kind": "station", "name": "Test Port"},
                {"kind": "carrier", "name": "NEW ONE A1B-2C3"},

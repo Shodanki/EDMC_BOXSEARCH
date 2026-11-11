@@ -715,7 +715,7 @@ class Handler(BaseHTTPRequestHandler):
                                                      capi_path=capi.path_for(app.cfg.plugin_dir)))
         if path == "/api/carriers/known":
             from . import carriers
-            return self._json(carriers.build_known(app.archive, app.favourites, app.live_state()))
+            return self._json(carriers.build_known(app.archive, app.favourites, app.live_state(), db=app.db))
         if path == "/api/mining/live":
             from . import mining
             return self._json(mining.build_live(app.archive, app.live_state(), app.cfg.journal_dir))

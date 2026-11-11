@@ -34,6 +34,13 @@ let root = null, data = null, known = null, knownQuery = "", knownMsg = "", show
 // E4: ship list sortable by every column, with a text filter and "on board only"
 let sortKey = store("fis.cag.sort") || "", sortDir = store("fis.cag.dir") === "asc" ? 1 : -1;
 let shipQuery = "", onBoardOnly = store("fis.cag.here") === "1";
+// with a carrier of your own, the known carriers get a tab of their own (11.11.)
+let tab = store("fis.carrier.tab") === "known" ? "known" : "own";
+// what a visited carrier offered when you docked (StationServices, lower case)
+const KC_SERVICE = { refuel: N_("Refuel"), repair: N_("Repair"), rearm: N_("Rearm"), commodities: N_("Commodities"),
+  shipyard: N_("Shipyard"), outfitting: N_("Outfitting"), blackmarket: N_("Secure warehouse"),
+  exploration: N_("Universal Cartographics"), vistagenomics: N_("Vista Genomics"), bartender: N_("Bar"),
+  pioneersupplies: N_("Pioneer Supplies"), voucherredemption: N_("Redemption office"), carrierfuel: N_("Tritium depot") };
 
 export function mount(r) { root = r; root.classList.add("carrier-view"); }
 
@@ -118,6 +125,23 @@ function carrierRow(c) {
   }
   const m = c.market;
   const buys = m && m.buys && m.buys.length ? m.buys.slice(0, 3).map(b => b.name + " " + fmt(b.demand, 0) + " t").join(" · ") : "";
+  // A1 docking access, the services you found there, the whole market to unfold
+  const a = c.access;
+  const accessEl = a ? el("span", { class: "chip " + (a.state === "dock" ? "mapped" : a.state === "none" ? "warn" : ""),
+    title: t("docking access: {a}", { a: a.access || "–" }) + (a.ts ? " · " + day(a.ts) : ""),
+    text: a.state === "dock" ? t("dockable") : a.state === "none" ? t("no docking for you") : t("friends/squadron only") }) : null;
+  const svc = (c.services || []).filter(s => KC_SERVICE[s.toLowerCase()]).map(s => t(KC_SERVICE[s.toLowerCase()]));
+  const svcEl = svc.length ? el("div", { class: "small" }, el("span", { class: "c-dim", text: t("services") + ": " }), svc.join(" · "),
+    el("span", { class: "c-dim", text: "  (" + t("when you docked, {d}", { d: day(c.services_ts) }) + ")" })) : null;
+  const goods = (lst, k, unit) => (lst || []).map(g => el("div", { class: "kc-good" },
+    el("span", { text: g.name || g.key }), el("span", { class: "num", text: fmt(g[k], 0) + " t" }),
+    el("span", { class: "num c-dim", text: g.price ? fmt(g.price, 0) + " Cr" : "" })));
+  const marketEl = m && ((m.buys && m.buys.length) || (m.sells && m.sells.length)) ? el("details", { class: "small kc-market" },
+    el("summary", { text: t("market of {d}", { d: day(m.ts) }) + (m.system ? " · " + m.system : "") }),
+    m.buys && m.buys.length ? el("div", {}, el("div", { class: "c-green", text: t("bought") }), ...goods(m.buys, "demand")) : null,
+    m.sells && m.sells.length ? el("div", {}, el("div", { class: "c-amber", text: t("sold") }), ...goods(m.sells, "stock")) : null) : null;
+  const openBtn = c.system_id64 ? el("button", { text: t("open system"), title: t("show the system with everything known about it"),
+    onclick: () => window.open(location.pathname + "?solo=tactical&system=" + c.system_id64, "fis-detail", "popup,width=1280,height=860") }) : null;
   const btn = el("button", { class: "fav-star" + (c.favourite ? " on" : ""), text: c.favourite ? "★" : "☆",
     title: c.favourite ? t("remove from favourites") : t("mark as favourite"), onclick: () => star(c, !c.favourite) });
   // K5: a favourite can be looked up at Spansh - on a click, once every 6 h
@@ -134,16 +158,17 @@ function carrierRow(c) {
   return el("div", { class: "kc-row" + (c.favourite ? " fav" : "") }, btn,
     el("div", { class: "kc-main" },
       el("div", {}, el("span", { class: "c-cyan", text: c.name || "?" }), el("span", { class: "c-dim", text: "  " + c.callsign }),
+        accessEl ? " " : null, accessEl,
         c.note ? el("span", { class: "c-amber small", text: "  " + c.note }) : null),
       el("div", { class: "small" }, el("span", { text: c.system || t("position unknown") }),
         el("span", { class: "c-dim", text: "  " + t(HOW[c.how] || "seen in the FSS") + " " + since(c.ts)
           + (c.dist_ly !== null && c.dist_ly !== undefined ? " · " + fmt(c.dist_ly, 1) + " ly" : "")
           + (c.from_store ? " · " + t("stored") : "") })),
       what.length ? el("div", { class: "small c-dim", text: what.join(" · ") }) : null,
-      buys ? el("div", { class: "small" }, el("span", { class: "c-green", text: t("bought") + ": " }), buys,
+      buys && !marketEl ? el("div", { class: "small" }, el("span", { class: "c-green", text: t("bought") + ": " }), buys,
         el("span", { class: "c-dim", text: "  (" + t("market of {d}", { d: day(m.ts) }) + ")" })) : null,
-      onLine),
-    el("div", { class: "kc-act" }, lookBtn, noteBtn,
+      svcEl, marketEl, onLine),
+    el("div", { class: "kc-act" }, lookBtn, noteBtn, openBtn,
       el("button", { text: t("copy system"), disabled: c.system ? null : true,
         title: t("copy the system name - paste it in the galaxy map to plot the jump"),
         onclick: (e) => copyText(c.system, e.currentTarget) })));
@@ -184,10 +209,16 @@ function render() {
     if (data && data.fleet && data.fleet.length) root.append(airWing());
     return;
   }
+  if (known) {
+    const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
+      onclick: () => { tab = k; store("fis.carrier.tab", k); render(); } });
+    root.append(el("div", { class: "kc-tabs" }, tb("own", t("MY CARRIER")),
+      tb("known", t("KNOWN CARRIERS") + " · " + known.counts.known)));
+  }
+  if (known && tab === "known") { root.append(knownCarriers()); return; }
   root.append(el("div", { class: "ns-grid" },
     el("div", { class: "ns-col" }, ident(), position(), tritium()),
     el("div", { class: "ns-col" }, hold(), finance(), services())));
-  if (known) root.append(knownCarriers());
   root.append(airWing());
 }
 

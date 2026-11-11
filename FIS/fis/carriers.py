@@ -137,6 +137,10 @@ def known_carriers(evs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
             c["market_id"] = here.get("market_id") or c["market_id"]
             if ev == "Docked":
                 c["docked_n"] += 1
+                if e.get("StationServices"):
+                    # what the carrier offered when you docked (services change)
+                    c["services"] = [str(s) for s in e["StationServices"]]
+                    c["services_ts"] = e.get("timestamp")
             c["last_docked"] = e.get("timestamp")
             place(c, e, "docked")
         elif ev == "CarrierJump" and here:
@@ -194,7 +198,7 @@ def _dist(a: Any, b: Any) -> Optional[float]:
 
 
 def build_known(archive: Any, store: Any, live: Optional[Dict[str, Any]] = None,
-                sighted: int = MAX_SIGHTED) -> Dict[str, Any]:
+                sighted: int = MAX_SIGHTED, db: Any = None) -> Dict[str, Any]:
     """
     K4 data for /api/carriers/known: favourites first, then the carriers you
     docked at or started something from, then the newest sightings. Each
@@ -208,6 +212,29 @@ def build_known(archive: Any, store: Any, live: Optional[Dict[str, Any]] = None,
     saved = store.get(fid) if store is not None else {"favourites": {}, "markets": {}}
     favs, markets = saved["favourites"], saved["markets"]
     here = ((live or {}).get("system") or {}).get("pos")
+    try:
+        access = docking_access(evs, markets, favs)        # A1: may we dock
+    except Exception:
+        access = {}
+    systems: Dict[Any, Any] = {}
+
+    def system_link(it: Dict[str, Any]) -> Optional[int]:
+        """The system's id64 when the plugin database knows its bodies - then
+        the view links to it; else only its name can be copied."""
+        if db is None or not (it.get("id64") or it.get("system")):
+            return None
+        key = it.get("id64") or it.get("system")
+        if key not in systems:
+            sid = None
+            try:
+                row = (db.system_by_id64(int(it["id64"])) if it.get("id64") else None) \
+                    or (db.system_by_name(it["system"]) if it.get("system") else None)
+                if row is not None and row["id64"] and db.bodies_of(int(row["id64"])):
+                    sid = int(row["id64"])
+            except Exception:
+                sid = None
+            systems[key] = sid
+        return systems[key]
 
     def item(cs: str) -> Dict[str, Any]:
         k = known.get(cs)
@@ -226,6 +253,8 @@ def build_known(archive: Any, store: Any, live: Optional[Dict[str, Any]] = None,
         it["online"] = (f or {}).get("online")       # K5: last lookup at Spansh
         it["market"] = markets.get(cs)
         it["dist_ly"] = _dist(it.get("pos"), here) if here and it.get("pos") else None
+        it["access"] = access.get(cs)
+        it["system_id64"] = system_link(it)
         return it
 
     fav_items = sorted((item(cs) for cs in favs), key=lambda i: i.get("ts") or "", reverse=True)

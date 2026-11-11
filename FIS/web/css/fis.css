@@ -680,6 +680,11 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .kc-row.fav { background: rgba(var(--amber-rgb), .04); }
 .kc-main { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .kc-act { display: flex; gap: 4px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
+.kc-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.kc-tabs button.on { color: var(--amber); border-color: var(--amber); }
+.kc-market summary { cursor: pointer; color: var(--cyan); margin-top: 2px; }
+.kc-good { display: grid; grid-template-columns: minmax(0, 1fr) 80px 90px; gap: 8px; padding-left: 10px; }
+.kc-good .num { text-align: right; }
 .fav-star { background: none; border: 0; color: var(--dim); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }
 .fav-star.on { color: var(--amber); }
 .poi-fav { color: var(--amber); }

@@ -1990,6 +1990,10 @@ sphere tile. No new online request.
   at a carrier (from its market, your own docking requests or the Spansh
   answer): *dockable*, *friends/squadron only*; carriers that refuse you are
   left out.
+* **KNOWN CARRIERS tab** - with a carrier of your own the known carriers get
+  a tab of their own in CARRIER: docking access, the services found when you
+  docked, the last market to unfold with its date, the system to copy, and
+  *open system* where the database knows its bodies.
 * **Docked at someone else's carrier** - CARRIER shows what its market buys
   (what you carry first, tritium next) and sells.
 * Fixes: docking at, or riding along on, someone else's carrier no longer
