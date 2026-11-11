@@ -62,6 +62,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "Undocked", "MissionAccepted", "CommunityGoalJoin",
           # may we dock there (A1): the carrier's access, granted / refused
           "Market", "DockingGranted", "DockingDenied",
+          # a nav beacon handed over every body of the system (SYSTEM hint)
+          "NavBeaconScan",
           # which ring the rocks were prospected in (fis/prospect.py)
           "SupercruiseEntry")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)

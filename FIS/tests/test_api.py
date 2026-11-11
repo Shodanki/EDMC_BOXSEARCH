@@ -174,6 +174,25 @@ class TestModel(_Base):
         self.assertFalse(br["target"]["in_no_database"])
         self.assertFalse(br["target"]["scoopable"])
 
+    def test_nav_beacon_hint(self):
+        import json as _json
+        import tempfile as _tf
+        from fis import fleet as _fl
+        d = _tf.mkdtemp()
+        lines = [{"timestamp": "2026-11-11T09:00:00Z", "event": "Commander", "FID": "F1", "Name": "T"},
+                 {"timestamp": "2026-11-11T09:30:00Z", "event": "NavBeaconScan",
+                  "SystemAddress": fx.SYS_ID, "NumBodies": 4},
+                 {"timestamp": "2026-11-11T09:31:00Z", "event": "NavBeaconScan",
+                  "SystemAddress": 999, "NumBodies": 30}]
+        with open(os.path.join(d, "Journal.2026-11-11T090000.01.log"), "w", encoding="utf-8") as fh:
+            fh.write("".join(_json.dumps(x) + chr(10) for x in lines))
+        arc = _fl.Archive(d)
+        self.assertEqual(self.model.nav_beacon(arc, fx.SYS_ID),
+                         {"ts": "2026-11-11T09:30:00Z", "bodies": 4})
+        self.assertIsNone(self.model.nav_beacon(arc, 12345))
+        sysv = self.model.build_system(self.db, fx.SYS_ID, None, archive=arc)
+        self.assertEqual(sysv["nav_beacon"]["bodies"], 4)
+
     def test_briefing_info_levels(self):
         import sqlite3
         cx = sqlite3.connect(self.db.path)

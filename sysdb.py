@@ -1292,7 +1292,10 @@ class SystemDB:
                         if "WasDiscovered" in entry else None,
                         was_mapped=(1 if entry.get("WasMapped") else 0)
                         if "WasMapped" in entry else None,
-                        scanned=1)
+                        # a nav beacon hands over every body's data: the data
+                        # counts, but it is not your scan (no discovery, no
+                        # exploration data) - an own scan stays an own scan
+                        scanned=None if entry.get("ScanType") == "NavBeaconDetail" else 1)
                     self._link_parents(a, entry.get("Parents"))
                     n += 1
 
@@ -2349,6 +2352,18 @@ def _selftest() -> int:
               "I1: population/factions/station marks 'inhabited', empty system and carrier not")
         check(db.system("Test Town")["quality"] == Q_JOURNAL and db.system("Test Town")["x"] == 7.0,
               "I1: marking keeps the journal position")
+        nb = {"event": "Scan", "ScanType": "NavBeaconDetail", "StarSystem": "Test Town",
+              "SystemAddress": 55, "BodyName": "Test Town 1", "BodyID": 1,
+              "PlanetClass": "Rocky body", "DistanceFromArrivalLS": 10.0,
+              "WasDiscovered": True, "WasMapped": False}
+        db.ingest_journal_event(nb)
+        own = dict(nb, ScanType="Detailed", BodyName="Test Town 2", BodyID=2)
+        db.ingest_journal_event(own)
+        db.ingest_journal_event(dict(own, ScanType="NavBeaconDetail"))
+        b = {r["body_id"]: r for r in db.bodies_of(55)}
+        check(b[1]["planet_class"] == "Rocky body" and b[1]["was_discovered"] == 1
+              and not b[1]["scanned"] and b[2]["scanned"] == 1,
+              "NavBeaconDetail: body data stored, not counted as your scan (an own scan stays)")
         db.close()
     print("failures: %d" % fails)
     return fails

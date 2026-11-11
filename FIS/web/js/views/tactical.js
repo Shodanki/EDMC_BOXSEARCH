@@ -281,6 +281,10 @@ function renderSide() {
     head.push(el("div", { class: "c-amber", text: t("Your carrier {n} jumps here · {t}", { n: c.name || "",
       t: c.departure ? new Date(c.departure * 1000).toLocaleString() : "?" }) }));
   }
+  if (sys.nav_beacon) head.push(el("div", { class: "c-cyan",
+    title: t("The beacon hands over every body: data, but no discovery and no exploration data of your own – mapping and bio still count."),
+    text: "◈ " + (sys.nav_beacon.bodies ? t("nav beacon scanned – all {n} bodies known", { n: sys.nav_beacon.bodies })
+      : t("nav beacon scanned – all bodies known")) + (sys.nav_beacon.ts ? " · " + String(sys.nav_beacon.ts).slice(0, 10) : "") }));
   // I1: "in no database" only where a source was really asked
   const lvl = sys.info_level;
   const noDb = !sys.known_sources.length && (!lvl || lvl === "checked");

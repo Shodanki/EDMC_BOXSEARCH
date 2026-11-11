@@ -191,6 +191,23 @@ POI_TYPES = {
 POI_ORDER = {"station": 0, "settlement": 1, "carrier": 2, "extraction": 3, "beacon": 4}
 
 
+def nav_beacon(archive: Any, id64: int) -> Optional[Dict[str, Any]]:
+    """The last NavBeaconScan in this system: every body is known from the
+    beacon (data, but no discovery and no exploration data of your own)."""
+    if archive is None:
+        return None
+    try:
+        hit = None
+        for e in archive.events():
+            if e.get("event") == "NavBeaconScan" and e.get("SystemAddress") == id64:
+                hit = e
+    except Exception:
+        return None
+    if hit is None:
+        return None
+    return {"ts": hit.get("timestamp"), "bodies": hit.get("NumBodies")}
+
+
 def system_poi(db: Database, id64: int, archive: Any = None) -> List[Dict[str, Any]]:
     """
     M10: points of interest of one system, from your own journals and the
@@ -372,6 +389,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         out["poi"] = system_poi(db, id64, archive)
     except Exception:
         out["poi"] = []
+    out["nav_beacon"] = nav_beacon(archive, id64)
     by_body = {}
     for p in out["poi"]:
         if p["kind"] == "settlement":

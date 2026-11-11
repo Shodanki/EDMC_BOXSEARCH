@@ -975,5 +975,8 @@ const DE = /*DE*/{
   "docking access: {a}": "Andock-Erlaubnis: {a}",
   "dockable": "andockbar",
   "friends/squadron only": "nur Freunde/Geschwader",
-  "{n} carriers that refuse docking hidden": "{n} Träger ohne Andock-Erlaubnis ausgeblendet"
+  "{n} carriers that refuse docking hidden": "{n} Träger ohne Andock-Erlaubnis ausgeblendet",
+  "The beacon hands over every body: data, but no discovery and no exploration data of your own – mapping and bio still count.": "Die Bake übergibt jeden Körper: Daten, aber keine Entdeckung und keine eigenen Erkundungsdaten – Kartieren und Bio zählen weiter.",
+  "nav beacon scanned – all {n} bodies known": "Navigationsbake gescannt – alle {n} Körper bekannt",
+  "nav beacon scanned – all bodies known": "Navigationsbake gescannt – alle Körper bekannt"
 }/*END*/;
