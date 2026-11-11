@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.6
+# SHBOXSEARCH v4.7
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -14,11 +14,13 @@ tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
 folder of this plugin. See [FIS/README.md](FIS/README.md) - with
 screenshots (demo data).
-**New in 4.6:** local first - EDSM and Spansh are asked in shells, only when
-the plan needs them, with a daily cap and an offline switch; EDDiscovery
-replaces Spansh when it is current. In the FIS: Rhino rigs and hold, the ship
-waiting at the Rhino's drop point, open bio signals, data at risk, on foot,
-a QR code for the tablet and an OBS mode - see "What changed in 4.6".
+**New in 4.7:** now under the Mozilla Public License 2.0. The briefing
+says "in no database" only where a source was really asked (inhabited
+systems count as known, the rest "not checked"). In the FIS: known and
+favourite carriers - in BRIEFING, SYSTEM (with docking access) and GALAXY -,
+learning from your own mining (tonnes per hour per ring and hotspot, best
+hotspots for you, a learning status), themes, combat mode, a cockpit
+configuration and ATLAS SYSTEMS - see "What changed in 4.7".
 
 **What you need**
 
@@ -1461,6 +1463,7 @@ tag, so the two have to be set together or the notice lies.
 | 4.5.0 | mining block in the overlay, carrier hold from Frontier's Companion API, FIS: galaxy 3D, mining, statistics |
 | 4.5.1 | fixes: FIS keeps following a journal the game rewrote, live-link watchdog; mining block only from a prospector in a mining ship |
 | 4.6.0 | local first: online sources in shells when needed, daily cap, offline switch, EDDiscovery first; FIS: Rhino rigs and hold, open bio signals, data at risk, on foot, QR code, OBS mode |
+| 4.7.0 | Mozilla Public License 2.0; honest information levels in the briefing; FIS: known and favourite carriers with docking access, learning from your own mining, themes, combat mode, cockpit configuration, ATLAS SYSTEMS |
 
 
 ---
@@ -1937,3 +1940,111 @@ the survey allows (details in "External sources", *Fair use*):
 
 After the update the plugin replays your journals once (Rhino rigs from
 earlier outings). Close the FIS window once so it starts with the new files.
+
+
+---
+## What changed in 4.7
+
+### Licence: Mozilla Public License 2.0
+
+From 4.7 on SHBOXSEARCH and SHBOX FIS are under the **Mozilla Public
+License 2.0** (file `LICENSE`). Use, change and share it freely; whoever
+passes on a changed file of this project keeps that file open under the same
+licence - files of your own next to it stay yours. Every source file carries
+the MPL header with an SPDX identifier; the "Incompatible With Secondary
+Licenses" notice is not used, so the code stays GPL-compatible for EDMC.
+4.6 and earlier were released under MIT and stay MIT. Three.js and the QR
+code generator keep their MIT licence.
+
+### Honest information levels
+
+The briefing (overlay and FIS) used to say *in no database - first discovery
+likely* for every system the plugin had no source for - also far outside the
+survey, where nobody was ever asked. Now it tells apart:
+
+* **known** - EDDiscovery, Spansh or EDSM report it;
+* **inhabited** - population, factions or a station seen in your journal:
+  every database knows it, no request needed;
+* **in no database** - only where a source really delivered that region
+  (a fetched shell, still valid) and none of them has it, with *checked:
+  EDSM, Spansh*;
+* **not checked** - outside our data frame: nobody was asked.
+
+The same rule decides "only known to us" in ATLAS SYSTEMS, GALAXY and the
+sphere tile. No new online request.
+
+### Carriers
+
+* **Known carriers** (CARRIER) - also without a carrier of your own: every
+  carrier you docked at, started a mission or community goal from, rode
+  along with or saw in the FSS, with its last known system and how old that
+  is, what you started there and its market when you last opened it.
+* **Favourites** - mark carriers with ☆ and a note (also from the tablet);
+  they come first, get a ★ in SYSTEM and on the GALAXY map (2D and 3D).
+  *online* at a favourite asks Spansh once - on your click, at most every
+  six hours, through the plugin's gateway and daily cap, never while
+  *offline* is on.
+* **BRIEFING: carriers here** - your own carrier and your favourites whose
+  newest known position is the current system, with source and age.
+* **Docking access** - SYSTEM's points of interest show whether you may dock
+  at a carrier (from its market, your own docking requests or the Spansh
+  answer): *dockable*, *friends/squadron only*; carriers that refuse you are
+  left out.
+* **Docked at someone else's carrier** - CARRIER shows what its market buys
+  (what you carry first, tritium next) and sells.
+* Fixes: docking at, or riding along on, someone else's carrier no longer
+  moves "your" carrier (plugin and FIS); loading the game on a carrier's pad
+  counts as docked.
+
+### Learning from your own data
+
+Counting, averages and ranges from your own journals and the plugin
+database - no AI, nothing sent anywhere. What rings and planets yield is
+shared knowledge of every commander on this PC; the exploration stays per
+commander.
+
+* **PLANET INFO** under each ring: what your prospected rocks held there
+  (with a 95 % range), what rocks of rings of the same class held at such a
+  hotspot (a thin group leans on the broader one), your tonnes per hour in
+  that ring, and what to expect at its hotspots. GROUND MINING: what your
+  Rhino rigs yielded here and on bodies of the same class, tonnes per rig
+  and rigs per hour.
+* **MINING: best hotspots for you** - the nearby hotspots ranked by your own
+  tonnes per hour there (that ring, else rings of its class, else any ring).
+* **STATISTICS: learning status** - how many rocks, runs, rigs and analysed
+  bodies each part rests on, and where it is still thin.
+
+### SHBOX FIS
+
+* **Themes** - standard, Federation console, Belt industrial, Station era and
+  Next with an accent colour of your own, per browser (footer).
+* **Combat mode** - hardpoints out: *READY · ANALYSIS* in the analysis HUD,
+  *COMBAT MODE* in the combat HUD, with shields, hull and interdictions.
+* **Cockpit configuration** (settings): views for extra screens, opened and
+  closed with one click; the FIS can be installed as an app on the game PC.
+* **ATLAS SYSTEMS** - the survey sphere by state (not visited, visited,
+  surveyed, known to no online source, checked and not existing), export as
+  CSV or JSON.
+* **SYSTEM** - points of interest from your own journals (stations,
+  settlements, fleet carriers, nav beacons); *nav beacon scanned - all bodies
+  known*; *back to the current system* from a pinned one.
+* **PLANET INFO** opens on the body of your last fix and follows it.
+* **GALAXY** - *copy name* for the game's galaxy map.
+
+### Plugin
+
+* **Route** - the arrival star as first stop is optional ("start the route
+  at the arrival star"); the pace is taken leg by leg as a median, so a
+  repair stop or side work no longer decides it.
+* **System map** in the route window pulls apart bodies that land on one
+  spot.
+* The panel names the **open bio signals**; partly done bodies count.
+* A **commander switch** drops the previous commander's system and route.
+* **Nav beacons** - the body data a beacon hands over is stored, but it is
+  not your scan (no discovery, no exploration data): mapping and bio are
+  still planned.
+* No shell is fetched while the commander is far outside the sphere.
+* Code scanning findings fixed (static files, sanitising), the self-test
+  workflow reads the repository only.
+
+After the update close the FIS window once so it starts with the new files.

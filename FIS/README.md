@@ -160,16 +160,16 @@ contains the access token - keep it out of the stream picture.
 
 | Key | View | What it shows |
 |---|---|---|
-| 1 | **BRIEFING** | the jump target: distance, star and scoopable, whether any database knows it, what the neighbours in its boxel held, fuel after the jump, open boxel candidates, the plotted route |
+| 1 | **BRIEFING** | the jump target: distance, star and scoopable, whether any database knows it - *in no database* only where a source was asked, *inhabited* or *not checked* otherwise -, what the neighbours in its boxel held, fuel after the jump, open boxel candidates, the plotted route; *carriers here*: your own carrier and your favourites last known in this system, with source and age |
 | 2 | **PLANET** | the surface of a body: your track (ship, SRV, on foot), finds, colony circles for exobiology sampling, where the SRV is parked or the ship waits, Rhino mining rigs (Rig 1, 2 ... per launch, with tonnes) |
-| 3 | **SYSTEM** | the current system in 3D at its Kepler positions, the course line in the plugin's order with leg times, your last position fix, biology per body, points of interest from your own journals (stations, settlements with a ⌂ on their body, fleet carriers seen there - the latest eight -, nav beacons) |
+| 3 | **SYSTEM** | the current system in 3D at its Kepler positions, the course line in the plugin's order with leg times, your last position fix, biology per body, points of interest from your own journals (stations, settlements with a ⌂ on their body, fleet carriers seen there - the latest eight, with *dockable* or *friends/squadron only* where their access is known, those that refuse you left out -, nav beacons); *nav beacon scanned - all bodies known* |
 | 4 | **GALAXY** | your flight path through the galaxy over time, the carrier's path and where it is now (with a pending jump), survey spheres with the status of every boxel, visited systems, notable finds; flat map or 3D with a replay of the flight path; starts on your system, a click moves the focus, a double click opens the system as a detail window; *copy name* copies the focused system for the game's galaxy map (on a tablet over the home network the browser may refuse the clipboard - then the name shows selected, to copy by hand) |
-| 5 | **PLANET INFO** | datasheet of a body: gravity, temperature, atmosphere, volcanism, materials, rings and hotspots, signals, species, genus forecast; opens on the body of your last fix; under each ring what your prospected rocks held there and what rocks of rings like it held at such hotspots; GROUND MINING: what your Rhino rigs yielded here and on bodies of the same class |
+| 5 | **PLANET INFO** | datasheet of a body: gravity, temperature, atmosphere, volcanism, materials, rings and hotspots, signals, species, genus forecast; opens on the body of your last fix; under each ring what your prospected rocks held there and what rocks of rings like it held at such hotspots, your tonnes per hour there and what to expect at its hotspots; GROUND MINING: what your Rhino rigs yielded here and on bodies of the same class, tonnes per rig and rigs per hour |
 | 6 | **ATLAS** | everything found, by kind - ring hotspots, body signals, materials picked up, finds on the ground, bio signals - nearest first, within a chosen distance; SYSTEMS lists the survey sphere by state (not visited, visited, surveyed, known to no online source, checked and not existing) and exports it as CSV or JSON |
 | 7 | **SHIP** | status panel (warning / caution / advisory lamps), schematic cutaway, power by priority, modules with integrity and ammunition, damage and function report, cargo and fuel |
 | 8 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range (with the tritium in your ship and - from EDMC's Frontier data - in the carrier's hold, what you mined and the trip to your route's end), hold with its goods, finances, services - and the air wing: every ship in the hangar with role ratings (combat, mining, transport, exploration, passengers, search and rescue); docked at someone else's carrier: what its market buys (what you carry first, tritium next) and sells, from the market you opened; **known carriers** - also without a carrier of your own: the carriers you docked at, started a mission or community goal from, rode along with or saw in the FSS, with their last known system, how old that is and how far from you, what you started there and what their market bought when you last opened it. Mark the ones you want to find again with ☆ (and a note); favourites come first, get a ★ in SYSTEM's points of interest and on the GALAXY map |
-| 9 | **MINING** | everything about mining, tritium first: the session (yield per hour, limpets, best and last rock), tritium for the carrier (tank, in your ship, mined, delivered), ring hotspots near you, mining ships, goods with what selling them earned against the carrier's upkeep, every session so far |
-| 0 | **STATISTICS** | the game's own record of you (written at every login): ranks with progress, exploration, exobiology, mining, the carrier, wealth and time played - with the growth over 24 h, 7, 30 or 90 days |
+| 9 | **MINING** | everything about mining, tritium first: the session (yield per hour, limpets, best and last rock), tritium for the carrier (tank, in your ship, mined, delivered), the best hotspots for you (nearby hotspots ranked by your own tonnes per hour), ring hotspots near you, mining ships, goods with what selling them earned against the carrier's upkeep, every session so far |
+| 0 | **STATISTICS** | the game's own record of you (written at every login): ranks with progress, exploration, exobiology, mining, the carrier, wealth and time played - with the growth over 24 h, 7, 30 or 90 days; *learning status*: how many rocks, mining runs, rigs and analysed bodies the FIS has learnt from, and where it is still thin |
 
 Planet, system, galaxy: the same place at three scales. Addresses work with the
 names too (`/#system`, `/#planetinfo`, `/#stats`).
@@ -192,9 +192,13 @@ Notes on what the files allow:
   went silent (tablet asleep, Wi-Fi) reconnects within about 40 seconds.
 * The route uses the same filters as the plugin (read from EDMC's settings).
 * If one journal folder holds several commanders, the FIS shows the one who
-  logged in last.
-* Known carriers come only from your own journals - nothing is looked up
-  online, so a carrier's position is where *you* last saw it. Favourites,
+  logged in last. What rings and planets yield (prospecting, mining runs,
+  Rhino rigs, the bio model) is learnt from all of them together.
+* What the FIS learns is counting, averages and ranges from your own data -
+  a value resting on few rocks, runs or rigs is marked as thin.
+* Known carriers come from your own journals - a carrier's position is
+  where *you* last saw it, unless you click *online* at a favourite (one
+  Spansh request, shown with its date). Favourites,
   notes and the last market of each visited carrier are kept per commander
   in `favourites.json` next to `fis.ini` (personal - keep it out of anything
   you share). Starring works from the tablet too (with the home-network
