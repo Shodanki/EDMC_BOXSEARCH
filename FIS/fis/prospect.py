@@ -28,6 +28,20 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 TOP = 6
+MIN_ROCKS = 30      # below this a group is "thin" and borrows from the broader one
+PRIOR_WEIGHT = 20   # how many rocks the broader group counts for (shrinkage)
+
+
+def wilson(k: int, n: int, z: float = 1.96) -> Tuple[int, int]:
+    """95 % range of a share k of n (Wilson score) in percent - honest for
+    small samples: 3 of 4 is 30-95 %, 300 of 400 is 70-79 %."""
+    if n <= 0:
+        return 0, 100
+    p = k / n
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    h = z * ((p * (1 - p) + z * z / (4 * n)) / n) ** 0.5 / d
+    return max(0, round(100 * (c - h))), min(100, round(100 * (c + h)))
 
 
 def _key(name: Optional[str]) -> str:
@@ -75,24 +89,34 @@ def summary(r: Optional[Dict[str, Any]], top: int = TOP) -> Optional[Dict[str, A
         return None
     n = r["rocks"]
     mats = sorted(r["mats"].items(), key=lambda kv: (-kv[1]["rocks"], -kv[1]["sum"]))
-    return {"rocks": n, "last": r.get("last"),
+    out = []
+    for k, d in mats[:top]:
+        lo, hi = wilson(d["rocks"], n)
+        out.append({"key": k, "name": d["name"], "share": round(100.0 * d["rocks"] / n),
+                    "lo": lo, "hi": hi, "avg": round(d["sum"] / d["rocks"], 1)})
+    return {"rocks": n, "last": r.get("last"), "thin": n < MIN_ROCKS,
             "motherlodes": sorted(r["motherlodes"].items(), key=lambda kv: -kv[1]),
-            "mats": [{"key": k, "name": d["name"], "share": round(100.0 * d["rocks"] / n),
-                      "avg": round(d["sum"] / d["rocks"], 1)} for k, d in mats[:top]]}
+            "mats": out}
 
 
 def expectations(prospects: Dict[str, Dict[str, Any]],
                  ring_hotspots: Dict[str, Tuple[str, List[str]]]) -> Dict[Tuple[str, str], Dict[str, Any]]:
     """
     (ring class, hotspot material key) -> pooled prospecting of every ring
-    of that class with such a hotspot. `ring_hotspots`: ring name ->
-    (ring class, [hotspot material keys]).
+    of that class with such a hotspot; (class, "*") pools every ring of the
+    class and ("*", "*") every ring - the broader groups a thin one leans
+    on. `ring_hotspots`: ring name -> (ring class, [hotspot material keys]).
     """
     pool: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for ring, r in prospects.items():
         cls, hs = ring_hotspots.get(ring, ("", []))
-        for h in hs:
-            p = pool.setdefault((cls, h), {"rocks": 0, "rings": set(), "motherlodes": {}, "mats": {}})
+        # the broader groups too: every ring of this class, every ring
+        for h in list(hs) + ["*", "**"]:
+            if h == "**":
+                cls_key, h_key = "*", "*"
+            else:
+                cls_key, h_key = cls, h
+            p = pool.setdefault((cls_key, h_key), {"rocks": 0, "rings": set(), "motherlodes": {}, "mats": {}})
             p["rocks"] += r["rocks"]
             p["rings"].add(ring)
             for k, d in r["mats"].items():
@@ -106,7 +130,14 @@ def expectations(prospects: Dict[str, Dict[str, Any]],
 
 def expected_for(pool: Dict[Tuple[str, str], Dict[str, Any]], cls: str, hotspot: str,
                  skip_ring: Optional[str] = None, top: int = TOP) -> Optional[Dict[str, Any]]:
-    """What rocks held in OTHER rings of this class with this hotspot."""
+    """
+    What rocks held in rings of this class with this hotspot - learning
+    from your own data: while that group is thin (< MIN_ROCKS) its shares
+    lean on the broader group (every ring of this class, then every ring)
+    as if that one added PRIOR_WEIGHT rocks; the more you prospect, the
+    more the specific group speaks for itself. None when only this very
+    ring (or nothing) has data.
+    """
     p = pool.get((cls, hotspot))
     if not p:
         return None
@@ -117,4 +148,18 @@ def expected_for(pool: Dict[Tuple[str, str], Dict[str, Any]], cls: str, hotspot:
     if s is None:
         return None
     s["rings"] = len(p["rings"])
+    s["level"] = "hotspot"
+    if p["rocks"] < MIN_ROCKS:
+        for key, level in (((cls, "*"), "class"), (("*", "*"), "all")):
+            par = pool.get(key)
+            if par and par["rocks"] > p["rocks"]:
+                n, m = p["rocks"], PRIOR_WEIGHT
+                for mat in s["mats"]:
+                    q = par["mats"].get(mat["key"])
+                    pp = (q["rocks"] / par["rocks"]) if q else 0.0
+                    k = p["mats"][mat["key"]]["rocks"]
+                    mat["share"] = round(100.0 * (k + m * pp) / (n + m))
+                s["level"] = level
+                s["borrowed"] = par["rocks"]
+                break
     return s

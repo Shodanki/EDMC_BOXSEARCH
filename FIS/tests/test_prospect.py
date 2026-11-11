@@ -58,6 +58,29 @@ class TestProspect(unittest.TestCase):
         self.assertIsNone(prospect.expected_for(only, "Icy", "tritium", skip_ring="Alpha 1 A Ring"))
         self.assertEqual(prospect.ring_class("eRingClass_MetalRich"), "MetalRich")
 
+    def test_l1_range_narrows_with_data(self):
+        lo, hi = prospect.wilson(3, 4)
+        self.assertTrue(lo < 40 and hi > 90, (lo, hi))
+        lo2, hi2 = prospect.wilson(300, 400)
+        self.assertTrue(hi2 - lo2 < 10 and lo2 <= 75 <= hi2, (lo2, hi2))
+        s = prospect.summary(prospect.ring_prospects(EVENTS)["Alpha 1 A Ring"])
+        self.assertTrue(s["thin"] and s["mats"][0]["lo"] < 100 == s["mats"][0]["hi"])
+
+    def test_l2_thin_group_leans_on_the_class(self):
+        evs = [_exit("Big 1 A Ring")] + [_rock([("tritium", 10.0)]) for _ in range(60)]
+        evs += [_exit("Small 2 A Ring"), _rock([("tritium", 10.0), ("gold", 5.0)]),
+                _rock([("gold", 5.0)])]
+        p = prospect.ring_prospects(evs)
+        hs = {"Big 1 A Ring": ("Icy", ["tritium"]), "Small 2 A Ring": ("Icy", ["painite"])}
+        pool = prospect.expectations(p, hs)
+        e = prospect.expected_for(pool, "Icy", "painite", skip_ring="Other")
+        self.assertEqual((e["level"], e["borrowed"]), ("class", 62))
+        gold = next(m for m in e["mats"] if m["key"] == "gold")
+        # 2 of 2 rocks alone would be 100 %; leaning on the class pulls it down
+        self.assertLess(gold["share"], 40)
+        big = prospect.expected_for(pool, "Icy", "tritium", skip_ring="Other")
+        self.assertEqual(big["level"], "hotspot")             # enough rocks of its own
+
 
 if __name__ == "__main__":
     unittest.main()

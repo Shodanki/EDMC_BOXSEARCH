@@ -253,13 +253,17 @@ function render(ctx) {
       if (r.hotspots && r.hotspots.length) rr.push(el("div", { class: "pl-line pl-sub c-amber", text: "◆ " + hsText(r.hotspots) }));
       else if (!r.belt) rr.push(el("div", { class: "pl-line pl-sub c-dim", text: t("no hotspots known - map the ring with the DSS") }));
       // your prospecting in this ring, and what rings like it held at such hotspots
-      const mats = (p) => p.mats.map(m => m.name + " " + m.share + " %").join(" · ");
-      if (r.prospect) rr.push(el("div", { class: "pl-line pl-sub small" },
+      // L1: the share with its 95 % range; L2: thin groups lean on broader ones
+      const mats = (p) => p.mats.map(m => m.name + " " + m.share + " %"
+        + (m.lo !== undefined && p.level === undefined ? " (" + m.lo + "–" + m.hi + ")" : "")).join(" · ");
+      const LEVEL = { class: N_("few rocks yet - leaning on all {c} rings"), all: N_("few rocks yet - leaning on all your rings") };
+      if (r.prospect) rr.push(el("div", { class: "pl-line pl-sub small" + (r.prospect.thin ? " c-dim" : "") },
         el("span", { class: "c-green", text: "⛏ " + t("your rocks here ({n}):", { n: r.prospect.rocks }) + " " }), mats(r.prospect),
         r.prospect.motherlodes.length ? el("span", { class: "c-violet", text: " · ◆ " + r.prospect.motherlodes.map(([m, n]) => m + " ×" + n).join(", ") }) : null));
       for (const e of r.expected || []) rr.push(el("div", { class: "pl-line pl-sub small c-dim" },
         el("span", { text: "↳ " + t("at {h} hotspots ({r} rings, {n} rocks) also:", { h: e.hotspot, r: e.rings, n: e.rocks }) + " " }),
-        el("span", { text: mats(e) })));
+        el("span", { text: mats(e) }),
+        e.level && e.level !== "hotspot" ? el("span", { class: "c-amber", text: " · " + t(LEVEL[e.level], { c: r.cls || "" }) }) : null));
     }
     const loose = b.hotspots.filter(h => !ringNames.has(h.ring));
     if (loose.length) rr.push(el("div", { class: "pl-line c-amber", text: "◆ " + hsText(loose) }));

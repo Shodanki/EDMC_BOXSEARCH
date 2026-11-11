@@ -906,6 +906,8 @@ const DE = /*DE*/{
   "target locked": "Ziel erfasst",
   "COMBAT": "KAMPF",
   "COMBAT MODE": "KAMPFMODUS",
+  "few rocks yet - leaning on all {c} rings": "noch wenige Brocken – gestützt auf alle {c}-Ringe",
+  "few rocks yet - leaning on all your rings": "noch wenige Brocken – gestützt auf alle deine Ringe",
   "here: {n} rigs, {t} t": "hier: {n} Rigs, {t} t",
   "on other {c} ({n} bodies):": "auf anderen {c} ({n} Körper):",
   "From the rigs you collected with the Rhino.": "Aus den Rigs, die du mit dem Rhino eingesammelt hast.",
