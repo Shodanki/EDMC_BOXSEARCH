@@ -96,6 +96,18 @@ async function star(c, on, note) {
   render();
 }
 
+async function lookup(c, btn) {
+  btn.disabled = true; btn.textContent = "…";
+  try {
+    await postJSON("/api/carriers/lookup", { callsign: c.callsign });
+    knownMsg = "";
+  } catch (e) {
+    knownMsg = t("Online lookup failed: {e}", { e: e.message || e });
+  }
+  try { known = await getJSON("/api/carriers/known"); } catch (e) { /* keep the old list */ }
+  render();
+}
+
 function carrierRow(c) {
   const what = [];
   if (c.docked_n) what.push(t("docked {n}×", { n: c.docked_n }));
@@ -108,6 +120,15 @@ function carrierRow(c) {
   const buys = m && m.buys && m.buys.length ? m.buys.slice(0, 3).map(b => b.name + " " + fmt(b.demand, 0) + " t").join(" · ") : "";
   const btn = el("button", { class: "fav-star" + (c.favourite ? " on" : ""), text: c.favourite ? "★" : "☆",
     title: c.favourite ? t("remove from favourites") : t("mark as favourite"), onclick: () => star(c, !c.favourite) });
+  // K5: a favourite can be looked up at Spansh - on a click, once every 6 h
+  const on = c.online;
+  const onLine = on ? el("div", { class: "small" + (on.found ? "" : " c-dim") },
+    el("span", { class: "c-violet", text: "Spansh: " }),
+    on.found ? (on.system || "?") + (on.updated ? "  (" + t("reported {d}", { d: day(on.updated) }) + ")" : "")
+      : t("not known there"),
+    el("span", { class: "c-dim", text: "  · " + t("asked {d}", { d: since(on.checked) }) })) : null;
+  const lookBtn = c.favourite ? el("button", { text: t("online"), title: t("look this favourite up at Spansh (once every 6 hours)"),
+    onclick: (e) => lookup(c, e.currentTarget) }) : null;
   const noteBtn = c.favourite ? el("button", { text: "✎", title: t("note"),
     onclick: () => { const v = window.prompt(t("Note for {c}", { c: c.callsign }), c.note || ""); if (v !== null) star(c, true, v); } }) : null;
   return el("div", { class: "kc-row" + (c.favourite ? " fav" : "") }, btn,
@@ -120,8 +141,9 @@ function carrierRow(c) {
           + (c.from_store ? " · " + t("stored") : "") })),
       what.length ? el("div", { class: "small c-dim", text: what.join(" · ") }) : null,
       buys ? el("div", { class: "small" }, el("span", { class: "c-green", text: t("bought") + ": " }), buys,
-        el("span", { class: "c-dim", text: "  (" + t("market of {d}", { d: day(m.ts) }) + ")" })) : null),
-    el("div", { class: "kc-act" }, noteBtn,
+        el("span", { class: "c-dim", text: "  (" + t("market of {d}", { d: day(m.ts) }) + ")" })) : null,
+      onLine),
+    el("div", { class: "kc-act" }, lookBtn, noteBtn,
       el("button", { text: t("copy system"), disabled: c.system ? null : true,
         title: t("copy the system name - paste it in the galaxy map to plot the jump"),
         onclick: (e) => copyText(c.system, e.currentTarget) })));
@@ -147,7 +169,7 @@ function knownCarriers() {
     if (seen.length > 8) rows.push(el("button", { text: showAllSeen ? t("fewer") : t("show {n} more", { n: seen.length - 8 }),
       onclick: () => { showAllSeen = !showAllSeen; render(); } }));
   }
-  rows.push(el("div", { class: "c-dim small", text: t("Last known positions from your own journals; the market is the one you last opened there. Nothing is fetched online.") }));
+  rows.push(el("div", { class: "c-dim small", text: t("Last known positions from your own journals; the market is the one you last opened there. Online only when you click it for a favourite (Spansh, the place someone last reported).") }));
   return frame(t("KNOWN CARRIERS"), t("{f} favourites · {n} known", { f: k.counts.favourites, n: k.counts.known }), rows, { cls: "ns-known", appear: false });
 }
 

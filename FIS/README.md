@@ -13,8 +13,12 @@ own database and maths.
 
 **It only reads.** The plugin database (opened read-only), the game's journal
 and its state files (`Status.json`, `NavRoute.json`, `ModulesInfo.json`,
-`Cargo.json`, ...). It sends nothing to the game, automates nothing and talks
-to no service on the internet. The 3D library Three.js (0.170.0, MIT) ships
+`Cargo.json`, ...). It sends nothing to the game and automates nothing. It
+asks a service on the internet in one case only: when you click *online* at a
+favourite carrier in CARRIER - one request to Spansh for where someone last
+reported it, through the plugin's polite gateway (pacing, the daily cap shared
+with the plugin, the plugin's *offline* switch), at most once per carrier
+every six hours. The 3D library Three.js (0.170.0, MIT) ships
 with it in `web/vendor/three` - licence and origin in `SOURCE.md` there - so
 the 3D views work offline too. The QR code on the settings page is drawn
 with Project Nayuki's QR Code generator (`fis/vendor/qrcodegen.py`, MIT,

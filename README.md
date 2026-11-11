@@ -374,6 +374,10 @@ network. Tip: open EDDiscovery once before you start a survey (it fetches
 the latest changes), then close it - while it runs, its file can be locked.
 The plugin notices a locked file and reads it again later.
 
+*FIS.* The flight information system asks Spansh only when you click *online*
+at a favourite carrier (where it was last reported), through the same
+gateway and daily cap, at most once per carrier every six hours.
+
 *Limits.* At most 50 requests per service and UTC day (a 50 ly survey needs
 about five), at most 20 Spansh pages (10 000 systems) per shell. The
 statistics window shows *external today: EDSM n of 50 · Spansh n of 50*.

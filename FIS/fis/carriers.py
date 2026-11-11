@@ -223,6 +223,7 @@ def build_known(archive: Any, store: Any, live: Optional[Dict[str, Any]] = None,
                 it["from_store"] = True     # the journal does not have it (any more)
         it["favourite"] = bool(f)
         it["note"] = (f or {}).get("note") or ""
+        it["online"] = (f or {}).get("online")       # K5: last lookup at Spansh
         it["market"] = markets.get(cs)
         it["dist_ly"] = _dist(it.get("pos"), here) if here and it.get("pos") else None
         return it

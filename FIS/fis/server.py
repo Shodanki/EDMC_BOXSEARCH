@@ -62,6 +62,10 @@ class App:
         from .favourites import FavouriteStore
         # personal (K2): next to fis.ini, never in the repository
         self.favourites = FavouriteStore(os.path.join(os.path.dirname(cfg.ini_path), "favourites.json"))
+        # K5: the one online lookup of the FIS (on a click, through the plugin's gateway)
+        from .online import CarrierLookup
+        self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
+                                    offline=self._plugin_offline)
         from .calib import Calibrator
         self.calib = Calibrator(cfg.journal_dir, model.plugin().sysroute, self._leg_ls)
 
@@ -119,6 +123,24 @@ class App:
             if len(self._cache) > 64:
                 self._cache.pop(next(iter(self._cache)))
         return val
+
+    def _calls_today(self) -> Dict[str, int]:
+        """Today's requests from the plugin's call log (read only) - one cap for both."""
+        try:
+            day0 = int(time.time() // 86400) * 86400
+            rows = self.db.query("SELECT service, COUNT(*) n FROM external_calls WHERE ts >= ? "
+                                 "GROUP BY service", (day0,))
+            return {r["service"]: int(r["n"]) for r in rows}
+        except Exception:
+            return {}
+
+    def _plugin_offline(self) -> bool:
+        """The plugin's "offline" switch (EDMC config.toml) holds for the FIS too."""
+        try:
+            data = self.cfg._plugin_settings() or {}
+        except Exception:
+            data = {}
+        return str(data.get("shboxsearch_offline", "")).lower() in ("true", "1")
 
     # ------------------------------------------------------------ routes
     def system(self, id64: int) -> Dict[str, Any]:
@@ -403,6 +425,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(400, "bad request")
         if url.path == "/api/carriers/favourite":
             return self._post_favourite(raw)
+        if url.path == "/api/carriers/lookup":
+            return self._post_lookup(raw)
         if url.path != "/api/settings":
             return self._error(404, "not found")
         if not self._local():
@@ -485,6 +509,35 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._error(400, str(exc))
         return self._json({"callsign": cs, "favourite": fav is not None, "note": (fav or {}).get("note", "")})
+
+    def _post_lookup(self, raw: bytes) -> None:
+        """K5: one favourite's position at Spansh - on a click, cached 6 h."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "lookups only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, UnicodeDecodeError):
+            return self._error(400, "bad request")
+        from . import carriers
+        cs = str(body.get("callsign") or "")
+        if not carriers.is_callsign(cs):
+            return self._error(400, "bad callsign")
+        app = self.app
+        fid = app.archive.commander()[0]
+        fav = app.favourites.get(fid)["favourites"].get(cs)
+        if not fav:
+            return self._error(400, "only favourites are looked up")
+        hit = app.lookup.cached(fav)
+        if hit:
+            return self._json(dict(hit, callsign=cs, cached=True))
+        res = app.lookup.lookup(cs)
+        if res.get("error"):
+            return self._json(dict(res, callsign=cs), 503 if res["error"] != "offline" else 409)
+        app.favourites.set_online(fid, cs, res)
+        return self._json(dict(res, callsign=cs, cached=False))
 
     def _json(self, obj: Any, code: int = 200) -> None:
         body = json.dumps(obj, ensure_ascii=False, separators=(",", ":"),

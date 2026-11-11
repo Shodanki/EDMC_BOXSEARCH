@@ -138,6 +138,18 @@ class FavouriteStore:
             self._save()
             return True
 
+    def set_online(self, fid: Optional[str], callsign: str, info: Dict[str, Any]) -> bool:
+        """K5: keep the answer of an online lookup with the favourite."""
+        keep = {k: info.get(k) for k in ("checked", "found", "source", "system", "id64",
+                                           "market_id", "updated", "pos")}
+        with self._lock:
+            f = self._cmdr(fid)["favourites"].get(callsign)
+            if not f:
+                return False
+            f["online"] = keep
+            self._save()
+            return True
+
     def note_market(self, fid: Optional[str], vis: Dict[str, Any]) -> bool:
         """K3: keep the market of a visited carrier (from visiting_carrier).
         Only a newer snapshot replaces the stored one."""
