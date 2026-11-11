@@ -76,6 +76,28 @@ class TestUnsold(unittest.TestCase):
         self.assertEqual(unsold.build_unsold(evs, VALUES)["advice"], "sell")      # 57 M
         self.assertIsNone(unsold.build_unsold(evs[:1], VALUES)["advice"])        # 19 M
 
+    def test_risk_levels(self):
+        st = [analyse("08:%02d" % i, "Stratum Tectonicas") for i in range(6)]
+        self.assertEqual(unsold.build_unsold(st[:1], VALUES)["risk"], "low")        # 19 M
+        self.assertEqual(unsold.build_unsold(st[:3], VALUES)["risk"], "moderate")   # 57 M
+        self.assertEqual(unsold.build_unsold(st, VALUES)["risk"], "high")           # 114 M
+
+    def test_first_discovery_and_first_footfall_are_valuable(self):
+        evs = [ev("08:00", "FSDJump", StarSystem="New", SystemAddress=5),
+               ev("08:01", "Scan", StarSystem="New", SystemAddress=5, BodyID=0, BodyName="New A",
+                  ScanType="AutoScan", DistanceFromArrivalLS=0.0, WasDiscovered=False),
+               ev("08:02", "Scan", StarSystem="New", SystemAddress=5, BodyID=3, BodyName="New 1",
+                  ScanType="Detailed", DistanceFromArrivalLS=300.0, WasDiscovered=False,
+                  Landable=True, WasFootfalled=False),
+               ev("08:10", "Disembark", SRV=False, OnPlanet=True, SystemAddress=5, Body="New 1", BodyID=3),
+               ev("08:20", "ScanOrganic", ScanType="Analyse", Species_Localised="Osseus Spiralis",
+                  SystemAddress=5, Body=3, WasLogged=True)]
+        u = unsold.build_unsold(evs, VALUES)
+        self.assertEqual((u["first_systems"], u["footfall_bio"]), (1, 1))
+        self.assertEqual(u["risk"], "moderate")            # little money, but nothing to get again
+        sold = evs + [ev("09:00", "MultiSellExplorationData", Discovered=[{"SystemName": "New"}])]
+        self.assertEqual(unsold.build_unsold(sold, VALUES)["first_systems"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

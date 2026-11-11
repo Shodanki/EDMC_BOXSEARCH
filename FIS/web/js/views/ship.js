@@ -104,9 +104,18 @@ function unsold() {
   }
   if (X.systems) rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exploration") + " " }),
     el("span", { text: t("{s} systems · {b} bodies · {m} mapped", { s: X.systems, b: X.bodies, m: X.mapped }) })));
+  // risk (user 11.11.): low below 50 M, moderate from 50 M, high from 100 M;
+  // first discoveries and first-footfall biology are what cannot be had again
+  const RISK = { low: [N_("RISK LOW"), "c-green"], moderate: [N_("RISK MODERATE"), "c-amber"], high: [N_("RISK HIGH"), "c-red"] };
+  if (U.risk && RISK[U.risk]) rows.unshift(el("div", { class: "pl-line" }, el("span", { class: RISK[U.risk][1], text: t(RISK[U.risk][0]) }),
+    el("span", { class: "c-dim", text: " · " + t("moderate from {m} M, high from {h} M Cr", { m: fmt(U.risk_cr.moderate / 1e6, 0), h: fmt(U.risk_cr.high / 1e6, 0) }) })));
+  if (U.first_systems || U.footfall_bio) rows.push(el("div", { class: "c-violet" }, "★ " + [
+    U.first_systems ? t("{n} systems discovered first by you", { n: U.first_systems }) : null,
+    U.footfall_bio ? t("{n} species on bodies of your first footfall", { n: U.footfall_bio }) : null].filter(Boolean).join(" · ")));
   rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; exploration data only counted.") }));
   if (U.advice === "sell") rows.push(el("div", { class: "c-red", text: t("A lot at stake - consider selling at the next station or carrier with Vista Genomics / Universal Cartographics.") }));
-  return frame(t("UNSOLD DATA"), B.value ? "≈ " + Mcr(B.value) : "", rows, { cls: "sh-unsold", appear: false, kind: U.advice ? "warn" : "" });
+  return frame(t("UNSOLD DATA"), B.value ? "≈ " + Mcr(B.value) : "", rows, { cls: "sh-unsold", appear: false,
+    kind: U.risk === "high" ? "alert" : U.advice || U.risk === "moderate" ? "warn" : "" });
 }
 
 // ------------------------------------------------------------ target (E5)
