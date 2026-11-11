@@ -1,7 +1,12 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // SHBOX FIS – application shell: state, view switching, ship bar, live push.
 
 import { getJSON, subscribe } from "./api.js";
-import { fmt } from "./ui.js";
+import { fmt, el } from "./ui.js";
 import { initLang, t, N_, lang, setLang, locale, applyStatic } from "./i18n.js";
 import * as layout from "./layout.js";
 import * as fullscreen from "./fullscreen.js";
@@ -33,12 +38,41 @@ const PROFILE = (() => {
     scale: sc >= 0.5 && sc <= 3 ? sc : null };
 })();
 if (PROFILE.obs) document.body.classList.add("obs");
+// M12: the FIS as an installed app (own window, taskbar icon) - only on the
+// game PC: browsers allow it on localhost, not on plain http in the home
+// network. No service worker: nothing is cached, an update is live at once.
+const ON_THIS_PC = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+if (ON_THIS_PC && !SOLO && !PROFILE.obs) {
+  const link = document.createElement("link");
+  link.rel = "manifest"; link.href = "/manifest.webmanifest";
+  link.crossOrigin = "use-credentials";        // LAN mode: the token cookie goes along
+  document.head.append(link);
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); window.fisInstall = e; });
+  window.addEventListener("appinstalled", () => { window.fisInstall = null; });
+}
 if (PROFILE.kiosk) document.body.classList.add("kiosk");
 if (PROFILE.scale) document.documentElement.style.zoom = String(PROFILE.scale);
 
 // language first: every view renders its texts through t()
 await initLang();
 applyStatic();
+// H1: theme per browser - theme-boot.js applied it before the views loaded,
+// so a change reloads the page (canvas colours are read on load)
+{
+  const THEMES = [["standard", N_("Theme: standard")], ["console", N_("Theme: Federation console")],
+    ["industrial", N_("Theme: Belt industrial")], ["station", N_("Theme: Station era")],
+    ["next", N_("Theme: Next (own accent)")]];
+  const sel = document.getElementById("opt-theme"), acc = document.getElementById("opt-accent");
+  const cur = document.documentElement.getAttribute("data-theme") || "standard";
+  for (const [k, label] of THEMES) sel.append(el("option", { value: k, text: t(label) }));
+  sel.value = cur;
+  acc.hidden = cur !== "next";
+  try { acc.value = (localStorage.getItem("fis.accent") || "#ff8a2a").toLowerCase(); } catch (e) { /* default */ }
+  const save = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } };
+  sel.addEventListener("change", () => { save("fis.theme", sel.value); location.reload(); });
+  acc.addEventListener("change", () => { save("fis.accent", acc.value); location.reload(); });
+}
+
 for (const b of document.querySelectorAll("#lang button")) {
   b.setAttribute("aria-pressed", b.dataset.lang === lang() ? "true" : "false");
   b.addEventListener("click", () => setLang(b.dataset.lang));
@@ -167,6 +201,7 @@ async function refresh(what) {
         store.selected = null;
       }
       if (mounted.has("tactical")) tactical.update(ctx, "data");
+      if (mounted.has("planet")) planet.update(ctx, "fix");      // follows the last fix
     }
     if (what === "briefing" || what === "all") {
       store.briefing = await getJSON("/api/briefing");
@@ -224,6 +259,35 @@ function renderShipBar() {
   else if (flags.includes("supercruise")) focus += " · SC";
   if (flags.includes("scooping")) focus += " · SCOOP";
   document.getElementById("sb-focus").textContent = focus;
+  renderCombat(s.combat);
+}
+
+// M8: combat mode - ALERT (shot at, interdicted), COMBAT MODE (hardpoints out,
+// combat HUD) or READY (hardpoints out, analysis HUD - scanners, no weapons).
+// The body class lets a theme repaint the whole FIS (T1 tokens); the state
+// ends by itself at `until`, so a quiet game still calms the display down.
+const COMBAT_WHY = { attacked: N_("under attack"), shields_down: N_("shields down"), hull_hit: N_("hull hit"),
+  interdicted: N_("interdicted"), interdicted_now: N_("interdiction"), danger: N_("danger"),
+  hardpoints: N_("hardpoints out"), target: N_("target locked"),
+  combat_hud: N_("HUD in combat mode"), analysis_hud: N_("HUD in analysis mode") };
+const COMBAT_LABEL = { alert: N_("COMBAT"), combat: N_("COMBAT MODE"), ready: N_("READY · ANALYSIS") };
+function renderCombat(c) {
+  const level = c && c.level;
+  document.body.classList.toggle("combat-alert", level === "alert");
+  document.body.classList.toggle("combat-ready", level === "ready");
+  document.body.classList.toggle("combat-mode", level === "combat");
+  const cell = document.getElementById("sb-combat");
+  if (!cell) return;
+  cell.hidden = !level;
+  cell.className = "sb-cell sb-combat " + (level || "");
+  if (level) {
+    document.getElementById("sb-combat-v").textContent = t(COMBAT_LABEL[level] || level);
+    cell.title = (c.reasons || []).map(r => t(COMBAT_WHY[r] || r)).join(" · ");
+  }
+  if (c && c.until) {
+    const ms = c.until * 1000 - Date.now() + 500;
+    if (ms > 0 && ms < 120000) later("combat", ms, () => refresh("ship"));
+  }
 }
 
 function tickClock() {

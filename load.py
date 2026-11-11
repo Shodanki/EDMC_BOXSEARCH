@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 SHBOXSEARCH v4.0 - systematic sphere survey for Elite Dangerous
 ===============================================================
@@ -8,7 +13,7 @@ deliberately hunting for systems that appear in no database at all.
 Documentation: see README.md in the plugin folder.
 
 Tested against EDMC 6.1.2 / Python 3.13.
-MIT License (c) 2025-2026
+Licence: MPL-2.0 (see LICENSE); 4.6 and earlier were released under MIT.
 """
 
 from __future__ import annotations
@@ -34,7 +39,7 @@ if _PLUGIN_DIR not in sys.path:
     sys.path.append(_PLUGIN_DIR)
 
 from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
-from sysdb import SystemDB, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
+from sysdb import SystemDB, Q_ESTIMATE, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
 from sources import SourceManager                              # noqa: E402
 from netgate import Gateway                                    # noqa: E402
 import netgate                                                 # noqa: E402
@@ -44,7 +49,7 @@ from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
 from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       F_ALL, F_OUTSTANDING, bodies_from_rows,
                       calibrate_from_journal, calibrate_work_from_journal,
-                      leg_distance_ls,
+                      leg_distance_ls, pace_ratio, spread_points,
                       plan_route, resolve_positions, shorten)
 from boxelplan import bundled_probe_prefix                   # noqa: E402
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
@@ -55,7 +60,7 @@ from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E40
 import surfacenav  # noqa: E402
 import miningstat  # noqa: E402
 
-VERSION = "4.6.0"
+VERSION = "4.7.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -90,6 +95,7 @@ CFG = {
     "show_stats": "%s_show_stats" % PLUGIN_NAME,
     "show_route": "%s_show_route" % PLUGIN_NAME,
     "route_all": "%s_route_all" % PLUGIN_NAME,
+    "route_arrival": "%s_route_arrival" % PLUGIN_NAME,
     "route_top": "%s_route_top" % PLUGIN_NAME,
     "route_map": "%s_route_map" % PLUGIN_NAME,
     "filters": "%s_filters" % PLUGIN_NAME,
@@ -164,6 +170,8 @@ class State:
         self.plan_info: str = ""
 
         self.cur_system: Optional[str] = None
+        self.cmdr: Optional[str] = None          # commander of the last journal event
+        self.awaiting_position = False           # commander switched: no system until Location
         self.cur_id64: Optional[int] = None
         self.cur_pos: Optional[Tuple[float, float, float]] = None
         self.max_jump: Optional[float] = None
@@ -189,7 +197,7 @@ class State:
         self.route_full = False
         self.route_feedback = ""
         self.route_started: Optional[float] = None
-        self.route_base: set = set()         # stops already done when the clock started
+        self.route_legs: List[Tuple[float, float]] = []   # R1: (planned s, actual s) per leg
         self.cost_model = DEFAULT_MODEL
         self.sc_segments: List[Tuple[float, float]] = []
         self.work_dss: List[float] = []
@@ -501,6 +509,14 @@ def _fetch_local(r_min: float = 0.0, r_max: float = 0.0) -> bool:
     _n, ok, _cnt = _fetch_into_db(["edd"], r_min, r_max or ST.radius)
     if ok.get("edd"):
         ST.edd_pending = False
+        try:
+            # I1: this region was checked against EDD's data - only then may
+            # the briefing say "in no database" there
+            with ST.lock:
+                ST.db.record_shell("edd", ST.center, r_min, r_max or ST.radius,
+                                   _cnt.get("edd", 0), shells.ttl_seconds())
+        except Exception:
+            logger.debug("EDD shell not recorded", exc_info=True)
         return True
     if not ST.edd_pending:
         logger.info("EDDiscovery not readable now (%s) - read again later, "
@@ -833,9 +849,37 @@ def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, floa
     return None
 
 
+def _commander_switched() -> None:
+    """
+    Another commander logged in on this PC (two accounts share one journal
+    folder and this database). Everything that belongs to where the last
+    one was - system, route, ticks, last body - is dropped, and nothing is
+    guessed from older journals (they are the other commander's): the new
+    commander's Location, FSDJump or CarrierJump sets the system again.
+    Before, the route was built for the previous commander's system for a
+    while (10.11.: ~16 s, two rebuilds in parallel).
+    """
+    ST.awaiting_position = True
+    ST.cur_system = None
+    ST.cur_id64 = None
+    ST.cur_pos = None
+    ST.route = None
+    ST.route_lines = []
+    ST.route_done = set()
+    ST.route_started = None
+    ST.route_legs = []
+    ST.route_feedback = ""
+    ST.last_body_id = None
+    ST.last_body_sys = None
+    ST.last_body_name = ""
+    logger.info("commander changed - waiting for the new commander's position")
+    _ui(_route_window_refresh)
+    _ui(_refresh)
+
+
 def _resolve_current_system() -> None:
     """Establish the current system if no jump has been seen this session."""
-    if ST.cur_id64 or not ST.db:
+    if ST.cur_id64 or not ST.db or ST.awaiting_position:
         return
     found = _current_system_from_journal()
     if found:
@@ -967,12 +1011,24 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
         info["scoopable"] = is_scoopable(row["star_class"])
     srcs = set((row["sources"] or "").split(",")) if row is not None else set()
     info["known_sources"] = [s for s in _EXTERNAL_DBS if s in srcs]
+    # I1: say "in no database" only where a source was really asked
+    pos = None
+    if row is not None and row["x"] is not None and (row["quality"] or 0) > Q_ESTIMATE:
+        pos = (row["x"], row["y"], row["z"])
+    try:
+        with ST.lock:
+            regions = {k: ST.db.valid_shells(k) for k in ("edd", "spansh", "edsm")}
+    except Exception:
+        regions = {}
+    info["level"], info["checked_by"] = shells.info_level(srcs, pos, regions)
     if row is not None and row["visited"] and kind == "target":
         info["visited"] = True
     pn = parse_name(name or "")
     if pn and ST.probe:
         info["boxel_open"] = sum(1 for q in ST.probe if q.boxel_key == pn.boxel_key)
     w = ST.fuel.warning() if ST.fuel else None
+    if w and kind == "target" and info.get("scoopable") and "CRITICAL" not in w:
+        w = None                  # a scoopable target: refuel where you arrive
     if w:
         info["fuel_warning"] = w
     elif ST.fuel and ST.fuel.jumps_left is not None:
@@ -989,8 +1045,15 @@ def _overlay_briefing(kind: str, name: Optional[str], id64: Optional[int],
         info = _briefing_info(kind, name, id64, star_class)
         # 30 s: long enough to read while aligning for the jump (user, 05.11.)
         ov.show_briefing(info, seconds=30)
-        if info.get("known_sources") == [] and kind == "target":
-            logger.info("briefing | %s is in no database - first discovery likely", name)
+        if kind == "target":
+            lv = info.get("level")
+            if lv == "checked":
+                logger.info("briefing | %s is in no database (checked: %s) - first "
+                            "discovery likely", name, ", ".join(info.get("checked_by") or []))
+            elif lv == "unchecked":
+                logger.info("briefing | %s not checked - outside our data frame", name)
+            elif lv == "inhabited":
+                logger.info("briefing | %s is inhabited - known", name)
     except Exception:
         logger.debug("overlay briefing failed", exc_info=True)
 
@@ -1058,15 +1121,17 @@ def _rebuild_route() -> None:
     except Exception:
         logger.debug("bio hints failed", exc_info=True)
     filters = [F_ALL] if cfg_bool(CFG["route_all"], False) else get_filters()
+    # R2: start the run at the arrival star (default) or with the first body
+    skip_arrival = not cfg_bool(CFG["route_arrival"], True)
     route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
-                       filters=filters)
+                       filters=filters, skip_arrival=skip_arrival)
     ST.route_full = False
     if not route.stops and F_ALL not in filters:
         # Nothing outstanding - show the complete tour anyway rather than an
         # empty window. Useful when revisiting a system, and it makes clear
         # that the system really is finished rather than unknown.
         route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
-                           filters=[F_ALL])
+                           filters=[F_ALL], skip_arrival=skip_arrival)
         ST.route_full = True
     for s in route.stops:
         if s.body.bio_hint and s.body.wants_bio:
@@ -1554,6 +1619,15 @@ def _route_map_draw() -> None:
     fg = col.get("fg") or "#ff8000"
     dim = col.get("bg") or "#101010"
 
+    # E17: bodies that land on one spot (the planets of a far companion
+    # star on the log scale) are pulled apart on screen - planets 14 px,
+    # moons stay near theirs; drawn and labelled where they ended up
+    raw = {st.body.body_id: project(st.body.pos) for st in route.stops if st.body.pos}
+    screen = spread_points(raw, 14.0)
+
+    def project_stop(st) -> Tuple[float, float]:
+        return screen.get(st.body.body_id) or project(st.body.pos)
+
     # range rings
     for frac, lbl in ((1.0, "%.0f LS" % rmax), (0.5, "")):
         rr = math.log10(1.0 + rmax * frac) / math.log10(1.0 + rmax) * span
@@ -1578,7 +1652,7 @@ def _route_map_draw() -> None:
             and ST.last_body_sys == ST.cur_id64):
         for st in route.stops:
             if st.body.body_id == ST.last_body_id and st.body.pos:
-                last_pos = project(st.body.pos)
+                last_pos = project_stop(st)
                 break
 
     # route legs
@@ -1586,7 +1660,7 @@ def _route_map_draw() -> None:
     for i, st in enumerate(route.stops):
         if not st.body.pos:
             continue
-        p = project(st.body.pos)
+        p = project_stop(st)
         done = st.body.body_id in ST.route_done
         _route_map.create_line(prev[0], prev[1], p[0], p[1], fill=fg,
                                width=1, dash=(1, 3) if done else None,
@@ -1614,7 +1688,7 @@ def _route_map_draw() -> None:
     for st in route.stops:
         if not st.body.pos:
             continue
-        x, y = project(st.body.pos)
+        x, y = project_stop(st)
         done = st.body.body_id in ST.route_done
         r = 2.0 if st.is_moon else 4.0
         if done:
@@ -1628,7 +1702,7 @@ def _route_map_draw() -> None:
         # their planet and would just pile more text into the same spot.
         if not st.body.pos or st.is_moon:
             continue
-        x, y = project(st.body.pos)
+        x, y = project_stop(st)
         px, py, anchor = free_spot(x, y, 4.0)
         _route_map.create_text(px, py, text=st.body.short[:10], fill=fg,
                                anchor=anchor, font=_FONT_SMALL)
@@ -1723,47 +1797,48 @@ def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
             logger.info("route | reached %s (%s), %d of %d done",
                         st.body.short, reason, len(ST.route_done),
                         len(ST.route.stops))
-            _route_progress_feedback()
+            _route_progress_feedback(st)
             _ui(_route_window_refresh)
             _ui(_refresh)
             return
 
 
-def _route_progress_feedback() -> None:
+def _route_progress_feedback(stop: Any = None) -> None:
     """
-    Compare the estimate against what actually happened.
+    Compare the estimate against what actually happened - leg by leg.
 
-    The first stop starts the clock. From then on the elapsed time is measured
-    against the sum of the legs already ticked off, which is the only honest
-    check the plugin can make on its own model - and it is the one that tells
-    you whether the remaining minutes are worth anything.
+    Each tick measures the time since the previous tick against the planned
+    time of the stop just reached, taken now, while it still holds its work
+    (once a body is mapped the rebuilt route plans no work for it, so a sum
+    over the rebuilt route made every pace look slow). The pace is the
+    median of those ratios (sysroute.pace_ratio): a leg with repairs, a
+    landing or a body mapped on the side does not decide it. The first tick
+    - also halfway through a system after an EDMC restart - starts the
+    clock.
     """
     route = ST.route
+    now = time.time()
     if route is None or not ST.route_done:
         ST.route_feedback = ""
         return
     if ST.route_started is None:
-        # the clock starts here - also halfway through a system after an
-        # EDMC restart, so the stops done before it are not compared
-        ST.route_started = time.time()
-        ST.route_base = set(ST.route_done)
+        ST.route_started = now
+        ST.route_legs = []
         ST.route_feedback = ""
         return
-    elapsed = time.time() - ST.route_started
-    planned = sum(s.leg_s for s in route.stops
-                  if s.body.body_id in ST.route_done
-                  and s.body.body_id not in ST.route_base)
-    if planned < 60 or elapsed < 60:
+    if stop is not None:
+        ST.route_legs.append((stop.leg_s, now - ST.route_started))
+    ST.route_started = now                   # the next leg starts here
+    ratio = pace_ratio(ST.route_legs)
+    if ratio is None:
         ST.route_feedback = ""
         return
-    ratio = elapsed / planned
     left = sum(s.leg_s for s in route.stops
                if s.body.body_id not in ST.route_done)
     ST.route_feedback = ("actual pace %.1fx the estimate - "
                          "remaining is more like %.0f min"
                          % (ratio, left * ratio / 60.0))
-    logger.info("route | %s (elapsed %.0f min vs planned %.0f min)",
-                ST.route_feedback, elapsed / 60.0, planned / 60.0)
+    logger.info("route | %s (median of %d legs)", ST.route_feedback, len(ST.route_legs))
 
 
 def _route_tick(body_id: int) -> None:
@@ -1777,7 +1852,8 @@ def _route_tick(body_id: int) -> None:
     done = body_id not in ST.route_done
     if done:
         ST.route_done.add(body_id)
-        _route_progress_feedback()
+        _route_progress_feedback(next((s for s in (ST.route.stops if ST.route else [])
+                                       if s.body.body_id == body_id), None))
     else:
         ST.route_done.discard(body_id)
     if ST.db and ST.cur_id64:
@@ -2330,7 +2406,7 @@ def _bootstrap_fuel() -> None:
         return
     files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
                    + glob.glob(os.path.join(d, "Journal_*.log")))[-6:]
-    used: List[Tuple[float, float]] = []
+    cmdr: Optional[str] = None
     for fn in files:
         try:
             with open(fn, "r", encoding="utf-8", errors="replace") as f:
@@ -2343,6 +2419,10 @@ def _bootstrap_fuel() -> None:
                     except ValueError:
                         continue
                     v = e.get("event")
+                    if v in ("Commander", "LoadGame"):
+                        cmdr = e.get("Name") or e.get("Commander") or cmdr
+                    if v in ("LoadGame", "Loadout") and e.get("ShipID") is not None:
+                        ST.fuel.set_ship((cmdr, e.get("ShipID")))
                     if v == "Loadout":
                         if e.get("MaxJumpRange"):
                             ST.fuel.max_jump = float(e["MaxJumpRange"])
@@ -2351,13 +2431,11 @@ def _bootstrap_fuel() -> None:
                             ST.fuel.capacity = float(cap)
                     elif v == "FSDJump":
                         if e.get("FuelUsed") is not None:
-                            used.append((float(e.get("JumpDist") or 0.0),
-                                         float(e["FuelUsed"])))
+                            ST.fuel.add_jump(e.get("JumpDist"), e.get("FuelUsed"))
                         if e.get("FuelLevel") is not None:
                             ST.fuel.level = float(e["FuelLevel"])
         except (OSError, TypeError, ValueError):
             continue
-    ST.fuel.jumps = [(d, u) for d, u in used if d > 0.1 and u > 0.0]
     logger.info("fuel | %s", ST.fuel.summary())
 
 
@@ -2980,6 +3058,10 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
     if not ST.db:
         return
     ev = entry.get("event")
+    if cmdr and cmdr != ST.cmdr:
+        if ST.cmdr is not None:
+            _commander_switched()
+        ST.cmdr = cmdr
     try:
         # Before the dispatch chain: any event naming a body updates where we
         # are. Putting this inside the chain meant whichever branch matched
@@ -3061,6 +3143,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 pass
 
         if ev in ("FSDJump", "Location", "CarrierJump"):
+            ST.awaiting_position = False
             if entry.get("SystemAddress") != ST.cur_id64:
                 ST.route_done.clear()
                 ST.route_started = None
@@ -3102,6 +3185,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                              "approach" if ev == "ApproachBody" else "landed")
 
         elif ev == "Loadout":
+            if entry.get("ShipID") is not None:
+                ST.fuel.set_ship((cmdr, entry.get("ShipID")))
             mj = entry.get("MaxJumpRange")
             if mj:
                 ST.max_jump = float(mj)
@@ -3117,7 +3202,9 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 pos = entry.get("StarPos")
                 if pos and len(pos) >= 3:
                     ST.cur_pos = (pos[0], pos[1], pos[2])
-            _run_async(_recheck_route, "game restart", label="route recheck")
+                ST.awaiting_position = False
+            if not ST.awaiting_position:
+                _run_async(_recheck_route, "game restart", label="route recheck")
             route = state.get("NavRoute") if state else None
             if route and cfg_bool(CFG["harvest_navroute"], True):
                 with ST.lock:
@@ -3938,7 +4025,11 @@ def _refresh() -> None:
                 if pr["dss_open"]:
                     bits.append("DSS %d" % len(pr["dss_open"]))
                 if pr["bio_open"]:
-                    bits.append("Bio %d" % len(pr["bio_open"]))
+                    # M1: open signals and where - finished bodies drop out
+                    short = [shorten(n, ST.cur_system) for n in pr["bio_open"]]
+                    bits.append("Bio %d open (%s%s)" % (
+                        pr.get("bio_signals_open") or len(short), ", ".join(short[:3]),
+                        ", ..." if len(short) > 3 else ""))
                 if pr["new_discoveries"]:
                     bits.append("first %d" % pr["new_discoveries"])
                 if bits:
@@ -4182,6 +4273,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     _p["route_top"] = tk.IntVar(value=1 if cfg_bool(CFG["route_top"], True) else 0)
     _p["route_map"] = tk.IntVar(value=1 if cfg_bool(CFG["route_map"], True) else 0)
     _p["route_all"] = tk.IntVar(value=1 if cfg_bool(CFG["route_all"], False) else 0)
+    _p["route_arrival"] = tk.IntVar(value=1 if cfg_bool(CFG["route_arrival"], True) else 0)
     _p["show_route"] = tk.IntVar(value=1 if cfg_bool(CFG["show_route"], True) else 0)
     field(right, "right", "", nb.Checkbutton(
         right, text="keep windows on top", variable=_p["route_top"]))
@@ -4189,6 +4281,8 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
         right, text="draw the system map", variable=_p["route_map"]))
     field(right, "right", "", nb.Checkbutton(
         right, text="route every body", variable=_p["route_all"]))
+    field(right, "right", "", nb.Checkbutton(
+        right, text="start the route at the arrival star", variable=_p["route_arrival"]))
     field(right, "right", "", nb.Checkbutton(
         right, text="show the route line in the panel", variable=_p["show_route"]))
 
@@ -4328,6 +4422,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["carrier_start"], bool(_p["carrier_start"].get()))
         cfg_set(CFG["show_route"], bool(_p["show_route"].get()))
         cfg_set(CFG["route_all"], bool(_p["route_all"].get()))
+        cfg_set(CFG["route_arrival"], bool(_p["route_arrival"].get()))
         cfg_set(CFG["route_top"], bool(_p["route_top"].get()))
         cfg_set(CFG["route_map"], bool(_p["route_map"].get()))
         cfg_set(CFG["map_size"], _p["map_size"].get())

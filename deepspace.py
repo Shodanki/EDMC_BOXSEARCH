@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 deepspace.py - fuel range and carrier staging for SHBOXSEARCH v4
 ================================================================
@@ -25,7 +30,7 @@ Standard library only.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 __all__ = [
     "SCOOPABLE", "RING_TRITIUM", "FuelState", "ring_summary",
@@ -76,6 +81,23 @@ class FuelState:
         self.level = level
         self.max_jump = max_jump
         self.jumps: List[Tuple[float, float]] = list(jumps or [])  # (ly, tonnes)
+        # the jumps belong to one ship of one commander: another ship (or
+        # the other commander's) burns differently - mixing them made the
+        # fit claim a Caspian at 68 ly needs 29 t a jump (11.11.2026)
+        self.ship: Any = None
+        self._by_ship: Dict[Any, List[Tuple[float, float]]] = {}
+
+    def set_ship(self, key: Any) -> bool:
+        """Switch to the jump history of this ship (commander, ShipID);
+        the previous ship's history is kept for when it comes back. True
+        when the ship changed."""
+        if key is None or key == self.ship:
+            return False
+        if self.ship is not None:
+            self._by_ship[self.ship] = self.jumps
+        self.ship = key
+        self.jumps = list(self._by_ship.get(key, []))
+        return True
 
     def add_jump(self, dist_ly: Optional[float], used_t: Optional[float]) -> None:
         try:

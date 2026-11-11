@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // 3D renderer for SYSTEM (Three.js, loaded by the browser from the CDN).
 // Expanse-like: thin orbit lines, faint range rings, lines instead of
 // surfaces; labels live on the shared 2D overlay (scene.js).

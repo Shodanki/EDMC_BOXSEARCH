@@ -1,6 +1,42 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // Small DOM and formatting helpers shared by all views.
 
 import { t, locale, lang } from "./i18n.js";
+
+// ------------------------------------------------------------ colour tokens
+// T1: the interface colours live as CSS variables in fis.css (:root); canvas
+// drawing reads the same tokens here, so a theme changes both. The values
+// below are only the fallback while the stylesheet is not there. Stars and
+// planet classes keep their physical colours (scene.js) - no theme repaints
+// a G star. A theme switch reloads the page (themeChanged() for tests).
+const TOKENS = { cyan: "#3EF2E0", green: "#7CFF6B", amber: "#FFB23E", red: "#FF4D4D",
+  violet: "#B57CFF", dim: "#6E8F8B", text: "#CFEFEB", faint: "#2A3D3B", blue: "#4FA3FF",
+  gold: "#FFD23E", white: "#FFFFFF", panel: "#050C0D", bg: "#05080A", ink: "#071214" };
+let tokenCache = null;
+function readTokens() {
+  const out = Object.assign({}, TOKENS);
+  try {
+    const cs = getComputedStyle(document.documentElement);
+    for (const k of Object.keys(TOKENS)) {
+      const v = cs.getPropertyValue("--" + k).trim();
+      if (/^#[0-9a-f]{6}$/i.test(v)) out[k] = v;
+    }
+  } catch (e) { /* no document (tests): the fallback values */ }
+  return out;
+}
+/** C.cyan, C.amber ... - the theme's colour for canvas drawing. */
+export const C = new Proxy({}, { get(_t, k) { if (!tokenCache) tokenCache = readTokens(); return tokenCache[k]; } });
+/** alpha("cyan", .25) -> "rgba(62,242,224,0.25)" in the theme's colour. */
+export function alpha(token, a) {
+  const h = C[token] || token;
+  const n = parseInt(String(h).slice(1), 16);
+  return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
+}
+export function themeChanged() { tokenCache = null; }
 
 export function el(tag, attrs = {}, ...kids) {
   const n = document.createElement(tag);
@@ -18,6 +54,41 @@ export function el(tag, attrs = {}, ...kids) {
     n.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
   }
   return n;
+}
+
+/**
+ * Copy text to the clipboard. The Clipboard API exists only in a secure
+ * context - on the game PC (localhost) - so a tablet over plain http in the
+ * home network falls back to a selected text field and the old copy
+ * command; if even that is refused, the text stays selected in the field
+ * for a long press. Returns true when the text was copied.
+ */
+export async function copyText(text, btn) {
+  const mark = (s) => { if (!btn) return; const old = btn.dataset.label || btn.textContent;
+    btn.dataset.label = old; btn.textContent = s; setTimeout(() => { btn.textContent = old; }, 1400); };
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      mark("✓"); return true;
+    }
+  } catch (e) { /* fall back below */ }
+  const ta = el("textarea", { readonly: true, class: "copy-buf",
+    style: { position: "fixed", left: "0", bottom: "0", width: "1px", height: "1px", opacity: "0" } });
+  ta.value = text;
+  document.body.append(ta);
+  ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  if (ok) { ta.remove(); mark("✓"); return true; }
+  // last resort: show the text, selected, to copy by hand
+  Object.assign(ta.style, { width: "min(90vw, 420px)", height: "2.4em", opacity: "1", left: "50%",
+    bottom: "12px", transform: "translateX(-50%)", zIndex: "9999" });
+  ta.focus(); ta.select();
+  const gone = () => ta.remove();
+  ta.addEventListener("blur", gone, { once: true });
+  setTimeout(gone, 30000);
+  mark("…");
+  return false;
 }
 
 /** A chamfered frame: <div.frame><div.frame-in>title + body</div></div> */

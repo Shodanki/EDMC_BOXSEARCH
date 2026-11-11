@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 GALAXY: where you have been, where you survey, what is still open.
 
@@ -37,6 +42,11 @@ MAX_PATH = 20000
 def _plugin():
     from .model import plugin
     return plugin()
+
+
+def _info_level(row, regions):
+    from .model import info_level
+    return info_level(row, regions)
 
 
 def _r(v: Optional[float], nd: int = 2) -> Optional[float]:
@@ -83,7 +93,7 @@ def _positions(archive: fl.Archive, db: Optional[Database] = None):
 def carrier_path(archive: fl.Archive, db: Optional[Database] = None) -> List[Dict[str, Any]]:
     """Positions the carrier went through (systems with known coordinates)."""
     seq: List[Dict[str, Any]] = []
-    for e in archive.events():
+    for e in archive.own_carrier_events():
         if e["event"] in ("CarrierJump", "CarrierLocation") and e.get("StarSystem"):
             if seq and seq[-1]["name"] == e["StarSystem"]:
                 continue
@@ -112,7 +122,7 @@ def carrier_now(archive: fl.Archive, db: Optional[Database] = None,
     ident: Dict[str, Any] = {}
     cur: Optional[Dict[str, Any]] = None
     req: Optional[Dict[str, Any]] = None
-    for e in archive.events():
+    for e in archive.own_carrier_events():
         ev = e["event"]
         if ev == "CarrierStats":
             ident = {"name": e.get("Name"), "callsign": e.get("Callsign")}
@@ -241,11 +251,12 @@ def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
     else:
         out["boxels"] = []
     # known systems
-    rows = db.query("SELECT name, id64, x, y, z, visited, fss_complete, sources FROM systems "
+    rows = db.query("SELECT name, id64, x, y, z, quality, visited, fss_complete, sources FROM systems "
                     "WHERE x IS NOT NULL") if db.has_table("systems") else []
+    regions = db.shell_regions()
     out["systems"] = [{"n": r["name"], "id": r["id64"], "x": _r(r["x"]), "y": _r(r["y"]), "z": _r(r["z"]),
                        "v": 1 if r["visited"] else 0, "f": 1 if r["fss_complete"] else 0,
-                       "u": 1 if (r["visited"] and not Database.known_sources(r)) else 0}
+                       "u": 1 if (r["visited"] and _info_level(r, regions)[0] == "checked") else 0}
                       for r in rows]
     # finds worth a symbol
     finds: Dict[Any, Dict[str, Any]] = {}

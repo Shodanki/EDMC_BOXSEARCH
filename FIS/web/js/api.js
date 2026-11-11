@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // JSON API and Server-Sent Events. The LAN token (if any) travels as a
 // cookie set when the page was opened with ?token=..., so nothing here
 // needs to know it; it is still forwarded as a header when present in the URL.

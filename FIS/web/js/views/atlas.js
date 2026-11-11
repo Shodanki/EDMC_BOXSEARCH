@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // ATLAS – everything found, of one kind, nearest first.
 // Tabs: ring hotspots · body signals · materials picked up · finds on the
 // ground. Second picker narrows to one kind, the search box filters system,
@@ -5,20 +10,25 @@
 // known body open the system in a new tab. The small map is a top view of the
 // hits around you (galactic x/z, ly).
 
-import { getJSON } from "../api.js";
-import { el, frame, fmt } from "../ui.js";
+import { getJSON, withToken } from "../api.js";
+import { el, frame, fmt, copyText, C, alpha } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const TABS = [["rings", N_("RINGS")], ["signals", N_("SIGNALS")], ["materials", N_("MATERIALS")], ["finds", N_("FINDS")],
-  ["bio", N_("BIOLOGY")]];
+  ["bio", N_("BIOLOGY")], ["systems", N_("SYSTEMS")]];
+// M6: the survey sphere's systems by state
+const SYS_KIND = { unvisited: N_("not visited yet"), visited: N_("visited"), surveyed: N_("surveyed (FSS complete)"),
+  only_us: N_("known to no online source"), absent: N_("checked - does not exist") };
+const SYS_SHORT = { unvisited: N_("not visited"), visited: N_("visited"), surveyed: N_("surveyed"), absent: N_("does not exist") };
 // M1: bodies with bio signals from all your journals - open first by default
 const BIO_KIND = { open: N_("still open"), done: N_("all analysed") };
 const FIND_KIND = { codex: N_("codex finds"), bio_analyse: N_("biology analysed"),
   settlement: N_("settlements"), screenshot: N_("screenshots / waypoints") };
 const FIND_SHORT = { codex: N_("codex"), bio_analyse: N_("bio ✔"), settlement: N_("settlement"), screenshot: N_("screenshot") };
-const TONE = { rings: "#FFB23E", signals: "#3EF2E0", materials: "#B57CFF", finds: "#7CFF6B", bio: "#C6FF4D" };
+const TONE = { rings: C.amber, signals: C.cyan, materials: C.violet, finds: C.green, bio: "#C6FF4D", systems: C.cyan };
 
-let root = null, ctxRef = null, list = null, info = null, cv = null, pick = null, search = null, tabBar = null, range = null;
+let root = null, ctxRef = null, list = null, info = null, cv = null, pick = null, search = null, tabBar = null, range = null,
+  exportBar = null;
 const RANGES = [25, 50, 100, 250, 500, 1000, 2000, 0];     // ly, 0 = everything
 let state = { view: localStorage.getItem("fis.atlas.view") || "signals", kind: "", q: "",
   max: Number(localStorage.getItem("fis.atlas.max") || "0") };
@@ -38,6 +48,11 @@ export function mount(r, ctx) {
   search = el("input", { class: "at-search", type: "search", placeholder: t("search system, body, name …"),
     oninput: () => { clearTimeout(timer); timer = setTimeout(() => { state.q = search.value.trim(); load(); }, 250); } });
   info = el("div", { class: "at-info c-dim" });
+  // M14: the survey sphere as a file
+  exportBar = el("div", { class: "row-btns small", style: { display: "none" } },
+    el("span", { class: "c-dim", text: t("export the survey sphere:") + " " }),
+    el("a", { class: "btn", href: withToken("/api/survey/export?format=csv"), download: "", text: "CSV" }),
+    el("a", { class: "btn", href: withToken("/api/survey/export?format=json"), download: "", text: "JSON" }));
   list = el("div", { class: "at-list scroll" });
   cv = el("canvas", { class: "at-map" });
   cv.addEventListener("mousemove", onMapMove);
@@ -45,7 +60,7 @@ export function mount(r, ctx) {
   cv.addEventListener("click", () => { if (hover >= 0 && data) open(data.items[hover]); });
   new ResizeObserver(() => drawMap()).observe(cv);
   root.append(el("div", { class: "at-grid" },
-    frame("ATLAS", "", [tabBar, el("div", { class: "at-bar" }, pick, range, search), info, list], { cls: "at-main" }),
+    frame("ATLAS", "", [tabBar, el("div", { class: "at-bar" }, pick, range, search), exportBar, info, list], { cls: "at-main" }),
     frame(t("AROUND YOU"), t("top view · ly"), cv, { cls: "at-side" })));
 }
 
@@ -67,7 +82,9 @@ async function setView(v, keepQuery) {
   try { kinds = (await getJSON("/api/atlas/kinds?view=" + v)).kinds || []; } catch (e) { kinds = []; }
   pick.replaceChildren(el("option", { value: "", text: t("(all)") }),
     ...kinds.map(k => el("option", { value: k.key,
-      text: (v === "finds" && FIND_KIND[k.key] ? t(FIND_KIND[k.key]) : v === "bio" && BIO_KIND[k.key] ? t(BIO_KIND[k.key]) : k.label) + " (" + k.count + ")" })));
+      text: (v === "finds" && FIND_KIND[k.key] ? t(FIND_KIND[k.key]) : v === "bio" && BIO_KIND[k.key] ? t(BIO_KIND[k.key])
+        : v === "systems" && SYS_KIND[k.key] ? t(SYS_KIND[k.key]) : k.label) + " (" + k.count + ")" })));
+  exportBar.style.display = v === "systems" ? "" : "none";
   if (![...pick.options].some(o => o.value === state.kind)) state.kind = "";
   pick.value = state.kind;
   load();
@@ -97,6 +114,12 @@ function where(it) {
     return parts.join(" · ");
   }
   if (state.view === "materials") return it.category ? it.category + (it.last ? " · " + it.last : "") : (it.last || "");
+  if (state.view === "systems") {
+    const parts = [];
+    if (it.bodies) parts.push(t("{n} bodies", { n: it.bodies }));
+    if (it.key !== "absent") parts.push(it.only_us ? t("known to no online source") : it.sources.join(", "));
+    return parts.join(" · ");
+  }
   return "";
 }
 
@@ -124,8 +147,11 @@ function render() {
       el("span", { class: "at-d", text: it.dist_ly !== null && it.dist_ly !== undefined ? fmt(it.dist_ly, 1) + " ly" : "–" }),
       el("span", { class: "at-sys", text: it.system }),
       el("span", { class: "at-body c-cyan", text: it.body_short || "" }),
-      el("span", { class: "at-lab" + (state.view === "bio" ? (it.open ? " c-amber" : " c-green") : ""), text: state.view === "bio"
+      el("span", { class: "at-lab" + (state.view === "bio" ? (it.open ? " c-amber" : " c-green")
+        : state.view === "systems" ? (it.key === "surveyed" ? " c-green" : it.key === "visited" ? " c-cyan" : it.key === "absent" ? " c-dim" : " c-amber") : ""),
+        text: state.view === "bio"
         ? (it.open ? t("{o} of {n} open", { o: it.open, n: it.signals }) : t("all {n} done", { n: it.signals }))
+        : state.view === "systems" ? t(SYS_SHORT[it.key] || it.key) + (it.only_us ? " ★" : "")
         : (it.label || "") + (it.count > 1 ? " ×" + it.count : "") }),
       el("span", { class: "at-w c-dim", text: where(it) }),
       el("button", { class: "at-copy", title: t("copy system name"), text: "⧉",
@@ -136,16 +162,12 @@ function render() {
 }
 
 function open(it) {
-  if (!it) return;
+  if (!it || !it.id64) return;            // a name checked as not existing has no system to open
   if (it.body_id !== undefined && it.body_id !== null) ctxRef.select(it.id64, it.body_id, true);
   else window.open("/?system=" + it.id64 + "#tactical", "_blank");
 }
 
-async function copy(text, btn) {
-  try { await navigator.clipboard.writeText(text); btn.textContent = "✓"; }
-  catch (e) { btn.textContent = "×"; }
-  setTimeout(() => { btn.textContent = "⧉"; }, 1200);
-}
+function copy(text, btn) { return copyText(text, btn); }
 
 function setHover(i) {
   if (i === hover) return;
@@ -183,7 +205,7 @@ function drawMap() {
   // keep room, the far ones still fit)
   const sq = !state.max && far > 250;
   const scale = (d) => R * (sq ? Math.sqrt(d / maxd) : d / maxd);
-  g.strokeStyle = "rgba(62,242,224,.14)"; g.fillStyle = "#6E8F8B"; g.font = "10px monospace";
+  g.strokeStyle = alpha("cyan", .14); g.fillStyle = C.dim; g.font = "10px monospace";
   const rings = sq ? [25, 100, 250, 500, 1000, 2000, 5000, 10000, 20000].filter(r => r <= maxd * 1.05)
     : (() => { const st = maxd > 400 ? 200 : maxd > 150 ? 50 : maxd > 60 ? 25 : 10; const a = []; for (let r = st; r <= maxd * 1.05; r += st) a.push(r); return a; })();
   for (const r of rings) {
@@ -192,21 +214,21 @@ function drawMap() {
     g.fillText(fmt(r, 0) + " ly", cx + rr * 0.71 + 3, cy - rr * 0.71 - 3);
   }
   g.beginPath(); g.moveTo(cx - 6, cy); g.lineTo(cx + 6, cy); g.moveTo(cx, cy - 6); g.lineTo(cx, cy + 6);
-  g.strokeStyle = "#CFEDEA"; g.stroke();
+  g.strokeStyle = C.text; g.stroke();
   // hits: galactic x to the right, z up (towards the core)
-  const col = TONE[state.view] || "#3EF2E0";
+  const col = TONE[state.view] || C.cyan;
   for (const p of pts) {
     const d = Math.hypot(p.it.rel[0], p.it.rel[2]) || 1e-9;
     const k = Math.min(scale(d), R + 4) / d;
     const x = cx + p.it.rel[0] * k, y = cy - p.it.rel[2] * k;
     dots.push({ x, y, i: p.i });
     const hot = p.i === hover;
-    g.fillStyle = hot ? "#FFFFFF" : col;
+    g.fillStyle = hot ? C.white : col;
     g.globalAlpha = hot ? 1 : 0.75;
     g.beginPath(); g.arc(x, y, hot ? 5 : 3, 0, Math.PI * 2); g.fill();
     if (hot) { g.font = "11px monospace"; g.fillText(p.it.system + (p.it.body_short ? " " + p.it.body_short : ""), x + 8, y - 6); }
   }
   g.globalAlpha = 1;
-  g.fillStyle = "#6E8F8B"; g.font = "10px monospace";
+  g.fillStyle = C.dim; g.font = "10px monospace";
   g.fillText(t("you") + " +   " + t("core") + " ↑" + (sq ? "   " + t("√ scale") : ""), 8, H - 8);
 }

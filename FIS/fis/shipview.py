@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 SHIP and CARRIER: what the views show, prepared for a glance.
 
@@ -346,6 +351,59 @@ def hold_tritium(capi_path: Optional[str], now: float) -> Optional[Dict[str, Any
     return {"t": d["tritium"], "age_s": d["age_s"], "saved": d["saved"]} if d else None
 
 
+def visiting_carrier(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
+                     own_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """
+    M7: docked at someone else's fleet carrier - what its market buys and
+    sells, from Market.json (written when you open the commodity market).
+    Only while docked (Status.json), only when the last docking was this
+    very market and only with a Market.json opened since, so an old file
+    never shows. A hint how you can
+    help - tritium for the next jump, trade orders - nothing is sent.
+    """
+    if not journal_dir or not (int((live.get("status") or {}).get("flags") or 0) & 1):
+        return None
+    m = _read_json(os.path.join(journal_dir, "Market.json")) or {}
+    if m.get("StationType") != "FleetCarrier" or not m.get("MarketID"):
+        return None
+    if own_id and m.get("MarketID") == own_id:
+        return None
+    # the docking: a Docked event - or, when the game was loaded on the pad,
+    # the Location written with Docked: true. The market must be younger
+    # than it, else Market.json is from an earlier visit.
+    dock = None
+    try:
+        dock = next((e for e in reversed(archive.events())
+                     if e.get("event") == "Docked"
+                     or (e.get("event") == "Location" and e.get("Docked"))), None)
+    except Exception:
+        dock = None
+    if not dock or dock.get("MarketID") != m.get("MarketID"):
+        return None
+    if (m.get("timestamp") or "") < (dock.get("timestamp") or ""):
+        return None
+    cargo = _read_json(os.path.join(journal_dir, "Cargo.json")) or {}
+    carry = {}
+    if cargo.get("Vessel", "Ship") == "Ship":
+        for c in cargo.get("Inventory") or []:
+            carry[(c.get("Name") or "").lower()] = int(c.get("Count") or 0)
+    buys, sells = [], []
+    for it in m.get("Items") or []:
+        key = (it.get("Name") or "").strip("$;").replace("_name", "").lower()
+        name = it.get("Name_Localised") or key.capitalize()
+        if int(it.get("Demand") or 0) > 0:
+            buys.append({"key": key, "name": name, "price": int(it.get("SellPrice") or 0),
+                         "demand": int(it.get("Demand") or 0), "carry": carry.get(key, 0)})
+        if int(it.get("Stock") or 0) > 0:
+            sells.append({"key": key, "name": name, "price": int(it.get("BuyPrice") or 0),
+                          "stock": int(it.get("Stock") or 0)})
+    buys.sort(key=lambda b: (-(b["carry"] > 0), -(b["key"] == "tritium"), -b["demand"]))
+    sells.sort(key=lambda s: -s["stock"])
+    return {"callsign": m.get("StationName"), "system": m.get("StarSystem"),
+            "access": m.get("CarrierDockingAccess"), "market_ts": m.get("timestamp"),
+            "buys": buys, "sells": sells}
+
+
 def build_carrier(archive: fl.Archive, live: Dict[str, Any],
                   now: Optional[float] = None, journal_dir: Optional[str] = None,
                   capi_path: Optional[str] = None) -> Dict[str, Any]:
@@ -353,6 +411,10 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
     c = archive.carrier()
     fleet = archive.fleet()
     out: Dict[str, Any] = {"generated": now, "fleet": fleet["ships"], "hangar": fleet["hangar"]}
+    own_id = ((c or {}).get("stats") or {}).get("CarrierID")
+    vis = visiting_carrier(archive, live or {}, journal_dir, own_id)
+    if vis:
+        out["visiting"] = vis
     if not c:
         out["empty"] = True
         return out

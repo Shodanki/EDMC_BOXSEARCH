@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 sysroute.py - in-system route planning for SHBOXSEARCH v4
 =========================================================
@@ -521,12 +526,73 @@ def body_matches(b: Body, filters: Sequence[str]) -> bool:
     return False
 
 
+def spread_points(points: Dict[int, Tuple[float, float]], min_d: float = 12.0,
+                  rounds: int = 40, fixed: Sequence[int] = ()) -> Dict[int, Tuple[float, float]]:
+    """
+    E17: pull apart map points that sit on top of each other (screen
+    space). The planets of a far companion star all land on one spot of a
+    log-scaled map; a few rounds of pairwise pushing give each its own
+    place while points that are already apart do not move. `fixed` keys
+    (the arrival star) stay put. The map is schematic anyway - direction
+    and order are kept, distances inside a tight cluster are not.
+    """
+    pts = {k: [float(x), float(y)] for k, (x, y) in points.items()}
+    keys = sorted(pts)
+    fix = set(fixed)
+    for _ in range(max(0, rounds)):
+        moved = False
+        for i, a in enumerate(keys):
+            for b in keys[i + 1:]:
+                pa, pb = pts[a], pts[b]
+                dx, dy = pb[0] - pa[0], pb[1] - pa[1]
+                d = math.hypot(dx, dy)
+                if d >= min_d:
+                    continue
+                if d < 1e-6:                     # exactly on top: a fixed direction per body
+                    dx, dy, d = math.cos(b * 2.399963), math.sin(b * 2.399963), 1.0
+                push = (min_d - d) / 2.0
+                ux, uy = dx / d, dy / d
+                wa = 0.0 if a in fix else (1.0 if b in fix else 0.5)
+                wb = 0.0 if b in fix else (1.0 if a in fix else 0.5)
+                pa[0] -= ux * push * 2 * wa
+                pa[1] -= uy * push * 2 * wa
+                pb[0] += ux * push * 2 * wb
+                pb[1] += uy * push * 2 * wb
+                moved = True
+        if not moved:
+            break
+    return {k: (round(v[0], 1), round(v[1], 1)) for k, v in pts.items()}
+
+
+PACE_MIN_LEG_S = 20.0   # legs planned shorter than this say nothing about pace
+
+
+def pace_ratio(legs: Sequence[Tuple[float, float]]) -> Optional[float]:
+    """
+    R1: how the commander's pace compares with the estimate, from
+    (planned s, actual s) per leg - the median ratio, so one leg with a
+    repair, a landing or a body mapped on the side does not decide it.
+    None with fewer than two usable legs.
+    """
+    r = sorted(a / p for p, a in legs if p >= PACE_MIN_LEG_S and a > 0)
+    if len(r) < 2:
+        return None
+    n = len(r)
+    return r[n // 2] if n % 2 else (r[n // 2 - 1] + r[n // 2]) / 2.0
+
+
+def is_arrival_star(b: Body) -> bool:
+    """The star the jump drops you at: a star 0 LS from the arrival point."""
+    return b.kind == "Star" and b.arrival_ls < 1.0
+
+
 def plan_route(system: str, bodies: Dict[int, Body],
                model: CostModel = DEFAULT_MODEL,
                start: Sequence[float] = (0.0, 0.0, 0.0),
                only_work: bool = True,
                group_moons: bool = True,
-               filters: Optional[Sequence[str]] = None) -> SystemRoute:
+               filters: Optional[Sequence[str]] = None,
+               skip_arrival: bool = False) -> SystemRoute:
     """
     Order the bodies into a short route.
 
@@ -538,6 +604,9 @@ def plan_route(system: str, bodies: Dict[int, Body],
     group_moons keeps a planet and its moons together as one cluster. They sit
     within a few light seconds of each other, so splitting them up is always a
     loss, and clustering shrinks the problem the optimiser has to solve.
+
+    skip_arrival leaves out the star you arrive at (0 LS) - the route then
+    starts with the first planned body instead of the arrival star.
     """
     resolve_positions(bodies)
 
@@ -547,6 +616,8 @@ def plan_route(system: str, bodies: Dict[int, Body],
         targets = [b for b in bodies.values()
                    if (b.has_work if only_work else b.kind in ("Planet", "Star"))]
     targets = [b for b in targets if not is_secondary_star(b)]
+    if skip_arrival:
+        targets = [b for b in targets if not is_arrival_star(b)]
     skipped = len(bodies) - len(targets)
     if not targets:
         return SystemRoute(system, [], skipped, model)
@@ -793,3 +864,50 @@ def shorten(name: str, system: str) -> str:
         rest = name[len(system):].strip()
         return rest if rest else "(main star)"
     return name or "?"
+
+
+def _selftest() -> int:
+    """python sysroute.py - the arrival star can be left out (R2)."""
+    fails = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal fails
+        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
+        fails += 0 if ok else 1
+
+    bodies = {
+        0: Body(0, "Sys A", kind="Star", arrival_ls=0.0),
+        1: Body(1, "Sys A 1", kind="Planet", arrival_ls=120.0, parent_id=0),
+        2: Body(2, "Sys A 2", kind="Planet", arrival_ls=900.0, parent_id=0),
+        3: Body(3, "Sys B", kind="Star", arrival_ls=5000.0),
+    }
+    names = lambda r: [s.body.name for s in r.stops]   # noqa: E731
+    full = plan_route("Sys", bodies, filters=[F_ALL])
+    check("Sys A" in names(full), "by default the arrival star is a stop")
+    short = plan_route("Sys", bodies, filters=[F_ALL], skip_arrival=True)
+    check("Sys A" not in names(short) and len(short.stops) == len(full.stops) - 1,
+          "skip_arrival: the route starts with the first planned body")
+    check(is_arrival_star(bodies[0]) and not is_arrival_star(bodies[3]),
+          "only the star at 0 LS counts as the arrival star")
+    # E17: a cluster of five points on one spot spreads out, lone points stay
+    pts = {1: (100.0, 100.0), 2: (100.0, 100.0), 3: (101.0, 100.0), 4: (100.0, 101.0),
+           5: (100.5, 100.5), 9: (300.0, 50.0), 0: (200.0, 200.0)}
+    out = spread_points(pts, 12.0, fixed=[0])
+    near = [(a, b) for a in (1, 2, 3, 4, 5) for b in (1, 2, 3, 4, 5)
+            if a < b and math.hypot(out[a][0] - out[b][0], out[a][1] - out[b][1]) < 11.0]
+    check(not near, "a cluster on one spot is pulled apart (%s)" % near)
+    check(out[9] == (300.0, 50.0) and out[0] == (200.0, 200.0), "lone and fixed points stay")
+    check(max(math.hypot(out[k][0] - 100, out[k][1] - 100) for k in (1, 2, 3, 4, 5)) < 40,
+          "the cluster stays where it was")
+    # R1: today's legs - mapping a few minutes each, one with 13 min of repairs
+    legs = [(240, 300), (100, 150), (200, 260), (250, 1030), (60, 90), (300, 330)]
+    r = pace_ratio(legs)
+    check(r is not None and 1.2 <= r <= 1.5, "median pace ignores the repair leg (%.2f)" % (r or 0))
+    check(pace_ratio([(240, 300)]) is None, "one leg is not enough")
+    check(pace_ratio([(5, 300), (240, 240), (200, 200)]) == 1.0, "legs under 20 s are left out")
+    print("failures: %d" % fails)
+    return fails
+
+
+if __name__ == "__main__":
+    raise SystemExit(1 if _selftest() else 0)

@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // GALAXY – your way through the galaxy and the survey around it.
 // Top view: galactic x to the right, z up (towards the core); y (height)
 // shows in the tooltip. Layers can be switched; the path is coloured by age
@@ -10,16 +15,15 @@
 // jump by jump, in both modes.
 
 import { getJSON } from "../api.js";
-import { el, frame, fmt, withPopout } from "../ui.js";
+import { el, frame, fmt, withPopout, copyText, C, alpha } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const LAYERS = [["path", N_("flight path")], ["carrier", N_("carrier")], ["systems", N_("systems")],
   ["boxels", N_("boxels")], ["spheres", N_("spheres")], ["finds", N_("finds")], ["navroute", N_("route")]];
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
 const MC = "abcdefgh";
-const C = { cyan: "#3EF2E0", amber: "#FFB23E", green: "#7CFF6B", violet: "#B57CFF", red: "#FF4D4D",
-  dim: "#6E8F8B", text: "#CFEDEA", grid: "rgba(62,242,224,.07)" };
-const FIND_COL = { guardian: "#4FA3FF", nonhuman: "#7CFF6B", brain: "#B57CFF" };
+// interface colours: C / alpha() from ui.js (theme tokens)
+const FIND_COL = { guardian: C.blue, nonhuman: C.green, brain: C.violet };
 const FIND_NAME = { guardian: N_("Guardian site"), nonhuman: N_("non-human site"), brain: N_("Brain Trees") };
 const BOX_NAME = { closed: N_("closed"), open: N_("open"), unchecked: N_("never checked") };
 
@@ -92,6 +96,7 @@ function fromPick(p) {
   if (p.kind === "find") return { kind: "find", name: p.f.name, id: p.f.id, x: p.f.x, y: p.f.y, z: p.f.z, kinds: p.f.kinds };
   if (p.kind === "carrier") return { kind: "stop", name: p.c.name, id: p.c.id, x: p.c.x, y: p.c.y, z: p.c.z, t: p.c.t };
   if (p.kind === "carriernow") return carrierFocus();
+  if (p.kind === "favcarrier") return { kind: "system", name: p.c.system, id: p.c.id, x: p.c.x, y: p.c.y, z: p.c.z };
   return null;
 }
 function carrierFocus() {
@@ -143,7 +148,7 @@ async function setMode(m) {
     ui.eng.textContent = t("loading 3D …"); ui.eng.className = "gal-eng small c-dim";
     try {
       g3load = g3load || Promise.race([import("./galaxy3d.js"),
-        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000))]);
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000))]);   // a tablet on Wi-Fi
       const mod = await g3load;
       if (!g3) g3 = mod.createGalaxy3D(stage, ov, { t, label, carrierTexts, pick: pickFocus, open: (p) => openDetail(p.id) });
       g3.setReplay(replay);
@@ -267,7 +272,7 @@ function draw() {
   // grid
   const step = niceStep(90 / view.scale);
   const [x0, z1] = toWorld(0, 0), [x1, z0] = toWorld(W, H);
-  g.strokeStyle = C.grid; g.lineWidth = 1; g.beginPath();
+  g.strokeStyle = alpha("cyan", .07); g.lineWidth = 1; g.beginPath();
   for (let x = Math.floor(x0 / step) * step; x <= x1; x += step) { const [sx] = toScreen(x, 0); g.moveTo(sx, 0); g.lineTo(sx, H); }
   for (let z = Math.floor(z0 / step) * step; z <= z1; z += step) { const [, sy] = toScreen(0, z); g.moveTo(0, sy); g.lineTo(W, sy); }
   g.stroke();
@@ -290,7 +295,7 @@ function draw() {
       const gF = c.closed / n, aF = c.open / n;
       if (gF) { g.fillStyle = `rgba(124,255,107,${(.08 + .32 * gF).toFixed(3)})`; g.fillRect(sx - s / 2, sy - s / 2, s, s); }
       if (aF) { g.fillStyle = `rgba(255,178,62,${(.06 + .22 * aF).toFixed(3)})`; g.fillRect(sx - s / 2, sy - s / 2, s, s); }
-      g.strokeStyle = c.open ? "rgba(255,178,62,.45)" : c.closed === n ? "rgba(124,255,107,.5)" : "rgba(110,143,139,.22)";
+      g.strokeStyle = c.open ? alpha("amber", .45) : c.closed === n ? alpha("green", .5) : alpha("dim", .22);
       g.lineWidth = 1; g.strokeRect(sx - s / 2 + .5, sy - s / 2 + .5, s - 1, s - 1);
       if (s > 34) { g.fillStyle = c.closed === n ? C.green : c.open ? C.amber : C.dim; g.font = "10px monospace"; g.fillText(c.closed + "/" + n, sx - s / 2 + 4, sy + s / 2 - 4); }
       if (s > 10) picks.push({ sx, sy, kind: "boxel", c });
@@ -301,7 +306,7 @@ function draw() {
     for (const sp of data.spheres) {
       const act = data.active && Math.abs(sp.x - data.active.x) < .01 && Math.abs(sp.z - data.active.z) < .01;
       const [sx, sy] = toScreen(sp.x, sp.z);
-      g.setLineDash(act ? [] : [5, 5]); g.strokeStyle = act ? C.cyan : "rgba(62,242,224,.4)"; g.lineWidth = act ? 1.6 : 1;
+      g.setLineDash(act ? [] : [5, 5]); g.strokeStyle = act ? C.cyan : alpha("cyan", .4); g.lineWidth = act ? 1.6 : 1;
       g.beginPath(); g.arc(sx, sy, sp.r * view.scale, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
       g.fillStyle = act ? C.cyan : C.dim; g.font = "11px monospace";
       g.fillText(sp.label, sx + sp.r * view.scale * .72 + 4, sy - sp.r * view.scale * .72);
@@ -314,7 +319,7 @@ function draw() {
       if (!s.v && small) continue;                 // far out: only where you have been
       if (!vis(s.x, s.z)) continue;
       const [sx, sy] = toScreen(s.x, s.z);
-      g.fillStyle = s.u ? C.violet : s.v ? (s.f ? C.green : "rgba(124,255,107,.6)") : "rgba(110,143,139,.45)";
+      g.fillStyle = s.u ? C.violet : s.v ? (s.f ? C.green : alpha("green", .6)) : alpha("dim", .45);
       const r = s.v ? 2.2 : 1.3;
       g.fillRect(sx - r, sy - r, r * 2, r * 2);
       picks.push({ sx, sy, kind: "system", s, id: s.id });
@@ -323,7 +328,7 @@ function draw() {
   // carrier path
   if (on.carrier && data.carrier.length) {
     if (data.carrier.length > 1) {
-      g.strokeStyle = "rgba(255,178,62,.75)"; g.lineWidth = 1.2; g.setLineDash([2, 4]); g.beginPath();
+      g.strokeStyle = alpha("amber", .75); g.lineWidth = 1.2; g.setLineDash([2, 4]); g.beginPath();
       data.carrier.forEach((c, i) => { const [sx, sy] = toScreen(c.x, c.z); i ? g.lineTo(sx, sy) : g.moveTo(sx, sy); });
       g.stroke(); g.setLineDash([]);
     }
@@ -345,7 +350,7 @@ function draw() {
     data.path.forEach((p, i) => { if (i > last) return; const [sx, sy] = toScreen(p.x, p.z); picks.push({ sx, sy, kind: "jump", p, id: p.id64 }); });
     if (replay < 1) {                       // replay head
       const [sx, sy] = toScreen(data.path[last].x, data.path[last].z);
-      g.strokeStyle = "#FFFFFF"; g.lineWidth = 1.5; g.beginPath(); g.arc(sx, sy, 6, 0, Math.PI * 2); g.stroke();
+      g.strokeStyle = C.white; g.lineWidth = 1.5; g.beginPath(); g.arc(sx, sy, 6, 0, Math.PI * 2); g.stroke();
     }
   }
   // finds
@@ -384,16 +389,25 @@ function draw() {
       g.beginPath(); g.arc(jx, jy, 6, 0, Math.PI * 2); g.stroke();
       g.fillStyle = C.amber; g.font = "11px monospace"; g.fillText(jump, jx + 9, jy + 14);
     }
-    g.fillStyle = "rgba(5,12,13,.9)"; g.strokeStyle = C.amber; g.lineWidth = 1.5;
+    g.fillStyle = alpha("panel", .9); g.strokeStyle = C.amber; g.lineWidth = 1.5;
     g.fillRect(sx - 9, sy - 3, 18, 7); g.strokeRect(sx - 9, sy - 3, 18, 7);
     g.fillStyle = C.amber; g.fillRect(sx + 2, sy - 8, 4, 5);
     g.font = "11px monospace"; g.fillText(main, sx + 13, sy + 4);
     picks.push({ sx, sy, kind: "carriernow", c: cn, id: cn.id });
   }
+  // K4: favourite carriers at their last known position - a star
+  if (on.carrier && data.fav_carriers) {
+    g.font = "13px monospace"; g.fillStyle = C.amber;
+    for (const f of data.fav_carriers) {
+      const [sx, sy] = toScreen(f.x, f.z);
+      g.fillText("★", sx - 5, sy + 5);
+      picks.push({ sx, sy, kind: "favcarrier", c: f, id: f.id });
+    }
+  }
   // you
   if (data.you) {
     const [sx, sy] = toScreen(data.you.x, data.you.z);
-    g.strokeStyle = "#FFFFFF"; g.lineWidth = 1.5;
+    g.strokeStyle = C.white; g.lineWidth = 1.5;
     g.beginPath(); g.arc(sx, sy, 7, 0, Math.PI * 2); g.moveTo(sx - 11, sy); g.lineTo(sx + 11, sy); g.moveTo(sx, sy - 11); g.lineTo(sx, sy + 11); g.stroke();
   }
   // the focus, when it is not you: amber ring and name
@@ -407,8 +421,8 @@ function draw() {
     const txt = label(hover);
     g.font = "12px monospace"; const w = g.measureText(txt).width + 10;
     const x = Math.min(W - w - 4, hover.sx + 10), y = Math.max(16, hover.sy - 12);
-    g.fillStyle = "rgba(5,12,13,.88)"; g.fillRect(x, y - 13, w, 18);
-    g.strokeStyle = "rgba(62,242,224,.4)"; g.strokeRect(x, y - 13, w, 18);
+    g.fillStyle = alpha("panel", .88); g.fillRect(x, y - 13, w, 18);
+    g.strokeStyle = alpha("cyan", .4); g.strokeRect(x, y - 13, w, 18);
     g.fillStyle = C.text; g.fillText(txt, x + 5, y);
   }
   // scale bar
@@ -424,6 +438,8 @@ function label(p) {
   if (p.kind === "jump") return p.p.name + y(p.p) + (p.p.t ? " · " + new Date(p.p.t * 1000).toLocaleDateString() : "");
   if (p.kind === "carrier") return t("carrier") + ": " + p.c.name + (p.c.t ? " · " + new Date(p.c.t * 1000).toLocaleDateString() : "");
   if (p.kind === "carriernow") return p.c.system + " · " + carrierTexts(p.c)[0];
+  if (p.kind === "favcarrier") return "★ " + [p.c.name, p.c.callsign].filter(Boolean).join(" ") + " · " + (p.c.system || "?")
+    + (p.c.ts ? " · " + t("last seen {d}", { d: String(p.c.ts).slice(0, 10) }) : "");
   if (p.kind === "find") return p.f.name + " · " + p.f.kinds.map(k => t(FIND_NAME[k] || k)).join(", ");
   if (p.kind === "boxel") {
     const keys = p.c.list.filter(b => b.key).map(b => b.key);
@@ -506,6 +522,9 @@ function focusFrame() {
     el("div", { class: "row-btns" },
       el("button", { text: t("details") + " ⧉", title: t("open this system in SYSTEM, in its own window"),
         disabled: f.id ? null : true, onclick: () => openDetail(f.id) }),
+      // G1: the name for the game's galaxy map - paste it there to plot the jump
+      el("button", { text: t("copy name"), title: t("copy the system name - paste it in the galaxy map to plot the jump"),
+        disabled: f.name && f.name !== "?" ? null : true, onclick: (e) => copyText(f.name, e.currentTarget) }),
       focusMe ? null : el("button", { text: t("back to me"), onclick: () => refit("you") }),
       data.carrier_now && f.kind !== "carrier" ? el("button", { text: t("carrier"), onclick: () => setFocus(carrierFocus(), false, { zoom: true }) }) : null),
   ], { appear: false });

@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """Data layer, model and HTTP API (MVP item 1)."""
 
 import json
@@ -164,8 +169,57 @@ class TestModel(_Base):
                  "Name": "Testia AB-C d1-8", "SystemAddress": 77,
                  "StarClass": "Y", "RemainingJumpsInRoute": 1})
         br = self.model.build_briefing(self.db, lt.snapshot())
-        self.assertEqual(br["status"], "unknown")
+        # I1: never in our database, nobody asked -> "not checked", not "unknown"
+        self.assertEqual(br["status"], "unchecked")
+        self.assertFalse(br["target"]["in_no_database"])
         self.assertFalse(br["target"]["scoopable"])
+
+    def test_nav_beacon_hint(self):
+        import json as _json
+        import tempfile as _tf
+        from fis import fleet as _fl
+        d = _tf.mkdtemp()
+        lines = [{"timestamp": "2026-11-11T09:00:00Z", "event": "Commander", "FID": "F1", "Name": "T"},
+                 {"timestamp": "2026-11-11T09:30:00Z", "event": "NavBeaconScan",
+                  "SystemAddress": fx.SYS_ID, "NumBodies": 4},
+                 {"timestamp": "2026-11-11T09:31:00Z", "event": "NavBeaconScan",
+                  "SystemAddress": 999, "NumBodies": 30}]
+        with open(os.path.join(d, "Journal.2026-11-11T090000.01.log"), "w", encoding="utf-8") as fh:
+            fh.write("".join(_json.dumps(x) + chr(10) for x in lines))
+        arc = _fl.Archive(d)
+        self.assertEqual(self.model.nav_beacon(arc, fx.SYS_ID),
+                         {"ts": "2026-11-11T09:30:00Z", "bodies": 4})
+        self.assertIsNone(self.model.nav_beacon(arc, 12345))
+        sysv = self.model.build_system(self.db, fx.SYS_ID, None, archive=arc)
+        self.assertEqual(sysv["nav_beacon"]["bodies"], 4)
+
+    def test_briefing_info_levels(self):
+        import sqlite3
+        cx = sqlite3.connect(self.db.path)
+        rows = [("Inside", 501, 110.0, -20.0, 50.0, 40, "navroute"),
+                ("Outside", 502, 900.0, -20.0, 50.0, 40, "navroute"),
+                ("Town", 503, 900.0, -20.0, 60.0, 40, "journal,inhabited"),
+                ("Guess", 504, 101.0, -20.0, 50.0, 10, "fsdtarget")]
+        cx.executemany("INSERT INTO systems (name,id64,x,y,z,quality,sources) VALUES (?,?,?,?,?,?,?)", rows)
+        cx.commit()
+        cx.close()
+        want = {"Inside": "unknown", "Outside": "unchecked", "Town": "inhabited", "Guess": "unchecked"}
+        try:
+            for name, id64, *_ in rows:
+                lt = fed_tracker()
+                lt.feed({"timestamp": "2026-11-04T20:12:00Z", "event": "FSDTarget",
+                         "Name": name, "SystemAddress": id64, "StarClass": "K"})
+                br = self.model.build_briefing(self.db, lt.snapshot())
+                self.assertEqual(br["status"], want[name], name)
+                self.assertEqual(br["target"]["in_no_database"], name == "Inside", name)
+            self.assertEqual(br["target"]["level"], "unchecked")      # estimate only
+            sysv = self.model.build_system(self.db, 502, None)
+            self.assertEqual(sysv["info_level"], "unchecked")
+        finally:
+            cx = sqlite3.connect(self.db.path)
+            cx.execute("DELETE FROM systems WHERE id64 BETWEEN 501 AND 504")
+            cx.commit()
+            cx.close()
 
     def test_briefing_only_us_and_range(self):
         lt = fed_tracker()
@@ -203,6 +257,61 @@ class TestModel(_Base):
         self.assertEqual(sv["systems"]["known"], 2)
         self.assertEqual(sv["systems"]["visited"], 1)
         self.assertEqual(sv["systems"]["only_us"], 1)
+
+    def test_system_poi(self):
+        # M10: stations, carriers (latest first), beacons; USS are left out
+        class Ar:
+            def refresh(self):
+                pass
+
+            def events(self):
+                a = fx.SYS_ID
+                return [
+                    {"event": "FSSSignalDiscovered", "SystemAddress": a, "SignalName": "Old Carrier X1Y-2Z3",
+                     "SignalType": "FleetCarrier", "IsStation": True, "timestamp": "2026-11-01T10:00:00Z"},
+                    {"event": "FSSSignalDiscovered", "SystemAddress": a, "SignalName": "New Carrier A1B-2C3",
+                     "SignalType": "FleetCarrier", "IsStation": True, "timestamp": "2026-11-09T10:00:00Z"},
+                    {"event": "FSSSignalDiscovered", "SystemAddress": a, "SignalName": "Test Port",
+                     "SignalType": "Outpost", "IsStation": True, "timestamp": "2026-11-02T10:00:00Z"},
+                    {"event": "Docked", "SystemAddress": a, "StationName": "Test Port", "StationType": "Outpost",
+                     "DistFromStarLS": 512.3, "timestamp": "2026-11-03T10:00:00Z"},
+                    {"event": "FSSSignalDiscovered", "SystemAddress": a, "SignalName": "$USS_Type_Salvage;",
+                     "SignalType": "USS", "timestamp": "2026-11-03T10:00:00Z"},
+                    {"event": "FSSSignalDiscovered", "SystemAddress": a, "SignalName": "Beacon",
+                     "SignalType": "NavBeacon", "timestamp": "2026-11-03T10:00:00Z"},
+                    {"event": "FSSSignalDiscovered", "SystemAddress": 42, "SignalName": "Elsewhere",
+                     "SignalType": "Outpost", "timestamp": "2026-11-03T10:00:00Z"},
+                    # 11.11.: docked at the carrier seen in the FSS - one line, name and callsign
+                    {"event": "Docked", "SystemAddress": a, "StationName": "X1Y-2Z3",
+                     "StationType": "FleetCarrier", "timestamp": "2026-11-02T10:00:00Z"},
+                ]
+        poi = self.model.system_poi(self.db, fx.SYS_ID, Ar())
+        self.assertEqual([(p["kind"], p["name"]) for p in poi],
+                         [("station", "Test Port"), ("carrier", "New Carrier A1B-2C3"),
+                          ("carrier", "Old Carrier X1Y-2Z3"), ("beacon", "Beacon")])
+        self.assertTrue(poi[2]["docked"])
+        self.assertEqual(poi[2]["seen"], "2026-11-02T10:00:00Z")
+        port = poi[0]
+        self.assertTrue(port["docked"])
+        self.assertEqual(port["dist_ls"], 512)
+        self.assertEqual(self.model.system_poi(self.db, fx.SYS_ID, None), [])
+
+    def test_atlas_systems_and_export(self):
+        # M6: the survey sphere's systems by state, M14: the same as a file
+        at = self.model.build_atlas(self.db, "systems", None, None, 50)
+        states = sorted(it["key"] for it in at["items"])
+        self.assertIn("absent", states)
+        self.assertEqual(len([s for s in states if s != "absent"]), 2)
+        kinds = {k["key"]: k["count"] for k in self.model.build_atlas_kinds(self.db, "systems")}
+        self.assertEqual((kinds.get("absent"), kinds.get("only_us")), (1, 1))
+        only = self.model.build_atlas(self.db, "systems", "only_us", None, 50)["items"]
+        self.assertTrue(only and all(it["only_us"] for it in only))
+        csv_text = self.model.survey_export(self.db, "csv")
+        lines = csv_text.strip().splitlines()
+        self.assertEqual(lines[0].split(",")[:3], ["name", "id64", "x"])
+        self.assertEqual(len(lines), 1 + 3)
+        js = self.model.survey_export(self.db, "json")
+        self.assertEqual(js["survey"]["radius"], 30.0)
 
 
 @unittest.skipUnless(os.path.exists(fx.REAL_DB), "no copy of a real database in tests/data")
@@ -297,6 +406,70 @@ class TestServer(_Base):
                 self.get(p)
             self.assertEqual(cm.exception.code, 404, p)
             cm.exception.close()
+
+    def test_static_stays_in_the_web_folder(self):
+        # S1 (CodeQL path-injection): raw paths, not cleaned up by urllib
+        import http.client
+        port = self.srv.server_address[1]
+        for p in ("/../fis/config.py", "/%2e%2e/fis/config.py", "/js/../../fis/server.py",
+                  "/..%5Cfis%5Cconfig.py", "/C:/Windows/win.ini", "//etc/passwd"):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("GET", p)
+            r = c.getresponse()
+            r.read()
+            self.assertEqual(r.status, 404, p)
+            c.close()
+
+    def test_survey_export(self):
+        # M14: the survey sphere as a file
+        st, h, body = self.get("/api/survey/export?format=csv")
+        self.assertEqual(st, 200)
+        self.assertIn('attachment; filename="shbox-survey-', h.get("Content-Disposition"))
+        self.assertTrue(body.startswith(b"\xef\xbb\xbf"))           # BOM for Excel
+        st, h, body = self.get("/api/survey/export?format=json")
+        self.assertEqual(json.loads(body)["survey"]["start_system"], fx.SYS)
+
+    def test_static_types(self):
+        for p, want in (("/", "text/html; charset=utf-8"), ("/js/i18n.js", "text/javascript; charset=utf-8"),
+                        ("/vendor/three/LICENSE", "application/octet-stream")):
+            st, h, _b = self.get(p)
+            self.assertEqual((st, h.get("Content-Type")), (200, want), p)
+
+    def test_carriers_at_the_jump_target(self):
+        # 11.11.: with a jump target the briefing names the carriers THERE
+        from fis import carriers
+        seen = []
+        orig = carriers.carriers_here
+        carriers.carriers_here = lambda id64, name, own, favs, now=None: seen.append((id64, name)) or []
+        try:
+            live = {"system": {"id64": 1, "name": "Here"}}
+            self.app._cache.clear()
+            self.app.carriers_here(dict(live, target={"name": "There", "id64": 2}))
+            self.app._cache.clear()
+            self.app.carriers_here(live)
+        finally:
+            carriers.carriers_here = orig
+        self.assertEqual(seen, [(2, "There"), (1, "Here")])
+        st, js = self.getj("/api/briefing")
+        self.assertIn(js["carriers_where"], ("target", "here"))
+
+    def test_static_revalidated_not_refetched(self):
+        # 11.11.: a tablet fetched Three.js (1.3 MB) on every load - now 304
+        import http.client
+        port = self.srv.server_address[1]
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        c.request("GET", "/vendor/three/three.module.js")
+        r = c.getresponse()
+        r.read()
+        etag = r.getheader("ETag")
+        self.assertEqual((r.status, r.getheader("Cache-Control")), (200, "no-cache"))
+        self.assertTrue(etag)
+        c.request("GET", "/vendor/three/three.module.js", headers={"If-None-Match": etag})
+        r = c.getresponse()
+        self.assertEqual((r.status, r.read()), (304, b""))
+        c.close()
+        st, h, _b = self.get("/api/health")
+        self.assertEqual(h.get("Cache-Control"), "no-store")            # data never cached
 
     def test_sse(self):
         req = urllib.request.Request(self.base + "/api/events")
@@ -440,6 +613,20 @@ class TestLanToken(_Base):
                                      headers={"X-FIS-Token": "secret-token"})
         with urllib.request.urlopen(req, timeout=5) as r:
             self.assertEqual(r.status, 200)
+
+    def test_page_cookie_is_the_stored_token(self):
+        # the cookie carries the stored token - nothing a request sends ends
+        # up in a header (S1: CodeQL http-response-splitting)
+        with urllib.request.urlopen(self.base + "/?token=secret-token", timeout=5) as r:
+            self.assertIn("fis_token=secret-token;", r.headers.get("Set-Cookie", ""))
+        import http.client
+        c = http.client.HTTPConnection("127.0.0.1", self.srv.server_address[1], timeout=5)
+        c.request("GET", "/?token=secret-token%0d%0aX-Evil:%201")
+        r = c.getresponse()
+        r.read()
+        self.assertEqual(r.status, 401)               # not the stored token
+        self.assertIsNone(r.getheader("X-Evil"))
+        c.close()
 
 
 if __name__ == "__main__":

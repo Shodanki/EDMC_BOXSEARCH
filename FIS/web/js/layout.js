@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // Screen size → layout. The FIS runs on a desktop monitor, a second screen,
 // a 10" tablet or a phone; the views arrange themselves by the body classes
 //   lay-desktop | lay-tablet | lay-phone   and   orient-landscape | orient-portrait

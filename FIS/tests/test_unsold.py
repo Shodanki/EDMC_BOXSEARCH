@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """M4: unsold data at risk - exobiology valued from own sales, exploration counted."""
 
 import unittest
@@ -32,18 +37,35 @@ class TestUnsold(unittest.TestCase):
         self.assertEqual(b["items"][0]["system"], "Alpha")
 
     def test_exploration_counted_until_sold(self):
+        def scan(t, sysname, addr, body, typ="Detailed"):
+            return ev(t, "Scan", StarSystem=sysname, SystemAddress=addr, BodyID=body, ScanType=typ)
         evs = [ev("08:00", "FSDJump", StarSystem="A", SystemAddress=1),
                ev("08:01", "FSSDiscoveryScan", SystemName="A", SystemAddress=1, BodyCount=12),
+               scan("08:02", "A", 1, 0, "AutoScan"), scan("08:03", "A", 1, 3),
                ev("08:05", "SAAScanComplete", SystemAddress=1, BodyID=3),
                ev("08:10", "FSDJump", StarSystem="B", SystemAddress=2),
                ev("08:11", "FSSDiscoveryScan", SystemName="B", SystemAddress=2, BodyCount=5),
+               scan("08:12", "B", 2, 0, "AutoScan"), scan("08:13", "B", 2, 1), scan("08:14", "B", 2, 2),
                ev("09:00", "MultiSellExplorationData", Discovered=[{"SystemName": "A", "NumBodies": 12}])]
         x = unsold.build_unsold(evs)["exploration"]
-        self.assertEqual((x["systems"], x["bodies"], x["mapped"]), (1, 5, 0))
+        self.assertEqual((x["systems"], x["bodies"], x["mapped"]), (1, 3, 0))
+        # 11.11.: back in A - the honk and the arrival star's scan are no new data
+        more = [ev("10:00", "FSDJump", StarSystem="A", SystemAddress=1),
+                ev("10:01", "FSSDiscoveryScan", SystemName="A", SystemAddress=1, BodyCount=12),
+                scan("10:02", "A", 1, 0, "AutoScan"),
+                # a nav beacon hands over data that is not yours to sell
+                ev("10:30", "FSDJump", StarSystem="C", SystemAddress=3),
+                scan("10:31", "C", 3, 1, "NavBeaconDetail"), scan("10:31", "C", 3, 2, "NavBeaconDetail")]
+        x = unsold.build_unsold(evs + more)["exploration"]
+        self.assertEqual((x["systems"], x["bodies"]), (1, 3))
+        # a new body in A after the sale is new data again
+        x = unsold.build_unsold(evs + more + [scan("10:40", "A", 1, 7)])["exploration"]
+        self.assertEqual((x["systems"], x["bodies"]), (2, 4))
 
     def test_death_loses_everything(self):
         evs = [analyse("08:10", "Bacterium Aurasus"),
                ev("08:11", "FSSDiscoveryScan", SystemName="A", SystemAddress=1, BodyCount=3),
+               ev("08:12", "Scan", StarSystem="A", SystemAddress=1, BodyID=0, ScanType="AutoScan"),
                ev("08:30", "Died")]
         u = unsold.build_unsold(evs, VALUES)
         self.assertEqual((u["bio"]["count"], u["exploration"]["systems"]), (0, 0))

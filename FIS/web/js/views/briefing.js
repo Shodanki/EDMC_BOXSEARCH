@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // BRIEFING – the next jump, Wing-Commander style.
 
 import { el, frame, fmt, chip, countUp, hbar } from "../ui.js";
@@ -18,6 +23,9 @@ function row(k, ...v) {
 const STATUS = {
   only_us: [N_("ONLY KNOWN TO US"), N_("You were there, but neither EDSM, Spansh nor EDDiscovery know the system (according to the plugin database)")],
   unknown: [N_("IN NO DATABASE"), N_("Neither EDSM, Spansh nor EDDiscovery report the system (according to the plugin database) – first discovery possible")],
+  // I1: say "in no database" only where a source was asked
+  inhabited: [N_("INHABITED"), N_("Population or a station seen in the journal – the databases know the system")],
+  unchecked: [N_("NOT CHECKED"), N_("Outside our data frame – no database was asked about this system")],
   visited: [N_("ALREADY VISITED"), N_("known in {s}")],
   known: [N_("KNOWN"), N_("known in {s}")],
 };
@@ -51,6 +59,8 @@ export function update(ctx, reason) {
         t("NO JUMP TARGET SET"), el("br"),
         el("span", { class: "c-dim", text: t("Pick a target in the galaxy map – the briefing appears by itself.") })),
       { cls: "br-main", appear }));
+    const ch0 = carriersTile(b && b.carriers_here, appear, "here");
+    if (ch0) root.append(ch0);
     if (b && b.navroute && b.navroute.length) root.append(navList(b.navroute, null, appear));
     const sv0 = surveyTile(ctx.store.survey, appear);
     if (sv0) root.append(sv0);
@@ -68,7 +78,9 @@ export function update(ctx, reason) {
     : [el("span", { class: "c-dim", text: t("unknown (only at StartJump)") })];
   const statusEl = el("div", {},
     el("div", { class: unknown ? "br-status disc" : "br-status", text: (unknown ? "■ " : "") + t(st[0]) }),
-    el("div", { class: "c-dim", text: st[1] ? t(st[1], { s: known }) : "" }));
+    el("div", { class: "c-dim", text: st[1] ? t(st[1], { s: known }) : "" }),
+    b.status === "unknown" && tg.checked_by && tg.checked_by.length
+      ? el("div", { class: "c-dim", text: t("checked: {s}", { s: tg.checked_by.join(", ") }) }) : null);
   const rows = [
     row(t("TARGET"), el("span", { class: "br-name", text: tg.name || "?" }),
       tg.distance_ly !== null && tg.distance_ly !== undefined ? el("span", { class: "br-dist" }, el("span", { class: "num", "data-count": tg.distance_ly, "data-digits": 1, text: fmt(tg.distance_ly, 1) }), el("span", { class: "unit", text: "ly" })) : null),
@@ -94,6 +106,7 @@ export function update(ctx, reason) {
       if (f.jumps_left !== null && f.jumps_left !== undefined) parts.push(maxJumps(f.jumps_left));
     }
     if (f.warning) parts.push(el("div", { class: "c-red", text: f.warning }));
+    else if (f.scoop_at_target) parts.push(el("span", { class: "c-green", text: " · " + t("refuel at the target") }));
     rows.push(row(t("FUEL"), ...parts));
   }
   const bx = b.boxel;
@@ -124,10 +137,33 @@ export function update(ctx, reason) {
 
   root.append(frame("BRIEFING", np, el("div", { class: "br-rows" }, ...rows),
     { kind: unknown ? "disc" : "hot", cls: "br-main", appear }));
+  const ch = carriersTile(b.carriers_here, appear, b.carriers_where);
+  if (ch) root.append(ch);
   if (b.navroute && b.navroute.length) root.append(navList(b.navroute, tg.name, appear));
   const sv = surveyTile(ctx.store.survey, appear);
   if (sv) root.append(sv);
   if (appear) countUp(root);
+}
+
+// B1: your own and favourite carriers known in this system - with where that
+// comes from and how old it is (never a live position)
+const CAR_HOW = { location: N_("your journal"), expected: N_("your journal – jump time passed"),
+  docked: N_("docked there"), sighted: N_("seen in the FSS"), jump: N_("jumped with you aboard"),
+  spansh: N_("Spansh lookup") };
+function carAge(s) {
+  if (s === null || s === undefined) return "?";
+  return s < 3600 ? t("{n} min ago", { n: Math.max(1, Math.round(s / 60)) }) : s < 172800 ? t("{n} h ago", { n: Math.round(s / 3600) })
+    : t("{n} days ago", { n: Math.round(s / 86400) });
+}
+function carriersTile(list, appear, where) {
+  if (!list || !list.length) return null;
+  const rows = list.map((c) => el("div", { class: "br-car" },
+    el("span", { class: c.kind === "own" ? "c-amber" : "c-cyan", text: (c.kind === "own" ? "◆ " : "★ ") + [c.name, c.callsign].filter(Boolean).join(" ") }),
+    el("span", { class: "c-dim", text: " · " + (c.kind === "own" ? t("your carrier") : t("favourite")) + " · "
+      + t(CAR_HOW[c.how] || "your journal") + (c.source === "stored" ? " (" + t("stored") + ")" : "") + " · " + carAge(c.age_s) }),
+    c.note ? el("div", { class: "small c-dim", text: c.note }) : null));
+  return frame(where === "target" ? t("CARRIERS AT THE TARGET") : t("CARRIERS HERE"), t("last known"),
+    el("div", {}, ...rows), { cls: "br-carriers", appear });
 }
 
 // Sphere progress (/api/survey) – a small tile beside the briefing.
@@ -167,6 +203,13 @@ function surveyTile(s, appear) {
   return frame(t("SPHERE"), tag, el("div", { class: "sv-body" }, ...body), { cls: "br-survey", appear });
 }
 
+// I1: a hop no database reports - unknown only where someone was asked
+function levelTag(level) {
+  if (level === "unchecked") return el("span", { class: "c-dim", text: t("not checked"), title: t("Outside our data frame – no database was asked about this system") });
+  if (level === "inhabited") return el("span", { class: "c-dim", text: t("inhabited") });
+  return chip(t("unknown"), "first");
+}
+
 function navList(hops, target, appear) {
   const list = el("ol", { class: "navlist" });
   for (const h of hops) {
@@ -177,7 +220,7 @@ function navList(hops, target, appear) {
       el("span", { class: "nl-star " + (h.boost ? "c-violet" : h.scoopable === false ? "c-amber" : "c-cyan"),
         text: (h.star_class || "?") + (h.boost ? " ⚡" : ""), title: h.boost ? t("jet cone: FSD boost") : "" }),
       el("span", { class: "nl-ly", text: h.jump_ly ? fmt(h.jump_ly, 1) + " ly" : "" }),
-      unknown ? chip(t("unknown"), "first") : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") }))));
+      unknown ? levelTag(h.level) : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") }))));
   }
   return frame("NAVPOINTS", t("{n} jumps plotted", { n: hops.length }), el("div", { class: "scroll" }, list), { cls: "br-nav", appear });
 }

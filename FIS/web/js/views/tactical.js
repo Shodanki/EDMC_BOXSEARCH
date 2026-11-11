@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // SYSTEM – the current system in 3D (view id "tactical").
 // Three.js if the CDN is reachable, otherwise the 2D canvas fallback.
 
@@ -79,7 +84,7 @@ async function initRenderer() {
     if (new URLSearchParams(location.search).has("2d")) throw new Error("2d requested");
     const mod = await Promise.race([
       import("./render3d.js"),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000)),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000)),   // a tablet on Wi-Fi
     ]);
     renderer = mod.create3D(stage);
     eng().textContent = "3D · Three.js";
@@ -185,7 +190,7 @@ function onDbl(e) {
 // ------------------------------------------------------------- side panel
 const RING_CLS = { Icy: N_("icy"), Rocky: N_("rocky"), Metalic: N_("metallic"), MetalRich: N_("metal-rich") };
 function ringClass(c) {
-  const k = String(c || "").replace("eRingClass_", "").replace("$", "").replace(";", "");
+  const k = String(c || "").replace("eRingClass_", "").replace(/[$;]/g, "");
   return RING_CLS[k] ? t(RING_CLS[k]) : (k || "?");
 }
 
@@ -201,6 +206,56 @@ function systemReport(sys) {
   }
   rows.push(el("div", { class: "c-dim small", text: t("Rule-based from the journal and the plugin database – no AI.") }));
   return frame(t("SYSTEM REPORT"), "", rows, { cls: "sr-frame", appear: false });
+}
+
+// M10: points of interest - stations, settlements, carriers, beacons
+const POI_ICON = { station: "▣", settlement: "⌂", carrier: "◈", extraction: "⛏", beacon: "◎" };
+const POI_KIND = { station: N_("station"), settlement: N_("settlement"), carrier: N_("fleet carrier"),
+  extraction: N_("extraction site"), beacon: N_("nav beacon") };
+// A1: may we dock at this carrier? Where the access is known, with source and date
+const ACCESS_SRC = { market: N_("its market"), journal: N_("your docking"), Spansh: "Spansh" };
+function accessTag(p) {
+  if (!p.access) return null;
+  const tip = t("docking access: {a}", { a: p.access_word || "–" }) + " · " + t(ACCESS_SRC[p.access_src] || p.access_src || "")
+    + (p.access_ts ? " · " + String(p.access_ts).slice(0, 10) : "");
+  return p.access === "dock"
+    ? el("span", { class: "chip mapped", title: tip, text: t("dockable") })
+    : el("span", { class: "chip", title: tip, text: t("friends/squadron only") });
+}
+
+function poiFrame(sys) {
+  const list = sys.poi || [];
+  if (!list.length) return null;
+  const CARRIERS_SHOWN = 8;                // the latest sightings; the bubble has dozens
+  const nCar = list.filter(p => p.kind === "carrier").length;
+  let car = 0;
+  const shown = list.filter(p => p.kind !== "carrier" || car++ < CARRIERS_SHOWN);
+  const rows = shown.map(p => {
+    const bits = [t(POI_KIND[p.kind] || p.kind)];
+    if (p.body) bits.push(p.body);
+    if (p.dist_ls !== undefined && p.dist_ls !== null) bits.push(fmt(p.dist_ls, 0) + " LS");
+    if (p.docked) bits.push(t("docked"));
+    if (p.seen) bits.push(t("seen {d}", { d: String(p.seen).slice(0, 10) }));
+    return el("div", { class: "sr-line" },
+      p.favourite ? el("span", { class: "poi-fav", title: t("favourite"), text: "★ " }) : null,
+      el("span", { class: "c-cyan", text: (POI_ICON[p.kind] || "·") + " " + p.name }),
+      accessTag(p),
+      el("span", { class: "c-dim small", text: "  " + bits.join(" · ") }));
+  });
+  if (sys.poi_hidden) rows.push(el("div", { class: "c-dim small", text: t("{n} carriers that refuse docking hidden", { n: sys.poi_hidden }) }));
+  if (nCar > CARRIERS_SHOWN) rows.push(el("div", { class: "c-dim small", text: t("+{n} more fleet carriers seen here", { n: nCar - CARRIERS_SHOWN }) }));
+  rows.push(el("div", { class: "c-dim small", text: t("From your own journals - carriers move on.") }));
+  return frame(t("POINTS OF INTEREST"), String(list.length), rows, { cls: "sr-frame", appear: false });
+}
+
+// another system pinned (?system=, from ATLAS, GALAXY, MINING): one click
+// back to the live system you are in - the rest of the address stays
+function backToCurrent() {
+  const q = new URLSearchParams(location.search);
+  if (!/^\d+$/.test(q.get("system") || "")) return null;
+  return el("button", { class: "sys-back", text: "⟲ " + t("back to the current system"),
+    title: t("show the system you are in, live"),
+    onclick: () => { q.delete("system"); const s = q.toString(); location.href = location.pathname + (s ? "?" + s : "") + "#tactical"; } });
 }
 
 function renderSide() {
@@ -226,11 +281,24 @@ function renderSide() {
     head.push(el("div", { class: "c-amber", text: t("Your carrier {n} jumps here · {t}", { n: c.name || "",
       t: c.departure ? new Date(c.departure * 1000).toLocaleString() : "?" }) }));
   }
-  if (!sys.known_sources.length) head.push(el("div", {}, chip(t("in no database"), "first")));
-  else head.push(el("div", { class: "c-dim", text: t("known: {s}", { s: sys.known_sources.join(", ") }) }));
-  side.append(frame("SYSTEM", sys.visited ? t("visited") : "", head, { kind: sys.known_sources.length ? "" : "disc", appear: false }));
+  if (sys.nav_beacon) head.push(el("div", { class: "c-cyan",
+    title: t("The beacon hands over every body: data, but no discovery and no exploration data of your own – mapping and bio still count."),
+    text: "◈ " + (sys.nav_beacon.bodies ? t("nav beacon scanned – all {n} bodies known", { n: sys.nav_beacon.bodies })
+      : t("nav beacon scanned – all bodies known")) + (sys.nav_beacon.ts ? " · " + String(sys.nav_beacon.ts).slice(0, 10) : "") }));
+  // I1: "in no database" only where a source was really asked
+  const lvl = sys.info_level;
+  const noDb = !sys.known_sources.length && (!lvl || lvl === "checked");
+  if (sys.known_sources.length) head.push(el("div", { class: "c-dim", text: t("known: {s}", { s: sys.known_sources.join(", ") }) }));
+  else if (lvl === "inhabited") head.push(el("div", { class: "c-dim", text: t("inhabited – known to the databases") }));
+  else if (lvl === "unchecked") head.push(el("div", { class: "c-dim", text: t("not checked – outside our data frame") }));
+  else head.push(el("div", {}, chip(t("in no database"), "first")));
+  const back = backToCurrent();
+  if (back) side.append(back);
+  side.append(frame("SYSTEM", sys.visited ? t("visited") : "", head, { kind: noDb ? "disc" : "", appear: false }));
 
   side.append(systemReport(sys));
+  const poi = poiFrame(sys);
+  if (poi) side.append(poi);
 
   // flight plan
   const r = sys.route;

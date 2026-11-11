@@ -1,6 +1,12 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // 2D fallback for SYSTEM (no internet → no Three.js): top-down canvas with
 // the same scene model, labels and controls (wheel zoom, drag pan).
 
+import { alpha } from "../ui.js";
 import { UI } from "./scene.js";
 
 export function create2D(container) {
@@ -34,10 +40,10 @@ export function create2D(container) {
     // distance rings + spokes
     g.lineWidth = 1;
     for (const r of scene.rings) {
-      g.strokeStyle = "rgba(62,242,224,.10)";
+      g.strokeStyle = alpha("cyan", .10);
       g.beginPath(); g.arc(o.x, o.y, r.radius * view.zoom, 0, Math.PI * 2); g.stroke();
     }
-    g.strokeStyle = "rgba(62,242,224,.05)";
+    g.strokeStyle = alpha("cyan", .05);
     const R = (scene.rings.length ? scene.rings[scene.rings.length - 1].radius : 50) * view.zoom;
     for (let a = 0; a < 12; a++) {
       g.beginPath(); g.moveTo(o.x, o.y);
@@ -46,7 +52,7 @@ export function create2D(container) {
     // orbits
     for (const b of scene.bodies) {
       if (!b.orbit) continue;
-      g.strokeStyle = b.moon ? "rgba(62,242,224,.14)" : "rgba(62,242,224,.24)";
+      g.strokeStyle = b.moon ? alpha("cyan", .14) : alpha("cyan", .24);
       g.beginPath();
       b.orbit.forEach((q, i) => { const s = P(q); i ? g.lineTo(s.x, s.y) : g.moveTo(s.x, s.y); });
       g.stroke();
@@ -54,7 +60,7 @@ export function create2D(container) {
     // route
     for (const l of scene.route) {
       const a = P(l.a), c = P(l.b);
-      g.strokeStyle = l.isNext ? UI.amber : (l.done ? "rgba(110,143,139,.55)" : "rgba(62,242,224,.75)");
+      g.strokeStyle = l.isNext ? UI.amber : (l.done ? alpha("dim", .55) : alpha("cyan", .75));
       g.lineWidth = l.isNext ? 2 : 1.2;
       g.setLineDash(l.done ? [4, 4] : []);
       g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(c.x, c.y); g.stroke();

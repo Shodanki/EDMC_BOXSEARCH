@@ -1,10 +1,15 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // MINING – everything about mining in one place. Tritium first (deep space:
 // the carrier's fuel), then goods to sell (what pays the carrier's upkeep).
 // Left: the session (live or the last one), tritium for the carrier, the
 // mining ships. Right: ring hotspots nearby, goods and income, all sessions.
 
 import { getJSON } from "../api.js";
-import { el, frame, fmt, withPopout } from "../ui.js";
+import { el, frame, fmt, withPopout, C } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const CONTENT = { low: N_("low"), medium: N_("medium"), high: N_("high") };
@@ -58,15 +63,16 @@ function render() {
   root.replaceChildren();
   if (!data) { root.append(frame(t("MINING"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
   root.append(el("div", { class: "mine-grid" },
-    el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session(), limpets(), ships()),
-    el("div", { class: "mine-col" }, tritium(), hotspots(), goods(), history())));
+    // the sessions under the mining ships: the left column has the room (11.11.)
+    el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session(), limpets(), ships(), history()),
+    el("div", { class: "mine-col" }, tritium(), hotspotRank(), hotspots(), goods())));
 }
 
 // ------------------------------------------------------------ live status
 // two bars: the hold (limpets | goods | free, with the advised limpet load
 // marked) and the refining of the last 10 minutes (one tick per tonne - the
 // game writes nothing about the refinery's bins, only each finished tonne)
-const GOOD_COL = ["#7CFF6B", "#FFB23E", "#B57CFF", "#4FA3FF", "#E8A06A"];
+const GOOD_COL = [C.green, C.amber, C.violet, C.blue, "#E8A06A"];
 // out in the Rhino: hold and how many full rigs still fit (a rig goes in whole)
 function rhinoHold(h) {
   return el("div", { class: "small " + (h.short ? "c-amber" : "c-dim"), text: h.short
@@ -226,6 +232,21 @@ function hotspots() {
       el("span", { class: "num", text: h.ly === null ? "?" : h.ly < 0.1 ? t("here") : fmt(h.ly, 1) + " ly" }))))
       : el("div", { class: "c-dim", text: t("No hotspots known for this material - scan rings with the DSS.") }),
     el("div", { class: "c-dim small", text: t("Rings you mapped (plugin database). A click opens the system.") }),
+  ], { appear: false });
+}
+
+// L3: the nearby hotspots by what YOU refined there per hour
+const RANK_LEVEL = { ring: N_("your runs in this ring"), class: N_("your runs in rings of its class"), all: N_("your runs in any ring") };
+function hotspotRank() {
+  const list = data.hotspot_rank || [];
+  if (!list.length) return null;
+  return frame(t("BEST HOTSPOTS FOR YOU"), t("expected t/h"), [
+    el("div", { class: "mine-list" }, ...list.map(h => el("div", { class: "cg mine-hs", title: h.system + " · " + t(RANK_LEVEL[h.rate.level] || ""), onclick: () => detail(h.id) },
+      el("span", { text: h.ring + " · " + h.material }),
+      el("span", { class: "num" + (h.rate.thin ? " c-dim" : " c-green"), text: fmt(h.rate.t_h, 1) + " t/h"
+        + (h.rate.runs > 1 ? " (" + fmt(h.rate.lo, 0) + "–" + fmt(h.rate.hi, 0) + ")" : "") }),
+      el("span", { class: "num", text: h.ly === null ? "?" : h.ly < 0.1 ? t("here") : fmt(h.ly, 1) + " ly" })))),
+    el("div", { class: "c-dim small", text: t("From your own mining runs (all commanders): the main refined material per hour - in that ring, else rings of its class, else any ring. Dim: fewer than 3 runs.") }),
   ], { appear: false });
 }
 

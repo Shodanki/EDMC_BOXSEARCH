@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """fis.ini handling and the LAN token."""
 
 import os
@@ -26,6 +31,16 @@ class TestPluginFilters(unittest.TestCase):
     def test_chosen_filters(self):
         c = self._cfg('[settings]\nshboxsearch_route_all = false\nshboxsearch_filters = "new,signals,bogus"\n')
         self.assertEqual(c.filters, ["new", "signals"])
+
+    def test_arrival_star(self):
+        # R2: default on (the run starts at the arrival star); off in EDMC skips it
+        self.assertFalse(self._cfg('[settings]\nother = 1\n').skip_arrival)
+        self.assertFalse(self._cfg(None).skip_arrival)
+        self.assertTrue(self._cfg('[settings]\nshboxsearch_route_arrival = false\n').skip_arrival)
+        self.assertTrue(self._cfg('[settings]\nshboxsearch_route_arrival = 0\n').skip_arrival)
+        c = self._cfg('[settings]\nshboxsearch_route_arrival = false\n')
+        c.route_source = "ini"
+        self.assertFalse(c.skip_arrival)                              # fixed in fis.ini
 
     def test_fallbacks(self):
         self.assertEqual(self._cfg('[settings]\nother = 1\n').filters, ["todo"])

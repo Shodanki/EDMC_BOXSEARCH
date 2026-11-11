@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // STATISTICS – the game's own record of the commander (the Statistics event
 // written at every login), research first: ranks with progress, exploration,
 // exobiology, mining, the carrier, wealth - and the growth over a chosen
@@ -112,6 +117,8 @@ function render() {
   if (!data || data.empty) {
     root.append(frame(t("STATISTICS"), "", el("div", { class: "empty" }, t("NO STATISTICS YET"), el("br"),
       el("span", { class: "c-dim", text: t("The game writes them at every login.") }))));
+    const lr = data && learning();
+    if (lr) root.append(el("div", { class: "stat-wrap" }, el("div"), el("div", { class: "stat-side scroll" }, lr)));
     return;
   }
   const sel = el("select", { class: "lay-pick", onchange: (e) => {
@@ -125,7 +132,41 @@ function render() {
     el("div", { class: "c-dim small", text: t("The game's own numbers, written at every login; the journals reach back to {d}.",
       { d: new Date(data.first_ts * 1000).toLocaleDateString() }) }),
   ], { appear: false }), "statistics");
-  root.append(el("div", { class: "stat-grid scroll" }, head, ranks(), ...CARDS.map(card)));
+  // the learning status in a column of its own on the right - no scrolling down to it (11.11.)
+  const lr = learning();
+  root.append(el("div", { class: "stat-wrap" + (lr ? "" : " solo") },
+    el("div", { class: "stat-grid scroll" }, head, ranks(), ...CARDS.map(card)),
+    lr ? el("div", { class: "stat-side scroll" }, lr) : null));
+}
+
+// L4: what the FIS has learnt from your own data - and where it is still thin
+function learning() {
+  const L = data.learning;
+  if (!L) return null;
+  const rows = [];
+  const line = (label, value, thin) => el("div", { class: "st-row" + (thin ? " c-dim" : "") },
+    el("span", { text: label }), el("span", { class: "num", text: value }), el("span", { class: "num small " + (thin ? "c-amber" : "c-green"), text: thin ? t("thin") : "✓" }));
+  const head = (s) => el("div", { class: "c-cyan small st-learn-h", text: s });
+  if (L.rocks.length) {
+    rows.push(head(t("Prospected rocks per ring class and hotspot (needs {n})", { n: L.min_rocks })));
+    for (const r of L.rocks) rows.push(line(r.cls + (r.hotspot ? " · " + r.hotspot : " · " + t("all")),
+      t(r.rings === 1 ? "{n} rocks · 1 ring" : "{n} rocks · {r} rings", { n: r.rocks, r: r.rings }), r.thin));
+  }
+  if (L.runs.length) {
+    rows.push(head(t("Mining runs per ring class and material (needs {n})", { n: L.thin_runs })));
+    for (const r of L.runs) rows.push(line(r.cls + " · " + (r.name || r.mat), (r.runs === 1 ? t("1 run") : t("{n} runs", { n: r.runs })) + " · " + fmt(r.t_h, 1) + " t/h", r.thin));
+  }
+  if (L.rigs.length) {
+    rows.push(head(t("Rhino rigs per planet class (needs {n})", { n: L.thin_rigs })));
+    for (const r of L.rigs) rows.push(line(r.cls, t("{n} rigs", { n: r.rigs }) + " · " + fmt(r.t_per_rig, 1) + " t/rig", r.thin));
+  }
+  rows.push(head(t("Bio model: {b} bodies with analysed species, {g} genera", { b: L.bio.bodies, g: L.bio.genera.length })));
+  for (const g of L.bio.genera) rows.push(line(g.genus, g.bodies === 1 ? t("1 body") : t("{n} bodies", { n: g.bodies }), g.thin));
+  if (!L.rocks.length && !L.runs.length && !L.rigs.length && !L.bio.genera.length)
+    rows.push(el("div", { class: "c-dim", text: t("Nothing learnt yet - prospect rocks, mine, collect rigs, analyse organisms.") }));
+  const thin = L.thin.rocks + L.thin.runs + L.thin.rigs + L.thin.genera;
+  rows.push(el("div", { class: "c-dim small", text: t("Counting and averages from your own journals and the plugin database (all commanders) - no AI. Thin groups lean on broader ones.") }));
+  return frame(t("LEARNING STATUS"), thin ? t("{n} still thin", { n: thin }) : "", rows, { cls: "st-card st-learning", appear: false });
 }
 
 function ranks() {

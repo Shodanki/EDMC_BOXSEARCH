@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 Local-first flow test (4.6, L2/L3): load.py against a fake galaxy - no
 network, no EDMC (its modules are stubbed). Survey start asks the nearest
@@ -234,10 +239,30 @@ with tempfile.TemporaryDirectory() as d:
     ST.net.seed_today({"edsm": netgate.DAILY_CAP["edsm"],
                        "spansh": netgate.DAILY_CAP["spansh"]})
     ST.center = (1200.0, 0.0, 0.0)
+    # the commander flies at the sphere's edge (far outside, nothing would be
+    # fetched at all - see shells.needs_next)
+    ST.cur_pos = (1245.0, 0.0, 0.0)
     load._start_worker()
     check(Sess.log == [] and ST.horizon == ST.radius,
           "daily cap %d reached: no request, local plan" % netgate.DAILY_CAP["edsm"])
     check("50 of 50" in load._external_today_line(), "statistics show the count")
+
+    # 11) a second commander on this PC: nothing of the first one's place stays
+    ST.cmdr, ST.cur_system, ST.cur_id64 = "Alpha", "Old System", 4711
+    ST.route_done = {3, 4}
+    load.journal_entry("Beta", False, None, None,
+                       {"event": "LoadGame", "timestamp": "2026-11-11T07:00:00Z"}, {})
+    load.journal_entry("Beta", False, None, None, {"event": "StartUp"}, {})
+    check(ST.cur_id64 is None and ST.awaiting_position and not ST.route_done
+          and "route recheck" not in ran[-1:],
+          "commander switch: old system and ticks dropped, no route for it")
+    load._resolve_current_system()
+    check(ST.cur_id64 is None, "and nothing guessed from the other commander's journals")
+    load.journal_entry("Beta", False, None, None,
+                       {"event": "Location", "StarSystem": "New System", "SystemAddress": 815,
+                        "StarPos": [1.0, 2.0, 3.0], "timestamp": "2026-11-11T07:00:05Z"}, {})
+    check(ST.cur_id64 == 815 and not ST.awaiting_position,
+          "the new commander's Location sets the system")
     ST.db.close()
 
 print("failures: %d" % fails)

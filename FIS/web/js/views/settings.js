@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // SETTINGS – what fis_settings.bat asks, in the browser. Only on the game PC
 // (the server answers nobody else): default language, open the browser at
 // start, home network for a tablet - with the address to type there.
@@ -5,6 +10,7 @@
 import { getJSON, postJSON, withToken } from "../api.js";
 import { el, frame } from "../ui.js";
 import { t } from "../i18n.js";
+import { cockpitRows } from "./cockpit.js";
 
 let root = null, data = null, msg = "", qrIndex = 0;
 // E6/P7: display links - one view alone, for OBS, a wall screen or a tablet
@@ -84,18 +90,38 @@ function render() {
   root.append(el("div", { class: "st-grid" },
     frame(t("SETTINGS"), t("only on this PC"), rows, { appear: false }),
     frame(t("DISPLAY LINKS"), t("one view alone"), linkRows(), { appear: false }),
+    frame(t("APP"), t("only on this PC"), appRows(), { appear: false }),
+    frame(t("COCKPIT"), t("only on this PC"), cockpitRows((w) => linkUrl({ view: w.view, obs: false, kiosk: true, scale: w.scale }), render),
+      { appear: false }),
     data.lan ? frame(t("HOME NETWORK"), "", lanRows.length ? lanRows : el("div", { class: "c-dim", text: t("Save to create the address.") }), { appear: false }) : null,
     el("div", { class: "c-dim small", text: t("Stored in {f}.", { f: data.ini }) })));
+}
+
+// M12: install the FIS as an app - own window and taskbar icon, nothing cached
+function appRows() {
+  const standalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+  if (standalone) return [el("div", { class: "c-green small", text: t("Running as an app.") })];
+  const rows = [el("div", { class: "c-dim small", text: t("Own window and taskbar icon; the FIS service must be running, as for the browser.") })];
+  if (window.fisInstall) {
+    rows.push(el("button", { text: t("install as app"), onclick: async () => {
+      const p = window.fisInstall; window.fisInstall = null;
+      try { await p.prompt(); } catch (e) { /* refused or gone */ }
+      render();
+    } }));
+  } else {
+    rows.push(el("div", { class: "c-dim small", text: t("If no button shows: the browser menu offers \"Install SHBOX FIS\" (Chrome, Edge).") }));
+  }
+  return rows;
 }
 
 // The address of one view with a display profile - made here so nobody has
 // to type URL parameters. With the home network on, the game PC needs the
 // token too (taken from the first home-network address).
-function linkUrl() {
-  const q = new URLSearchParams({ solo: link.view });
-  if (link.obs) q.set("obs", "1");
-  else if (link.kiosk) q.set("kiosk", "1");
-  if (link.scale !== "1") q.set("scale", link.scale);
+function linkUrl(p = link) {
+  const q = new URLSearchParams({ solo: p.view });
+  if (p.obs) q.set("obs", "1");
+  else if (p.kiosk) q.set("kiosk", "1");
+  if (p.scale !== "1") q.set("scale", p.scale);
   if (data.lan && data.lan_urls && data.lan_urls.length) {
     const tok = new URL(data.lan_urls[0]).searchParams.get("token");
     if (tok) q.set("token", tok);

@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // PLANET – datasheet of one body.
 
 import { getJSON } from "../api.js";
@@ -35,8 +40,24 @@ export async function load(ctx) {
   if (root && ctx.store.view === "planet") render(ctx);
 }
 
+// The body of the last fix (approached, scanned, landed ...) is shown by
+// itself: when the fix moves to another body, PLANET INFO follows. A body
+// picked by hand stays until the fix moves on.
+let lastFixKey = null;
+
 export function update(ctx, reason) {
   if (!root) return;
+  const sys = ctx.store.system, fix = sys && sys.fix;
+  if (fix && fix.body_id !== null && fix.body_id !== undefined) {
+    const fk = sys.id64 + ":" + fix.body_id;
+    if (fk !== lastFixKey) {
+      lastFixKey = fk;
+      if (!ctx.store.selected || keyOf(ctx.store.selected) !== keyOf({ id64: sys.id64, body_id: fix.body_id })) {
+        ctx.store.selected = { id64: sys.id64, body_id: fix.body_id };
+        load(ctx); return;
+      }
+    }
+  }
   if (!ctx.store.selected && ctx.store.system && ctx.store.system.route && ctx.store.system.route.next) {
     // nothing picked yet: show the next stop of the route
     const leg = ctx.store.system.route.legs[ctx.store.system.route.next - 1];
@@ -220,6 +241,11 @@ function render(ctx) {
     const mats = b.materials.map(([k, v]) => hbar(k, v, b.materials[0][1] || 1, fmt(v, 1) + " %", "violet"));
     right.push(frame(t("MATERIALS"), b.materials.length + "", mats));
   }
+  // L3: "12.3 t/h (8–15, 4 runs)"
+  const RATE_LEVEL = { ring: N_("in this ring"), class: N_("from your {c} rings"), all: N_("from all your rings") };
+  const rateText = (name, a) => (name ? name + " " : "") + fmt(a.t_h, 1) + " t/h"
+    + (a.runs > 1 ? " (" + fmt(a.lo, 0) + "–" + fmt(a.hi, 0) + ", " + t("{n} runs", { n: a.runs }) + ")" : " (" + t("1 run") + ")")
+    + (a.thin ? " · " + t("few runs yet") : "");
   if (b.rings.length || b.hotspots.length) {
     // E11: each ring with its own hotspots below it ("Tritium ×2, Platinum");
     // hotspots whose ring is not in the ring list stay listed at the end
@@ -231,10 +257,49 @@ function render(ctx) {
         el("span", { class: "c-dim", text: " · " + (r.cls || "") + " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" })));
       if (r.hotspots && r.hotspots.length) rr.push(el("div", { class: "pl-line pl-sub c-amber", text: "◆ " + hsText(r.hotspots) }));
       else if (!r.belt) rr.push(el("div", { class: "pl-line pl-sub c-dim", text: t("no hotspots known - map the ring with the DSS") }));
+      // your prospecting in this ring, and what rings like it held at such hotspots
+      // L1: the share with its 95 % range; L2: thin groups lean on broader ones
+      const mats = (p) => p.mats.map(m => m.name + " " + m.share + " %"
+        + (m.lo !== undefined && p.level === undefined ? " (" + m.lo + "–" + m.hi + ")" : "")).join(" · ");
+      const LEVEL = { class: N_("few rocks yet - leaning on all {c} rings"), all: N_("few rocks yet - leaning on all your rings") };
+      if (r.prospect) rr.push(el("div", { class: "pl-line pl-sub small" + (r.prospect.thin ? " c-dim" : "") },
+        el("span", { class: "c-green", text: "⛏ " + t("your rocks here ({n}):", { n: r.prospect.rocks }) + " " }), mats(r.prospect),
+        r.prospect.motherlodes.length ? el("span", { class: "c-violet", text: " · ◆ " + r.prospect.motherlodes.map(([m, n]) => m + " ×" + n).join(", ") }) : null));
+      // L3: what you refined per hour in this ring
+      if (r.rates && r.rates.length) rr.push(el("div", { class: "pl-line pl-sub small" + (r.rates.every(a => a.thin) ? " c-dim" : "") },
+        el("span", { class: "c-green", text: "⏱ " + t("your rate here:") + " " }),
+        r.rates.map(a => rateText(a.name || a.mat, a)).join(" · ")));
+      for (const e of r.expected || []) {
+        if (e.mats) rr.push(el("div", { class: "pl-line pl-sub small c-dim" },
+          el("span", { text: "↳ " + t("at {h} hotspots ({r} rings, {n} rocks) also:", { h: e.hotspot, r: e.rings, n: e.rocks }) + " " }),
+          el("span", { text: mats(e) }),
+          e.level && e.level !== "hotspot" ? el("span", { class: "c-amber", text: " · " + t(LEVEL[e.level], { c: r.cls || "" }) }) : null));
+        if (e.rate && e.rate.level !== "ring") rr.push(el("div", { class: "pl-line pl-sub small c-dim" },
+          el("span", { text: "⏱ " + t("expected at {h}:", { h: e.hotspot }) + " " + rateText("", e.rate) + " · " + t(RATE_LEVEL[e.rate.level], { c: r.cls || "" }) })));
+      }
     }
     const loose = b.hotspots.filter(h => !ringNames.has(h.ring));
     if (loose.length) rr.push(el("div", { class: "pl-line c-amber", text: "◆ " + hsText(loose) }));
+    if (b.rings.some(r => r.prospect || (r.expected && r.expected.length)))
+      rr.push(el("div", { class: "c-dim small", text: t("Share of prospected rocks that held the material - from your own prospector reports.") }));
+    if (b.rings.some(r => (r.rates && r.rates.length) || (r.expected || []).some(e => e.rate)))
+      rr.push(el("div", { class: "c-dim small", text: t("t/h: the main refined material of your mining runs (all commanders), average with the slowest and fastest run.") }));
     right.push(frame(t("RINGS"), b.reserve ? t("reserves: {r}", { r: b.reserve }) : "", rr));
+  }
+
+  // ground mining with the Rhino: what rigs yielded here, and on bodies of this class
+  if (b.ground) {
+    const g = b.ground, gl = [];
+    if (g.here) gl.push(el("div", { class: "pl-line" }, el("span", { class: "c-green", text: "⛏ " + t("here: {n} rigs, {t} t", { n: g.here.rigs, t: g.here.tonnes }) + " · " }),
+      g.here.mats.map(m => m.name + " " + m.t + " t").join(" · ")));
+    if (g.rate) gl.push(el("div", { class: "pl-line small" + (g.rate.thin ? " c-dim" : "") },
+      el("span", { class: "c-green", text: "⏱ " + t("{c}: {r} rigs on {b} bodies · {t} t per rig", { c: g.rate.cls, r: g.rate.rigs, b: g.rate.bodies, t: fmt(g.rate.t_per_rig, 1) })
+        + (g.rate.rigs_h !== null && g.rate.rigs_h !== undefined ? " · " + t("{n} rigs/h", { n: fmt(g.rate.rigs_h, 1) }) : "") + (g.rate.thin ? " · " + t("few rigs yet") : "") })));
+    if (g.expected) gl.push(el("div", { class: "pl-line small c-dim" },
+      el("span", { text: "↳ " + t("on other {c} ({n} bodies):", { c: g.expected.cls, n: g.expected.bodies }) + " " }),
+      el("span", { text: g.expected.mats.map(m => m.name + " " + m.t + " t").join(" · ") })));
+    gl.push(el("div", { class: "c-dim small", text: t("From the rigs you collected with the Rhino.") }));
+    right.push(frame(t("GROUND MINING"), "", gl));
   }
 
   if (b.signals && b.signals.length) {

@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 Ship, fleet and carrier knowledge from the commander's own journals.
 
@@ -50,7 +55,19 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "UnderAttack", "Interdicted", "EscapeInterdiction", "HullDamage", "HeatWarning", "HeatDamage",
           "ShieldState", "CockpitBreached", "SystemsShutdown", "Died", "JetConeDamage", "JetConeBoost",
           "FighterDestroyed", "SRVDestroyed", "ApproachBody", "LeaveBody", "SupercruiseExit", "Touchdown",
-          "Docked")
+          "Docked",
+          # points of interest in SYSTEM (M10): stations, carriers, beacons
+          "FSSSignalDiscovered",
+          # known carriers (K1): where you docked, what you started there
+          "Undocked", "MissionAccepted", "CommunityGoalJoin",
+          # may we dock there (A1): the carrier's access, granted / refused
+          "Market", "DockingGranted", "DockingDenied",
+          # a nav beacon handed over every body of the system (SYSTEM hint)
+          "NavBeaconScan",
+          # unsold exploration data: which bodies you scanned (kept slim)
+          "Scan",
+          # which ring the rocks were prospected in (fis/prospect.py)
+          "SupercruiseEntry")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
 
 # carrier tritium per jump: 5 + ly * (load + tritium + BASE) / DIV, rounded.
@@ -356,6 +373,9 @@ def rate_loadout(lo: Dict[str, Any], vehicles: Optional[Iterable[str]] = None) -
 
 # --------------------------------------------------------------- archive
 
+ALL_COMMANDERS = "*"      # Archive.events(ALL_COMMANDERS): every commander's events
+
+
 class Archive:
     """Relevant journal events from every journal, rescanned when files change."""
 
@@ -419,10 +439,20 @@ class Archive:
                             out.append({"event": "LoadGame", "timestamp": e.get("timestamp"), "_fid": fid})
                         continue
                     if e.get("event") in ("FSDJump", "Location"):
-                        # only the coordinates are needed (carrier jump distances)
-                        e = {"event": e["event"], "timestamp": e.get("timestamp"),
-                             "StarSystem": e.get("StarSystem"), "StarPos": e.get("StarPos"),
-                             "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
+                        # the coordinates (carrier jump distances) - and for a
+                        # Location the docking: loading the game on a pad
+                        # writes no Docked, only Location with Docked: true
+                        slim = {"event": e["event"], "timestamp": e.get("timestamp"),
+                                "StarSystem": e.get("StarSystem"), "StarPos": e.get("StarPos"),
+                                "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
+                        if e.get("Docked"):
+                            slim.update({k: e.get(k) for k in ("Docked", "StationName",
+                                                               "StationType", "MarketID")})
+                        e = slim
+                    elif e.get("event") == "Scan":
+                        # only who and what - the full scan is in the plugin database
+                        e = {k: e.get(k) for k in ("event", "timestamp", "StarSystem", "SystemAddress",
+                                                   "BodyID", "BodyName", "ScanType")}
                     elif e.get("event") == "ShipTargeted":
                         if not str(e.get("PilotName") or "").startswith("$RolePanel2_unmanned"):
                             continue
@@ -446,13 +476,17 @@ class Archive:
         return (last["_fid"], last.get("Name")) if last else (None, None)
 
     def events(self, fid: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Events of one commander (default: the one logged in last)."""
+        """Events of one commander (default: the one logged in last). With
+        ALL_COMMANDERS every commander's events - for shared knowledge (what
+        rings and planets yield): only the exploration is per commander."""
         self.refresh()
         if fid is None:
             fid = self.commander()[0]
+        every = fid == ALL_COMMANDERS
         with self._lock:
             evs = [e for _p, (_s, lst) in sorted(self._files.items()) for e in lst
-                   if e["event"] != "Commander" and (fid is None or e.get("_fid") in (fid, None))]
+                   if e["event"] != "Commander"
+                   and (every or fid is None or e.get("_fid") in (fid, None))]
         evs.sort(key=lambda e: e.get("timestamp") or "")
         return evs
 
@@ -612,8 +646,17 @@ class Archive:
         return last
 
     # ------------------------------------------------------------ carrier
-    def carrier(self) -> Optional[Dict[str, Any]]:
+    def own_carrier_events(self) -> List[Dict[str, Any]]:
+        """events() without the CarrierJumps of someone else's carrier: riding
+        along on a stranger's carrier (docked or aboard on foot) writes a
+        CarrierJump too, and that moved "your" carrier in CARRIER and GALAXY
+        - for a commander without a carrier it even invented one."""
+        from .carriers import own_jump_flags
         evs = self.events()
+        return [e for e, foreign in zip(evs, own_jump_flags(evs)) if not foreign]
+
+    def carrier(self) -> Optional[Dict[str, Any]]:
+        evs = self.own_carrier_events()
         stats = loc = None
         pos: Dict[str, Any] = {}
         jumps: List[Dict[str, Any]] = []

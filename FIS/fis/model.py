@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """Builds the JSON snapshots the web interface draws.
 
 All maths that already exists in the plugin is imported, not re-written:
@@ -10,7 +15,7 @@ from __future__ import annotations
 import calendar
 import math
 import time
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .data import Database, _json
 
@@ -37,6 +42,12 @@ def plugin():
                 import surfacenav  # type: ignore   # plugin 4.5+
             except ImportError:
                 surfacenav = None
+            try:
+                import shells  # type: ignore   # plugin 4.6+, info levels 4.7+
+                if not hasattr(shells, "info_level"):
+                    shells = None
+            except ImportError:
+                shells = None
         finally:
             sys.dont_write_bytecode = keep
 
@@ -46,6 +57,7 @@ def plugin():
         p.sysroute, p.biopredict, p.deepspace, p.procgen = \
             sysroute, biopredict, deepspace, procgen
         p.surfacenav = surfacenav
+        p.shells = shells
         _plugin = p
     return _plugin
 
@@ -53,6 +65,25 @@ def plugin():
 # ---------------------------------------------------------------------------
 # small helpers
 # ---------------------------------------------------------------------------
+
+Q_ESTIMATE = 10      # sysdb: a position derived from name/id64 (boxel centre)
+
+
+def info_level(row: Any, regions: Optional[Dict[str, list]]) -> Tuple[str, List[str]]:
+    """I1 information level of a system row: known / inhabited / checked
+    (asked, nobody has it = 'in no database') / unchecked (nobody asked).
+    Same rule as the plugin briefing (shells.info_level)."""
+    if row is None:
+        return "unchecked", []
+    srcs = set((row["sources"] or "").split(","))
+    pos = None
+    q = row["quality"] if "quality" in row.keys() else None
+    if row["x"] is not None and (q is None or q > Q_ESTIMATE):
+        pos = (row["x"], row["y"], row["z"])
+    sh = plugin().shells
+    if sh is None:                         # older plugin: the old rule
+        return ("known" if Database.known_sources(row) else "checked"), []
+    return sh.info_level(srcs, pos, regions or {})
 
 def _r(v: Optional[float], nd: int = 2) -> Optional[float]:
     if v is None:
@@ -148,11 +179,129 @@ def _rings(row, hotspots: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> L
     return out
 
 
+# M10: what the FSS lists as a place to go - not the passing signal sources
+POI_TYPES = {
+    "FleetCarrier": "carrier", "SquadronCarrier": "carrier",
+    "NavBeacon": "beacon", "ResourceExtraction": "extraction", "Titan": "station",
+    "Outpost": "station", "Installation": "station", "Megaship": "station",
+    "StationCoriolis": "station", "StationONeilCylinder": "station", "StationONeilOrbis": "station",
+    "StationBernalSphere": "station", "StationMegaShip": "station", "StationAsteroid": "station",
+    "Station": "station",
+}
+POI_ORDER = {"station": 0, "settlement": 1, "carrier": 2, "extraction": 3, "beacon": 4}
+
+
+def nav_beacon(archive: Any, id64: int) -> Optional[Dict[str, Any]]:
+    """The last NavBeaconScan in this system: every body is known from the
+    beacon (data, but no discovery and no exploration data of your own)."""
+    if archive is None:
+        return None
+    try:
+        hit = None
+        for e in archive.events():
+            if e.get("event") == "NavBeaconScan" and e.get("SystemAddress") == id64:
+                hit = e
+    except Exception:
+        return None
+    if hit is None:
+        return None
+    return {"ts": hit.get("timestamp"), "bodies": hit.get("NumBodies")}
+
+
+def system_poi(db: Database, id64: int, archive: Any = None) -> List[Dict[str, Any]]:
+    """
+    M10: points of interest of one system, from your own journals and the
+    plugin database - stations, outposts, installations and megaships,
+    settlements (with their body), fleet carriers seen there, nav beacons
+    and extraction sites. Latest sighting per name; docking adds the
+    distance from the arrival star.
+    """
+    pois: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    evs = []
+    if archive is not None:
+        try:
+            archive.refresh()
+            evs = [e for e in archive.events() if e.get("SystemAddress") == id64]
+        except Exception:
+            evs = []
+    for e in evs:
+        ev = e.get("event")
+        if ev == "FSSSignalDiscovered":
+            st = e.get("SignalType") or ""
+            kind = POI_TYPES.get(st) or ("station" if e.get("IsStation") and st != "FleetCarrier" else None)
+            if not kind:
+                continue
+            name = e.get("SignalName_Localised") or e.get("SignalName") or ""
+            if not name or name.startswith("$"):
+                continue
+            p = pois.setdefault((kind, name), {"kind": kind, "type": st, "name": name})
+            p["seen"] = max(p.get("seen") or "", e.get("timestamp") or "")
+        elif ev == "Docked":
+            name = e.get("StationName_Localised") or e.get("StationName") or ""
+            st = e.get("StationType") or ""
+            kind = POI_TYPES.get(st, "station")
+            if not name:
+                continue
+            p = pois.setdefault((kind, name), {"kind": kind, "type": st, "name": name})
+            p["seen"] = max(p.get("seen") or "", e.get("timestamp") or "")
+            p["docked"] = True
+            if e.get("DistFromStarLS") is not None:
+                p["dist_ls"] = _r(e.get("DistFromStarLS"), 0)
+    srow = db.system_by_id64(id64)
+    sysname = srow["name"] if srow is not None else ""
+    try:
+        rows = db.settlements_of(id64)
+    except Exception:
+        rows = []
+    for r in rows:
+        body = r["body_name"] or ""
+        short = body[len(sysname):].strip() if sysname and body.startswith(sysname) else body
+        pois[("settlement", (r["label"] or "") + "@" + body)] = {
+            "kind": "settlement", "type": "Settlement", "name": r["label"] or "?", "body": short,
+            "body_name": body, "lat": _r(r["lat"], 4), "lon": _r(r["lon"], 4), "seen": r["ts"]}
+    # a carrier seen in the FSS ("NAME K7Q-12Z") and docked at ("K7Q-12Z")
+    # is one carrier: one line with name and callsign (11.11.)
+    from .carriers import is_callsign, parse_signal
+    merged: Dict[str, Dict[str, Any]] = {}
+    for key in [k for k in pois if k[0] == "carrier"]:
+        p = pois.pop(key)
+        nm = p["name"]
+        cs = nm if is_callsign(nm) else (parse_signal(nm) or {}).get("callsign")
+        if not cs:
+            pois[key] = p
+            continue
+        m = merged.get(cs)
+        if m is None:
+            merged[cs] = p
+            continue
+        for k, v in p.items():
+            if k == "name":
+                if len(v) > len(m["name"]):
+                    m["name"] = v                      # the one with the name
+            elif k == "seen":
+                m["seen"] = max(m.get("seen") or "", v or "")
+            elif m.get(k) is None:
+                m[k] = v
+    for cs, p in merged.items():
+        pois[("carrier", cs)] = p
+    out = list(pois.values())
+    # by kind; carriers come and go - the latest sightings first
+    carriers = sorted((p for p in out if p["kind"] == "carrier"),
+                      key=lambda p: p.get("seen") or "", reverse=True)
+    rest = sorted((p for p in out if p["kind"] != "carrier"),
+                  key=lambda p: (POI_ORDER.get(p["kind"], 9), p["name"]))
+    before = [p for p in rest if POI_ORDER.get(p["kind"], 9) < POI_ORDER["carrier"]]
+    after = [p for p in rest if POI_ORDER.get(p["kind"], 9) > POI_ORDER["carrier"]]
+    return before + carriers + after
+
+
 def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
                  filters: Sequence[str] = ("todo",),
                  now: Optional[float] = None,
                  cost_model: Any = None,
-                 order_model: Any = None) -> Dict[str, Any]:
+                 order_model: Any = None,
+                 skip_arrival: bool = False,
+                 archive: Any = None) -> Dict[str, Any]:
     """Everything TAKTIK needs: bodies at Kepler positions, orbits, route, fix."""
     p = plugin()
     sr = p.sysroute
@@ -172,6 +321,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         "fss_complete": bool(srow["fss_complete"]) if srow is not None else False,
         "visited": bool(srow["visited"]) if srow is not None else False,
         "known_sources": Database.known_sources(srow),
+        "info_level": info_level(srow, db.shell_regions())[0],
         "bodies": [], "route": None, "fix": None, "generated": now,
     }
     if not rows:
@@ -207,10 +357,12 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
     # order with the model the plugin uses, times with the measured one
     cm = cost_model or sr.DEFAULT_MODEL
     om = order_model or cm
-    route = sr.plan_route(name or "", bodies, model=om, filters=flist)
+    route = sr.plan_route(name or "", bodies, model=om, filters=flist,
+                          skip_arrival=skip_arrival)
     full = False
     if not route.stops and "all" not in flist:
-        route = sr.plan_route(name or "", bodies, model=om, filters=["all"])
+        route = sr.plan_route(name or "", bodies, model=om, filters=["all"],
+                              skip_arrival=skip_arrival)
     if om is not cm:
         _recost(route, cm)
         full = True
@@ -257,6 +409,21 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         })
 
     out["bio"] = bio_list(db, id64, rows, out["bodies"])
+    # M10: stations, settlements, carriers, beacons - and a mark on the body
+    try:
+        out["poi"] = system_poi(db, id64, archive)
+    except Exception:
+        out["poi"] = []
+    out["nav_beacon"] = nav_beacon(archive, id64)
+    by_body = {}
+    for p in out["poi"]:
+        if p["kind"] == "settlement":
+            by_body[p["body_name"]] = by_body.get(p["body_name"], 0) + 1
+    if by_body:
+        for b in out["bodies"]:
+            n = by_body.get(b.get("name"))
+            if n:
+                b["flags"]["settlement"] = n
     from . import science
     try:
         out["report"] = science.system_report([dict(r) for r in rows], out)
@@ -474,7 +641,90 @@ def system_signals(rows) -> List[Dict[str, Any]]:
     return sorted(agg.values(), key=lambda x: (x["tone"] != "violet", -x["total"]))
 
 
-ATLAS_VIEWS = ("rings", "signals", "materials", "finds", "bio")
+ATLAS_VIEWS = ("rings", "signals", "materials", "finds", "bio", "systems")
+SYSTEM_STATES = ("unvisited", "visited", "surveyed", "only_us", "absent")
+
+
+def survey_rows(db: Database) -> Dict[str, Any]:
+    """
+    M6/M14: every system of the active survey sphere with its state - known
+    to the online sources but not visited yet, visited, surveyed (FSS
+    complete) - plus the names checked in the galaxy map and found not to
+    exist. "only_us": no online source knows the system. Read only, from
+    the plugin database.
+    """
+    s = db.survey()
+    out: Dict[str, Any] = {"survey": None, "systems": []}
+    if s is None or s["cx"] is None:
+        return out
+    c = (s["cx"], s["cy"], s["cz"])
+    out["survey"] = {"start_system": s["start_system"], "center": list(c), "radius": s["radius"],
+                     "active": bool(s["active"]), "started": s["started"]}
+    regions = db.shell_regions()
+    for r in db.systems_in_sphere(c[0], c[1], c[2], s["radius"] or 0.0):
+        srcs = Database.known_sources(r)
+        state = "surveyed" if r["fss_complete"] else "visited" if r["visited"] else "unvisited"
+        level = info_level(r, regions)[0]
+        out["systems"].append({
+            "name": r["name"], "id64": r["id64"], "x": r["x"], "y": r["y"], "z": r["z"],
+            "from_centre_ly": _r(math.dist((r["x"], r["y"], r["z"]), c), 2),
+            # I1: "known to no online source" only where they were asked
+            "state": state, "only_us": level == "checked", "level": level, "sources": srcs,
+            "bodies": r["body_count"]})
+    for r in db.absent_all():
+        out["systems"].append({"name": r["name"], "id64": None, "x": None, "y": None, "z": None,
+                               "from_centre_ly": None, "state": "absent", "only_us": False,
+                               "sources": [], "bodies": None, "checked": r["ts"]})
+    return out
+
+
+def _atlas_systems(db: Database, kind: Optional[str], near: Optional[Sequence[float]],
+                   limit: int, q: Optional[str], max_ly: Optional[float]) -> Dict[str, Any]:
+    """ATLAS SYSTEMS (M6): the survey sphere's systems, nearest first."""
+    text = (q or "").strip().lower()
+    items = []
+    for r in survey_rows(db)["systems"]:
+        if kind == "only_us" and not r["only_us"]:
+            continue
+        if kind and kind != "only_us" and r["state"] != kind:
+            continue
+        if text and text not in r["name"].lower():
+            continue
+        it: Dict[str, Any] = {"system": r["name"], "id64": r["id64"], "body": None, "count": None,
+                              "key": r["state"], "only_us": r["only_us"], "sources": r["sources"],
+                              "bodies": r["bodies"], "dist_ly": None, "rel": None}
+        if near and r["x"] is not None:
+            dx, dy, dz = r["x"] - near[0], r["y"] - near[1], r["z"] - near[2]
+            it["dist_ly"] = _r(math.sqrt(dx * dx + dy * dy + dz * dz), 1)
+            it["rel"] = [_r(dx, 2), _r(dy, 2), _r(dz, 2)]
+        if max_ly and near and (it["dist_ly"] is None or it["dist_ly"] > max_ly):
+            continue
+        items.append(it)
+    items.sort(key=lambda x: (x["dist_ly"] if x["dist_ly"] is not None else 1e9, x["system"]))
+    for it in items:
+        it["body_short"] = ""
+    return {"view": "systems", "kind": kind, "q": q or "", "max_ly": max_ly,
+            "total": len(items), "items": items[:limit]}
+
+
+def survey_export(db: Database, fmt: str) -> Any:
+    """M14: the survey sphere as CSV (text) or JSON (dict)."""
+    data = survey_rows(db)
+    if fmt == "json":
+        return data
+    import csv
+    import io as _io
+    buf = _io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["name", "id64", "x", "y", "z", "from_centre_ly", "state", "only_us",
+                "sources", "bodies"])
+    for r in data["systems"]:
+        w.writerow([r["name"], r["id64"] or "", r["x"] if r["x"] is not None else "",
+                    r["y"] if r["y"] is not None else "", r["z"] if r["z"] is not None else "",
+                    r["from_centre_ly"] if r["from_centre_ly"] is not None else "", r["state"],
+                    "1" if r["only_us"] else "0", "|".join(r["sources"]),
+                    r["bodies"] if r["bodies"] is not None else ""])
+    return buf.getvalue()
 # M1: Horizons-era organics are logged with the composition scanner (codex)
 # only - the genetic sampler never analyses them, so a body whose only open
 # signals are these counts as done. Assumption, to confirm in game.
@@ -521,6 +771,8 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
     `rel` (ly from you: x, z in the galactic plane, y up) for the small map.
     """
     view = view if view in ATLAS_VIEWS else "signals"
+    if view == "systems":
+        return _atlas_systems(db, kind, near, limit, q, max_ly)
     rows = {"rings": db.atlas_rings, "materials": db.atlas_materials,
             "finds": db.atlas_finds, "bio": db.atlas_bio}.get(view, db.atlas_signals)(kind)
     need = text = None
@@ -595,6 +847,13 @@ def build_atlas(db: Database, view: str, kind: Optional[str],
 def build_atlas_kinds(db: Database, view: str) -> List[Dict[str, Any]]:
     """The second picker: what kinds exist in one atlas view, with counts."""
     out = []
+    if view == "systems":
+        rows = survey_rows(db)["systems"]
+        n = {k: 0 for k in SYSTEM_STATES}
+        for r in rows:
+            n[r["state"]] += 1
+            n["only_us"] += 1 if r["only_us"] else 0
+        return [{"key": k, "label": k, "count": n[k]} for k in SYSTEM_STATES if n[k]]
     if view == "bio":
         n = {"open": 0, "done": 0}
         for r in db.atlas_bio():
@@ -608,6 +867,123 @@ def build_atlas_kinds(db: Database, view: str) -> List[Dict[str, Any]]:
             label = "%s · %s" % (r["category"], label)
         out.append({"key": r["key"], "label": label, "count": r["n"]})
     return out
+
+
+_PROSPECTS: Dict[str, Any] = {"key": None, "pros": {}}
+
+
+def _ring_prospects(archive: Any) -> Dict[str, Dict[str, Any]]:
+    """Prospecting per ring from the journals of EVERY commander (the
+    knowledge is shared, only the exploration is per commander), computed
+    once per archive change."""
+    if archive is None:
+        return {}
+    from . import prospect
+    from .fleet import ALL_COMMANDERS
+    try:
+        key = (id(archive), getattr(archive, "rev", None))
+    except Exception:
+        key = None
+    if key is None or _PROSPECTS["key"] != key:
+        _PROSPECTS["pros"] = prospect.ring_prospects(archive.events(ALL_COMMANDERS))
+        _PROSPECTS["key"] = key
+    return _PROSPECTS["pros"]
+
+
+def _ring_mining(db: Database, rings: List[Dict[str, Any]], archive: Any) -> None:
+    """
+    Under each ring: what the rocks there held (your prospecting) and, for
+    each of its hotspots, what the rocks of rings of this class with such a
+    hotspot held - the materials to expect next to it.
+    """
+    from . import learn, prospect
+    pros = _ring_prospects(archive)
+    # L3: your mining runs (t/h) - every commander's, like the prospecting
+    try:
+        runs = learn.runs_of(archive)
+    except Exception:
+        runs = []
+    if not pros and not runs:
+        return
+    ring_hs: Dict[str, Any] = {}
+    try:
+        for h in db.query("SELECT body_name, material, ring_class FROM hotspots"):
+            cls, keys = ring_hs.get(h["body_name"], (prospect.ring_class(h["ring_class"]), []))
+            keys.append(prospect._key(h["material"]))
+            ring_hs[h["body_name"]] = (cls, keys)
+    except Exception:
+        return
+    pool = prospect.expectations(pros, ring_hs) if pros else {}
+    rates = learn.ring_rates(runs, learn.ring_classes(db)) if runs else {}
+    for g in rings:
+        name = g.get("name") or ""
+        g["prospect"] = prospect.summary(pros.get(name))
+        cls = prospect.ring_class(g.get("cls")) or ring_hs.get(name, ("", []))[0]
+        # L3: your tonnes per hour in this very ring, per material
+        own = [dict(a, mat=m) for (rn, m), a in (rates.get("ring") or {}).items() if rn == name]
+        g["rates"] = sorted(own, key=lambda a: -(a["t_h"] or 0))
+        exp = []
+        for h in g.get("hotspots") or []:
+            k = prospect._key(h.get("key") or h["material"])
+            e = prospect.expected_for(pool, cls, k, skip_ring=name) if pool else None
+            rate = learn.expected_rate(rates, name, cls, k) if rates else None
+            if e or rate:
+                item = dict(e or {}, hotspot=h["material"])
+                if rate:
+                    item["rate"] = rate
+                exp.append(item)
+        g["expected"] = exp
+
+
+def _ground_mining(db: Database, body_name: str, planet_class: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Ground mining (Rhino rigs) on this body - tonnes per material and the
+    rigs collected - and what rigs on other bodies of this planet class
+    yielded: what to expect here. From the plugin's "refined" marks (one
+    per tonne, written where the rig was collected).
+    """
+    if not db.has_table("surface_marks"):
+        return None
+    rows = db.query("SELECT m.body_name, m.label, m.ts, m.lat, m.lon, b.planet_class "
+                    "FROM surface_marks m LEFT JOIN bodies b ON b.name = m.body_name "
+                    "WHERE m.kind = 'refined'")
+    if not rows:
+        return None
+    here: Dict[str, int] = {}
+    pool: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        typ = (r["label"] or "?").split("#")[0]
+        if r["body_name"] == body_name:
+            here[typ] = here.get(typ, 0) + 1
+        elif planet_class and r["planet_class"] == planet_class:
+            p = pool.setdefault(typ, {"t": 0, "bodies": set()})
+            p["t"] += 1
+            p["bodies"].add(r["body_name"])
+    out: Dict[str, Any] = {}
+    if here:
+        rigs = 0
+        try:
+            nav = plugin().surfacenav
+            marks = [dict(m) for m in db.query("SELECT * FROM surface_marks WHERE body_name = ?",
+                                               (body_name,))]
+            rigs = len(nav.body_state(marks)["rigs"]) if nav else 0
+        except Exception:
+            rigs = 0
+        out["here"] = {"rigs": rigs, "tonnes": sum(here.values()),
+                       "mats": [{"name": k, "t": v} for k, v in sorted(here.items(), key=lambda kv: -kv[1])]}
+    try:
+        # L3: rigs on bodies of this class - tonnes per rig, rigs per hour
+        from . import learn
+        rr = learn.rig_rates_db(db).get(planet_class or "?") if planet_class else None
+        if rr:
+            out["rate"] = dict(rr, cls=planet_class)
+    except Exception:
+        pass
+    if pool:
+        out["expected"] = {"cls": planet_class, "bodies": len(set().union(*(p["bodies"] for p in pool.values()))),
+                           "mats": [{"name": k, "t": p["t"], "bodies": len(p["bodies"])}
+                                    for k, p in sorted(pool.items(), key=lambda kv: -kv[1]["t"])]}
+    return out or None
 
 
 def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Optional[Dict[str, Any]]:
@@ -626,12 +1002,14 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
     # itself) - by the planet's body_id there are none (F4)
     ring_names = {g.get("name") for g in (_json(r["rings_json"], []) or []) if g.get("name")}
     hotspots = [{"material": h["label"] or h["material"], "count": h["count"],
-                 "ring": h["body_name"]} for h in db.hotspots_of(id64)
+                 "ring": h["body_name"], "key": h["material"]} for h in db.hotspots_of(id64)
                 if h["body_name"] in ring_names or h["body_id"] == body_id]
     hs_by_ring: Dict[str, List[Dict[str, Any]]] = {}
     for h in hotspots:
+        # the label for the view ("Void Opal"), the game's material ("Opal")
+        # to match the prospector reports and mining runs
         hs_by_ring.setdefault(h["ring"] or "", []).append(
-            {"material": h["material"], "count": h["count"]})
+            {"material": h["material"], "count": h["count"], "key": h.pop("key")})
     out: Dict[str, Any] = {
         "id64": id64, "body_id": body_id, "system": sysname,
         "name": r["name"], "short": p.sysroute.shorten(r["name"] or "", sysname),
@@ -729,6 +1107,14 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
         except Exception as exc:  # pragma: no cover - model is best effort
             out["bio"]["model"] = "forecast not available: %s" % exc
     from . import science
+    try:
+        _ring_mining(db, out["rings"], archive)    # rocks per ring, what to expect at a hotspot
+    except Exception:
+        pass
+    try:
+        out["ground"] = _ground_mining(db, r["name"] or "", r["planet_class"])
+    except Exception:
+        out["ground"] = None
     out["report"] = science.body_report(out)
     out["report_level"] = science.worst(out["report"])
     return out
@@ -1034,6 +1420,7 @@ def _navpoints(db: Database, live: Dict[str, Any], limit: int = 14) -> List[Dict
     """The plotted route after the current system, with what we know of each hop."""
     route = live.get("navroute") or []
     cur = (live.get("system") or {}).get("name")
+    regions = db.shell_regions()
     start = 0
     for i, h in enumerate(route):
         if h.get("name") == cur:
@@ -1049,6 +1436,7 @@ def _navpoints(db: Database, live: Dict[str, Any], limit: int = 14) -> List[Dict
                     "boost": boost_kind(h.get("star_class")),
                     "jump_ly": _r(_dist3(prev, pos), 2) if prev and pos else None,
                     "known_sources": Database.known_sources(row),
+                    "level": info_level(row, regions)[0],
                     "visited": bool(row["visited"]) if row is not None else False})
         prev = pos
     return out
@@ -1124,6 +1512,7 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
     cpos = (live.get("system") or {}).get("pos")
     dist = _r(_dist3(cpos, tpos), 2) if cpos and tpos else None
     known = Database.known_sources(row)
+    level, checked_by = info_level(row, db.shell_regions())
     route = live.get("navroute") or []
     idx = next((i for i, h in enumerate(route) if h.get("name") == name), None)
     out["target"] = {
@@ -1132,7 +1521,8 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
         "boost": boost_kind(star),
         "distance_ly": dist, "in_db": row is not None,
         "visited": bool(row["visited"]) if row is not None else False,
-        "known_sources": known, "in_no_database": not known,
+        "known_sources": known, "in_no_database": level == "checked",
+        "level": level, "checked_by": checked_by,
         "body_count": row["body_count"] if row is not None else None,
         "remaining_jumps": tgt.get("remaining_jumps"),
         "navpoint": [idx, len(route) - 1] if idx is not None and len(route) > 1 else None,
@@ -1160,6 +1550,11 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
                 fs2 = _fuel_state(live)
                 fs2.level = after
                 f["jumps_after"] = fs2.jumps_left
+        # a scoopable target: you refuel where you arrive - no fuel warning
+        # as long as the jump itself is covered (11.11.: a G star, 5+ jumps)
+        if f.get("warning") and out["target"]["scoopable"] and not f.get("beyond_range")                 and (f.get("cost_t") is None or fs.level > f["cost_t"]):
+            f["warning"] = None
+            f["scoop_at_target"] = True
         out["fuel"] = f
     # expectation text, rule based
     exp = []
@@ -1170,7 +1565,11 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
         exp.append({"key": "bio_neighbours", "n": bx["bio_systems"], "of": bx["visited"]})
     # data, not sentences: the browser words them in the display language
     out["expectation"] = exp
-    if not known and row is not None and row["visited"]:
+    if not known and level == "inhabited":
+        out["status"] = "inhabited"         # population/station: surely known
+    elif not known and level == "unchecked":
+        out["status"] = "unchecked"         # I1: nobody asked - never "unknown"
+    elif not known and row is not None and row["visited"]:
         out["status"] = "only_us"           # visited, but in no external database
     elif not known:
         out["status"] = "unknown"           # first discovery possible
@@ -1219,6 +1618,8 @@ def build_ship(live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "jumping": live.get("jumping"),
         "status_ts": st.get("ts"),
     }
+    from .combat import combat_state
+    out["combat"] = combat_state(live, time.time())          # M8
     if ship.get("fuel_capacity"):
         fs = _fuel_state(live)
         out["fuel"].update(pct=_r(fs.pct, 1), jumps_left=fs.jumps_left,
@@ -1249,7 +1650,8 @@ def build_survey(db: Database) -> Dict[str, Any]:
                masscodes=s["masscodes"], started=s["started"], updated=s["updated"])
     rows = db.systems_in_sphere(s["cx"], s["cy"], s["cz"], s["radius"] or 0.0)
     visited = [r for r in rows if r["visited"]]
-    only_us = [r for r in visited if not Database.known_sources(r)]
+    regions = db.shell_regions()
+    only_us = [r for r in visited if info_level(r, regions)[0] == "checked"]
     out["systems"] = {
         "known": len(rows), "visited": len(visited),
         "fss_complete": sum(1 for r in rows if r["fss_complete"]),

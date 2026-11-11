@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """
 sysdb.py - persistent database for SHBOXSEARCH v4
 =================================================
@@ -36,6 +41,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from procgen import (MASSCODES, SectorRegistry, decode_id64, make_name,
                      parse_boxel_key, parse_name)
+from shells import INHABITED, inhabited_event
 
 logger = logging.getLogger(__name__)
 
@@ -355,6 +361,7 @@ class SystemDB:
     def __init__(self, path: str):
         self.path = path
         self.backup_path: Optional[str] = None
+        self._dock_market_id: Optional[int] = None
         try:
             state = stored_state(path)
         except sqlite3.Error:
@@ -692,6 +699,27 @@ class SystemDB:
             self.cx.commit()
         return changed
 
+    def mark_inhabited(self, name: Optional[str], id64: Optional[int]) -> int:
+        """I1: population, factions or a station seen in the journal - the
+        system is known to every database without asking. Stored as the
+        pseudo source 'inhabited' (no schema change). 1 when newly marked."""
+        if not name and not id64:
+            return 0
+        if name:
+            self.upsert(name, id64=id64, quality=Q_ESTIMATE, source="journal")
+        row = (self.system_by_id64(id64) if id64 else None) or (
+            self.system(name) if name else None)
+        if row is None:
+            return 0
+        have = set((row["sources"] or "").split(",")) - {""}
+        if INHABITED in have:
+            return 0
+        have.add(INHABITED)
+        self.cx.execute("UPDATE systems SET sources=?, updated=? WHERE name=?",
+                        (",".join(sorted(have)), _now(), row["name"]))
+        self.cx.commit()
+        return 1
+
     def system_by_id64(self, id64: int) -> Optional[sqlite3.Row]:
         return self.cx.execute("SELECT * FROM systems WHERE id64=?", (id64,)).fetchone()
 
@@ -854,7 +882,8 @@ class SystemDB:
     def system_progress(self, id64: Optional[int]) -> Dict[str, object]:
         """What is still outstanding in this system?"""
         empty = {"body_count": None, "scanned": 0, "mapped": 0, "fss_complete": False,
-                 "dss_open": [], "bio_open": [], "new_discoveries": 0, "valuable": []}
+                 "dss_open": [], "bio_open": [], "bio_signals_open": 0,
+                 "new_discoveries": 0, "valuable": []}
         if not id64:
             return empty
         s = self.system_by_id64(id64)
@@ -862,13 +891,19 @@ class SystemDB:
         scanned = sum(1 for r in rows if r["scanned"])
         mapped = sum(1 for r in rows if r["mapped"])
         dss_open, bio_open, valuable = [], [], []
+        bio_signals_open = 0
         for r in rows:
             worth = (r["sig_bio"] or 0) > 0 or (r["planet_class"] in VALUABLE_CLASSES) \
                 or (r["terraform"] or "") == "Terraformable"
             if r["kind"] == "Planet" and worth and not r["mapped"]:
                 dss_open.append(r["name"] or "Body %d" % r["body_id"])
-            if (r["sig_bio"] or 0) > 0 and (r["organics"] or 0) == 0:
+            # M1: open = signals minus species analysed - a body with three
+            # signals and one species done is still open (it used to count
+            # as done as soon as one species was analysed)
+            left = (r["sig_bio"] or 0) - (r["organics"] or 0)
+            if left > 0:
                 bio_open.append(r["name"] or "Body %d" % r["body_id"])
+                bio_signals_open += left
             if r["planet_class"] in VALUABLE_CLASSES or (r["terraform"] or "") == "Terraformable":
                 valuable.append((r["name"], r["planet_class"], r["terraform"]))
         return {
@@ -878,6 +913,7 @@ class SystemDB:
             "fss_complete": bool(s["fss_complete"]) if s else False,
             "dss_open": dss_open,
             "bio_open": bio_open,
+            "bio_signals_open": bio_signals_open,
             "new_discoveries": sum(1 for r in rows if r["was_discovered"] == 0),
             "valuable": valuable,
         }
@@ -1104,11 +1140,14 @@ class SystemDB:
         ev = entry.get("event")
         n = 0
         self._track_location(ev, entry)
+        self._note_dock(ev, entry)
         try:
             self._surface_event(ev, entry)
         except Exception:
             logger.debug("surface mark failed for %s", ev, exc_info=True)
         try:
+            if inhabited_event(entry):
+                n += self.mark_inhabited(entry.get("StarSystem"), entry.get("SystemAddress"))
             if ev in ("FSDJump", "Location", "CarrierJump"):
                 pos = entry.get("StarPos")
                 if entry.get("StarSystem") and pos and len(pos) >= 3:
@@ -1116,6 +1155,12 @@ class SystemDB:
                                 id64=entry.get("SystemAddress"), quality=Q_JOURNAL,
                                 source="journal", visited=True)
                     n += 1
+                # CarrierJump is caught here, so the carrier branch below only
+                # ever saw CarrierLocation: riding along on the own carrier
+                # left it in the old system until the next login.
+                if ev == "CarrierJump" and self._own_carrier_event(ev, entry):
+                    self.set_carrier(entry.get("StarSystem"), entry.get("SystemAddress"),
+                                     tuple(pos[:3]) if pos and len(pos) >= 3 else None)
 
             elif ev == "FSDTarget":
                 nm = entry.get("Name") or entry.get("StarSystem")
@@ -1247,7 +1292,10 @@ class SystemDB:
                         if "WasDiscovered" in entry else None,
                         was_mapped=(1 if entry.get("WasMapped") else 0)
                         if "WasMapped" in entry else None,
-                        scanned=1)
+                        # a nav beacon hands over every body's data: the data
+                        # counts, but it is not your scan (no discovery, no
+                        # exploration data) - an own scan stays an own scan
+                        scanned=None if entry.get("ScanType") == "NavBeaconDetail" else 1)
                     self._link_parents(a, entry.get("Parents"))
                     n += 1
 
@@ -1311,7 +1359,7 @@ class SystemDB:
                                       else None)
                     n += 1
 
-            elif ev in ("CarrierJump", "CarrierLocation"):
+            elif ev == "CarrierLocation" and self._own_carrier_event(ev, entry):
                 nm = entry.get("StarSystem")
                 pos = entry.get("StarPos")
                 a = entry.get("SystemAddress")
@@ -1326,11 +1374,14 @@ class SystemDB:
                                      tuple(pos[:3]) if pos and len(pos) >= 3 else None)
                     n += 1
 
-            elif ev == "CarrierStats":
+            elif ev == "CarrierStats" and entry.get("CarrierType", "FleetCarrier") == "FleetCarrier":
+                if entry.get("CarrierID"):
+                    self.set_meta("carrier_market_id", entry["CarrierID"])
                 self.set_meta("carrier_callsign", entry.get("Callsign") or "")
                 self.set_meta("carrier_name", entry.get("Name") or "")
 
-            elif ev == "Docked" and entry.get("StationType") == "FleetCarrier":
+            elif (ev == "Docked" and entry.get("StationType") == "FleetCarrier"
+                  and self._own_carrier_event(ev, entry)):
                 nm = entry.get("StarSystem")
                 if nm:
                     self.set_carrier(nm, entry.get("SystemAddress"),
@@ -1497,6 +1548,42 @@ class SystemDB:
         return self.cx.execute("SELECT * FROM survey WHERE id=1").fetchone()
 
     # --------------------------------------------------------------- carrier
+    def _own_carrier_event(self, ev: str, entry: dict) -> bool:
+        """
+        Is this carrier event about the commander's OWN fleet carrier?
+
+        Up to 4.7 every Docked at a fleet carrier and every CarrierJump moved
+        "my carrier": docking at someone else's carrier (or riding along on
+        it) overwrote the own carrier's position and callsign - and a
+        commander without a carrier got a stranger's carrier as his own.
+        The own carrier is known by its CarrierID (= MarketID) from
+        CarrierLocation / CarrierStats, which the game writes for owners at
+        every login. Without that ID nothing but CarrierLocation counts.
+        """
+        if ev == "CarrierLocation":
+            if entry.get("CarrierType", "FleetCarrier") != "FleetCarrier":
+                return False             # squadron carrier, not the own one
+            if entry.get("CarrierID"):
+                self.set_meta("carrier_market_id", entry["CarrierID"])
+            return True
+        own = self.get_meta("carrier_market_id")
+        mid = entry.get("MarketID")
+        if ev == "CarrierJump" and not mid:
+            mid = self._dock_market_id     # on foot aboard: no MarketID
+        if own and mid:
+            return str(mid) == str(own)
+        if not own and ev == "Docked":
+            cs = self.get_meta("carrier_callsign")
+            return bool(cs) and entry.get("StationName") == cs
+        return False
+
+    def _note_dock(self, ev: str, entry: dict) -> None:
+        """Remember where the commander is docked (for CarrierJump on foot)."""
+        if ev == "Docked" or (ev == "Location" and entry.get("Docked")):
+            self._dock_market_id = entry.get("MarketID")
+        elif ev in ("Undocked", "FSDJump", "Died", "LoadGame", "Shutdown"):
+            self._dock_market_id = None
+
     def set_carrier(self, name: str, id64: Optional[int] = None,
                     coords: Optional[Sequence[float]] = None,
                     callsign: Optional[str] = None,
@@ -2222,6 +2309,62 @@ def _selftest() -> int:
         cx.commit()
         cx.close()
         check(stored_state(legacy) == (0, set()), "database without meta = schema 0")
+        db = SystemDB(os.path.join(d, "carrier.sqlite"))
+        db.ingest_journal_event({"event": "Docked", "StationType": "FleetCarrier",
+                                 "StationName": "ZZZ-001", "MarketID": 1001,
+                                 "StarSystem": "Test Alpha", "SystemAddress": 11})
+        check(db.get_carrier() is None, "docking at a stranger's carrier: no own carrier")
+        db.ingest_journal_event({"event": "CarrierLocation", "CarrierType": "FleetCarrier",
+                                 "CarrierID": 2002, "StarSystem": "Test Home",
+                                 "SystemAddress": 22})
+        db.ingest_journal_event({"event": "CarrierStats", "CarrierID": 2002,
+                                 "Callsign": "OWN-002", "Name": "TEST OWN"})
+        db.ingest_journal_event({"event": "Docked", "StationType": "FleetCarrier",
+                                 "StationName": "ZZZ-001", "MarketID": 1001,
+                                 "StarSystem": "Test Alpha", "SystemAddress": 11})
+        db.ingest_journal_event({"event": "Disembark", "OnStation": True})
+        db.ingest_journal_event({"event": "CarrierJump", "OnFoot": True, "Docked": False,
+                                 "StarSystem": "Test Beta", "SystemAddress": 33,
+                                 "StarPos": [1.0, 2.0, 3.0]})
+        c = db.get_carrier()
+        check(c and c["system"] == "Test Home" and c["callsign"] == "OWN-002",
+              "stranger's carrier (docked, jump on foot) leaves the own carrier alone")
+        db.ingest_journal_event({"event": "Undocked"})
+        db.ingest_journal_event({"event": "Docked", "StationType": "FleetCarrier",
+                                 "StationName": "OWN-002", "MarketID": 2002,
+                                 "StarSystem": "Test Home", "SystemAddress": 22})
+        db.ingest_journal_event({"event": "CarrierJump", "OnFoot": True, "Docked": False,
+                                 "StarSystem": "Test Gamma", "SystemAddress": 44,
+                                 "StarPos": [4.0, 5.0, 6.0]})
+        check(db.get_carrier()["system"] == "Test Gamma", "own carrier jump while aboard counts")
+        db.ingest_journal_event({"event": "FSDJump", "StarSystem": "Test Town",
+                                 "SystemAddress": 55, "StarPos": [7.0, 8.0, 9.0],
+                                 "Population": 4200, "Factions": [{"Name": "F"}]})
+        db.ingest_journal_event({"event": "FSDJump", "StarSystem": "Test Void",
+                                 "SystemAddress": 66, "StarPos": [9.0, 8.0, 7.0],
+                                 "Population": 0})
+        db.ingest_journal_event({"event": "Docked", "StationType": "Coriolis",
+                                 "StationName": "Port", "MarketID": 77,
+                                 "StarSystem": "Test Port", "SystemAddress": 77})
+        src = lambda nm: set(((db.system(nm) or {"sources": ""})["sources"] or "").split(","))  # noqa: E731
+        check(INHABITED in src("Test Town") and INHABITED not in src("Test Void")
+              and INHABITED in src("Test Port") and INHABITED not in src("Test Alpha"),
+              "I1: population/factions/station marks 'inhabited', empty system and carrier not")
+        check(db.system("Test Town")["quality"] == Q_JOURNAL and db.system("Test Town")["x"] == 7.0,
+              "I1: marking keeps the journal position")
+        nb = {"event": "Scan", "ScanType": "NavBeaconDetail", "StarSystem": "Test Town",
+              "SystemAddress": 55, "BodyName": "Test Town 1", "BodyID": 1,
+              "PlanetClass": "Rocky body", "DistanceFromArrivalLS": 10.0,
+              "WasDiscovered": True, "WasMapped": False}
+        db.ingest_journal_event(nb)
+        own = dict(nb, ScanType="Detailed", BodyName="Test Town 2", BodyID=2)
+        db.ingest_journal_event(own)
+        db.ingest_journal_event(dict(own, ScanType="NavBeaconDetail"))
+        b = {r["body_id"]: r for r in db.bodies_of(55)}
+        check(b[1]["planet_class"] == "Rocky body" and b[1]["was_discovered"] == 1
+              and not b[1]["scanned"] and b[2]["scanned"] == 1,
+              "NavBeaconDetail: body data stored, not counted as your scan (an own scan stays)")
+        db.close()
     print("failures: %d" % fails)
     return fails
 

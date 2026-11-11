@@ -7,6 +7,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   selftest:
     runs-on: ubuntu-latest
@@ -25,6 +28,8 @@ jobs:
         run: python miningstat.py
       - name: cockpit overlay self test
         run: python overlay.py
+      - name: in-system route self test
+        run: python sysroute.py
       - name: database backup self test
         run: python sysdb.py
       - name: network gateway self test (no network)

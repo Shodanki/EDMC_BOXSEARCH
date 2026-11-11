@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """Synthetic test database with the plugin's schema (columns the FIS reads).
 
 Independent of the real data, so the tests also run without the copy in
@@ -45,6 +50,9 @@ CREATE TABLE hotspots (sys_id64 INTEGER, body_id INTEGER, body_name TEXT, materi
   label TEXT, count INTEGER, ring_class TEXT, found TEXT,
   PRIMARY KEY (sys_id64, body_id, material));
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE fetched_shells (id INTEGER PRIMARY KEY, service TEXT NOT NULL, cx REAL NOT NULL,
+  cy REAL NOT NULL, cz REAL NOT NULL, r_min REAL NOT NULL, r_max REAL NOT NULL,
+  fetched_at REAL NOT NULL, expires_at REAL NOT NULL, systems INTEGER NOT NULL DEFAULT 0);
 """
 
 SYS = "Testia AB-C d1-5"
@@ -69,13 +77,16 @@ def make_db(path=None):
     cx = sqlite3.connect(path)
     cx.executescript(SCHEMA)
     cx.execute("PRAGMA journal_mode=WAL")
-    cx.execute("INSERT INTO systems (name,id64,x,y,z,star_class,visited,visited_ts,body_count,"
-               "fss_complete,sources) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-               (SYS, SYS_ID, 100.0, -20.0, 50.0, "K", 1, "2026-11-04T20:00:00Z", 4, 1,
+    cx.execute("INSERT INTO systems (name,id64,x,y,z,quality,star_class,visited,visited_ts,body_count,"
+               "fss_complete,sources) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+               (SYS, SYS_ID, 100.0, -20.0, 50.0, 40, "K", 1, "2026-11-04T20:00:00Z", 4, 1,
                 "journal,fss,scan"))
-    cx.execute("INSERT INTO systems (name,id64,x,y,z,star_class,visited,body_count,sources) "
-               "VALUES (?,?,?,?,?,?,?,?,?)",
-               (NEXT, NEXT_ID, 103.0, -20.0, 54.0, "M", 0, 12, "EDSM,navroute"))
+    cx.execute("INSERT INTO systems (name,id64,x,y,z,quality,star_class,visited,body_count,sources) "
+               "VALUES (?,?,?,?,?,?,?,?,?,?)",
+               (NEXT, NEXT_ID, 103.0, -20.0, 54.0, 30, "M", 0, 12, "EDSM,navroute"))
+    # I1: EDSM delivered 0-50 ly around the test system (valid for a long time)
+    cx.execute("INSERT INTO fetched_shells (service,cx,cy,cz,r_min,r_max,fetched_at,expires_at,"
+               "systems) VALUES ('edsm',100.0,-20.0,50.0,0.0,50.0,0,4102444800,2)")
     # star at the origin
     _body(cx, sys_id64=SYS_ID, body_id=0, name=SYS + " A", kind="Star", star_type="K",
           arrival_ls=0.0, radius=6.0e8, stellar_mass=0.8, subclass=3, luminosity="Va",

@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025-2026 Shodanki
 // CARRIER – the fleet carrier as a navy ship's sheet, plus the air wing for
 // the CAG: which ships are on board, what each is fitted for, ready where.
 //
@@ -6,8 +11,8 @@
 // journal (CarrierStats, jumps, transfers); the weekly cost is an estimate
 // from the balance over time and says so.
 
-import { getJSON } from "../api.js";
-import { el, frame, fmt, withPopout } from "../ui.js";
+import { getJSON, postJSON } from "../api.js";
+import { el, frame, fmt, withPopout, copyText } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const ROLES = [["combat", N_("Combat")], ["mining", N_("Mining")], ["transport", N_("Transport")],
@@ -25,17 +30,26 @@ const ACCESS = { all: N_("everyone"), friends: N_("friends"), squadron: N_("squa
   squadronfriends: N_("squadron and friends"), none: N_("nobody") };
 
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
-let root = null, data = null, roleFilter = store("fis.cag.role") || "";
+let root = null, data = null, known = null, knownQuery = "", knownMsg = "", showAllSeen = false, roleFilter = store("fis.cag.role") || "";
 // E4: ship list sortable by every column, with a text filter and "on board only"
 let sortKey = store("fis.cag.sort") || "", sortDir = store("fis.cag.dir") === "asc" ? 1 : -1;
 let shipQuery = "", onBoardOnly = store("fis.cag.here") === "1";
+// with a carrier of your own, the known carriers get a tab of their own (11.11.)
+let tab = store("fis.carrier.tab") === "known" ? "known" : "own";
+// what a visited carrier offered when you docked (StationServices, lower case)
+const KC_SERVICE = { refuel: N_("Refuel"), repair: N_("Repair"), rearm: N_("Rearm"), commodities: N_("Commodities"),
+  shipyard: N_("Shipyard"), outfitting: N_("Outfitting"), blackmarket: N_("Secure warehouse"),
+  exploration: N_("Universal Cartographics"), vistagenomics: N_("Vista Genomics"), bartender: N_("Bar"),
+  pioneersupplies: N_("Pioneer Supplies"), voucherredemption: N_("Redemption office"), carrierfuel: N_("Tritium depot") };
 
 export function mount(r) { root = r; root.classList.add("carrier-view"); }
 
 export async function update(ctx, reason) {
   if (!root) return;
   if (reason !== "show" && reason !== "data" && data) return;
-  try { data = await getJSON("/api/carrier"); } catch (e) { data = null; }
+  const [d, k] = await Promise.all([getJSON("/api/carrier").catch(() => null),
+    getJSON("/api/carriers/known").catch(() => null)]);
+  data = d; known = k;
   render();
 }
 
@@ -52,18 +66,160 @@ function age(s) {
 function cr(v) { return v === null || v === undefined ? "–" : fmt(v / 1e6, 1) + " M Cr"; }
 function line(k, ...v) { return el("div", { class: "ns-row" }, el("div", { class: "ns-k", text: k }), el("div", { class: "ns-v" }, ...v)); }
 
+// M7: docked at someone else's carrier - what it buys (how you can help) and sells
+function visiting() {
+  const v = data.visiting;
+  const rows = [];
+  if (!v.buys.length && !v.sells.length) rows.push(el("div", { class: "c-dim", text: t("This carrier trades nothing right now.") }));
+  if (v.buys.length) {
+    rows.push(el("div", { class: "sr-h", text: t("IT BUYS") }));
+    for (const b of v.buys.slice(0, 12)) rows.push(el("div", { class: "cg" + (b.carry ? " c-green" : b.key === "tritium" ? " c-amber" : "") },
+      el("span", { text: b.name + (b.carry ? "  · " + t("you carry {n} t", { n: b.carry }) : "") }),
+      el("span", { class: "num", text: fmt(b.demand, 0) + " t · " + fmt(b.price, 0) + " Cr" })));
+  }
+  if (v.sells.length) {
+    rows.push(el("div", { class: "sr-h", text: t("IT SELLS") }));
+    for (const s of v.sells.slice(0, 8)) rows.push(el("div", { class: "cg" },
+      el("span", { text: s.name }), el("span", { class: "num", text: fmt(s.stock, 0) + " t · " + fmt(s.price, 0) + " Cr" })));
+  }
+  rows.push(el("div", { class: "c-dim small", text: t("From the market you opened at {d} - open it again for fresh figures.", { d: String(v.market_ts || "").slice(11, 16) }) }));
+  return frame(t("DOCKED AT A CARRIER"), (v.callsign || "") + (v.system ? " · " + v.system : ""), rows, { appear: false });
+}
+
+// K4: other carriers you know - favourites first (★), then the ones you
+// docked at or started something from, then the newest FSS sightings
+const HOW = { docked: N_("docked"), sighted: N_("seen in the FSS"), jump: N_("jumped with you aboard") };
+
+function since(ts) { const ms = Date.parse(ts || ""); return isNaN(ms) ? "?" : age((Date.now() - ms) / 1000); }
+
+async function star(c, on, note) {
+  knownMsg = "";
+  try {
+    const body = { callsign: c.callsign, on };
+    if (note !== undefined) body.note = note;
+    await postJSON("/api/carriers/favourite", body);
+    known = await getJSON("/api/carriers/known");
+  } catch (e) { knownMsg = t("Could not save: {e}", { e: e.message }); }
+  render();
+}
+
+async function lookup(c, btn) {
+  btn.disabled = true; btn.textContent = "…";
+  try {
+    await postJSON("/api/carriers/lookup", { callsign: c.callsign });
+    knownMsg = "";
+  } catch (e) {
+    knownMsg = t("Online lookup failed: {e}", { e: e.message || e });
+  }
+  try { known = await getJSON("/api/carriers/known"); } catch (e) { /* keep the old list */ }
+  render();
+}
+
+function carrierRow(c) {
+  const what = [];
+  if (c.docked_n) what.push(t("docked {n}×", { n: c.docked_n }));
+  for (const s of (c.started || []).slice(-2).reverse()) {
+    what.push((s.kind === "cg" ? t("CG") : t("mission")) + ": " + (s.name || "?")
+      + (s.commodity ? " · " + s.commodity + (s.count ? " " + fmt(s.count, 0) + " t" : "") : "")
+      + (s.to ? " → " + s.to : ""));
+  }
+  const m = c.market;
+  const buys = m && m.buys && m.buys.length ? m.buys.slice(0, 3).map(b => b.name + " " + fmt(b.demand, 0) + " t").join(" · ") : "";
+  // A1 docking access, the services you found there, the whole market to unfold
+  const a = c.access;
+  const accessEl = a ? el("span", { class: "chip " + (a.state === "dock" ? "mapped" : a.state === "none" ? "warn" : ""),
+    title: t("docking access: {a}", { a: a.access || "–" }) + (a.ts ? " · " + day(a.ts) : ""),
+    text: a.state === "dock" ? t("dockable") : a.state === "none" ? t("no docking for you") : t("friends/squadron only") }) : null;
+  const svc = (c.services || []).filter(s => KC_SERVICE[s.toLowerCase()]).map(s => t(KC_SERVICE[s.toLowerCase()]));
+  const svcEl = svc.length ? el("div", { class: "small" }, el("span", { class: "c-dim", text: t("services") + ": " }), svc.join(" · "),
+    el("span", { class: "c-dim", text: "  (" + t("when you docked, {d}", { d: day(c.services_ts) }) + ")" })) : null;
+  const goods = (lst, k, unit) => (lst || []).map(g => el("div", { class: "kc-good" },
+    el("span", { text: g.name || g.key }), el("span", { class: "num", text: fmt(g[k], 0) + " t" }),
+    el("span", { class: "num c-dim", text: g.price ? fmt(g.price, 0) + " Cr" : "" })));
+  const marketEl = m && ((m.buys && m.buys.length) || (m.sells && m.sells.length)) ? el("details", { class: "small kc-market" },
+    el("summary", { text: t("market of {d}", { d: day(m.ts) }) + (m.system ? " · " + m.system : "") }),
+    m.buys && m.buys.length ? el("div", {}, el("div", { class: "c-green", text: t("bought") }), ...goods(m.buys, "demand")) : null,
+    m.sells && m.sells.length ? el("div", {}, el("div", { class: "c-amber", text: t("sold") }), ...goods(m.sells, "stock")) : null) : null;
+  const openBtn = c.system_id64 ? el("button", { text: t("open system"), title: t("show the system with everything known about it"),
+    onclick: () => window.open(location.pathname + "?solo=tactical&system=" + c.system_id64, "fis-detail", "popup,width=1280,height=860") }) : null;
+  const btn = el("button", { class: "fav-star" + (c.favourite ? " on" : ""), text: c.favourite ? "★" : "☆",
+    title: c.favourite ? t("remove from favourites") : t("mark as favourite"), onclick: () => star(c, !c.favourite) });
+  // K5: a favourite can be looked up at Spansh - on a click, once every 6 h
+  const on = c.online;
+  const onLine = on ? el("div", { class: "small" + (on.found ? "" : " c-dim") },
+    el("span", { class: "c-violet", text: "Spansh: " }),
+    on.found ? (on.system || "?") + (on.updated ? "  (" + t("reported {d}", { d: day(on.updated) }) + ")" : "")
+      : t("not known there"),
+    el("span", { class: "c-dim", text: "  · " + t("asked {d}", { d: since(on.checked) }) })) : null;
+  const lookBtn = c.favourite ? el("button", { text: t("online"), title: t("look this favourite up at Spansh (once every 6 hours)"),
+    onclick: (e) => lookup(c, e.currentTarget) }) : null;
+  const noteBtn = c.favourite ? el("button", { text: "✎", title: t("note"),
+    onclick: () => { const v = window.prompt(t("Note for {c}", { c: c.callsign }), c.note || ""); if (v !== null) star(c, true, v); } }) : null;
+  return el("div", { class: "kc-row" + (c.favourite ? " fav" : "") }, btn,
+    el("div", { class: "kc-main" },
+      el("div", {}, el("span", { class: "c-cyan", text: c.name || "?" }), el("span", { class: "c-dim", text: "  " + c.callsign }),
+        accessEl ? " " : null, accessEl,
+        c.note ? el("span", { class: "c-amber small", text: "  " + c.note }) : null),
+      el("div", { class: "small" }, el("span", { text: c.system || t("position unknown") }),
+        el("span", { class: "c-dim", text: "  " + t(HOW[c.how] || "seen in the FSS") + " " + since(c.ts)
+          + (c.dist_ly !== null && c.dist_ly !== undefined ? " · " + fmt(c.dist_ly, 1) + " ly" : "")
+          + (c.from_store ? " · " + t("stored") : "") })),
+      what.length ? el("div", { class: "small c-dim", text: what.join(" · ") }) : null,
+      buys && !marketEl ? el("div", { class: "small" }, el("span", { class: "c-green", text: t("bought") + ": " }), buys,
+        el("span", { class: "c-dim", text: "  (" + t("market of {d}", { d: day(m.ts) }) + ")" })) : null,
+      svcEl, marketEl, onLine),
+    el("div", { class: "kc-act" }, lookBtn, noteBtn, openBtn,
+      el("button", { text: t("copy system"), disabled: c.system ? null : true,
+        title: t("copy the system name - paste it in the galaxy map to plot the jump"),
+        onclick: (e) => copyText(c.system, e.currentTarget) })));
+}
+
+function knownCarriers() {
+  const k = known;
+  const q = knownQuery.trim().toLowerCase();
+  const match = (c) => !q || [c.callsign, c.name, c.system, c.note].some(v => v && String(v).toLowerCase().includes(q));
+  const fav = k.favourites.filter(match), met = k.met.filter(match), seen = k.sighted.filter(match);
+  const rows = [];
+  const search = el("input", { type: "search", class: "cag-q kc-q", placeholder: t("filter carriers"), value: knownQuery,
+    oninput: (e) => { knownQuery = e.target.value; const pos = e.target.selectionStart; render();
+      const n = root.querySelector(".kc-q"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (err) { /* type=search */ } } } });
+  rows.push(el("div", { class: "cag-tools" }, search));
+  if (knownMsg) rows.push(el("div", { class: "c-red small", text: knownMsg }));
+  rows.push(el("div", { class: "sr-h", text: t("FAVOURITES") }));
+  rows.push(...(fav.length ? fav.map(carrierRow) : [el("div", { class: "c-dim small", text: t("None yet - mark a carrier with ☆.") })]));
+  if (met.length) { rows.push(el("div", { class: "sr-h", text: t("DOCKED OR STARTED FROM") })); rows.push(...met.map(carrierRow)); }
+  if (seen.length) {
+    rows.push(el("div", { class: "sr-h", text: t("SEEN IN PASSING") }));
+    rows.push(...(showAllSeen ? seen : seen.slice(0, 8)).map(carrierRow));
+    if (seen.length > 8) rows.push(el("button", { text: showAllSeen ? t("fewer") : t("show {n} more", { n: seen.length - 8 }),
+      onclick: () => { showAllSeen = !showAllSeen; render(); } }));
+  }
+  rows.push(el("div", { class: "c-dim small", text: t("Last known positions from your own journals; the market is the one you last opened there. Online only when you click it for a favourite (Spansh, the place someone last reported).") }));
+  return frame(t("KNOWN CARRIERS"), t("{f} favourites · {n} known", { f: k.counts.favourites, n: k.counts.known }), rows, { cls: "ns-known", appear: false });
+}
+
 function render() {
   if (!root) return;
   root.replaceChildren();
+  if (data && data.visiting) root.append(visiting());
   if (!data || data.empty) {
     root.append(frame(t("CARRIER"), "", el("div", { class: "empty" }, t("NO CARRIER DATA"), el("br"),
       el("span", { class: "c-dim", text: t("No carrier of your own known yet - your ships are listed below. If you own one, open the carrier management once.") }))));
+    if (known) root.append(knownCarriers());
     if (data && data.fleet && data.fleet.length) root.append(airWing());
     return;
   }
+  if (known) {
+    const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
+      onclick: () => { tab = k; store("fis.carrier.tab", k); render(); } });
+    root.append(el("div", { class: "kc-tabs" }, tb("own", t("MY CARRIER")),
+      tb("known", t("KNOWN CARRIERS") + " · " + known.counts.known)));
+  }
+  if (known && tab === "known") { root.append(knownCarriers()); return; }
   root.append(el("div", { class: "ns-grid" },
     el("div", { class: "ns-col" }, ident(), position(), tritium()),
-    el("div", { class: "ns-col" }, hold(), finance(), services())), airWing());
+    el("div", { class: "ns-col" }, hold(), finance(), services())));
+  root.append(airWing());
 }
 
 function ident() {

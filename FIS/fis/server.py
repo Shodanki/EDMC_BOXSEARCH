@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """HTTP server: static web files, JSON API and Server-Sent Events.
 
 Standard library only (ThreadingHTTPServer). Default bind 127.0.0.1; with
@@ -10,7 +15,6 @@ from __future__ import annotations
 import argparse
 import hmac
 import json
-import mimetypes
 import os
 import queue
 import re
@@ -19,7 +23,7 @@ import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from . import config as config_mod
@@ -28,10 +32,6 @@ from . import qr as qr_mod
 from .config import WEB_DIR, Config
 from .data import Database
 from .live import Hub, LiveTracker
-
-mimetypes.add_type("text/javascript", ".js")
-mimetypes.add_type("text/css", ".css")
-mimetypes.add_type("image/svg+xml", ".svg")
 
 _RE_SYS = re.compile(r"^/api/system/(\d+)$")
 _RE_BODY = re.compile(r"^/api/body/(\d+)/(\d+)$")
@@ -59,6 +59,13 @@ class App:
         self._stop = threading.Event()
         from .fleet import Archive
         self.archive = Archive(cfg.journal_dir)
+        from .favourites import FavouriteStore
+        # personal (K2): next to fis.ini, never in the repository
+        self.favourites = FavouriteStore(os.path.join(os.path.dirname(cfg.ini_path), "favourites.json"))
+        # K5: the one online lookup of the FIS (on a click, through the plugin's gateway)
+        from .online import CarrierLookup
+        self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
+                                    offline=self._plugin_offline)
         from .calib import Calibrator
         self.calib = Calibrator(cfg.journal_dir, model.plugin().sysroute, self._leg_ls)
 
@@ -117,6 +124,24 @@ class App:
                 self._cache.pop(next(iter(self._cache)))
         return val
 
+    def _calls_today(self) -> Dict[str, int]:
+        """Today's requests from the plugin's call log (read only) - one cap for both."""
+        try:
+            day0 = int(time.time() // 86400) * 86400
+            rows = self.db.query("SELECT service, COUNT(*) n FROM external_calls WHERE ts >= ? "
+                                 "GROUP BY service", (day0,))
+            return {r["service"]: int(r["n"]) for r in rows}
+        except Exception:
+            return {}
+
+    def _plugin_offline(self) -> bool:
+        """The plugin's "offline" switch (EDMC config.toml) holds for the FIS too."""
+        try:
+            data = self.cfg._plugin_settings() or {}
+        except Exception:
+            data = {}
+        return str(data.get("shboxsearch_offline", "")).lower() in ("true", "1")
+
     # ------------------------------------------------------------ routes
     def system(self, id64: int) -> Dict[str, Any]:
         live = self.live_state()
@@ -125,12 +150,86 @@ class App:
         # positions move along their orbits; a 30 s bucket is plenty
         sig = (self.db.mtime(), int(time.time() // 30), cur.get("id64"),
                fx.get("body_id"), fx.get("body"),
-               int((fx.get("ts") or 0) // 60), id(self.calib.model))
+               int((fx.get("ts") or 0) // 60), id(self.calib.model),
+               tuple(self.cfg.filters), self.cfg.skip_arrival, self.archive.rev)
         self.calib.maybe_refresh()
         cm, om = self.calib.model, self.calib.order_model
         out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
-            self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om))
-        return self._with_carrier(out, id64)
+            self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om,
+            skip_arrival=self.cfg.skip_arrival, archive=self.archive))
+        return self._with_favourites(self._with_carrier(out, id64))
+
+    def _with_favourites(self, out: Dict[str, Any]) -> Dict[str, Any]:
+        """K4: a star at your favourite carriers among the points of interest;
+        A1: their docking access where known, carriers refusing us left out."""
+        if not out.get("poi"):
+            return out
+        try:
+            from .carriers import docking_access, mark_docking_pois, mark_favourite_pois
+            saved = self.favourites.get(self.archive.commander()[0])
+        except Exception:
+            return out
+        favs = saved.get("favourites") or {}
+        poi = out["poi"]
+        hidden = 0
+        try:
+            acc = docking_access(self.archive.events(), saved.get("markets"), favs)
+            poi, hidden = mark_docking_pois(poi, acc)
+        except Exception:
+            pass
+        if favs:
+            poi = mark_favourite_pois(poi, favs)
+        if poi is out["poi"] and not hidden:
+            return out
+        return dict(out, poi=poi, poi_hidden=hidden)
+
+    def favourite_carriers_at(self) -> List[Dict[str, Any]]:
+        """K4 GALAXY: your favourite carriers at their last known position."""
+        try:
+            from . import carriers
+            favs = carriers.build_known(self.archive, self.favourites, None, sighted=0)["favourites"]
+        except Exception:
+            return []
+        out = []
+        for c in favs:
+            p = c.get("pos")
+            if p and len(p) >= 3:
+                out.append({"callsign": c["callsign"], "name": c.get("name"), "system": c.get("system"),
+                            "id": c.get("id64"), "ts": c.get("ts"), "how": c.get("how"),
+                            "x": round(float(p[0]), 2), "y": round(float(p[1]), 2), "z": round(float(p[2]), 2)})
+        return out
+
+    def carriers_here(self, live: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """B1 BRIEFING: your own and your favourite carriers known in the
+        jump target's system - or, without a target, in the current one -
+        from the journal and the stored Spansh lookup, no request. Cached per
+        journal change, favourites file and minute."""
+        tgt = self.model.current_target(live or {})
+        cur = ({"id64": tgt.get("id64"), "name": tgt.get("name")} if tgt
+               else (live or {}).get("system") or {})
+        if not (cur.get("id64") or cur.get("name")):
+            return []
+        try:
+            fmt = os.path.getmtime(self.favourites.path)
+        except OSError:
+            fmt = None
+        sig = (self.archive.rev, fmt, cur.get("id64"), cur.get("name"), int(time.time() // 60))
+
+        def build() -> List[Dict[str, Any]]:
+            from . import carriers, galaxy
+            try:
+                own = galaxy.carrier_now(self.archive, self.db)
+            except Exception:
+                own = None
+            try:
+                favs = carriers.build_known(self.archive, self.favourites, None, sighted=0)["favourites"]
+            except Exception:
+                favs = []
+            return carriers.carriers_here(cur.get("id64"), cur.get("name"), own, favs)
+        try:
+            return self.cached("carriers_here", sig, build)
+        except Exception:
+            return []
 
     def _with_carrier(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
         """Your carrier, when it is in this system or jumping here."""
@@ -169,6 +268,36 @@ class App:
                 "journal_rewrites": getattr(self.live, "rewrites", 0),
                 "restarts": self.watch_restarts}
 
+    _market_sig: Any = None
+
+    def snapshot_market(self, live: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        K3: docked at someone else's carrier with its market open - keep what
+        it buys and sells (Market.json is overwritten at the next market).
+        Same rules as the CARRIER hint (shipview.visiting_carrier): docked,
+        the last docking was this market, the market younger than it.
+        Checked when Market.json or the journal archive changed.
+        """
+        jd = self.cfg.journal_dir
+        if not jd:
+            return False
+        try:
+            mt = os.path.getmtime(os.path.join(jd, "Market.json"))
+        except OSError:
+            return False
+        self.archive.refresh()
+        sig = (mt, self.archive.rev)
+        if sig == self._market_sig:
+            return False
+        from . import carriers, shipview
+        evs = self.archive.events()
+        own = carriers.own_carrier_ids(evs)["market_id"]
+        vis = shipview.visiting_carrier(self.archive, live if live is not None else self.live_state(), jd, own)
+        if not vis:
+            return False                  # not (yet) docked there: try again on the next change
+        self._market_sig = sig
+        return self.favourites.note_market(self.archive.commander()[0], vis)
+
     def watch(self) -> None:
         """Keeps the live link alive: a dead polling thread is started again;
         the state goes to /api/health and every SSE ping."""
@@ -180,6 +309,10 @@ class App:
                         print("FIS watchdog: the journal reader had stopped - restarted (%d)"
                               % self.watch_restarts, flush=True)
                         self.live.restart()
+                except Exception:
+                    pass
+                try:
+                    self.snapshot_market()
                 except Exception:
                     pass
         threading.Thread(target=run, name="fis-watchdog", daemon=True).start()
@@ -274,11 +407,12 @@ class Handler(BaseHTTPRequestHandler):
             tok = m.group(1)
         return bool(cfg.token) and hmac.compare_digest(tok, cfg.token)
 
-    def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None) -> None:
+    def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None,
+              cache: str = "no-store") -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
@@ -333,6 +467,10 @@ class Handler(BaseHTTPRequestHandler):
         if n > 4096 or n < 0:
             self.close_connection = True
             return self._error(400, "bad request")
+        if url.path == "/api/carriers/favourite":
+            return self._post_favourite(raw)
+        if url.path == "/api/carriers/lookup":
+            return self._post_lookup(raw)
         if url.path != "/api/settings":
             return self._error(404, "not found")
         if not self._local():
@@ -363,6 +501,87 @@ class Handler(BaseHTTPRequestHandler):
         out["token_changed"] = changed
         out["restart"] = cfg.lan != self.app.lan_at_start
         return self._json(out)
+
+    LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+    def _page_write_ok(self) -> bool:
+        """
+        K2: may this request change a favourite? Unlike the settings (which
+        can switch the LAN and the token, so game PC only) a star and a note
+        are harmless and the tablet beside the screen is where you look at
+        CARRIER - so the tablet may, under the same locks as every read plus
+        the ones a write needs:
+          * the custom header X-FIS-Settings (another site's page cannot send
+            it without a preflight, which is never answered),
+          * Origin, when sent, equal to this very address,
+          * without LAN only a localhost Host (no DNS-rebinding detour),
+          * with LAN the token (header or the page's cookie),
+          * the E14 brake (do_POST) and small bodies (4 KiB).
+        """
+        if self.headers.get("X-FIS-Settings") != "1":
+            return False
+        host = self.headers.get("Host") or ""
+        origin = self.headers.get("Origin")
+        if origin and origin != "http://" + host:
+            return False
+        if not self.app.cfg.lan:
+            name = host.rsplit(":", 1)[0] if not host.endswith("]") else host
+            return name in self.LOCAL_HOSTS
+        return self._authorised({})
+
+    def _post_favourite(self, raw: bytes) -> None:
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "favourites only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, UnicodeDecodeError):
+            return self._error(400, "bad request")
+        from . import carriers
+        cs = str(body.get("callsign") or "")
+        if not carriers.is_callsign(cs):
+            return self._error(400, "bad callsign")
+        app = self.app
+        fid = app.archive.commander()[0]
+        info = carriers.known_carriers(app.archive.events()).get(cs)
+        note = body.get("note")
+        try:
+            fav = app.favourites.set_favourite(fid, cs, bool(body.get("on", True)),
+                                               note=None if note is None else str(note), info=info)
+        except ValueError as exc:
+            return self._error(400, str(exc))
+        return self._json({"callsign": cs, "favourite": fav is not None, "note": (fav or {}).get("note", "")})
+
+    def _post_lookup(self, raw: bytes) -> None:
+        """K5: one favourite's position at Spansh - on a click, cached 6 h."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "lookups only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, UnicodeDecodeError):
+            return self._error(400, "bad request")
+        from . import carriers
+        cs = str(body.get("callsign") or "")
+        if not carriers.is_callsign(cs):
+            return self._error(400, "bad callsign")
+        app = self.app
+        fid = app.archive.commander()[0]
+        fav = app.favourites.get(fid)["favourites"].get(cs)
+        if not fav:
+            return self._error(400, "only favourites are looked up")
+        hit = app.lookup.cached(fav)
+        if hit:
+            return self._json(dict(hit, callsign=cs, cached=True))
+        res = app.lookup.lookup(cs)
+        if res.get("error"):
+            return self._json(dict(res, callsign=cs), 503 if res["error"] != "offline" else 409)
+        app.favourites.set_online(fid, cs, res)
+        return self._json(dict(res, callsign=cs, cached=False))
 
     def _json(self, obj: Any, code: int = 200) -> None:
         body = json.dumps(obj, ensure_ascii=False, separators=(",", ":"),
@@ -446,7 +665,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(404, "body not found")
             return self._json(out)
         if path == "/api/briefing":
-            return self._json(m.build_briefing(app.db, app.live_state()))
+            live = app.live_state()
+            out = m.build_briefing(app.db, live)
+            out["carriers_here"] = app.carriers_here(live)
+            # at the jump target when there is one (11.11.: a carrier left
+            # behind in the current system says nothing about the next one)
+            out["carriers_where"] = "target" if out.get("target") else "here"
+            return self._json(out)
         if path == "/api/ship":
             return self._json(m.build_ship(app.live_state()))
         if path == "/api/surface":
@@ -488,6 +713,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(shipview.build_carrier(app.archive, app.live_state(),
                                                      journal_dir=app.cfg.journal_dir,
                                                      capi_path=capi.path_for(app.cfg.plugin_dir)))
+        if path == "/api/carriers/known":
+            from . import carriers
+            return self._json(carriers.build_known(app.archive, app.favourites, app.live_state(), db=app.db))
         if path == "/api/mining/live":
             from . import mining
             return self._json(mining.build_live(app.archive, app.live_state(), app.cfg.journal_dir))
@@ -502,7 +730,14 @@ class Handler(BaseHTTPRequestHandler):
                 days = float((qs.get("days") or ["0"])[0]) or None
             except ValueError:
                 days = None
-            return self._json(stats.build_statistics(app.archive, days))
+            out = stats.build_statistics(app.archive, days)
+            try:
+                from . import learn
+                # L4: what the FIS has learnt from your own data so far
+                out["learning"] = learn.learning_status(app.archive, app.db)
+            except Exception:
+                out["learning"] = None
+            return self._json(out)
         if path == "/api/galaxy":
             from . import galaxy
             try:
@@ -518,8 +753,22 @@ class Handler(BaseHTTPRequestHandler):
             nav = len(live.get("navroute") or [])
             app.archive.refresh()
             sig = (app.db.mtime(), app.archive.rev, pos, nav, mc, days)
-            return self._json(app.cached("galaxy:%s:%s" % (mc, days), sig,
-                                         lambda: galaxy.build_galaxy(app.db, app.archive, live, mc, days)))
+            out = app.cached("galaxy:%s:%s" % (mc, days), sig,
+                             lambda: galaxy.build_galaxy(app.db, app.archive, live, mc, days))
+            return self._json(dict(out, fav_carriers=app.favourite_carriers_at()))
+        if path == "/api/survey/export":
+            # M14: the survey sphere as a file - CSV or JSON
+            fmt = "json" if (qs.get("format") or ["csv"])[0] == "json" else "csv"
+            res = m.survey_export(app.db, fmt)
+            day = time.strftime("%Y-%m-%d")
+            if fmt == "json":
+                body = json.dumps(res, ensure_ascii=False, indent=1, default=str).encode("utf-8")
+                ctype = "application/json; charset=utf-8"
+            else:
+                body = ("\ufeff" + res).encode("utf-8")   # BOM: Excel reads UTF-8 then
+                ctype = "text/csv; charset=utf-8"
+            return self._send(200, body, ctype, {
+                "Content-Disposition": 'attachment; filename="shbox-survey-%s.%s"' % (day, fmt)})
         if path == "/api/survey":
             return self._json(app.cached("survey", app.db.mtime(),
                                          lambda: m.build_survey(app.db)))
@@ -555,24 +804,50 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(("event: %s\ndata: %s\n\n" % (event, payload)).encode("utf-8"))
         self.wfile.flush()
 
+    # what the web folder holds; anything else is served as plain bytes
+    STATIC_TYPES = {
+        ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+        ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
+        ".md": "text/markdown; charset=utf-8", ".txt": "text/plain; charset=utf-8",
+        ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon",
+        ".woff2": "font/woff2", ".webmanifest": "application/manifest+json",
+    }
+
     def _static(self, path: str, qs: Dict[str, Any]) -> None:
         if path in ("", "/"):
             path = "/index.html"
         root = os.path.realpath(self.app.web_dir)
-        full = os.path.realpath(os.path.join(root, path.lstrip("/").replace("/", os.sep)))
-        if not (full == root or full.startswith(root + os.sep)) or not os.path.isfile(full):
+        # normalise first, then require the result to lie inside the web
+        # folder - and once more after resolving links
+        full = os.path.normpath(os.path.join(root, path.lstrip("/").replace("/", os.sep)))
+        if not full.startswith(root + os.sep):
             return self._error(404, "not found")
+        full = os.path.realpath(full)
+        if not full.startswith(root + os.sep) or not os.path.isfile(full):
+            return self._error(404, "not found")
+        # the browser may keep the pages and modules, but asks every time
+        # whether they changed (ETag -> 304): an update shows at once, and a
+        # tablet on Wi-Fi no longer fetches 1.9 MB (Three.js) per page load -
+        # the 3D view gave up after 8 s there (11.11.)
+        st = os.stat(full)
+        etag = '"%x-%x"' % (int(st.st_mtime_ns // 1000), st.st_size)
+        if etag in [t.strip() for t in (self.headers.get("If-None-Match") or "").split(",")]:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            return
         with open(full, "rb") as fh:
             body = fh.read()
-        ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
-        if ctype.startswith("text/") or ctype.endswith("javascript"):
-            ctype += "; charset=utf-8"
-        extra = {}
-        tok = (qs.get("token") or [""])[0]
-        if self.app.cfg.lan and tok:
-            # remember the token for the module and API requests of this page
-            extra["Set-Cookie"] = "fis_token=%s; Path=/; SameSite=Strict; HttpOnly" % tok
-        self._send(200, body, ctype, extra)
+        ctype = self.STATIC_TYPES.get(os.path.splitext(full)[1].lower(), "application/octet-stream")
+        extra = {"ETag": etag}
+        cfg = self.app.cfg
+        if cfg.lan and cfg.token and (qs.get("token") or [""])[0]:
+            # remember the token for the module and API requests of this
+            # page - the stored one: the request's token was checked equal
+            # to it, and nothing a request sends ends up in a header
+            extra["Set-Cookie"] = "fis_token=%s; Path=/; SameSite=Strict; HttpOnly" % cfg.token
+        self._send(200, body, ctype, extra, cache="no-cache")
 
 
 class _Server(ThreadingHTTPServer):

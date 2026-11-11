@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
 """Read-only access to the plugin database.
 
 The plugin (EDMC) writes in WAL mode while we read. Every query opens a short
@@ -11,6 +16,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 EXTERNAL_DBS = ("EDDiscovery", "Spansh", "EDSM")
@@ -206,6 +212,14 @@ class Database:
         return self.query("SELECT * FROM surface_track WHERE sys_id64=? AND body_name=? "
                           "ORDER BY ts", (int(id64), body))
 
+    def settlements_of(self, id64: int) -> List[sqlite3.Row]:
+        """M10: settlements approached in a system (ApproachSettlement marks)."""
+        if not self.has_table("surface_marks"):
+            return []
+        return self.query("SELECT body_name, label, lat, lon, MAX(ts) ts FROM surface_marks "
+                          "WHERE sys_id64=? AND kind='settlement' GROUP BY body_name, label",
+                          (id64,))
+
     def surface_marks(self, id64: int, body: str) -> List[sqlite3.Row]:
         if not self.has_table("surface_marks"):
             return []
@@ -240,6 +254,20 @@ class Database:
             self._bio_cache = (mt, rows)
         return rows
 
+    def shell_regions(self, now: Optional[float] = None) -> Dict[str, list]:
+        """I1: the regions each source (edd / spansh / edsm) delivered
+        completely and that are still valid - where 'in no database' may be
+        said. Empty for an older plugin database."""
+        if not self.has_table("fetched_shells"):
+            return {}
+        now = time.time() if now is None else now
+        out: Dict[str, list] = {}
+        for r in self.query("SELECT service, cx, cy, cz, r_min, r_max FROM fetched_shells"
+                            " WHERE expires_at>?", (now,)):
+            out.setdefault(r["service"], []).append(
+                (r["cx"], r["cy"], r["cz"], r["r_min"], r["r_max"]))
+        return out
+
     @staticmethod
     def known_sources(row: Optional[sqlite3.Row]) -> List[str]:
         if row is None:
@@ -257,6 +285,10 @@ class Database:
         return self.query("SELECT * FROM systems WHERE name LIKE ? ESCAPE '\\'",
                           (esc + "%",))
 
+    def absent_all(self) -> List[sqlite3.Row]:
+        """Names checked in the galaxy map and found not to exist."""
+        return self.query("SELECT name, boxel, ts FROM absent ORDER BY name")
+
     def absent_in(self, key: str) -> List[sqlite3.Row]:
         return self.query("SELECT * FROM absent WHERE boxel=?", (key,))
 
@@ -270,7 +302,7 @@ class Database:
     def systems_in_sphere(self, cx: float, cy: float, cz: float, r: float
                           ) -> List[sqlite3.Row]:
         return self.query(
-            "SELECT name, id64, x, y, z, visited, fss_complete, sources, body_count "
+            "SELECT name, id64, x, y, z, quality, visited, fss_complete, sources, body_count "
             "FROM systems WHERE x BETWEEN ? AND ? AND y BETWEEN ? AND ? "
             "AND z BETWEEN ? AND ? "
             "AND (x-?)*(x-?)+(y-?)*(y-?)+(z-?)*(z-?) <= ?",
