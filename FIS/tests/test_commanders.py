@@ -94,6 +94,29 @@ class TestPerCommander(_Base):
         self.db.main_setting = SECOND
         self.assertEqual(self.model.build_survey(self.db)["systems"]["fss_complete"], 0)
 
+    def test_r3_route_starts_at_the_carrier(self):
+        cx = sqlite3.connect(self.db_path)
+        cx.execute("UPDATE cmdr_systems SET start_body=3, start_name=? WHERE fid=?",
+                   (fx.SYS + " 2", SECOND))
+        cx.commit()
+        cx.close()
+        try:
+            sec = self.model.build_system(self.db, fx.SYS_ID, None, ["all"], fid=SECOND)
+            main = self.model.build_system(self.db, fx.SYS_ID, None, ["all"], fid=MAIN_FID)
+        finally:
+            cx = sqlite3.connect(self.db_path)
+            cx.execute("UPDATE cmdr_systems SET start_body=NULL, start_name=NULL")
+            cx.commit()
+            cx.close()
+        r = sec["route"]
+        self.assertEqual(r["start"]["body_id"], 3)
+        self.assertEqual(r["start"]["short"], "2")
+        gas = self.body(sec, 3)
+        self.assertEqual(r["legs"][0]["from"], gas["pos"])          # from the carrier, not (0,0,0)
+        self.assertNotIn(0, [leg["body_id"] for leg in r["legs"]])  # arrival star left out
+        self.assertIsNone(main["route"]["start"])                   # the other commander: main star
+        self.assertIn(0, [leg["body_id"] for leg in main["route"]["legs"]])
+
     def test_briefing_visited_and_also(self):
         live = {"target": {"name": fx.SYS, "id64": fx.SYS_ID, "source": "fsdtarget"}}
         b = self.model.build_briefing(self.db, live, fid=SECOND)

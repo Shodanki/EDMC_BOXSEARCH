@@ -287,6 +287,9 @@ CREATE TABLE IF NOT EXISTS cmdr_systems (
     sys_id64     INTEGER NOT NULL,
     visited_ts   TEXT,                 -- first arrival (journal time)
     fss_complete INTEGER NOT NULL DEFAULT 0,
+    arrival_ts   TEXT,                 -- R3: the last arrival decided below
+    start_body   INTEGER,              -- R3: route starts at this body (carrier)
+    start_name   TEXT,                 --     NULL = at the main star
     PRIMARY KEY (fid, sys_id64)
 );
 CREATE INDEX IF NOT EXISTS ix_cmdr_sys ON cmdr_systems(sys_id64);
@@ -504,6 +507,11 @@ class SystemDB:
                          ("bio_species", "TEXT")):    # JSON list, ScanOrganic
             if col not in bhave:
                 self.cx.execute("ALTER TABLE bodies ADD COLUMN %s %s" % (col, typ))
+        chave = {r[1] for r in self.cx.execute("PRAGMA table_info(cmdr_systems)")}
+        for col, typ in (("arrival_ts", "TEXT"), ("start_body", "INTEGER"),
+                         ("start_name", "TEXT")):
+            if col not in chave:
+                self.cx.execute("ALTER TABLE cmdr_systems ADD COLUMN %s %s" % (col, typ))
         self.cx.commit()
         if not self.get_meta("fix_phantoms"):
             try:
@@ -1136,6 +1144,56 @@ class SystemDB:
         m = self.cmdr_system(f, row["id64"])
         return bool(m is not None and m["visited_ts"])
 
+    def explored(self, fid: str, id64: int) -> bool:
+        """Has this commander explored the system - FSS complete or any body
+        scanned with his own scanner?"""
+        r = self.cmdr_system(fid, id64)
+        if r is not None and r["fss_complete"]:
+            return True
+        return self.cx.execute("SELECT 1 FROM cmdr_bodies WHERE fid=? AND sys_id64=? "
+                               "AND scanned=1 LIMIT 1", (fid, id64)).fetchone() is not None
+
+    def _cmdr_arrival(self, ev: str, entry: dict) -> None:
+        """
+        R3: riding along on a fleet carrier, you start at the carrier, not at
+        the main star. Arriving by CarrierJump, or loading the game docked at
+        a FleetCarrier, in a system THIS commander has not explored: the
+        route of this visit starts at the carrier's body (Body / BodyID of the
+        event). Any other arrival (FSDJump, a carrier jump into an explored
+        system) starts at the main star again. Location away from a carrier
+        changes nothing. Decided once, when the arrival happens - a replay of
+        an older arrival keeps what was decided then.
+        """
+        a, ts = entry.get("SystemAddress"), entry.get("timestamp")
+        if not self.fid or not a or not ts:
+            return
+        carrier = ev == "CarrierJump" or (
+            ev == "Location" and entry.get("Docked")
+            and entry.get("StationType") == "FleetCarrier")
+        if ev == "Location" and not carrier:
+            return
+        cur = self.cmdr_system(self.fid, a)
+        if cur is not None and cur["arrival_ts"] and ts <= cur["arrival_ts"]:
+            return
+        body, name = None, None
+        if carrier and entry.get("BodyID") is not None and not self.explored(self.fid, a):
+            body, name = entry["BodyID"], entry.get("Body")
+        self.cx.execute("INSERT OR IGNORE INTO cmdr_systems(fid,sys_id64) VALUES (?,?)",
+                        (self.fid, a))
+        self.cx.execute("UPDATE cmdr_systems SET arrival_ts=?, start_body=?, start_name=? "
+                        "WHERE fid=? AND sys_id64=?", (ts, body, name, self.fid, a))
+
+    def route_start(self, fid: Optional[str], id64: Optional[int]
+                    ) -> Optional[Tuple[int, Optional[str]]]:
+        """R3: (body id, body name) the route of this visit starts at, or
+        None for the main star."""
+        if not fid or not id64:
+            return None
+        r = self.cmdr_system(fid, id64)
+        if r is None or r["start_body"] is None:
+            return None
+        return int(r["start_body"]), r["start_name"]
+
     def cmdr_system(self, fid: str, id64: int) -> Optional[sqlite3.Row]:
         return self.cx.execute("SELECT * FROM cmdr_systems WHERE fid=? AND sys_id64=?",
                                (fid, id64)).fetchone()
@@ -1435,6 +1493,7 @@ class SystemDB:
                     self.upsert(entry["StarSystem"], pos[0], pos[1], pos[2],
                                 id64=entry.get("SystemAddress"), quality=Q_JOURNAL,
                                 source="journal", visited=True)
+                    self._cmdr_arrival(ev, entry)
                     self._cmdr_system(entry.get("SystemAddress"), entry.get("timestamp"))
                     n += 1
                 # CarrierJump is caught here, so the carrier branch below only
@@ -2707,7 +2766,8 @@ def _selftest() -> int:
               and not b[1]["scanned"] and b[2]["scanned"] == 1,
               "NavBeaconDetail: body data stored, not counted as your scan (an own scan stays)")
         db.close()
-        fails += _selftest_cmdr(d, check)
+        n_cmdr = _selftest_cmdr(d, check)
+        fails += n_cmdr
     print("failures: %d" % fails)
     return fails
 
@@ -2780,6 +2840,32 @@ def _selftest_cmdr(d: str, check) -> int:
     db.import_journals(jd)
     check(db.fid == "F9" and db.explorers(701) == ["Seven"] and db.explorers(702) == ["Eight"],
           "C1: a replay files each journal under its own commander, the live one stays")
+    # R3: Second rides along on a carrier into Cm Beta (never explored)
+    db.set_commander("F2", "Second")
+    ev({"event": "CarrierJump", "Docked": True, "StationType": "FleetCarrier",
+        "StarSystem": "Cm Beta", "SystemAddress": 502, "StarPos": [2.0, 0.0, 0.0],
+        "Body": "Cm Beta 3", "BodyID": 7, "BodyType": "Planet",
+        "timestamp": "2026-01-06T10:00:00Z"})
+    check(db.route_start("F2", 502) == (7, "Cm Beta 3"), "R3: carrier jump into an unexplored system")
+    ev(dict(scan, StarSystem="Cm Beta", SystemAddress=502, BodyName="Cm Beta 3", BodyID=7,
+            timestamp="2026-01-06T10:05:00Z"))
+    ev({"event": "CarrierJump", "Docked": True, "StationType": "FleetCarrier",
+        "StarSystem": "Cm Beta", "SystemAddress": 502, "StarPos": [2.0, 0.0, 0.0],
+        "Body": "Cm Beta 3", "BodyID": 7, "BodyType": "Planet",
+        "timestamp": "2026-01-06T10:00:00Z"})
+    check(db.route_start("F2", 502) == (7, "Cm Beta 3"), "R3: a replay keeps the decision")
+    ev({"event": "Location", "Docked": True, "StationType": "FleetCarrier",
+        "StarSystem": "Cm Beta", "SystemAddress": 502, "StarPos": [2.0, 0.0, 0.0],
+        "Body": "Cm Beta 3", "BodyID": 7, "timestamp": "2026-01-07T10:00:00Z"})
+    check(db.route_start("F2", 502) is None, "R3: explored meanwhile -> later routes at the main star")
+    ev({"event": "Location", "Docked": True, "StationType": "FleetCarrier",
+        "StarSystem": "Cm Gamma", "SystemAddress": 503, "StarPos": [3.0, 0.0, 0.0],
+        "Body": "Cm Gamma 1", "BodyID": 4, "timestamp": "2026-01-08T10:00:00Z"})
+    check(db.route_start("F2", 503) == (4, "Cm Gamma 1"), "R3: loading docked at a carrier, unexplored")
+    ev({"event": "FSDJump", "StarSystem": "Cm Gamma", "SystemAddress": 503,
+        "StarPos": [3.0, 0.0, 0.0], "timestamp": "2026-01-09T10:00:00Z"})
+    check(db.route_start("F2", 503) is None, "R3: arriving by FSD -> main star")
+    check(db.route_start("F1", 502) is None, "R3: per commander")
     db.cx.execute("DELETE FROM meta WHERE k=?", (CMDR_READY,))
     check(db.system_progress(501, CURRENT)["mapped"] == 1,
           "C1: not replayed yet -> shared view (anyone)")
@@ -2788,7 +2874,7 @@ def _selftest_cmdr(d: str, check) -> int:
     db.close()
     db = SystemDB(os.path.join(d, "cmdr.sqlite"))
     check(db.backup_path is not None and not db.cmdr_ready()
-          and db.cx.execute("SELECT COUNT(*) FROM cmdr_bodies").fetchone()[0] == 1,
+          and db.cx.execute("SELECT COUNT(*) FROM cmdr_bodies").fetchone()[0] >= 1,
           "C1: schema 4 -> 5 makes a backup, keeps the data, waits for the replay")
     db.close()
     return 0

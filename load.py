@@ -51,7 +51,7 @@ from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       F_ALL, F_OUTSTANDING, bodies_from_rows,
                       calibrate_from_journal, calibrate_work_from_journal,
                       leg_distance_ls, pace_ratio, spread_points,
-                      plan_route, resolve_positions, shorten)
+                      plan_route, resolve_positions, shorten, start_at_body)
 from boxelplan import bundled_probe_prefix                   # noqa: E402
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
@@ -197,6 +197,8 @@ class State:
         self.route_lines: List[str] = []
         self.route_done: set = set()
         self.route_full = False
+        self.route_from: Optional[str] = None    # R3: body of the carrier the route starts at
+        self.route_start_pos: Optional[Tuple[float, float, float]] = None
         self.route_feedback = ""
         self.route_started: Optional[float] = None
         self.route_legs: List[Tuple[float, float]] = []   # R1: (planned s, actual s) per leg
@@ -1161,15 +1163,31 @@ def _rebuild_route() -> None:
     filters = [F_ALL] if cfg_bool(CFG["route_all"], False) else get_filters()
     # R2: start the run at the arrival star (default) or with the first body
     skip_arrival = not cfg_bool(CFG["route_arrival"], True)
+    # R3: riding along on a carrier into a system you have not explored, you
+    # start at the carrier - this visit's route begins at its body, without
+    # the arrival star. Later visits start at the main star again.
+    start = (0.0, 0.0, 0.0)
+    ST.route_from = None
+    ST.route_start_pos = None
+    with ST.lock:
+        r3 = ST.db.route_start(ST.db.view_fid(CURRENT), ST.cur_id64)
+    if r3:
+        at = start_at_body(bodies, r3[0])
+        if at:
+            start, skip_arrival = at, True
+            ST.route_start_pos = at
+            ST.route_from = shorten(r3[1], ST.cur_system or "") if r3[1] else "#%d" % r3[0]
+            logger.info("route | starting at the carrier (%s), not at the main star",
+                        r3[1] or r3[0])
     route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
-                       filters=filters, skip_arrival=skip_arrival)
+                       filters=filters, skip_arrival=skip_arrival, start=start)
     ST.route_full = False
     if not route.stops and F_ALL not in filters:
         # Nothing outstanding - show the complete tour anyway rather than an
         # empty window. Useful when revisiting a system, and it makes clear
         # that the system really is finished rather than unknown.
         route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
-                           filters=[F_ALL], skip_arrival=skip_arrival)
+                           filters=[F_ALL], skip_arrival=skip_arrival, start=start)
         ST.route_full = True
     for s in route.stops:
         if s.body.bio_hint and s.body.wants_bio:
@@ -1693,8 +1711,12 @@ def _route_map_draw() -> None:
                 last_pos = project_stop(st)
                 break
 
-    # route legs
+    # route legs - from the arrival star, or (R3) from the carrier's body
     prev = (cx, cy)
+    if ST.route_from and ST.route_start_pos:
+        prev = project(ST.route_start_pos)
+        _route_map.create_rectangle(prev[0] - 3, prev[1] - 3, prev[0] + 3, prev[1] + 3,
+                                    outline=fg, width=1)
     for i, st in enumerate(route.stops):
         if not st.body.pos:
             continue
@@ -1945,6 +1967,8 @@ def _route_window_refresh() -> None:
             % (left_ls, left_s / 60.0,
                "  (model from %d of your own runs)" % ST.cost_model.samples
                if ST.cost_model.samples else "")]
+    if ST.route_from:
+        head.append("starts at your carrier (%s) - you arrived on board" % ST.route_from)
     if ST.route_full:
         head.append("nothing outstanding here - showing the full tour")
     if ST.route_done:

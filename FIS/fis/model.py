@@ -363,12 +363,23 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
     # order with the model the plugin uses, times with the measured one
     cm = cost_model or sr.DEFAULT_MODEL
     om = order_model or cm
+    # R3: arrived on board a carrier in a system you had not explored - the
+    # route of this visit starts at the carrier's body, the arrival star left
+    # out (the plugin decided it at the arrival; same rule, same data)
+    start, route_from = (0.0, 0.0, 0.0), None
+    r3 = db.route_start(fid, id64) if fid else None
+    if r3 and hasattr(sr, "start_at_body"):
+        at = sr.start_at_body(bodies, r3[0])
+        if at:
+            start, skip_arrival = at, True
+            route_from = {"body_id": r3[0], "name": r3[1],
+                          "short": sr.shorten(r3[1], name or "") if r3[1] else None}
     route = sr.plan_route(name or "", bodies, model=om, filters=flist,
-                          skip_arrival=skip_arrival)
+                          skip_arrival=skip_arrival, start=start)
     full = False
     if not route.stops and "all" not in flist:
         route = sr.plan_route(name or "", bodies, model=om, filters=["all"],
-                              skip_arrival=skip_arrival)
+                              skip_arrival=skip_arrival, start=start)
     if om is not cm:
         _recost(route, cm)
         full = True
@@ -439,7 +450,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
     done_ids = {r["body_id"] for r in rows if r["route_done"]}
     legs = []
     next_idx = None
-    prev = (0.0, 0.0, 0.0)
+    prev = start
     for i, s in enumerate(route.stops, 1):
         b = s.body
         done = b.body_id in done_ids        # the plugin's own route ticks
@@ -458,6 +469,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         prev = b.pos
     out["route"] = {
         "filters": flist, "full_tour": full, "legs": legs, "next": next_idx,
+        "start": route_from,
         "summary": route.summary(), "total_ls": round(route.total_ls, 0),
         "total_min": round(route.total_s / 60.0, 1), "skipped": route.skipped,
         "cost_model": cm.as_dict(),

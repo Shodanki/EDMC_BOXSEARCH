@@ -140,6 +140,7 @@ const DE = /*DE*/{
   "VISITED": "BESUCHT",
   "You have been there": "Du warst schon dort",
   "ALSO": "AUCH",
+  "starts at your carrier ({b}) – you arrived on board": "beginnt an deinem Träger ({b}) – du bist an Bord angekommen",
   "also explored by {n}": "auch erkundet von {n}",
   "for {n}": "für {n}",
   "Scans, maps and samples are kept per commander; what was found here is shared.": "Scans, Kartierungen und Proben zählen je Kommandant; was hier gefunden wurde, teilen alle.",

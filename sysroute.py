@@ -586,6 +586,22 @@ def is_arrival_star(b: Body) -> bool:
     return b.kind == "Star" and b.arrival_ls < 1.0
 
 
+def start_at_body(bodies: Dict[int, Body], body_id: Optional[int]
+                  ) -> Optional[Tuple[float, float, float]]:
+    """
+    R3: where a route starts that begins at a body instead of the arrival
+    star - the body a fleet carrier is parked at (CarrierJump / Location
+    name it). Its Kepler position now, in the system frame plan_route uses;
+    None when that body is not known yet (no FSS so far): the route then
+    starts at the main star as usual.
+    """
+    if body_id is None or body_id not in bodies:
+        return None
+    resolve_positions(bodies)
+    b = bodies[body_id]
+    return tuple(b.pos) if b.pos else None
+
+
 def plan_route(system: str, bodies: Dict[int, Body],
                model: CostModel = DEFAULT_MODEL,
                start: Sequence[float] = (0.0, 0.0, 0.0),
@@ -889,6 +905,12 @@ def _selftest() -> int:
           "skip_arrival: the route starts with the first planned body")
     check(is_arrival_star(bodies[0]) and not is_arrival_star(bodies[3]),
           "only the star at 0 LS counts as the arrival star")
+    # R3: start at the carrier's body, the arrival star left out
+    at = start_at_body(bodies, 2)
+    r3 = plan_route("Sys", bodies, filters=[F_ALL], start=at, skip_arrival=True)
+    check(at is not None and names(r3)[0] == "Sys A 2" and r3.stops[0].leg_ls < 1.0
+          and "Sys A" not in names(r3), "R3: the route starts at the carrier's body")
+    check(start_at_body(bodies, 42) is None, "R3: unknown body -> main star")
     # E17: a cluster of five points on one spot spreads out, lone points stay
     pts = {1: (100.0, 100.0), 2: (100.0, 100.0), 3: (101.0, 100.0), 4: (100.0, 101.0),
            5: (100.5, 100.5), 9: (300.0, 50.0), 0: (200.0, 200.0)}

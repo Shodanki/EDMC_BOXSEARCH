@@ -321,7 +321,10 @@ function renderSide() {
     }
     const tag = (r.full_tour ? t("all done · full tour") + " · " : "") + fmt(r.total_ls, 0) + " LS · ~" + fmt(r.total_min, 0) + " min"
       + " · " + (r.calibrated ? t("times: journal") : t("times: default"));
-    side.append(frame(t("FLIGHT PLAN"), tag, el("div", { class: "scroll legs-box" }, list), { appear: false }));
+    const plan = [];
+    if (r.start) plan.push(el("div", { class: "c-cyan small", text: "◇ " + t("starts at your carrier ({b}) – you arrived on board", { b: r.start.short || r.start.name || "?" }) }));
+    plan.push(el("div", { class: "scroll legs-box" }, list));
+    side.append(frame(t("FLIGHT PLAN"), tag, plan, { appear: false }));
   } else if (sys.bodies && sys.bodies.length) {
     // never just gone: say why there is nothing to fly to
     side.append(frame(t("FLIGHT PLAN"), (r && r.filters ? r.filters.join(", ") : ""),

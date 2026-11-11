@@ -411,6 +411,21 @@ class Database:
             out.append(d)
         return out
 
+    def route_start(self, fid: Optional[str], id64: Optional[int]) -> Optional[tuple]:
+        """R3: (body id, name) of the carrier the route of this visit starts
+        at - decided by the plugin at the arrival - or None (main star)."""
+        fid = self.view_fid(fid)
+        if not fid or not id64:
+            return None
+        try:
+            r = self.one("SELECT start_body, start_name FROM cmdr_systems WHERE fid=? AND sys_id64=?",
+                         (fid, int(id64)))
+        except sqlite3.Error:                 # a 4.8 database before R3
+            return None
+        if r is None or r["start_body"] is None:
+            return None
+        return int(r["start_body"]), r["start_name"]
+
     def explorers(self, id64: Optional[int], but: Optional[str] = None) -> List[str]:
         """C1 'also explored by': names of the commanders who were here."""
         if not id64 or not self.has_table("cmdr_systems"):
