@@ -91,7 +91,9 @@ function unsold() {
   const U = data.unsold;
   if (!U) return null;
   const B = U.bio, X = U.exploration;
-  if (!B.count && !X.systems) return frame(t("UNSOLD DATA"), "", el("div", { class: "c-dim", text: t("Nothing unsold - all data is cashed in.") }), { appear: false });
+  // after a crash nothing is unsold any more - the lost systems still show
+  if (!B.count && !X.systems) return frame(t("UNSOLD DATA"), "", [el("div", { class: "c-dim", text: t("Nothing unsold - all data is cashed in.") }),
+    ...lostRows(U)], { appear: false, kind: U.lost_systems && U.lost_systems.length ? "warn" : "" });
   const Mcr = (v) => fmt(v / 1e6, 1) + " M Cr";
   const rows = [];
   if (B.count) {
@@ -109,13 +111,7 @@ function unsold() {
   const RISK = { low: [N_("RISK LOW"), "c-green"], moderate: [N_("RISK MODERATE"), "c-amber"], high: [N_("RISK HIGH"), "c-red"] };
   if (U.risk && RISK[U.risk]) rows.unshift(el("div", { class: "pl-line" }, el("span", { class: RISK[U.risk][1], text: t(RISK[U.risk][0]) }),
     el("span", { class: "c-dim", text: " · " + t("moderate from {m} M, high from {h} M Cr", { m: fmt(U.risk_cr.moderate / 1e6, 0), h: fmt(U.risk_cr.high / 1e6, 0) }) })));
-  // data that went down with the ship - planned again in SYSTEM until redone
-  if (U.lost_systems && U.lost_systems.length) {
-    rows.push(el("div", { class: "c-red pl-line", text: "✖ " + t("Lost in a crash, to redo:") }));
-    for (const s of U.lost_systems.slice(0, 5)) rows.push(el("div", { class: "small" }, (s.name || "?") + " ",
-      el("span", { class: "c-dim", text: [s.scan ? t("{n} scans", { n: s.scan }) : null, s.map ? t("{n} maps", { n: s.map }) : null,
-        s.bio.length ? s.bio.join(", ") : null, s.ts ? String(s.ts).slice(0, 10) : null].filter(Boolean).join(" · ") })));
-  }
+  rows.push(...lostRows(U));
   if (U.first_systems || U.footfall_bio) rows.push(el("div", { class: "c-violet" }, "★ " + [
     U.first_systems ? t("{n} systems discovered first by you", { n: U.first_systems }) : null,
     U.footfall_bio ? t("{n} species on bodies of your first footfall", { n: U.footfall_bio }) : null].filter(Boolean).join(" · ")));
@@ -123,6 +119,22 @@ function unsold() {
   if (U.advice === "sell") rows.push(el("div", { class: "c-red", text: t("A lot at stake - consider selling at the next station or carrier with Vista Genomics / Universal Cartographics.") }));
   return frame(t("UNSOLD DATA"), B.value ? "≈ " + Mcr(B.value) : "", rows, { cls: "sh-unsold", appear: false,
     kind: U.risk === "high" ? "alert" : U.advice || U.risk === "moderate" ? "warn" : "" });
+}
+
+// data that went down with the ship - planned again in SYSTEM until redone
+function lostRows(U) {
+  const L = U.lost_systems || [];
+  if (!L.length) return [];
+  const out = [el("div", { class: "c-red pl-line", text: "✖ " + t("Lost in a crash, to redo:") })];
+  for (const s of L) {
+    const n = {};
+    for (const b of s.bio) n[b] = (n[b] || 0) + 1;          // the same species on several bodies
+    const bio = Object.entries(n).map(([b, k]) => (k > 1 ? k + "× " : "") + b).join(", ");
+    out.push(el("div", { class: "small" }, (s.name || "?") + " ",
+      el("span", { class: "c-dim", text: [s.scan ? t("{n} scans", { n: s.scan }) : null, s.map ? t("{n} maps", { n: s.map }) : null,
+        bio || null, s.ts ? String(s.ts).slice(0, 10) : null].filter(Boolean).join(" · ") })));
+  }
+  return out;
 }
 
 // ------------------------------------------------------------ target (E5)

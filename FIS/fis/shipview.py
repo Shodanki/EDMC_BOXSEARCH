@@ -247,7 +247,7 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
     if out["unsold"] is not None and db is not None and hasattr(db, "lost_summary"):
         try:
             # where data went down with the ship and is not redone yet
-            out["unsold"] = dict(out["unsold"], lost_systems=db.lost_summary(archive.commander()[0])[:8])
+            out["unsold"] = dict(out["unsold"], lost_systems=db.lost_summary(archive.commander()[0])[:12])
         except Exception:
             pass
     return out
