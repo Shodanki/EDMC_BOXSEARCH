@@ -240,6 +240,10 @@ body.motion .frame.appear > .frame-in { animation: frame-fill var(--t-draw) ease
 .sb-cell .v { overflow: hidden; text-overflow: ellipsis; }
 .sb-target .v { max-width: 24ch; color: var(--amber); }
 .sb-system .v { max-width: 24ch; color: var(--cyan); }
+/* back to the live system from a pinned one */
+.sys-back { width: 100%; margin: 0 0 6px; padding: 4px 8px; font: 600 12px var(--font-display); letter-spacing: .08em;
+  color: var(--amber); background: rgba(var(--amber-rgb), .08); border: 1px solid rgba(var(--amber-rgb), .55); cursor: pointer; }
+.sys-back:hover { background: rgba(var(--amber-rgb), .18); }
 /* M13: cockpit configuration rows */
 .ck-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
 .ck-num { display: inline-flex; gap: 3px; align-items: center; font-size: 11px; }

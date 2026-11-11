@@ -906,6 +906,8 @@ const DE = /*DE*/{
   "target locked": "Ziel erfasst",
   "COMBAT": "KAMPF",
   "COMBAT MODE": "KAMPFMODUS",
+  "back to the current system": "zurück zum aktuellen System",
+  "show the system you are in, live": "das System zeigen, in dem du bist – live",
   "few rocks yet - leaning on all {c} rings": "noch wenige Brocken – gestützt auf alle {c}-Ringe",
   "few rocks yet - leaning on all your rings": "noch wenige Brocken – gestützt auf alle deine Ringe",
   "here: {n} rigs, {t} t": "hier: {n} Rigs, {t} t",

@@ -235,6 +235,16 @@ function poiFrame(sys) {
   return frame(t("POINTS OF INTEREST"), String(list.length), rows, { cls: "sr-frame", appear: false });
 }
 
+// another system pinned (?system=, from ATLAS, GALAXY, MINING): one click
+// back to the live system you are in - the rest of the address stays
+function backToCurrent() {
+  const q = new URLSearchParams(location.search);
+  if (!/^\d+$/.test(q.get("system") || "")) return null;
+  return el("button", { class: "sys-back", text: "⟲ " + t("back to the current system"),
+    title: t("show the system you are in, live"),
+    onclick: () => { q.delete("system"); const s = q.toString(); location.href = location.pathname + (s ? "?" + s : "") + "#tactical"; } });
+}
+
 function renderSide() {
   const sys = ctxRef.store.system;
   side.replaceChildren();
@@ -260,6 +270,8 @@ function renderSide() {
   }
   if (!sys.known_sources.length) head.push(el("div", {}, chip(t("in no database"), "first")));
   else head.push(el("div", { class: "c-dim", text: t("known: {s}", { s: sys.known_sources.join(", ") }) }));
+  const back = backToCurrent();
+  if (back) side.append(back);
   side.append(frame("SYSTEM", sys.visited ? t("visited") : "", head, { kind: sys.known_sources.length ? "" : "disc", appear: false }));
 
   side.append(systemReport(sys));
