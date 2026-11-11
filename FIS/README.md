@@ -118,10 +118,12 @@ its own window with a taskbar icon. Nothing is stored offline - the FIS
 service has to run as usual, and an update shows at the next start. Browsers
 offer this only on the PC itself (localhost), not over the home network.
 
-While you fight, the status bar says so: **WEAPONS READY** (amber, hardpoints
-out) or **COMBAT** (red, under attack, shields down, hull hit, interdiction) -
-from Status.json and the journal; it calms down by itself 30 s after the
-last hit.
+While you fight, the status bar says so - from Status.json and the journal:
+**READY · ANALYSIS** (amber: hardpoints out with the HUD in analysis mode -
+the scanners are out, not the weapons), **COMBAT MODE** (red outline:
+hardpoints out with the HUD in combat mode) or **COMBAT** (red, blinking:
+under attack, shields down, hull hit, interdiction - whatever the HUD); it
+calms down by itself 30 s after the last hit.
 
 ### Display links and OBS
 

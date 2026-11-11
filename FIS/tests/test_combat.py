@@ -23,11 +23,23 @@ class TestCombat(unittest.TestCase):
     def test_quiet(self):
         self.assertEqual(combat.combat_state(_live(), NOW), {"level": None, "reasons": [], "until": None})
 
-    def test_ready_with_hardpoints(self):
+    def test_hardpoints_combat_hud(self):
         c = combat.combat_state(_live(HP, {"target": NOW - 10}), NOW)
-        self.assertEqual((c["level"], c["reasons"], c["until"]), ("ready", ["hardpoints", "target"], NOW + 50))
+        self.assertEqual((c["level"], c["reasons"], c["until"]),
+                         ("combat", ["hardpoints", "combat_hud", "target"], NOW + 50))
         # a lock long ago is just hardpoints
-        self.assertEqual(combat.combat_state(_live(HP, {"target": NOW - 100}), NOW)["reasons"], ["hardpoints"])
+        self.assertEqual(combat.combat_state(_live(HP, {"target": NOW - 100}), NOW)["reasons"],
+                         ["hardpoints", "combat_hud"])
+
+    def test_hardpoints_analysis_hud_is_only_ready(self):
+        # the user's rule: hardpoints in analysis mode = ready, combat HUD = combat mode
+        c = combat.combat_state(_live(HP | 1 << combat.ANALYSIS), NOW)
+        self.assertEqual((c["level"], c["reasons"]), ("ready", ["hardpoints", "analysis_hud"]))
+        # being shot at is combat whatever the HUD
+        c = combat.combat_state(_live(HP | 1 << combat.ANALYSIS, {"attacked": NOW - 2}), NOW)
+        self.assertEqual(c["level"], "alert")
+        # analysis HUD without hardpoints: nothing
+        self.assertIsNone(combat.combat_state(_live(1 << combat.ANALYSIS), NOW)["level"])
 
     def test_alert_and_decay(self):
         c = combat.combat_state(_live(0, {"attacked": NOW - 5, "shields_down": NOW - 20}), NOW)
@@ -54,7 +66,8 @@ class TestCombat(unittest.TestCase):
         self.assertEqual(lt.snapshot()["combat_hits"], {})
 
     def test_build_ship_carries_it(self):
-        self.assertEqual(build_ship(_live(HP))["combat"]["level"], "ready")
+        self.assertEqual(build_ship(_live(HP))["combat"]["level"], "combat")
+        self.assertEqual(build_ship(_live(HP | 1 << combat.ANALYSIS))["combat"]["level"], "ready")
 
 
 if __name__ == "__main__":

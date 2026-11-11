@@ -244,22 +244,26 @@ function renderShipBar() {
   renderCombat(s.combat);
 }
 
-// M8: combat mode - ALERT (shot at, interdicted) or READY (hardpoints out).
+// M8: combat mode - ALERT (shot at, interdicted), COMBAT MODE (hardpoints out,
+// combat HUD) or READY (hardpoints out, analysis HUD - scanners, no weapons).
 // The body class lets a theme repaint the whole FIS (T1 tokens); the state
 // ends by itself at `until`, so a quiet game still calms the display down.
 const COMBAT_WHY = { attacked: N_("under attack"), shields_down: N_("shields down"), hull_hit: N_("hull hit"),
   interdicted: N_("interdicted"), interdicted_now: N_("interdiction"), danger: N_("danger"),
-  hardpoints: N_("hardpoints out"), target: N_("target locked") };
+  hardpoints: N_("hardpoints out"), target: N_("target locked"),
+  combat_hud: N_("HUD in combat mode"), analysis_hud: N_("HUD in analysis mode") };
+const COMBAT_LABEL = { alert: N_("COMBAT"), combat: N_("COMBAT MODE"), ready: N_("READY · ANALYSIS") };
 function renderCombat(c) {
   const level = c && c.level;
   document.body.classList.toggle("combat-alert", level === "alert");
   document.body.classList.toggle("combat-ready", level === "ready");
+  document.body.classList.toggle("combat-mode", level === "combat");
   const cell = document.getElementById("sb-combat");
   if (!cell) return;
   cell.hidden = !level;
   cell.className = "sb-cell sb-combat " + (level || "");
   if (level) {
-    document.getElementById("sb-combat-v").textContent = (level === "alert" ? t("COMBAT") : t("WEAPONS READY"));
+    document.getElementById("sb-combat-v").textContent = t(COMBAT_LABEL[level] || level);
     cell.title = (c.reasons || []).map(r => t(COMBAT_WHY[r] || r)).join(" · ");
   }
   if (c && c.until) {
