@@ -796,6 +796,98 @@ def build_atlas_kinds(db: Database, view: str) -> List[Dict[str, Any]]:
     return out
 
 
+_PROSPECTS: Dict[str, Any] = {"key": None, "pros": {}}
+
+
+def _ring_prospects(archive: Any) -> Dict[str, Dict[str, Any]]:
+    """Prospecting per ring from the journals, computed once per archive change."""
+    if archive is None:
+        return {}
+    from . import prospect
+    try:
+        key = (getattr(archive, "rev", None), archive.commander()[0])
+    except Exception:
+        key = None
+    if key is None or _PROSPECTS["key"] != key:
+        _PROSPECTS["pros"] = prospect.ring_prospects(archive.events())
+        _PROSPECTS["key"] = key
+    return _PROSPECTS["pros"]
+
+
+def _ring_mining(db: Database, rings: List[Dict[str, Any]], archive: Any) -> None:
+    """
+    Under each ring: what the rocks there held (your prospecting) and, for
+    each of its hotspots, what the rocks of rings of this class with such a
+    hotspot held - the materials to expect next to it.
+    """
+    from . import prospect
+    pros = _ring_prospects(archive)
+    if not pros:
+        return
+    ring_hs: Dict[str, Any] = {}
+    try:
+        for h in db.query("SELECT body_name, material, ring_class FROM hotspots"):
+            cls, keys = ring_hs.get(h["body_name"], (prospect.ring_class(h["ring_class"]), []))
+            keys.append(prospect._key(h["material"]))
+            ring_hs[h["body_name"]] = (cls, keys)
+    except Exception:
+        return
+    pool = prospect.expectations(pros, ring_hs)
+    for g in rings:
+        name = g.get("name") or ""
+        g["prospect"] = prospect.summary(pros.get(name))
+        cls = prospect.ring_class(g.get("cls")) or ring_hs.get(name, ("", []))[0]
+        exp = []
+        for h in g.get("hotspots") or []:
+            e = prospect.expected_for(pool, cls, prospect._key(h["material"]), skip_ring=name)
+            if e:
+                exp.append(dict(e, hotspot=h["material"]))
+        g["expected"] = exp
+
+
+def _ground_mining(db: Database, body_name: str, planet_class: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Ground mining (Rhino rigs) on this body - tonnes per material and the
+    rigs collected - and what rigs on other bodies of this planet class
+    yielded: what to expect here. From the plugin's "refined" marks (one
+    per tonne, written where the rig was collected).
+    """
+    if not db.has_table("surface_marks"):
+        return None
+    rows = db.query("SELECT m.body_name, m.label, m.ts, m.lat, m.lon, b.planet_class "
+                    "FROM surface_marks m LEFT JOIN bodies b ON b.name = m.body_name "
+                    "WHERE m.kind = 'refined'")
+    if not rows:
+        return None
+    here: Dict[str, int] = {}
+    pool: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        typ = (r["label"] or "?").split("#")[0]
+        if r["body_name"] == body_name:
+            here[typ] = here.get(typ, 0) + 1
+        elif planet_class and r["planet_class"] == planet_class:
+            p = pool.setdefault(typ, {"t": 0, "bodies": set()})
+            p["t"] += 1
+            p["bodies"].add(r["body_name"])
+    out: Dict[str, Any] = {}
+    if here:
+        rigs = 0
+        try:
+            nav = plugin().surfacenav
+            marks = [dict(m) for m in db.query("SELECT * FROM surface_marks WHERE body_name = ?",
+                                               (body_name,))]
+            rigs = len(nav.body_state(marks)["rigs"]) if nav else 0
+        except Exception:
+            rigs = 0
+        out["here"] = {"rigs": rigs, "tonnes": sum(here.values()),
+                       "mats": [{"name": k, "t": v} for k, v in sorted(here.items(), key=lambda kv: -kv[1])]}
+    if pool:
+        out["expected"] = {"cls": planet_class, "bodies": len(set().union(*(p["bodies"] for p in pool.values()))),
+                           "mats": [{"name": k, "t": p["t"], "bodies": len(p["bodies"])}
+                                    for k, p in sorted(pool.items(), key=lambda kv: -kv[1]["t"])]}
+    return out or None
+
+
 def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Optional[Dict[str, Any]]:
     r = db.body(id64, body_id)
     if r is None:
@@ -915,6 +1007,14 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
         except Exception as exc:  # pragma: no cover - model is best effort
             out["bio"]["model"] = "forecast not available: %s" % exc
     from . import science
+    try:
+        _ring_mining(db, out["rings"], archive)    # rocks per ring, what to expect at a hotspot
+    except Exception:
+        pass
+    try:
+        out["ground"] = _ground_mining(db, r["name"] or "", r["planet_class"])
+    except Exception:
+        out["ground"] = None
     out["report"] = science.body_report(out)
     out["report_level"] = science.worst(out["report"])
     return out

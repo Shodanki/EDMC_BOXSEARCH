@@ -252,10 +252,32 @@ function render(ctx) {
         el("span", { class: "c-dim", text: " · " + (r.cls || "") + " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" })));
       if (r.hotspots && r.hotspots.length) rr.push(el("div", { class: "pl-line pl-sub c-amber", text: "◆ " + hsText(r.hotspots) }));
       else if (!r.belt) rr.push(el("div", { class: "pl-line pl-sub c-dim", text: t("no hotspots known - map the ring with the DSS") }));
+      // your prospecting in this ring, and what rings like it held at such hotspots
+      const mats = (p) => p.mats.map(m => m.name + " " + m.share + " %").join(" · ");
+      if (r.prospect) rr.push(el("div", { class: "pl-line pl-sub small" },
+        el("span", { class: "c-green", text: "⛏ " + t("your rocks here ({n}):", { n: r.prospect.rocks }) + " " }), mats(r.prospect),
+        r.prospect.motherlodes.length ? el("span", { class: "c-violet", text: " · ◆ " + r.prospect.motherlodes.map(([m, n]) => m + " ×" + n).join(", ") }) : null));
+      for (const e of r.expected || []) rr.push(el("div", { class: "pl-line pl-sub small c-dim" },
+        el("span", { text: "↳ " + t("at {h} hotspots ({r} rings, {n} rocks) also:", { h: e.hotspot, r: e.rings, n: e.rocks }) + " " }),
+        el("span", { text: mats(e) })));
     }
     const loose = b.hotspots.filter(h => !ringNames.has(h.ring));
     if (loose.length) rr.push(el("div", { class: "pl-line c-amber", text: "◆ " + hsText(loose) }));
+    if (b.rings.some(r => r.prospect || (r.expected && r.expected.length)))
+      rr.push(el("div", { class: "c-dim small", text: t("Share of prospected rocks that held the material - from your own prospector reports.") }));
     right.push(frame(t("RINGS"), b.reserve ? t("reserves: {r}", { r: b.reserve }) : "", rr));
+  }
+
+  // ground mining with the Rhino: what rigs yielded here, and on bodies of this class
+  if (b.ground) {
+    const g = b.ground, gl = [];
+    if (g.here) gl.push(el("div", { class: "pl-line" }, el("span", { class: "c-green", text: "⛏ " + t("here: {n} rigs, {t} t", { n: g.here.rigs, t: g.here.tonnes }) + " · " }),
+      g.here.mats.map(m => m.name + " " + m.t + " t").join(" · ")));
+    if (g.expected) gl.push(el("div", { class: "pl-line small c-dim" },
+      el("span", { text: "↳ " + t("on other {c} ({n} bodies):", { c: g.expected.cls, n: g.expected.bodies }) + " " }),
+      el("span", { text: g.expected.mats.map(m => m.name + " " + m.t + " t").join(" · ") })));
+    gl.push(el("div", { class: "c-dim small", text: t("From the rigs you collected with the Rhino.") }));
+    right.push(frame(t("GROUND MINING"), "", gl));
   }
 
   if (b.signals && b.signals.length) {

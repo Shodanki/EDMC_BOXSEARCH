@@ -59,7 +59,9 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           # points of interest in SYSTEM (M10): stations, carriers, beacons
           "FSSSignalDiscovered",
           # known carriers (K1): where you docked, what you started there
-          "Undocked", "MissionAccepted", "CommunityGoalJoin")
+          "Undocked", "MissionAccepted", "CommunityGoalJoin",
+          # which ring the rocks were prospected in (fis/prospect.py)
+          "SupercruiseEntry")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
 
 # carrier tritium per jump: 5 + ly * (load + tritium + BASE) / DIV, rounded.
