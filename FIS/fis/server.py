@@ -404,11 +404,12 @@ class Handler(BaseHTTPRequestHandler):
             tok = m.group(1)
         return bool(cfg.token) and hmac.compare_digest(tok, cfg.token)
 
-    def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None) -> None:
+    def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None,
+              cache: str = "no-store") -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
@@ -818,17 +819,29 @@ class Handler(BaseHTTPRequestHandler):
         full = os.path.realpath(full)
         if not full.startswith(root + os.sep) or not os.path.isfile(full):
             return self._error(404, "not found")
+        # the browser may keep the pages and modules, but asks every time
+        # whether they changed (ETag -> 304): an update shows at once, and a
+        # tablet on Wi-Fi no longer fetches 1.9 MB (Three.js) per page load -
+        # the 3D view gave up after 8 s there (11.11.)
+        st = os.stat(full)
+        etag = '"%x-%x"' % (int(st.st_mtime_ns // 1000), st.st_size)
+        if etag in [t.strip() for t in (self.headers.get("If-None-Match") or "").split(",")]:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            return
         with open(full, "rb") as fh:
             body = fh.read()
         ctype = self.STATIC_TYPES.get(os.path.splitext(full)[1].lower(), "application/octet-stream")
-        extra = {}
+        extra = {"ETag": etag}
         cfg = self.app.cfg
         if cfg.lan and cfg.token and (qs.get("token") or [""])[0]:
             # remember the token for the module and API requests of this
             # page - the stored one: the request's token was checked equal
             # to it, and nothing a request sends ends up in a header
             extra["Set-Cookie"] = "fis_token=%s; Path=/; SameSite=Strict; HttpOnly" % cfg.token
-        self._send(200, body, ctype, extra)
+        self._send(200, body, ctype, extra, cache="no-cache")
 
 
 class _Server(ThreadingHTTPServer):

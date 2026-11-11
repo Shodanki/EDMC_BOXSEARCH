@@ -430,6 +430,24 @@ class TestServer(_Base):
             st, h, _b = self.get(p)
             self.assertEqual((st, h.get("Content-Type")), (200, want), p)
 
+    def test_static_revalidated_not_refetched(self):
+        # 11.11.: a tablet fetched Three.js (1.3 MB) on every load - now 304
+        import http.client
+        port = self.srv.server_address[1]
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        c.request("GET", "/vendor/three/three.module.js")
+        r = c.getresponse()
+        r.read()
+        etag = r.getheader("ETag")
+        self.assertEqual((r.status, r.getheader("Cache-Control")), (200, "no-cache"))
+        self.assertTrue(etag)
+        c.request("GET", "/vendor/three/three.module.js", headers={"If-None-Match": etag})
+        r = c.getresponse()
+        self.assertEqual((r.status, r.read()), (304, b""))
+        c.close()
+        st, h, _b = self.get("/api/health")
+        self.assertEqual(h.get("Cache-Control"), "no-store")            # data never cached
+
     def test_sse(self):
         req = urllib.request.Request(self.base + "/api/events")
         r = urllib.request.urlopen(req, timeout=5)

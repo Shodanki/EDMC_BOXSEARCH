@@ -84,7 +84,7 @@ async function initRenderer() {
     if (new URLSearchParams(location.search).has("2d")) throw new Error("2d requested");
     const mod = await Promise.race([
       import("./render3d.js"),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000)),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000)),   // a tablet on Wi-Fi
     ]);
     renderer = mod.create3D(stage);
     eng().textContent = "3D · Three.js";

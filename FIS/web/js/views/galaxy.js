@@ -148,7 +148,7 @@ async function setMode(m) {
     ui.eng.textContent = t("loading 3D …"); ui.eng.className = "gal-eng small c-dim";
     try {
       g3load = g3load || Promise.race([import("./galaxy3d.js"),
-        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000))]);
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000))]);   // a tablet on Wi-Fi
       const mod = await g3load;
       if (!g3) g3 = mod.createGalaxy3D(stage, ov, { t, label, carrierTexts, pick: pickFocus, open: (p) => openDetail(p.id) });
       g3.setReplay(replay);
