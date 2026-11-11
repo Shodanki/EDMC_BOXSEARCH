@@ -1525,6 +1525,11 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
                 fs2 = _fuel_state(live)
                 fs2.level = after
                 f["jumps_after"] = fs2.jumps_left
+        # a scoopable target: you refuel where you arrive - no fuel warning
+        # as long as the jump itself is covered (11.11.: a G star, 5+ jumps)
+        if f.get("warning") and out["target"]["scoopable"] and not f.get("beyond_range")                 and (f.get("cost_t") is None or fs.level > f["cost_t"]):
+            f["warning"] = None
+            f["scoop_at_target"] = True
         out["fuel"] = f
     # expectation text, rule based
     exp = []

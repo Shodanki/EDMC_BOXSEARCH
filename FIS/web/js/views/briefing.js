@@ -106,6 +106,7 @@ export function update(ctx, reason) {
       if (f.jumps_left !== null && f.jumps_left !== undefined) parts.push(maxJumps(f.jumps_left));
     }
     if (f.warning) parts.push(el("div", { class: "c-red", text: f.warning }));
+    else if (f.scoop_at_target) parts.push(el("span", { class: "c-green", text: " · " + t("refuel at the target") }));
     rows.push(row(t("FUEL"), ...parts));
   }
   const bx = b.boxel;

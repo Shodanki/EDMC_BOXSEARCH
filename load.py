@@ -1027,6 +1027,8 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     if pn and ST.probe:
         info["boxel_open"] = sum(1 for q in ST.probe if q.boxel_key == pn.boxel_key)
     w = ST.fuel.warning() if ST.fuel else None
+    if w and kind == "target" and info.get("scoopable") and "CRITICAL" not in w:
+        w = None                  # a scoopable target: refuel where you arrive
     if w:
         info["fuel_warning"] = w
     elif ST.fuel and ST.fuel.jumps_left is not None:
@@ -2404,7 +2406,7 @@ def _bootstrap_fuel() -> None:
         return
     files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
                    + glob.glob(os.path.join(d, "Journal_*.log")))[-6:]
-    used: List[Tuple[float, float]] = []
+    cmdr: Optional[str] = None
     for fn in files:
         try:
             with open(fn, "r", encoding="utf-8", errors="replace") as f:
@@ -2417,6 +2419,10 @@ def _bootstrap_fuel() -> None:
                     except ValueError:
                         continue
                     v = e.get("event")
+                    if v in ("Commander", "LoadGame"):
+                        cmdr = e.get("Name") or e.get("Commander") or cmdr
+                    if v in ("LoadGame", "Loadout") and e.get("ShipID") is not None:
+                        ST.fuel.set_ship((cmdr, e.get("ShipID")))
                     if v == "Loadout":
                         if e.get("MaxJumpRange"):
                             ST.fuel.max_jump = float(e["MaxJumpRange"])
@@ -2425,13 +2431,11 @@ def _bootstrap_fuel() -> None:
                             ST.fuel.capacity = float(cap)
                     elif v == "FSDJump":
                         if e.get("FuelUsed") is not None:
-                            used.append((float(e.get("JumpDist") or 0.0),
-                                         float(e["FuelUsed"])))
+                            ST.fuel.add_jump(e.get("JumpDist"), e.get("FuelUsed"))
                         if e.get("FuelLevel") is not None:
                             ST.fuel.level = float(e["FuelLevel"])
         except (OSError, TypeError, ValueError):
             continue
-    ST.fuel.jumps = [(d, u) for d, u in used if d > 0.1 and u > 0.0]
     logger.info("fuel | %s", ST.fuel.summary())
 
 
@@ -3181,6 +3185,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                              "approach" if ev == "ApproachBody" else "landed")
 
         elif ev == "Loadout":
+            if entry.get("ShipID") is not None:
+                ST.fuel.set_ship((cmdr, entry.get("ShipID")))
             mj = entry.get("MaxJumpRange")
             if mj:
                 ST.max_jump = float(mj)

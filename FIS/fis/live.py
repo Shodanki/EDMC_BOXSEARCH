@@ -157,6 +157,8 @@ class LiveTracker:
         self._stop = threading.Event()
         self._replaying = False
         self.errors = 0
+        self._jumps_by_ship: Dict[Any, List[Any]] = {}     # fuel model per ship
+        self._jump_ship: Any = None
         # watchdog: when the polling last ran, how often the game rewrote the
         # journal under the same name (06.11.2026: after a lost connection the
         # game started the file anew; reading on at the old offset, past the
@@ -166,6 +168,19 @@ class LiveTracker:
         self.rewrites = 0
 
     # ---------------------------------------------------------------- api
+    def _fuel_ship(self, e: Dict[str, Any]) -> None:
+        """The fuel model learns per ship: the jumps of another ship - or of
+        the other commander's - burn differently (caller holds the lock)."""
+        name = e.get("Commander") if e.get("event") == "LoadGame" else None
+        key = (name or self.state.get("commander"), e.get("ShipID"))
+        cur = getattr(self, "_jump_ship", None)
+        if key == cur:
+            return
+        if cur is not None:
+            self._jumps_by_ship[cur] = self.state["jumps"]
+        self._jump_ship = key
+        self.state["jumps"] = list(self._jumps_by_ship.get(key, []))
+
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
             return copy.deepcopy(self.state)
@@ -183,6 +198,8 @@ class LiveTracker:
         out: Optional[str] = None
         with self._lock:
             s["last_event"], s["last_event_ts"] = ev, ts
+            if ev in ("LoadGame", "Loadout") and e.get("ShipID") is not None:
+                self._fuel_ship(e)
             if ev == "Commander":
                 s["commander"] = e.get("Name")
             elif ev == "LoadGame":
