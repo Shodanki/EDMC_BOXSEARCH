@@ -13,14 +13,17 @@ earlier sales of the same species; the first-logged bonus (4x the value,
 as your sales show it) counts when the scan says WasLogged false. Species
 you never sold have no known value - they are counted, not priced.
 
-Exploration data: only counted (its value needs a formula - B6): systems
-honked with the FSS (FSSDiscoveryScan) and bodies mapped (SAAScanComplete)
-since a MultiSellExplorationData / SellExplorationData listed that system.
+Exploration data: only counted (its value needs a formula - B6): bodies
+you scanned yourself (Scan, not a nav beacon's NavBeaconDetail) and mapped
+(SAAScanComplete) that were not part of an earlier sale of their system
+(MultiSellExplorationData / SellExplorationData). A honk alone is no data:
+honking a system whose bodies you sold before leaves nothing to sell
+(11.11.: six such systems were shown as unsold).
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from .live import parse_ts
 
@@ -33,7 +36,10 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
                  ) -> Dict[str, Any]:
     values = values or {}
     bio: List[Dict[str, Any]] = []
-    systems: Dict[str, Dict[str, Any]] = {}       # system name -> honked / mapped bodies
+    scanned: Dict[str, Set[Any]] = {}             # system -> bodies scanned, not sold yet
+    mapped: Dict[str, Set[Any]] = {}              # system -> bodies mapped, not sold yet
+    sold_scan: Dict[str, Set[Any]] = {}           # system -> bodies whose scan was sold
+    sold_map: Dict[str, Set[Any]] = {}            # system -> bodies whose map was sold
     names: Dict[Any, str] = {}                    # SystemAddress -> name (jumps, honks)
     last_sale: Dict[str, Optional[float]] = {"bio": None, "exploration": None}
     lost: Optional[Dict[str, Any]] = None
@@ -59,21 +65,28 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
             nm = e.get("SystemName") or names.get(e.get("SystemAddress"))
             if e.get("SystemAddress") is not None and nm:
                 names[e["SystemAddress"]] = nm
-            if nm:
-                systems.setdefault(nm, {"bodies": e.get("BodyCount") or 0, "mapped": 0})
+        elif ev == "Scan" and e.get("ScanType") != "NavBeaconDetail":
+            nm = e.get("StarSystem") or names.get(e.get("SystemAddress"))
+            body = e.get("BodyID") if e.get("BodyID") is not None else e.get("BodyName")
+            if nm and body is not None and body not in sold_scan.get(nm, ()):
+                scanned.setdefault(nm, set()).add(body)
         elif ev == "SAAScanComplete":
             nm = names.get(e.get("SystemAddress"))
-            if nm:
-                systems.setdefault(nm, {"bodies": 0, "mapped": 0})["mapped"] += 1
+            body = e.get("BodyID") if e.get("BodyID") is not None else e.get("BodyName")
+            if nm and body is not None and body not in sold_map.get(nm, ()):
+                mapped.setdefault(nm, set()).add(body)
         elif ev in ("MultiSellExplorationData", "SellExplorationData"):
             sold = [d.get("SystemName") for d in e.get("Discovered") or []] or (e.get("Systems") or [])
             for nm in sold:
-                systems.pop(nm, None)
+                sold_scan.setdefault(nm, set()).update(scanned.pop(nm, ()))
+                sold_map.setdefault(nm, set()).update(mapped.pop(nm, ()))
             last_sale["exploration"] = ts
         elif ev == "Died":
-            if bio or systems:
-                lost = {"ts": ts, "bio": len(bio), "systems": len(systems)}
-            bio, systems = [], {}
+            n_sys = len(set(scanned) | set(mapped))
+            if bio or n_sys:
+                lost = {"ts": ts, "bio": len(bio), "systems": n_sys}
+            # the data is gone, not sold: those bodies can be scanned again
+            bio, scanned, mapped = [], {}, {}
     priced, unknown = 0, 0
     total = 0
     items = []
@@ -87,15 +100,16 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
         else:
             unknown += 1
         items.append(dict(x, value=val))
-    mapped = sum(s["mapped"] for s in systems.values())
+    systems = set(scanned) | set(mapped)
     advice = None
     if total >= WARN_CR or len(systems) >= WARN_SYSTEMS:
         advice = "sell"
     return {"bio": {"count": len(bio), "value": total, "priced": priced, "unknown": unknown,
                     "first": sum(1 for x in bio if x["first"]), "items": items[-12:],
                     "since": last_sale["bio"]},
-            "exploration": {"systems": len(systems), "mapped": mapped,
-                            "bodies": sum(s["bodies"] for s in systems.values()),
+            "exploration": {"systems": len(systems),
+                            "mapped": sum(len(v) for v in mapped.values()),
+                            "bodies": sum(len(v) for v in scanned.values()),
                             "since": last_sale["exploration"]},
             "lost_last": lost, "advice": advice,
             "warn_cr": WARN_CR, "warn_systems": WARN_SYSTEMS}

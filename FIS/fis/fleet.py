@@ -64,6 +64,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "Market", "DockingGranted", "DockingDenied",
           # a nav beacon handed over every body of the system (SYSTEM hint)
           "NavBeaconScan",
+          # unsold exploration data: which bodies you scanned (kept slim)
+          "Scan",
           # which ring the rocks were prospected in (fis/prospect.py)
           "SupercruiseEntry")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
@@ -447,6 +449,10 @@ class Archive:
                             slim.update({k: e.get(k) for k in ("Docked", "StationName",
                                                                "StationType", "MarketID")})
                         e = slim
+                    elif e.get("event") == "Scan":
+                        # only who and what - the full scan is in the plugin database
+                        e = {k: e.get(k) for k in ("event", "timestamp", "StarSystem", "SystemAddress",
+                                                   "BodyID", "BodyName", "ScanType")}
                     elif e.get("event") == "ShipTargeted":
                         if not str(e.get("PilotName") or "").startswith("$RolePanel2_unmanned"):
                             continue
