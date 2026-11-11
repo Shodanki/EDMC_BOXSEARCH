@@ -1463,7 +1463,7 @@ tag, so the two have to be set together or the notice lies.
 | 4.5.0 | mining block in the overlay, carrier hold from Frontier's Companion API, FIS: galaxy 3D, mining, statistics |
 | 4.5.1 | fixes: FIS keeps following a journal the game rewrote, live-link watchdog; mining block only from a prospector in a mining ship |
 | 4.6.0 | local first: online sources in shells when needed, daily cap, offline switch, EDDiscovery first; FIS: Rhino rigs and hold, open bio signals, data at risk, on foot, QR code, OBS mode |
-| 4.7.0 | Mozilla Public License 2.0; honest information levels in the briefing; FIS: known and favourite carriers with docking access, learning from your own mining, themes, combat mode, cockpit configuration, ATLAS SYSTEMS |
+| 4.7.0 | Mozilla Public License 2.0; honest information levels in the briefing; fuel model per ship; FIS: known and favourite carriers with docking access, learning from your own mining, themes, combat mode, cockpit configuration, ATLAS SYSTEMS |
 
 
 ---
@@ -1984,9 +1984,11 @@ sphere tile. No new online request.
   *online* at a favourite asks Spansh once - on your click, at most every
   six hours, through the plugin's gateway and daily cap, never while
   *offline* is on.
-* **BRIEFING: carriers here** - your own carrier and your favourites whose
-  newest known position is the current system, with source and age.
-* **Docking access** - SYSTEM's points of interest show whether you may dock
+* **BRIEFING: carriers at the target** - your own carrier and your
+  favourites whose newest known position is the jump target (without a
+  target: the current system), with source and age.
+* **Docking access** - SYSTEM's points of interest (one line per carrier,
+  with name and callsign) show whether you may dock
   at a carrier (from its market, your own docking requests or the Spansh
   answer): *dockable*, *friends/squadron only*; carriers that refuse you are
   left out.
@@ -2034,6 +2036,11 @@ commander.
   known*; *back to the current system* from a pinned one.
 * **PLANET INFO** opens on the body of your last fix and follows it.
 * **GALAXY** - *copy name* for the game's galaxy map.
+* **SHIP: unsold data** counts the bodies you scanned or mapped since you
+  last sold that system - honking a system you sold before is no new data.
+* **Tablets** - pages and modules are kept by the browser and only checked
+  for changes, so a reload no longer fetches Three.js again; the 3D views
+  load at the first try.
 
 ### Plugin
 
@@ -2042,6 +2049,9 @@ commander.
   repair stop or side work no longer decides it.
 * **System map** in the route window pulls apart bodies that land on one
   spot.
+* **Fuel** - the burn curve is learnt per ship and commander (another
+  ship's jumps made a long-range explorer look short of fuel); no "fuel low"
+  in the briefing when the jump target is a scoopable star.
 * The panel names the **open bio signals**; partly done bodies count.
 * A **commander switch** drops the previous commander's system and route.
 * **Nav beacons** - the body data a beacon hands over is stored, but it is
