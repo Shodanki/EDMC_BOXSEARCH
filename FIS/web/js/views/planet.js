@@ -40,8 +40,24 @@ export async function load(ctx) {
   if (root && ctx.store.view === "planet") render(ctx);
 }
 
+// The body of the last fix (approached, scanned, landed ...) is shown by
+// itself: when the fix moves to another body, PLANET INFO follows. A body
+// picked by hand stays until the fix moves on.
+let lastFixKey = null;
+
 export function update(ctx, reason) {
   if (!root) return;
+  const sys = ctx.store.system, fix = sys && sys.fix;
+  if (fix && fix.body_id !== null && fix.body_id !== undefined) {
+    const fk = sys.id64 + ":" + fix.body_id;
+    if (fk !== lastFixKey) {
+      lastFixKey = fk;
+      if (!ctx.store.selected || keyOf(ctx.store.selected) !== keyOf({ id64: sys.id64, body_id: fix.body_id })) {
+        ctx.store.selected = { id64: sys.id64, body_id: fix.body_id };
+        load(ctx); return;
+      }
+    }
+  }
   if (!ctx.store.selected && ctx.store.system && ctx.store.system.route && ctx.store.system.route.next) {
     // nothing picked yet: show the next stop of the route
     const leg = ctx.store.system.route.legs[ctx.store.system.route.next - 1];

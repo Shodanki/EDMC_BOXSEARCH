@@ -201,6 +201,7 @@ async function refresh(what) {
         store.selected = null;
       }
       if (mounted.has("tactical")) tactical.update(ctx, "data");
+      if (mounted.has("planet")) planet.update(ctx, "fix");      // follows the last fix
     }
     if (what === "briefing" || what === "all") {
       store.briefing = await getJSON("/api/briefing");
