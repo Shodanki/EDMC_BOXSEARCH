@@ -280,6 +280,16 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
       label(cn, main, C.amber);
       if (jump && cn.jump.x !== undefined) label(cn.jump, jump, C.amber);
     }
+    // K4: favourite carriers at their last known position - a star, like the 2D map
+    if (on.carrier !== false && data.fav_carriers) {
+      g.font = "13px monospace"; g.fillStyle = C.amber;
+      for (const f of data.fav_carriers) {
+        if (f.x === undefined || f.x === null) continue;
+        const [x, y, ok] = project(f.x, f.y, -f.z);
+        if (ok) g.fillText("★", x - 5, y + 5);
+      }
+      g.font = "11px monospace";
+    }
     // replay head
     if (replay < 1) {
       const h = api.replayHead();
@@ -299,6 +309,8 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
     }
     if (on.carrier !== false) for (const c of data.carrier) add(c, { kind: "carrier", c, id: c.id });
     if (on.carrier !== false && data.carrier_now) add(data.carrier_now, { kind: "carriernow", c: data.carrier_now, id: data.carrier_now.id });
+    if (on.carrier !== false && data.fav_carriers) for (const f of data.fav_carriers)
+      if (f.x !== undefined && f.x !== null) add(f, { kind: "favcarrier", c: f, id: f.id });
     if (on.finds !== false) for (const f of data.finds) add(f, { kind: "find", f, id: f.id });
     if (hover) {
       const txt = hooks.label ? hooks.label(hover) : "";
