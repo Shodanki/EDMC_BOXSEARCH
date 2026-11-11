@@ -860,7 +860,8 @@ class SystemDB:
     def system_progress(self, id64: Optional[int]) -> Dict[str, object]:
         """What is still outstanding in this system?"""
         empty = {"body_count": None, "scanned": 0, "mapped": 0, "fss_complete": False,
-                 "dss_open": [], "bio_open": [], "new_discoveries": 0, "valuable": []}
+                 "dss_open": [], "bio_open": [], "bio_signals_open": 0,
+                 "new_discoveries": 0, "valuable": []}
         if not id64:
             return empty
         s = self.system_by_id64(id64)
@@ -868,13 +869,19 @@ class SystemDB:
         scanned = sum(1 for r in rows if r["scanned"])
         mapped = sum(1 for r in rows if r["mapped"])
         dss_open, bio_open, valuable = [], [], []
+        bio_signals_open = 0
         for r in rows:
             worth = (r["sig_bio"] or 0) > 0 or (r["planet_class"] in VALUABLE_CLASSES) \
                 or (r["terraform"] or "") == "Terraformable"
             if r["kind"] == "Planet" and worth and not r["mapped"]:
                 dss_open.append(r["name"] or "Body %d" % r["body_id"])
-            if (r["sig_bio"] or 0) > 0 and (r["organics"] or 0) == 0:
+            # M1: open = signals minus species analysed - a body with three
+            # signals and one species done is still open (it used to count
+            # as done as soon as one species was analysed)
+            left = (r["sig_bio"] or 0) - (r["organics"] or 0)
+            if left > 0:
                 bio_open.append(r["name"] or "Body %d" % r["body_id"])
+                bio_signals_open += left
             if r["planet_class"] in VALUABLE_CLASSES or (r["terraform"] or "") == "Terraformable":
                 valuable.append((r["name"], r["planet_class"], r["terraform"]))
         return {
@@ -884,6 +891,7 @@ class SystemDB:
             "fss_complete": bool(s["fss_complete"]) if s else False,
             "dss_open": dss_open,
             "bio_open": bio_open,
+            "bio_signals_open": bio_signals_open,
             "new_discoveries": sum(1 for r in rows if r["was_discovered"] == 0),
             "valuable": valuable,
         }

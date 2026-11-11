@@ -3994,7 +3994,11 @@ def _refresh() -> None:
                 if pr["dss_open"]:
                     bits.append("DSS %d" % len(pr["dss_open"]))
                 if pr["bio_open"]:
-                    bits.append("Bio %d" % len(pr["bio_open"]))
+                    # M1: open signals and where - finished bodies drop out
+                    short = [shorten(n, ST.cur_system) for n in pr["bio_open"]]
+                    bits.append("Bio %d open (%s%s)" % (
+                        pr.get("bio_signals_open") or len(short), ", ".join(short[:3]),
+                        ", ..." if len(short) > 3 else ""))
                 if pr["new_discoveries"]:
                     bits.append("first %d" % pr["new_discoveries"])
                 if bits:
