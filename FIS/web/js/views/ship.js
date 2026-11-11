@@ -109,6 +109,13 @@ function unsold() {
   const RISK = { low: [N_("RISK LOW"), "c-green"], moderate: [N_("RISK MODERATE"), "c-amber"], high: [N_("RISK HIGH"), "c-red"] };
   if (U.risk && RISK[U.risk]) rows.unshift(el("div", { class: "pl-line" }, el("span", { class: RISK[U.risk][1], text: t(RISK[U.risk][0]) }),
     el("span", { class: "c-dim", text: " · " + t("moderate from {m} M, high from {h} M Cr", { m: fmt(U.risk_cr.moderate / 1e6, 0), h: fmt(U.risk_cr.high / 1e6, 0) }) })));
+  // data that went down with the ship - planned again in SYSTEM until redone
+  if (U.lost_systems && U.lost_systems.length) {
+    rows.push(el("div", { class: "c-red pl-line", text: "✖ " + t("Lost in a crash, to redo:") }));
+    for (const s of U.lost_systems.slice(0, 5)) rows.push(el("div", { class: "small" }, (s.name || "?") + " ",
+      el("span", { class: "c-dim", text: [s.scan ? t("{n} scans", { n: s.scan }) : null, s.map ? t("{n} maps", { n: s.map }) : null,
+        s.bio.length ? s.bio.join(", ") : null, s.ts ? String(s.ts).slice(0, 10) : null].filter(Boolean).join(" · ") })));
+  }
   if (U.first_systems || U.footfall_bio) rows.push(el("div", { class: "c-violet" }, "★ " + [
     U.first_systems ? t("{n} systems discovered first by you", { n: U.first_systems }) : null,
     U.footfall_bio ? t("{n} species on bodies of your first footfall", { n: U.footfall_bio }) : null].filter(Boolean).join(" · ")));

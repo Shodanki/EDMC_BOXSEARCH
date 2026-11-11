@@ -768,6 +768,10 @@ body.obs .frame > .frame-in { background: linear-gradient(180deg, rgba(var(--bg-
 body.obs #solo-ctl, body.kiosk #solo-ctl { display: none; }
 body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 
+/* lost with the ship - to redo */
+.leg.lost .lg-name { color: var(--red); }
+.leg.lost .lg-name::after { content: " ✖"; color: var(--red); }
+
 /* V1: VEHICLE - tokens only */
 .vh-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; align-content: start;
   height: 100%; overflow: auto; }

@@ -408,8 +408,34 @@ class Database:
             for k in ("was_discovered", "was_mapped", "was_footfalled"):
                 if o is not None and o[k] is not None:
                     d[k] = o[k]
+            # lost with the ship, not redone yet (plugin 4.8, after the crash replay)
+            d["lost_what"] = o["lost_what"] if o is not None and "lost_what" in o.keys() else None
             out.append(d)
         return out
+
+    def lost_summary(self, fid: Optional[str]) -> List[Dict[str, Any]]:
+        """Systems with data lost with the ship and not redone, newest first."""
+        fid = self.view_fid(fid)
+        if not fid:
+            return []
+        try:
+            rows = self.query("SELECT b.sys_id64, b.lost_ts, b.lost_what, s.name FROM cmdr_bodies b "
+                              "LEFT JOIN systems s ON s.id64=b.sys_id64 "
+                              "WHERE b.fid=? AND b.lost_what IS NOT NULL", (fid,))
+        except sqlite3.Error:                 # a plugin database before the crash marks
+            return []
+        out: Dict[int, Dict[str, Any]] = {}
+        for r in rows:
+            d = out.setdefault(r["sys_id64"], {"id64": r["sys_id64"], "name": r["name"],
+                                               "ts": r["lost_ts"], "scan": 0, "map": 0, "bio": []})
+            for w in _json(r["lost_what"], []):
+                if w == "scan":
+                    d["scan"] += 1
+                elif w == "map":
+                    d["map"] += 1
+                elif str(w).startswith("bio:"):
+                    d["bio"].append(w[4:])
+        return sorted(out.values(), key=lambda d: d["ts"] or "", reverse=True)
 
     def route_start(self, fid: Optional[str], id64: Optional[int]) -> Optional[tuple]:
         """R3: (body id, name) of the carrier the route of this visit starts

@@ -117,6 +117,25 @@ class TestPerCommander(_Base):
         self.assertIsNone(main["route"]["start"])                   # the other commander: main star
         self.assertIn(0, [leg["body_id"] for leg in main["route"]["legs"]])
 
+    def test_lost_in_a_crash_is_marked(self):
+        cx = sqlite3.connect(self.db_path)
+        cx.execute("UPDATE cmdr_bodies SET mapped=0, lost_what=?, lost_ts='2026-11-11T19:27:41Z' "
+                   "WHERE fid=? AND body_id=1", ('["bio:Bacterium Cerbrus", "map"]', MAIN_FID))
+        cx.commit()
+        cx.close()
+        try:
+            s = self.model.build_system(self.db, fx.SYS_ID, None, ["todo"], fid=MAIN_FID)
+            lost = self.db.lost_summary(MAIN_FID)
+        finally:
+            cx = sqlite3.connect(self.db_path)
+            cx.execute("UPDATE cmdr_bodies SET mapped=1, lost_what=NULL, lost_ts=NULL WHERE body_id=1")
+            cx.commit()
+            cx.close()
+        self.assertEqual(self.body(s, 1)["flags"]["lost"], ["bio:Bacterium Cerbrus", "map"])
+        self.assertEqual(s["lost"], {"bodies": 1, "scan": 0, "map": 1, "bio": ["Bacterium Cerbrus"]})
+        self.assertTrue(any(leg["lost"] for leg in s["route"]["legs"] if leg["body_id"] == 1))
+        self.assertEqual((lost[0]["name"], lost[0]["map"], lost[0]["bio"]), (fx.SYS, 1, ["Bacterium Cerbrus"]))
+
     def test_briefing_visited_and_also(self):
         live = {"target": {"name": fx.SYS, "id64": fx.SYS_ID, "source": "fsdtarget"}}
         b = self.model.build_briefing(self.db, live, fid=SECOND)

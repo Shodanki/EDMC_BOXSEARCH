@@ -40,7 +40,7 @@ if _PLUGIN_DIR not in sys.path:
 
 from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
 from sysdb import SystemDB, Q_ESTIMATE, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
-from sysdb import CMDR_READY, CURRENT, PLAN                     # noqa: E402
+from sysdb import CMDR_READY, CURRENT, LOSS_REPLAY, PLAN        # noqa: E402
 from sources import SourceManager                              # noqa: E402
 from netgate import Gateway                                    # noqa: E402
 import netgate                                                 # noqa: E402
@@ -1234,9 +1234,14 @@ def _rebuild_route() -> None:
         route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
                            filters=[F_ALL], skip_arrival=skip_arrival, start=start)
         ST.route_full = True
+    lost_of = {r["body_id"]: r["lost_what"] for r in rows
+               if "lost_what" in r.keys() and r["lost_what"]}
     for s in route.stops:
         if s.body.bio_hint and s.body.wants_bio:
             s.work = (s.work + " | " if s.work else "") + s.body.bio_hint
+        if s.body.body_id in lost_of:
+            # lost with the ship and not redone yet - worth doing again
+            s.work = "LOST: redo | " + (s.work or "")
     ST.route = route
     # Restore the ticks for this system, then drop any that no longer refer to
     # a stop on the current route.
@@ -4673,8 +4678,10 @@ def _first_run_migration() -> None:
 # upgrade_46_rigs: Rhino rig collection points from MiningRefined + the track
 # upgrade_48_cmdr (C1): exploration per commander - visited, FSS, scans,
 # maps, first discoveries and species analysed sorted by FID
+# upgrade_48_lost: what each commander carries unsold, and what a lost ship
+# took with it (marked, planned again)
 REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44", "upgrade_44b",
-               "upgrade_46_rigs", CMDR_READY)
+               "upgrade_46_rigs", CMDR_READY, LOSS_REPLAY)
 
 
 def _upgrade_replay() -> None:

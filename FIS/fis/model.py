@@ -421,11 +421,19 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
                 "valuable": (r["planet_class"] in sr.VALUABLE
                              or (r["terraform"] or "") == "Terraformable"),
                 "wants_dss": b.wants_dss, "wants_bio": b.wants_bio,
+                # lost with the ship, still to redo: "scan", "map", "bio:<species>"
+                "lost": _json(r["lost_what"], []) if "lost_what" in r.keys() else [],
             },
             "bio_hint": b.bio_hint,
         })
 
     out["bio"] = bio_list(db, id64, rows, out["bodies"])
+    lost = [b for b in out["bodies"] if b["flags"]["lost"]]
+    if lost:
+        out["lost"] = {"bodies": len(lost),
+                       "scan": sum(1 for b in lost if "scan" in b["flags"]["lost"]),
+                       "map": sum(1 for b in lost if "map" in b["flags"]["lost"]),
+                       "bio": [w[4:] for b in lost for w in b["flags"]["lost"] if w.startswith("bio:")]}
     # M10: stations, settlements, carriers, beacons - and a mark on the body
     try:
         out["poi"] = system_poi(db, id64, archive)
@@ -448,6 +456,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         out["report"] = []
 
     done_ids = {r["body_id"] for r in rows if r["route_done"]}
+    lost_ids = {b["body_id"] for b in out["bodies"] if b["flags"]["lost"]}
     legs = []
     next_idx = None
     prev = start
@@ -463,7 +472,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
             "cum_min": round(s.cum_s / 60.0, 1),
             "work": (s.work + (" | " + b.bio_hint if b.bio_hint and b.wants_bio else "")),
             "group": s.group, "group_start": s.group_start, "moon": s.is_moon,
-            "done": done,
+            "done": done, "lost": bool(lost_ids and b.body_id in lost_ids),
             "label": "LEG %d · %.0f LS · ~%.0f min" % (i, s.leg_ls, max(1.0, s.leg_s / 60.0)),
         })
         prev = b.pos
