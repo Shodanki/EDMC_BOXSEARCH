@@ -702,6 +702,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(out)
         if path == "/api/ship":
             return self._json(m.build_ship(app.live_state()))
+        if path == "/api/vehicle":
+            return self._json(m.build_vehicle(app.live_state()))
         if path == "/api/surface":
             sid = (qs.get("sys") or [None])[0]
             body = (qs.get("body") or [None])[0]

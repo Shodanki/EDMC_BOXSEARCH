@@ -15,7 +15,7 @@ import { cockpitRows } from "./cockpit.js";
 let root = null, data = null, msg = "", qrIndex = 0;
 // E6/P7: display links - one view alone, for OBS, a wall screen or a tablet
 const LINK_VIEWS = [["briefing", "BRIEFING"], ["surface", "PLANET"], ["tactical", "SYSTEM"], ["galaxy", "GALAXY"],
-  ["planet", "PLANET INFO"], ["atlas", "ATLAS"], ["ship", "SHIP"], ["carrier", "CARRIER"], ["mining", "MINING"],
+  ["planet", "PLANET INFO"], ["atlas", "ATLAS"], ["ship", "SHIP"], ["vehicle", "VEHICLE"], ["carrier", "CARRIER"], ["mining", "MINING"],
   ["statistics", "STATISTICS"]];
 const link = { view: "briefing", obs: false, kiosk: false, scale: "1" };
 

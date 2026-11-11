@@ -1690,6 +1690,71 @@ GUI_FOCUS = {0: "NONE", 1: "INTERNAL", 2: "EXTERNAL", 3: "COMMS", 4: "ROLE",
              9: "FSS", 10: "SAA", 11: "CODEX"}
 
 
+# V1: what Status.json says about the vehicle (Flags bits, seen 11.11.2026 in
+# the Nomad, Scarab and Rhino)
+VEHICLE_FLAGS = ((8, "lights"), (31, "high_beam"), (12, "handbrake"), (15, "drive_assist"),
+                 (13, "turret"), (14, "under_ship"), (28, "night_vision"), (27, "analysis"),
+                 (6, "hardpoints"), (9, "cargo_scoop"), (3, "shields"), (22, "danger"),
+                 (19, "low_fuel"))
+
+
+def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Initial great-circle bearing from point 1 to point 2, degrees 0..360."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dl = math.radians(lon2 - lon1)
+    x = math.sin(dl) * math.cos(p2)
+    y = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
+
+
+def _vehicle_view(v: Dict[str, Any], now: float) -> Dict[str, Any]:
+    flags = int(v.get("flags") or 0)
+    on = [n for bit, n in VEHICLE_FLAGS if flags & (1 << bit)]
+    if v.get("nomad"):
+        # the Nomad flies: landed / gear instead of the SRV's handbrake and turret
+        on = [n for n in on if n not in ("handbrake", "drive_assist", "turret", "under_ship")]
+        if flags & 4:
+            on.append("gear")
+    out = {k: v.get(k) for k in ("type", "name", "edition", "nomad", "since", "cargo", "refined",
+                                 "materials", "samples", "landings", "flying", "on_foot",
+                                 "pips", "fire_group", "ended", "how")}
+    out["flags"] = on if not v.get("on_foot") else []
+    out["minutes"] = _r((((v.get("ended") or now) - v["since"]) / 60.0), 1) if v.get("since") else None
+    out["fuel"] = _r(v.get("fuel"), 3)
+    out["fuel_start"] = _r(v.get("fuel_start"), 3)
+    if v.get("fuel") is not None and v.get("fuel_start") is not None:
+        out["fuel_used"] = _r(max(0.0, v["fuel_start"] - v["fuel"]), 3)
+    pos = v.get("pos")
+    out["pos"] = ({"body": pos.get("body"), "lat": _r(pos.get("lat"), 4), "lon": _r(pos.get("lon"), 4),
+                   "alt": _r(pos.get("alt"), 0), "heading": pos.get("heading")} if pos else None)
+    spot = v.get("ship_spot")
+    if pos and spot and spot.get("body") == pos.get("body") and pos.get("lat") is not None:
+        r = pos.get("radius") or spot.get("radius")
+        if r:
+            d = plugin().biopredict.surface_distance_m(pos["lat"], pos["lon"], spot["lat"], spot["lon"], r)
+            out["ship"] = {"dist_m": _r(d, 0), "bearing": _r(_bearing(pos["lat"], pos["lon"],
+                                                                        spot["lat"], spot["lon"]), 0),
+                           "landed": spot.get("landed")}
+    return out
+
+
+def build_vehicle(live: Optional[Dict[str, Any]], now: Optional[float] = None) -> Dict[str, Any]:
+    """
+    V1: the surface vehicle - SRV (Scarab, Rhino) or Nomad - from what the
+    game really writes: type and edition (Launch*), the vehicle's own tank
+    (Status.json FuelReservoir), cargo, position, flags, pips; refined tonnes,
+    samples and landings from the journal; distance and bearing to where the
+    ship was. Hull, ammunition and modules are in no game file.
+    """
+    live = live or {}
+    now = time.time() if now is None else now
+    v, last = live.get("srv"), live.get("srv_last")
+    return {"active": v is not None,
+            "vehicle": _vehicle_view(v, now) if v else None,
+            "last": _vehicle_view(last, now) if last and not v else None,
+            "generated": now}
+
+
 def decode_flags(flags: int) -> List[str]:
     return [n for bit, n in FLAGS.items() if flags & (1 << bit)]
 

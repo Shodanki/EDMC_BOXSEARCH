@@ -94,6 +94,9 @@ def empty_state() -> Dict[str, Any]:
         "target": None,         # FSDTarget: name, id64, star_class, remaining_jumps
         "ship_target": None,    # ShipTargeted: the locked ship, as far as scanned (E5)
         "vehicle": None,        # surface vehicle out now: "SRV Rhino", "Nomad" ... (M2)
+        "srv": None,            # V1: the vehicle out now - type, edition, fuel, cargo, position
+        "srv_last": None,       # V1: the last vehicle trip, after docking / loss
+        "ship_spot": None,      # V1: where the ship was last (lat/lon on a body)
         "suit": None,           # SuitLoadout: suit, class, mods, weapons (M5)
         "navroute": [],         # NavRoute.json hops
         "fuel": {},             # main, reservoir
@@ -206,6 +209,7 @@ class LiveTracker:
                 s["commander"] = e.get("Commander") or s["commander"]
                 s["ship_target"] = None      # new game session: no lock yet
                 s["vehicle"] = None
+                self._srv_end(s, ts, "session")
                 s["ship"].update(type=e.get("Ship"), name=e.get("ShipName"),
                                  ident=e.get("ShipIdent"))
                 if e.get("FuelCapacity"):
@@ -260,9 +264,40 @@ class LiveTracker:
             elif ev in ("LaunchSRV", "LaunchVessel"):
                 s["vehicle"] = (e.get("SRVType_Localised") or e.get("VesselType_Localised")
                                 or e.get("SRVType") or e.get("VesselType") or "SRV")
+                typ = e.get("SRVType") or e.get("VesselType") or ""
+                s["srv"] = {"type": typ, "name": s["vehicle"],
+                            # the ARX edition it was bought in (galactic, stellar ...),
+                            # not a fitting - the journal names no modules
+                            "edition": e.get("Loadout"), "id": e.get("ID"),
+                            "nomad": typ.startswith("lander") or ev == "LaunchVessel",
+                            "since": ts, "ship_spot": s.get("ship_spot"),
+                            "fuel": None, "fuel_start": None, "cargo": 0,
+                            "refined": {}, "materials": 0, "samples": 0, "landings": 0,
+                            "flying": None, "on_foot": False, "pos": None, "flags": 0,
+                            "pips": None, "fire_group": None}
                 out = "status"
-            elif ev in ("DockSRV", "DockVessel", "SRVDestroyed"):
+            elif ev in ("DockSRV", "DockVessel", "SRVDestroyed", "VesselDestroyed"):
                 s["vehicle"] = None
+                self._srv_end(s, ts, "docked" if ev.startswith("Dock") else "lost")
+                out = "status"
+            elif s.get("srv") and ev in ("MiningRefined", "Cargo", "ScanOrganic", "MaterialCollected",
+                                         "Disembark", "Embark", "Touchdown", "Liftoff"):
+                v = s["srv"]
+                if ev == "MiningRefined":
+                    m = e.get("Type_Localised") or e.get("Type") or "?"
+                    v["refined"][m] = v["refined"].get(m, 0) + 1
+                elif ev == "Cargo" and e.get("Vessel") == "SRV" and e.get("Count") is not None:
+                    v["cargo"] = e.get("Count")
+                elif ev == "ScanOrganic":
+                    v["samples"] += 1
+                elif ev == "MaterialCollected":
+                    v["materials"] += int(e.get("Count") or 1)
+                elif ev in ("Disembark", "Embark") and e.get("SRV"):
+                    v["on_foot"] = ev == "Disembark"
+                elif ev in ("Touchdown", "Liftoff") and v["nomad"] and e.get("PlayerControlled"):
+                    v["flying"] = ev == "Liftoff"
+                    if ev == "Touchdown":
+                        v["landings"] += 1
                 out = "status"
             elif ev == "ShipTargeted":
                 s["ship_target"] = self._ship_target(e, s.get("ship_target"), ts)
@@ -317,6 +352,9 @@ class LiveTracker:
                 if ev == "RefuelAll":
                     s["fuel"]["main"] = s["ship"]["fuel_capacity"]
                 out = "status"
+            if ev == "Died" and s.get("srv"):
+                s["vehicle"] = None
+                self._srv_end(s, ts, "lost")
             if combat.note_event(s.setdefault("combat_hits", {}), e, ts):
                 out = out or "status"
             if ev in FIX_EVENTS:
@@ -330,6 +368,14 @@ class LiveTracker:
             self._emit(out, {"event": ev, "ts": ts,
                              "system_id64": self.state["system"].get("id64")})
         return out
+
+    @staticmethod
+    def _srv_end(s: Dict[str, Any], ts: Optional[float], how: str) -> None:
+        """V1: the trip is over - keep it as the last one (docked or lost)."""
+        v = s.get("srv")
+        if v is not None:
+            s["srv_last"] = dict(v, ended=ts, how=how)
+        s["srv"] = None
 
     @staticmethod
     def _ship_target(e: Dict[str, Any], prev: Optional[Dict[str, Any]],
@@ -420,9 +466,48 @@ class LiveTracker:
                    "oxygen": st.get("Oxygen"), "health": st.get("Health"),
                    "temp_k": st.get("Temperature"), "gravity": st.get("Gravity")}
             fuel = st.get("Fuel") or {}
-            if fuel:
+            in_srv = bool(new["flags"] & (1 << 26))
+            if fuel and in_srv:
+                # V1: in the SRV / Nomad the Fuel block is the VEHICLE's (main 0,
+                # reservoir = its tank) - it used to empty the ship's tank on screen
+                v = s.get("srv")
+                last = s.get("srv_last") or {}
+                # Status.json lags the journal: the snapshots right after DockSRV
+                # still say "in the SRV" - no phantom vehicle from those
+                just_docked = (last.get("ended") is not None and ts is not None
+                               and ts - last["ended"] < 20)
+                if v is None and not just_docked:
+                    v = s["srv"] = {"type": "", "name": s.get("vehicle"), "edition": None, "id": None,
+                                    "nomad": False, "since": ts, "ship_spot": s.get("ship_spot"),
+                                    "fuel": None, "fuel_start": None, "cargo": 0, "refined": {},
+                                    "materials": 0, "samples": 0, "landings": 0, "flying": None,
+                                    "on_foot": False, "pos": None, "flags": 0, "pips": None,
+                                    "fire_group": None}
+                if v is not None:
+                    r = fuel.get("FuelReservoir")
+                    if r is not None:
+                        v["fuel"] = r
+                        if v["fuel_start"] is None:
+                            v["fuel_start"] = r
+                    if st.get("Cargo") is not None:
+                        v["cargo"] = st.get("Cargo")
+                    v["flags"] = new["flags"]
+                    v["pips"], v["fire_group"] = new["pips"], new["fire_group"]
+                    v["on_foot"] = False
+                    if new["lat"] is not None:
+                        v["pos"] = {"body": new["body_name"], "lat": new["lat"], "lon": new["lon"],
+                                    "alt": new["alt"], "heading": new["heading"],
+                                    "radius": new["radius"], "ts": ts}
+                    if v["nomad"]:
+                        v["flying"] = not bool(new["flags"] & 2)
+            elif fuel:
                 s["fuel"]["main"] = fuel.get("FuelMain", s["fuel"].get("main"))
                 s["fuel"]["reservoir"] = fuel.get("FuelReservoir", s["fuel"].get("reservoir"))
+            if new["flags"] & (1 << 24) and new["lat"] is not None and not in_srv:
+                s["ship_spot"] = {"body": new["body_name"], "lat": new["lat"], "lon": new["lon"],
+                                  "radius": new["radius"], "landed": bool(new["flags"] & 2), "ts": ts}
+            if s.get("srv") and new["flags2"] & 1:
+                s["srv"]["on_foot"] = True        # left the vehicle (Nomad: sampling on foot)
             s["status"] = new
             if new["body_name"] and new["lat"] is not None:
                 fx = s.get("last_fix") or {}
