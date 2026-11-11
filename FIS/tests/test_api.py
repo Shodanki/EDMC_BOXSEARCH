@@ -169,8 +169,38 @@ class TestModel(_Base):
                  "Name": "Testia AB-C d1-8", "SystemAddress": 77,
                  "StarClass": "Y", "RemainingJumpsInRoute": 1})
         br = self.model.build_briefing(self.db, lt.snapshot())
-        self.assertEqual(br["status"], "unknown")
+        # I1: never in our database, nobody asked -> "not checked", not "unknown"
+        self.assertEqual(br["status"], "unchecked")
+        self.assertFalse(br["target"]["in_no_database"])
         self.assertFalse(br["target"]["scoopable"])
+
+    def test_briefing_info_levels(self):
+        import sqlite3
+        cx = sqlite3.connect(self.db.path)
+        rows = [("Inside", 501, 110.0, -20.0, 50.0, 40, "navroute"),
+                ("Outside", 502, 900.0, -20.0, 50.0, 40, "navroute"),
+                ("Town", 503, 900.0, -20.0, 60.0, 40, "journal,inhabited"),
+                ("Guess", 504, 101.0, -20.0, 50.0, 10, "fsdtarget")]
+        cx.executemany("INSERT INTO systems (name,id64,x,y,z,quality,sources) VALUES (?,?,?,?,?,?,?)", rows)
+        cx.commit()
+        cx.close()
+        want = {"Inside": "unknown", "Outside": "unchecked", "Town": "inhabited", "Guess": "unchecked"}
+        try:
+            for name, id64, *_ in rows:
+                lt = fed_tracker()
+                lt.feed({"timestamp": "2026-11-04T20:12:00Z", "event": "FSDTarget",
+                         "Name": name, "SystemAddress": id64, "StarClass": "K"})
+                br = self.model.build_briefing(self.db, lt.snapshot())
+                self.assertEqual(br["status"], want[name], name)
+                self.assertEqual(br["target"]["in_no_database"], name == "Inside", name)
+            self.assertEqual(br["target"]["level"], "unchecked")      # estimate only
+            sysv = self.model.build_system(self.db, 502, None)
+            self.assertEqual(sysv["info_level"], "unchecked")
+        finally:
+            cx = sqlite3.connect(self.db.path)
+            cx.execute("DELETE FROM systems WHERE id64 BETWEEN 501 AND 504")
+            cx.commit()
+            cx.close()
 
     def test_briefing_only_us_and_range(self):
         lt = fed_tracker()

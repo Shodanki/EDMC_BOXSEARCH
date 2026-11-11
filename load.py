@@ -39,7 +39,7 @@ if _PLUGIN_DIR not in sys.path:
     sys.path.append(_PLUGIN_DIR)
 
 from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
-from sysdb import SystemDB, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
+from sysdb import SystemDB, Q_ESTIMATE, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
 from sources import SourceManager                              # noqa: E402
 from netgate import Gateway                                    # noqa: E402
 import netgate                                                 # noqa: E402
@@ -509,6 +509,14 @@ def _fetch_local(r_min: float = 0.0, r_max: float = 0.0) -> bool:
     _n, ok, _cnt = _fetch_into_db(["edd"], r_min, r_max or ST.radius)
     if ok.get("edd"):
         ST.edd_pending = False
+        try:
+            # I1: this region was checked against EDD's data - only then may
+            # the briefing say "in no database" there
+            with ST.lock:
+                ST.db.record_shell("edd", ST.center, r_min, r_max or ST.radius,
+                                   _cnt.get("edd", 0), shells.ttl_seconds())
+        except Exception:
+            logger.debug("EDD shell not recorded", exc_info=True)
         return True
     if not ST.edd_pending:
         logger.info("EDDiscovery not readable now (%s) - read again later, "
@@ -1003,6 +1011,16 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
         info["scoopable"] = is_scoopable(row["star_class"])
     srcs = set((row["sources"] or "").split(",")) if row is not None else set()
     info["known_sources"] = [s for s in _EXTERNAL_DBS if s in srcs]
+    # I1: say "in no database" only where a source was really asked
+    pos = None
+    if row is not None and row["x"] is not None and (row["quality"] or 0) > Q_ESTIMATE:
+        pos = (row["x"], row["y"], row["z"])
+    try:
+        with ST.lock:
+            regions = {k: ST.db.valid_shells(k) for k in ("edd", "spansh", "edsm")}
+    except Exception:
+        regions = {}
+    info["level"], info["checked_by"] = shells.info_level(srcs, pos, regions)
     if row is not None and row["visited"] and kind == "target":
         info["visited"] = True
     pn = parse_name(name or "")
@@ -1025,8 +1043,15 @@ def _overlay_briefing(kind: str, name: Optional[str], id64: Optional[int],
         info = _briefing_info(kind, name, id64, star_class)
         # 30 s: long enough to read while aligning for the jump (user, 05.11.)
         ov.show_briefing(info, seconds=30)
-        if info.get("known_sources") == [] and kind == "target":
-            logger.info("briefing | %s is in no database - first discovery likely", name)
+        if kind == "target":
+            lv = info.get("level")
+            if lv == "checked":
+                logger.info("briefing | %s is in no database (checked: %s) - first "
+                            "discovery likely", name, ", ".join(info.get("checked_by") or []))
+            elif lv == "unchecked":
+                logger.info("briefing | %s not checked - outside our data frame", name)
+            elif lv == "inhabited":
+                logger.info("briefing | %s is inhabited - known", name)
     except Exception:
         logger.debug("overlay briefing failed", exc_info=True)
 

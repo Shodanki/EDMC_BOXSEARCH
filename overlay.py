@@ -109,7 +109,9 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
       name, kind ('target' | 'arrival'), star_class, scoopable (bool),
       known_sources (list of database names), visited (bool),
       boxel_open (int, open candidates in that boxel), jumps_left (int),
-      fuel_warning (str), bodies (int), bodies_new (int)
+      fuel_warning (str), bodies (int), bodies_new (int),
+      level ('known' | 'inhabited' | 'checked' | 'unchecked', shells.info_level),
+      checked_by (list of sources that covered the position)
     """
     name = info.get("name") or "?"
     kind = info.get("kind") or "target"
@@ -122,11 +124,18 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
                                     ("  NOT scoopable" if scoop is False else "")),
                     COL["data"] if scoop or scoop is None else COL["warn"]))
     src = info.get("known_sources")
-    if src is not None:
-        if src:
-            out.append(("KNOWN  %s" % ", ".join(src), COL["dim"]))
-        else:
-            out.append(("IN NO DATABASE - first discovery likely", COL["new"]))
+    level = info.get("level")
+    if src:
+        out.append(("KNOWN  %s" % ", ".join(src), COL["dim"]))
+    elif level == "inhabited":
+        out.append(("INHABITED - known to the databases", COL["dim"]))
+    elif level == "unchecked":
+        # I1: nobody was asked about this place - never claim "no database"
+        out.append(("NOT CHECKED - outside our data frame", COL["dim"]))
+    elif level == "checked" or (level is None and src is not None):
+        out.append(("IN NO DATABASE - first discovery likely", COL["new"]))
+        if info.get("checked_by"):
+            out.append(("checked: %s" % ", ".join(info["checked_by"]), COL["dim"]))
     if info.get("visited"):
         out.append(("visited before", COL["dim"]))
     if info.get("bodies"):
@@ -369,6 +378,19 @@ def _selftest() -> int:
     check(not ov.keep_targets(ov._targets_t + 9999), "not while mining")
     ov.mute_targets, ov._last_targets = False, []
     check(not ov.keep_targets(ov._targets_t + 9999), "nothing to keep")
+
+    def texts(**kw):
+        return [t for t, _c in briefing_lines(dict(name="X", kind="target", **kw))]
+    nb = "IN NO DATABASE - first discovery likely"
+    check(nb not in texts(known_sources=[], level="unchecked")
+          and "NOT CHECKED - outside our data frame" in texts(known_sources=[], level="unchecked"),
+          "I1: not asked -> 'NOT CHECKED', never 'in no database'")
+    tx = texts(known_sources=[], level="checked", checked_by=["Spansh", "EDSM"])
+    check(nb in tx and "checked: Spansh, EDSM" in tx, "I1: asked and unknown -> in no database + by whom")
+    check(nb not in texts(known_sources=[], level="inhabited")
+          and "INHABITED - known to the databases" in texts(known_sources=[], level="inhabited"),
+          "I1: inhabited -> known, no request")
+    check("KNOWN  EDSM" in texts(known_sources=["EDSM"], level="known"), "I1: known stays known")
     print("failures: %d" % fails)
     return fails
 

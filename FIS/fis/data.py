@@ -16,6 +16,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 EXTERNAL_DBS = ("EDDiscovery", "Spansh", "EDSM")
@@ -253,6 +254,20 @@ class Database:
             self._bio_cache = (mt, rows)
         return rows
 
+    def shell_regions(self, now: Optional[float] = None) -> Dict[str, list]:
+        """I1: the regions each source (edd / spansh / edsm) delivered
+        completely and that are still valid - where 'in no database' may be
+        said. Empty for an older plugin database."""
+        if not self.has_table("fetched_shells"):
+            return {}
+        now = time.time() if now is None else now
+        out: Dict[str, list] = {}
+        for r in self.query("SELECT service, cx, cy, cz, r_min, r_max FROM fetched_shells"
+                            " WHERE expires_at>?", (now,)):
+            out.setdefault(r["service"], []).append(
+                (r["cx"], r["cy"], r["cz"], r["r_min"], r["r_max"]))
+        return out
+
     @staticmethod
     def known_sources(row: Optional[sqlite3.Row]) -> List[str]:
         if row is None:
@@ -287,7 +302,7 @@ class Database:
     def systems_in_sphere(self, cx: float, cy: float, cz: float, r: float
                           ) -> List[sqlite3.Row]:
         return self.query(
-            "SELECT name, id64, x, y, z, visited, fss_complete, sources, body_count "
+            "SELECT name, id64, x, y, z, quality, visited, fss_complete, sources, body_count "
             "FROM systems WHERE x BETWEEN ? AND ? AND y BETWEEN ? AND ? "
             "AND z BETWEEN ? AND ? "
             "AND (x-?)*(x-?)+(y-?)*(y-?)+(z-?)*(z-?) <= ?",

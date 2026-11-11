@@ -42,6 +42,12 @@ def plugin():
                 import surfacenav  # type: ignore   # plugin 4.5+
             except ImportError:
                 surfacenav = None
+            try:
+                import shells  # type: ignore   # plugin 4.6+, info levels 4.7+
+                if not hasattr(shells, "info_level"):
+                    shells = None
+            except ImportError:
+                shells = None
         finally:
             sys.dont_write_bytecode = keep
 
@@ -51,6 +57,7 @@ def plugin():
         p.sysroute, p.biopredict, p.deepspace, p.procgen = \
             sysroute, biopredict, deepspace, procgen
         p.surfacenav = surfacenav
+        p.shells = shells
         _plugin = p
     return _plugin
 
@@ -58,6 +65,25 @@ def plugin():
 # ---------------------------------------------------------------------------
 # small helpers
 # ---------------------------------------------------------------------------
+
+Q_ESTIMATE = 10      # sysdb: a position derived from name/id64 (boxel centre)
+
+
+def info_level(row: Any, regions: Optional[Dict[str, list]]) -> Tuple[str, List[str]]:
+    """I1 information level of a system row: known / inhabited / checked
+    (asked, nobody has it = 'in no database') / unchecked (nobody asked).
+    Same rule as the plugin briefing (shells.info_level)."""
+    if row is None:
+        return "unchecked", []
+    srcs = set((row["sources"] or "").split(","))
+    pos = None
+    q = row["quality"] if "quality" in row.keys() else None
+    if row["x"] is not None and (q is None or q > Q_ESTIMATE):
+        pos = (row["x"], row["y"], row["z"])
+    sh = plugin().shells
+    if sh is None:                         # older plugin: the old rule
+        return ("known" if Database.known_sources(row) else "checked"), []
+    return sh.info_level(srcs, pos, regions or {})
 
 def _r(v: Optional[float], nd: int = 2) -> Optional[float]:
     if v is None:
@@ -253,6 +279,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         "fss_complete": bool(srow["fss_complete"]) if srow is not None else False,
         "visited": bool(srow["visited"]) if srow is not None else False,
         "known_sources": Database.known_sources(srow),
+        "info_level": info_level(srow, db.shell_regions())[0],
         "bodies": [], "route": None, "fix": None, "generated": now,
     }
     if not rows:
@@ -590,13 +617,16 @@ def survey_rows(db: Database) -> Dict[str, Any]:
     c = (s["cx"], s["cy"], s["cz"])
     out["survey"] = {"start_system": s["start_system"], "center": list(c), "radius": s["radius"],
                      "active": bool(s["active"]), "started": s["started"]}
+    regions = db.shell_regions()
     for r in db.systems_in_sphere(c[0], c[1], c[2], s["radius"] or 0.0):
         srcs = Database.known_sources(r)
         state = "surveyed" if r["fss_complete"] else "visited" if r["visited"] else "unvisited"
+        level = info_level(r, regions)[0]
         out["systems"].append({
             "name": r["name"], "id64": r["id64"], "x": r["x"], "y": r["y"], "z": r["z"],
             "from_centre_ly": _r(math.dist((r["x"], r["y"], r["z"]), c), 2),
-            "state": state, "only_us": not srcs, "sources": srcs,
+            # I1: "known to no online source" only where they were asked
+            "state": state, "only_us": level == "checked", "level": level, "sources": srcs,
             "bodies": r["body_count"]})
     for r in db.absent_all():
         out["systems"].append({"name": r["name"], "id64": None, "x": None, "y": None, "z": None,
@@ -1320,6 +1350,7 @@ def _navpoints(db: Database, live: Dict[str, Any], limit: int = 14) -> List[Dict
     """The plotted route after the current system, with what we know of each hop."""
     route = live.get("navroute") or []
     cur = (live.get("system") or {}).get("name")
+    regions = db.shell_regions()
     start = 0
     for i, h in enumerate(route):
         if h.get("name") == cur:
@@ -1335,6 +1366,7 @@ def _navpoints(db: Database, live: Dict[str, Any], limit: int = 14) -> List[Dict
                     "boost": boost_kind(h.get("star_class")),
                     "jump_ly": _r(_dist3(prev, pos), 2) if prev and pos else None,
                     "known_sources": Database.known_sources(row),
+                    "level": info_level(row, regions)[0],
                     "visited": bool(row["visited"]) if row is not None else False})
         prev = pos
     return out
@@ -1410,6 +1442,7 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
     cpos = (live.get("system") or {}).get("pos")
     dist = _r(_dist3(cpos, tpos), 2) if cpos and tpos else None
     known = Database.known_sources(row)
+    level, checked_by = info_level(row, db.shell_regions())
     route = live.get("navroute") or []
     idx = next((i for i, h in enumerate(route) if h.get("name") == name), None)
     out["target"] = {
@@ -1418,7 +1451,8 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
         "boost": boost_kind(star),
         "distance_ly": dist, "in_db": row is not None,
         "visited": bool(row["visited"]) if row is not None else False,
-        "known_sources": known, "in_no_database": not known,
+        "known_sources": known, "in_no_database": level == "checked",
+        "level": level, "checked_by": checked_by,
         "body_count": row["body_count"] if row is not None else None,
         "remaining_jumps": tgt.get("remaining_jumps"),
         "navpoint": [idx, len(route) - 1] if idx is not None and len(route) > 1 else None,
@@ -1456,7 +1490,11 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
         exp.append({"key": "bio_neighbours", "n": bx["bio_systems"], "of": bx["visited"]})
     # data, not sentences: the browser words them in the display language
     out["expectation"] = exp
-    if not known and row is not None and row["visited"]:
+    if not known and level == "inhabited":
+        out["status"] = "inhabited"         # population/station: surely known
+    elif not known and level == "unchecked":
+        out["status"] = "unchecked"         # I1: nobody asked - never "unknown"
+    elif not known and row is not None and row["visited"]:
         out["status"] = "only_us"           # visited, but in no external database
     elif not known:
         out["status"] = "unknown"           # first discovery possible
@@ -1537,7 +1575,8 @@ def build_survey(db: Database) -> Dict[str, Any]:
                masscodes=s["masscodes"], started=s["started"], updated=s["updated"])
     rows = db.systems_in_sphere(s["cx"], s["cy"], s["cz"], s["radius"] or 0.0)
     visited = [r for r in rows if r["visited"]]
-    only_us = [r for r in visited if not Database.known_sources(r)]
+    regions = db.shell_regions()
+    only_us = [r for r in visited if info_level(r, regions)[0] == "checked"]
     out["systems"] = {
         "known": len(rows), "visited": len(visited),
         "fss_complete": sum(1 for r in rows if r["fss_complete"]),

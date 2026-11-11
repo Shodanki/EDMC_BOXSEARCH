@@ -157,6 +157,63 @@ def in_shell(p: Sequence[float], center: Sequence[float], r_min: float,
     return r_min - 1e-6 <= d <= r_max + 1e-6
 
 
+# ---------------------------------------------------------------------------
+# I1 information levels (4.7): never say "in no database" unasked
+# ---------------------------------------------------------------------------
+
+# Pseudo source in systems.sources: the journal showed population, factions
+# or a station there - such a system is known to every database, no request
+# needed.
+INHABITED = "inhabited"
+SERVICE_NAMES = {"edd": "EDDiscovery", "spansh": "Spansh", "edsm": "EDSM"}
+LEVELS = ("known", "inhabited", "checked", "unchecked")
+
+
+def info_level(sources: Iterable[str], pos: Sequence[float] = None,
+               regions: dict = None) -> Tuple[str, List[str]]:
+    """
+    What do we really know about a system's presence in the databases?
+
+      known      an external database (EDDiscovery, Spansh, EDSM) reports it
+      inhabited  population, factions or a station seen in the journal
+      checked    its position lies in a shell a source delivered completely
+                 and still valid - and none of them had it: "in no database"
+      unchecked  nobody was asked about that place - outside our data frame
+
+    sources: the system's source names; pos: its position (None when only
+    an estimate is known); regions: {service: [Region, ...]} valid shells.
+    Returns (level, display names of the sources that cover the position).
+    """
+    srcs = set(sources or ())
+    by = []
+    if pos is not None:
+        for k in ("edd", "spansh", "edsm"):
+            if any(_inside(pos, r) for r in (regions or {}).get(k) or ()):
+                by.append(SERVICE_NAMES[k])
+    if srcs & set(SERVICE_NAMES.values()):
+        return "known", by
+    if INHABITED in srcs:
+        return "inhabited", by
+    return ("checked" if by else "unchecked"), by
+
+
+def inhabited_event(entry: dict) -> bool:
+    """Does this journal event show the system as inhabited (I1)? FSDJump,
+    Location, CarrierJump with population or factions; docking at a station
+    (not a fleet carrier, which can park anywhere)."""
+    ev = entry.get("event")
+    if ev in ("FSDJump", "Location", "CarrierJump"):
+        try:
+            if int(entry.get("Population") or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+        return bool(entry.get("Factions"))
+    if ev == "Docked":
+        return bool(entry.get("StationType")) and entry.get("StationType") != "FleetCarrier"
+    return False
+
+
 def needs_next(horizon: float, radius: float, center: Sequence[float],
                pos: Sequence[float] = None, targets_left: int = 1) -> bool:
     """Is the next shell needed? Only while the horizon is short of the
@@ -229,6 +286,32 @@ def _selftest() -> int:
           "just outside the sphere, coming in: next shell")
     check(in_shell((c[0] + 30, c[1], c[2]), c, 25, 50)
           and not in_shell((c[0] + 10, c[1], c[2]), c, 25, 50), "shell filter")
+
+    # I1 information levels
+    reg = {"spansh": [(c[0], c[1], c[2], 0.0, 25.0)],
+           "edsm": [(c[0], c[1], c[2], 0.0, 50.0)]}
+    p_in, p_mid, p_out = (c[0] + 10, c[1], c[2]), (c[0] + 40, c[1], c[2]), \
+        (c[0] + 400, c[1], c[2])
+    check(info_level(["journal", "EDSM"], p_out, reg) == ("known", []),
+          "I1: a database reports it -> known (even outside the frame)")
+    check(info_level(["journal"], p_in, reg) == ("checked", ["Spansh", "EDSM"]),
+          "I1: inside both shells, nobody has it -> checked by Spansh + EDSM")
+    check(info_level(["journal"], p_mid, reg) == ("checked", ["EDSM"]),
+          "I1: inside only the EDSM shell -> checked by EDSM")
+    check(info_level(["journal", "navroute"], p_out, reg) == ("unchecked", []),
+          "I1: outside every shell -> NOT checked, never 'in no database'")
+    check(info_level(["journal"], None, reg)[0] == "unchecked",
+          "I1: no reliable position -> not checked")
+    check(info_level(["journal", INHABITED], p_out, reg)[0] == "inhabited",
+          "I1: inhabited -> known without a request")
+    check(info_level([], p_in, {})[0] == "unchecked", "I1: no shells at all -> not checked")
+    check(inhabited_event({"event": "FSDJump", "Population": 12000})
+          and inhabited_event({"event": "Location", "Population": 0,
+                               "Factions": [{"Name": "x"}]})
+          and not inhabited_event({"event": "FSDJump", "Population": 0})
+          and inhabited_event({"event": "Docked", "StationType": "Coriolis"})
+          and not inhabited_event({"event": "Docked", "StationType": "FleetCarrier"}),
+          "I1: population/factions/station docking = inhabited, a carrier is not")
 
     print("failures: %d" % fails)
     return fails

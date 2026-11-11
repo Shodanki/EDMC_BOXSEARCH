@@ -953,5 +953,14 @@ const DE = /*DE*/{
   "Running as an app.": "Läuft als App.",
   "Own window and taskbar icon; the FIS service must be running, as for the browser.": "Eigenes Fenster und Taskleisten-Symbol; der FIS-Dienst muss laufen, wie für den Browser.",
   "install as app": "als App installieren",
-  "If no button shows: the browser menu offers \"Install SHBOX FIS\" (Chrome, Edge).": "Wenn kein Knopf erscheint: Das Browser-Menü bietet „SHBOX FIS installieren“ (Chrome, Edge)."
+  "If no button shows: the browser menu offers \"Install SHBOX FIS\" (Chrome, Edge).": "Wenn kein Knopf erscheint: Das Browser-Menü bietet „SHBOX FIS installieren“ (Chrome, Edge).",
+  "INHABITED": "BEWOHNT",
+  "Population or a station seen in the journal – the databases know the system": "Bevölkerung oder Station im Journal gesehen – die Datenbanken kennen das System",
+  "NOT CHECKED": "NICHT GEPRÜFT",
+  "Outside our data frame – no database was asked about this system": "Außerhalb unseres Datenrahmens – keine Datenbank wurde zu diesem System gefragt",
+  "checked: {s}": "geprüft: {s}",
+  "not checked": "nicht geprüft",
+  "inhabited": "bewohnt",
+  "inhabited – known to the databases": "bewohnt – den Datenbanken bekannt",
+  "not checked – outside our data frame": "nicht geprüft – außerhalb unseres Datenrahmens"
 }/*END*/;

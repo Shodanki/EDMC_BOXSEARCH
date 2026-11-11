@@ -44,6 +44,11 @@ def _plugin():
     return plugin()
 
 
+def _info_level(row, regions):
+    from .model import info_level
+    return info_level(row, regions)
+
+
 def _r(v: Optional[float], nd: int = 2) -> Optional[float]:
     return None if v is None else round(float(v), nd)
 
@@ -246,11 +251,12 @@ def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
     else:
         out["boxels"] = []
     # known systems
-    rows = db.query("SELECT name, id64, x, y, z, visited, fss_complete, sources FROM systems "
+    rows = db.query("SELECT name, id64, x, y, z, quality, visited, fss_complete, sources FROM systems "
                     "WHERE x IS NOT NULL") if db.has_table("systems") else []
+    regions = db.shell_regions()
     out["systems"] = [{"n": r["name"], "id": r["id64"], "x": _r(r["x"]), "y": _r(r["y"]), "z": _r(r["z"]),
                        "v": 1 if r["visited"] else 0, "f": 1 if r["fss_complete"] else 0,
-                       "u": 1 if (r["visited"] and not Database.known_sources(r)) else 0}
+                       "u": 1 if (r["visited"] and _info_level(r, regions)[0] == "checked") else 0}
                       for r in rows]
     # finds worth a symbol
     finds: Dict[Any, Dict[str, Any]] = {}

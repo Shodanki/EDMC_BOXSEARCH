@@ -41,6 +41,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from procgen import (MASSCODES, SectorRegistry, decode_id64, make_name,
                      parse_boxel_key, parse_name)
+from shells import INHABITED, inhabited_event
 
 logger = logging.getLogger(__name__)
 
@@ -698,6 +699,27 @@ class SystemDB:
             self.cx.commit()
         return changed
 
+    def mark_inhabited(self, name: Optional[str], id64: Optional[int]) -> int:
+        """I1: population, factions or a station seen in the journal - the
+        system is known to every database without asking. Stored as the
+        pseudo source 'inhabited' (no schema change). 1 when newly marked."""
+        if not name and not id64:
+            return 0
+        if name:
+            self.upsert(name, id64=id64, quality=Q_ESTIMATE, source="journal")
+        row = (self.system_by_id64(id64) if id64 else None) or (
+            self.system(name) if name else None)
+        if row is None:
+            return 0
+        have = set((row["sources"] or "").split(",")) - {""}
+        if INHABITED in have:
+            return 0
+        have.add(INHABITED)
+        self.cx.execute("UPDATE systems SET sources=?, updated=? WHERE name=?",
+                        (",".join(sorted(have)), _now(), row["name"]))
+        self.cx.commit()
+        return 1
+
     def system_by_id64(self, id64: int) -> Optional[sqlite3.Row]:
         return self.cx.execute("SELECT * FROM systems WHERE id64=?", (id64,)).fetchone()
 
@@ -1124,6 +1146,8 @@ class SystemDB:
         except Exception:
             logger.debug("surface mark failed for %s", ev, exc_info=True)
         try:
+            if inhabited_event(entry):
+                n += self.mark_inhabited(entry.get("StarSystem"), entry.get("SystemAddress"))
             if ev in ("FSDJump", "Location", "CarrierJump"):
                 pos = entry.get("StarPos")
                 if entry.get("StarSystem") and pos and len(pos) >= 3:
@@ -2310,6 +2334,21 @@ def _selftest() -> int:
                                  "StarSystem": "Test Gamma", "SystemAddress": 44,
                                  "StarPos": [4.0, 5.0, 6.0]})
         check(db.get_carrier()["system"] == "Test Gamma", "own carrier jump while aboard counts")
+        db.ingest_journal_event({"event": "FSDJump", "StarSystem": "Test Town",
+                                 "SystemAddress": 55, "StarPos": [7.0, 8.0, 9.0],
+                                 "Population": 4200, "Factions": [{"Name": "F"}]})
+        db.ingest_journal_event({"event": "FSDJump", "StarSystem": "Test Void",
+                                 "SystemAddress": 66, "StarPos": [9.0, 8.0, 7.0],
+                                 "Population": 0})
+        db.ingest_journal_event({"event": "Docked", "StationType": "Coriolis",
+                                 "StationName": "Port", "MarketID": 77,
+                                 "StarSystem": "Test Port", "SystemAddress": 77})
+        src = lambda nm: set(((db.system(nm) or {"sources": ""})["sources"] or "").split(","))  # noqa: E731
+        check(INHABITED in src("Test Town") and INHABITED not in src("Test Void")
+              and INHABITED in src("Test Port") and INHABITED not in src("Test Alpha"),
+              "I1: population/factions/station marks 'inhabited', empty system and carrier not")
+        check(db.system("Test Town")["quality"] == Q_JOURNAL and db.system("Test Town")["x"] == 7.0,
+              "I1: marking keeps the journal position")
         db.close()
     print("failures: %d" % fails)
     return fails

@@ -268,11 +268,16 @@ function renderSide() {
     head.push(el("div", { class: "c-amber", text: t("Your carrier {n} jumps here · {t}", { n: c.name || "",
       t: c.departure ? new Date(c.departure * 1000).toLocaleString() : "?" }) }));
   }
-  if (!sys.known_sources.length) head.push(el("div", {}, chip(t("in no database"), "first")));
-  else head.push(el("div", { class: "c-dim", text: t("known: {s}", { s: sys.known_sources.join(", ") }) }));
+  // I1: "in no database" only where a source was really asked
+  const lvl = sys.info_level;
+  const noDb = !sys.known_sources.length && (!lvl || lvl === "checked");
+  if (sys.known_sources.length) head.push(el("div", { class: "c-dim", text: t("known: {s}", { s: sys.known_sources.join(", ") }) }));
+  else if (lvl === "inhabited") head.push(el("div", { class: "c-dim", text: t("inhabited – known to the databases") }));
+  else if (lvl === "unchecked") head.push(el("div", { class: "c-dim", text: t("not checked – outside our data frame") }));
+  else head.push(el("div", {}, chip(t("in no database"), "first")));
   const back = backToCurrent();
   if (back) side.append(back);
-  side.append(frame("SYSTEM", sys.visited ? t("visited") : "", head, { kind: sys.known_sources.length ? "" : "disc", appear: false }));
+  side.append(frame("SYSTEM", sys.visited ? t("visited") : "", head, { kind: noDb ? "disc" : "", appear: false }));
 
   side.append(systemReport(sys));
   const poi = poiFrame(sys);

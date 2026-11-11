@@ -23,6 +23,9 @@ function row(k, ...v) {
 const STATUS = {
   only_us: [N_("ONLY KNOWN TO US"), N_("You were there, but neither EDSM, Spansh nor EDDiscovery know the system (according to the plugin database)")],
   unknown: [N_("IN NO DATABASE"), N_("Neither EDSM, Spansh nor EDDiscovery report the system (according to the plugin database) – first discovery possible")],
+  // I1: say "in no database" only where a source was asked
+  inhabited: [N_("INHABITED"), N_("Population or a station seen in the journal – the databases know the system")],
+  unchecked: [N_("NOT CHECKED"), N_("Outside our data frame – no database was asked about this system")],
   visited: [N_("ALREADY VISITED"), N_("known in {s}")],
   known: [N_("KNOWN"), N_("known in {s}")],
 };
@@ -73,7 +76,9 @@ export function update(ctx, reason) {
     : [el("span", { class: "c-dim", text: t("unknown (only at StartJump)") })];
   const statusEl = el("div", {},
     el("div", { class: unknown ? "br-status disc" : "br-status", text: (unknown ? "■ " : "") + t(st[0]) }),
-    el("div", { class: "c-dim", text: st[1] ? t(st[1], { s: known }) : "" }));
+    el("div", { class: "c-dim", text: st[1] ? t(st[1], { s: known }) : "" }),
+    b.status === "unknown" && tg.checked_by && tg.checked_by.length
+      ? el("div", { class: "c-dim", text: t("checked: {s}", { s: tg.checked_by.join(", ") }) }) : null);
   const rows = [
     row(t("TARGET"), el("span", { class: "br-name", text: tg.name || "?" }),
       tg.distance_ly !== null && tg.distance_ly !== undefined ? el("span", { class: "br-dist" }, el("span", { class: "num", "data-count": tg.distance_ly, "data-digits": 1, text: fmt(tg.distance_ly, 1) }), el("span", { class: "unit", text: "ly" })) : null),
@@ -172,6 +177,13 @@ function surveyTile(s, appear) {
   return frame(t("SPHERE"), tag, el("div", { class: "sv-body" }, ...body), { cls: "br-survey", appear });
 }
 
+// I1: a hop no database reports - unknown only where someone was asked
+function levelTag(level) {
+  if (level === "unchecked") return el("span", { class: "c-dim", text: t("not checked"), title: t("Outside our data frame – no database was asked about this system") });
+  if (level === "inhabited") return el("span", { class: "c-dim", text: t("inhabited") });
+  return chip(t("unknown"), "first");
+}
+
 function navList(hops, target, appear) {
   const list = el("ol", { class: "navlist" });
   for (const h of hops) {
@@ -182,7 +194,7 @@ function navList(hops, target, appear) {
       el("span", { class: "nl-star " + (h.boost ? "c-violet" : h.scoopable === false ? "c-amber" : "c-cyan"),
         text: (h.star_class || "?") + (h.boost ? " ⚡" : ""), title: h.boost ? t("jet cone: FSD boost") : "" }),
       el("span", { class: "nl-ly", text: h.jump_ly ? fmt(h.jump_ly, 1) + " ly" : "" }),
-      unknown ? chip(t("unknown"), "first") : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") }))));
+      unknown ? levelTag(h.level) : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") }))));
   }
   return frame("NAVPOINTS", t("{n} jumps plotted", { n: hops.length }), el("div", { class: "scroll" }, list), { cls: "br-nav", appear });
 }
