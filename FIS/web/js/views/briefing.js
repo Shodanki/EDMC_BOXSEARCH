@@ -61,7 +61,7 @@ export function update(ctx, reason) {
       { cls: "br-main", appear }));
     const ch0 = carriersTile(b && b.carriers_here, appear, "here");
     if (ch0) root.append(ch0);
-    if (b && b.navroute && b.navroute.length) root.append(navList(b.navroute, null, appear));
+    if (b && b.navroute && b.navroute.length) root.append(navList(b.navroute, null, appear, b.fuel_route));
     const sv0 = surveyTile(ctx.store.survey, appear);
     if (sv0) root.append(sv0);
     return;
@@ -141,7 +141,7 @@ export function update(ctx, reason) {
     { kind: unknown ? "disc" : "hot", cls: "br-main", appear }));
   const ch = carriersTile(b.carriers_here, appear, b.carriers_where);
   if (ch) root.append(ch);
-  if (b.navroute && b.navroute.length) root.append(navList(b.navroute, tg.name, appear));
+  if (b.navroute && b.navroute.length) root.append(navList(b.navroute, tg.name, appear, b.fuel_route));
   const sv = surveyTile(ctx.store.survey, appear);
   if (sv) root.append(sv);
   if (appear) countUp(root);
@@ -215,17 +215,38 @@ function levelTag(level) {
   return chip(t("unknown"), "first");
 }
 
-function navList(hops, target, appear) {
+// F1: where to scoop at the latest along the plotted route - one line
+function fuelLine(fr) {
+  if (!fr) return null;
+  if (fr.stranded) return el("div", { class: "c-red small", text: "⛽ " + t(fr.stranded.hard ? "Fuel runs out at jump {n} – plot via scoopable stars"
+    : "Fuel runs low at jump {n} – plot via scoopable stars", { n: fr.stranded.n }) });
+  if (fr.gaps && fr.gaps.length) {
+    const g = fr.gaps[0];
+    return el("div", { class: "c-red small", text: "⛽ " + t("No scoopable star on jumps {a}–{b}: {need} t needed, tank {cap} t", { a: g.from, b: g.to, need: fmt(g.need, 0), cap: fmt(g.cap, 0) }) });
+  }
+  if (fr.latest && fr.latest.length) {
+    const m = fr.latest[0];
+    const more = fr.latest.length > 1 ? " · " + t("{n} more stops", { n: fr.latest.length - 1 }) : "";
+    return el("div", { class: "c-amber small", text: "⛽ " + (m.n === 0 ? t("Scoop here at the latest")
+      : t("Scoop at the latest at {s} (jump {n} of {m})", { s: m.name || "?", n: m.n, m: fr.jumps })) + more });
+  }
+  return el("div", { class: "c-dim small", text: "⛽ " + t("Fuel lasts all {n} jumps (~{f} t left)", { n: fr.jumps, f: fmt(fr.arrive, 0) }) });
+}
+
+function navList(hops, target, appear, fr) {
   const list = el("ol", { class: "navlist" });
   for (const h of hops) {
     const unknown = !(h.known_sources && h.known_sources.length);
-    list.append(el("li", { class: h.name === target ? "cur" : "" },
+    const fuel = h.fuel_out ? chip(t("fuel out"), "alert") : h.scoop_latest ? chip(t("scoop at the latest"), "warn")
+      : h.fuel_gap ? chip(t("no scoop"), "alert") : null;
+    list.append(el("li", { class: (h.name === target ? "cur" : "") + (h.scoop_latest ? " scoop-latest" : "") },
       el("span", { class: "nl-n", text: String(h.n).padStart(2, "0") }),
       el("span", { class: "nl-name", text: h.name }),
       el("span", { class: "nl-star " + (h.boost ? "c-violet" : h.scoopable === false ? "c-amber" : "c-cyan"),
         text: (h.star_class || "?") + (h.boost ? " ⚡" : ""), title: h.boost ? t("jet cone: FSD boost") : "" }),
       el("span", { class: "nl-ly", text: h.jump_ly ? fmt(h.jump_ly, 1) + " ly" : "" }),
-      unknown ? levelTag(h.level) : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") }))));
+      unknown ? levelTag(h.level) : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") })),
+      fuel));
   }
-  return frame("NAVPOINTS", t("{n} jumps plotted", { n: hops.length }), el("div", { class: "scroll" }, list), { cls: "br-nav", appear });
+  return frame("NAVPOINTS", t("{n} jumps plotted", { n: hops.length }), [fuelLine(fr), el("div", { class: "scroll" }, list)], { cls: "br-nav", appear });
 }

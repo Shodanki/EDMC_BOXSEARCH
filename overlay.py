@@ -146,6 +146,11 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
         nb = info.get("bodies_new") or 0
         out.append(("BODIES  %d%s" % (info["bodies"], ("  %d undiscovered" % nb) if nb else ""),
                     COL["new"] if nb else COL["data"]))
+    if info.get("scoop"):
+        # F1: where to scoop at the latest along the plotted route
+        text, lvl = info["scoop"]
+        out.append((text[:44], COL["alert"] if lvl == "alert" else
+                    COL["warn"] if lvl == "warn" else COL["dim"]))
     if info.get("boxel_open"):
         out.append(("BOXEL  %d candidate%s still open" % (
             info["boxel_open"], "" if info["boxel_open"] == 1 else "s"), COL["warn"]))
@@ -395,6 +400,8 @@ def _selftest() -> int:
           and "INHABITED - known to the databases" in texts(known_sources=[], level="inhabited"),
           "I1: inhabited -> known, no request")
     check("KNOWN  EDSM" in texts(known_sources=["EDSM"], level="known"), "I1: known stays known")
+    check("SCOOP at the latest jump 3/9 K" in texts(scoop=("SCOOP at the latest jump 3/9 K", "warn")),
+          "F1: the latest scoop line in the briefing")
     check("also explored by Xerxes" in texts(also_by=["Xerxes"])
           and not any(t.startswith("also") for t in texts()),
           "C1: 'also explored by' only when another commander was there")

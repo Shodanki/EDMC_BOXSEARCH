@@ -1460,6 +1460,45 @@ def _navpoints(db: Database, live: Dict[str, Any], limit: int = 14) -> List[Dict
     return out
 
 
+def fuel_route(live: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    F1: along a plotted route of two or more jumps, where to scoop at the
+    latest (deepspace.scoop_plan with the ship's own fuel curve and tank).
+    Marks are route indices like the navpoints' "n"; None without a route,
+    a ship or a fuel model.
+    """
+    route = live.get("navroute") or []
+    cur = (live.get("system") or {}).get("name")
+    start = 0
+    for i, h in enumerate(route):
+        if h.get("name") == cur:
+            start = i + 1
+    rest = route[start:]
+    if len(rest) < 2 or not live.get("ship"):
+        return None
+    ds = plugin().deepspace
+    if not hasattr(ds, "scoop_plan"):
+        return None
+    prev = (live.get("system") or {}).get("pos") or (route[start - 1].get("pos") if start else None)
+    hops = []
+    for h in rest:
+        pos = h.get("pos")
+        d = _dist3(prev, pos) if prev and pos else 0.0
+        hops.append((h.get("name"), h.get("star_class"), d))
+        prev = pos
+    here_cls = route[start - 1].get("star_class") if start else None
+    plan = ds.scoop_plan(_fuel_state(live), hops, here=(cur, here_cls))
+    if plan is None:
+        return None
+    for m in plan["latest"]:
+        m["idx"] = start + m["n"] - 1          # route index; -1 + start = here
+    for g in plan["gaps"]:
+        g["idx"] = [start + g["from"] - 1, start + g["to"] - 1]
+    if plan["stranded"]:
+        plan["stranded"]["idx"] = start + plan["stranded"]["n"] - 1
+    return plan
+
+
 def _navpoints_for(db: Database, live: Dict[str, Any], fid: Optional[str]) -> List[Dict[str, Any]]:
     """_navpoints with 'visited' as this commander's own (C1)."""
     pts = _navpoints(db, live)
@@ -1535,6 +1574,23 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]],
         out["approach"] = approach_info(db, live)
     except Exception:                     # never cost the briefing
         out["approach"] = None
+    try:
+        fr = fuel_route(live)
+    except Exception:
+        fr = None
+    out["fuel_route"] = fr
+    if fr:
+        late = {m["idx"] for m in fr["latest"]}
+        gap = set()
+        for g in fr["gaps"]:
+            gap.update(range(g["idx"][0], g["idx"][1] + 1))
+        for p in out["navroute"]:
+            if p["n"] in late:
+                p["scoop_latest"] = True
+            if p["n"] in gap:
+                p["fuel_gap"] = True
+            if fr["stranded"] and p["n"] == fr["stranded"]["idx"]:
+                p["fuel_out"] = True
     if not tgt:
         return out
     name, id64 = tgt.get("name"), tgt.get("id64")

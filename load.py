@@ -46,7 +46,7 @@ from netgate import Gateway                                    # noqa: E402
 import netgate                                                 # noqa: E402
 import shells                                                  # noqa: E402
 from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
-                       staging_lines, tritium_systems)
+                       scoop_line, scoop_plan, staging_lines, tritium_systems)
 from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       F_ALL, F_OUTSTANDING, bodies_from_rows,
                       calibrate_from_journal, calibrate_work_from_journal,
@@ -198,6 +198,8 @@ class State:
         self.route_done: set = set()
         self.route_full = False
         self.route_from: Optional[str] = None    # R3: body of the carrier the route starts at
+        # F1: the plotted route (NavRoute) - (system, star class, StarPos) per hop
+        self.navroute: List[Tuple[str, Optional[str], Optional[Tuple[float, float, float]]]] = []
         self.route_start_pos: Optional[Tuple[float, float, float]] = None
         self.route_feedback = ""
         self.route_started: Optional[float] = None
@@ -1065,6 +1067,12 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     pn = parse_name(name or "")
     if pn and ST.probe:
         info["boxel_open"] = sum(1 for q in ST.probe if q.boxel_key == pn.boxel_key)
+    try:
+        sl = scoop_line(_scoop_plan())
+        if sl:
+            info["scoop"] = sl          # F1: where to scoop at the latest
+    except Exception:
+        logger.debug("scoop plan failed", exc_info=True)
     w = ST.fuel.warning() if ST.fuel else None
     if w and kind == "target" and info.get("scoopable") and "CRITICAL" not in w:
         w = None                  # a scoopable target: refuel where you arrive
@@ -1073,6 +1081,43 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     elif ST.fuel and ST.fuel.jumps_left is not None:
         info["jumps_left"] = ST.fuel.jumps_left
     return info
+
+
+def _note_navroute(route: Any) -> None:
+    """F1: keep the plotted route (EDMC hands NavRoute with its Route)."""
+    hops = []
+    for h in route or []:
+        pos = h.get("StarPos")
+        hops.append((h.get("StarSystem") or "", h.get("StarClass"),
+                     tuple(pos[:3]) if pos and len(pos) >= 3 else None))
+    ST.navroute = hops
+    if len(hops) > 2:
+        sl = scoop_line(_scoop_plan())
+        if sl:
+            logger.info("fuel | route of %d jumps: %s", len(hops) - 1, sl[0])
+
+
+def _scoop_plan() -> Optional[Dict[str, Any]]:
+    """F1: the rest of the plotted route from where we are, with the fuel
+    curve of this ship - None for a single jump or without a fuel model."""
+    route = ST.navroute
+    if len(route) < 3 or not ST.fuel:
+        return None
+    start = 0
+    for i, h in enumerate(route):
+        if h[0] == ST.cur_system:
+            start = i + 1
+    rest = route[start:]
+    if len(rest) < 2:
+        return None
+    prev = ST.cur_pos or (route[start - 1][2] if start else None)
+    hops = []
+    for nm, cls, pos in rest:
+        d = math.dist(prev, pos) if prev and pos else 0.0
+        hops.append((nm, cls, d))
+        prev = pos
+    here = (ST.cur_system or "", route[start - 1][1] if start else None)
+    return scoop_plan(ST.fuel, hops, here=here)
 
 
 def _overlay_briefing(kind: str, name: Optional[str], id64: Optional[int],
@@ -3152,6 +3197,10 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 logger.debug("mining overlay failed", exc_info=True)
 
         # EDMC enriches NavRoute with the full Route array
+        if ev == "NavRoute" and entry.get("Route"):
+            _note_navroute(entry.get("Route"))
+        elif ev == "NavRouteClear":
+            ST.navroute = []
         if ev == "NavRoute" and not cfg_bool(CFG["harvest_navroute"], True):
             return
 
@@ -3278,6 +3327,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
             if not ST.awaiting_position:
                 _run_async(_recheck_route, "game restart", label="route recheck")
             route = state.get("NavRoute") if state else None
+            if route and route.get("Route"):
+                _note_navroute(route.get("Route"))
             if route and cfg_bool(CFG["harvest_navroute"], True):
                 with ST.lock:
                     ST.db.ingest_journal_event({"event": "NavRoute",
