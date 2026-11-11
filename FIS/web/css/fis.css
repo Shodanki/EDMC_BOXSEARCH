@@ -368,6 +368,8 @@ body.motion .blink { animation: pulse 0.9s steps(2) infinite; }
 .navlist .nl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .br-nav .scroll { max-height: 70vh; }
 .br-survey { grid-column: 2; }
+.br-carriers { grid-column: 2; }
+.br-car { font-size: 12px; padding: 2px 4px; }
 .sv-body { display: grid; gap: 6px; padding: 2px 4px; font-size: 12px; }
 .sv-head { margin-bottom: 2px; }
 .sv-extra { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
@@ -388,7 +390,7 @@ body.motion .blink { animation: pulse 0.9s steps(2) infinite; }
 @media (max-width: 1100px) {
   .tac-view { grid-template-columns: 1fr; grid-template-rows: 62vh auto; overflow: auto; }
   .briefing-view, .pl-grid { grid-template-columns: 1fr; }
-  .br-survey { grid-column: auto; }
+  .br-survey, .br-carriers { grid-column: auto; }
   .shipbar .sb-focus { display: none; }
   /* tablets: ship bar gets its own row instead of being cut off */
   #top { grid-template-columns: auto 1fr; row-gap: 6px; }

@@ -106,5 +106,47 @@ class TestKnown(unittest.TestCase):
         self.assertIs(ca.mark_favourite_pois(poi, {}), poi)
 
 
+class TestCarriersHere(unittest.TestCase):
+    """B1: own and favourite carriers known in the current system."""
+    NOW = 1794404800.0           # 2026-11-11 13:46:40 UTC
+
+    def test_own_and_favourites(self):
+        own = {"system": "Test Beta", "id": 2, "since": self.NOW - 7200, "expected": False,
+               "name": "MY OWN", "callsign": "OWN-001"}
+        favs = [
+            # journal: docked here 3 h ago
+            {"callsign": "Q2W-3ER", "name": "BLUE HERON", "system": "Test Beta", "id64": 2,
+             "ts": "2026-11-11T10:46:40Z", "how": "docked", "note": "trade"},
+            # journal says here, but a NEWER Spansh answer puts it elsewhere -> not listed
+            {"callsign": "A1B-2C3", "system": "Test Beta", "id64": 2, "ts": "2026-11-01T10:00:00Z",
+             "how": "sighted", "online": {"found": True, "system": "Far Away", "id64": 9,
+                                          "updated": "2026-11-10 08:00:00+00", "checked": "2026-11-11T12:00:00Z"}},
+            # journal elsewhere, newer Spansh answer: here
+            {"callsign": "Z9Z-9ZZ", "system": "Test Alpha", "id64": 1, "ts": "2026-11-01T10:00:00Z",
+             "how": "sighted", "online": {"found": True, "system": "Test Beta", "id64": 2,
+                                          "updated": "2026-11-11 12:46:40+00", "checked": "2026-11-11T13:00:00Z"}},
+            # nothing known about its place
+            {"callsign": "N0N-000"},
+            # the own carrier as favourite is not listed twice
+            {"callsign": "OWN-001", "system": "Test Beta", "id64": 2, "ts": "2026-11-11T13:00:00Z"},
+        ]
+        out = ca.carriers_here(2, "Test Beta", own, favs, now=self.NOW)
+        self.assertEqual([c["callsign"] for c in out], ["OWN-001", "Q2W-3ER", "Z9Z-9ZZ"])
+        self.assertEqual((out[0]["kind"], out[0]["source"], out[0]["age_s"]), ("own", "journal", 7200))
+        self.assertEqual((out[1]["source"], out[1]["how"], out[1]["age_s"], out[1]["note"]),
+                         ("journal", "docked", 3 * 3600, "trade"))
+        self.assertEqual((out[2]["source"], out[2]["how"], out[2]["age_s"]), ("Spansh", "spansh", 3600))
+        self.assertEqual(out[2]["checked"], "2026-11-11T13:00:00Z")
+
+    def test_elsewhere_and_by_name(self):
+        own = {"system": "Test Alpha", "id": 1, "since": self.NOW - 60, "expected": True}
+        self.assertEqual(ca.carriers_here(2, "Test Beta", own, []), [])
+        fav = [{"callsign": "Q2W-3ER", "system": "test beta", "ts": "2026-11-11T10:00:00Z",
+                "how": "sighted", "from_store": True}]
+        out = ca.carriers_here(None, "Test Beta", None, fav, now=self.NOW)
+        self.assertEqual((out[0]["callsign"], out[0]["source"]), ("Q2W-3ER", "stored"))
+        self.assertEqual(ca.carriers_here(None, None, own, fav), [])
+
+
 if __name__ == "__main__":
     unittest.main()

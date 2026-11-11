@@ -59,6 +59,8 @@ export function update(ctx, reason) {
         t("NO JUMP TARGET SET"), el("br"),
         el("span", { class: "c-dim", text: t("Pick a target in the galaxy map – the briefing appears by itself.") })),
       { cls: "br-main", appear }));
+    const ch0 = carriersTile(b && b.carriers_here, appear);
+    if (ch0) root.append(ch0);
     if (b && b.navroute && b.navroute.length) root.append(navList(b.navroute, null, appear));
     const sv0 = surveyTile(ctx.store.survey, appear);
     if (sv0) root.append(sv0);
@@ -134,10 +136,32 @@ export function update(ctx, reason) {
 
   root.append(frame("BRIEFING", np, el("div", { class: "br-rows" }, ...rows),
     { kind: unknown ? "disc" : "hot", cls: "br-main", appear }));
+  const ch = carriersTile(b.carriers_here, appear);
+  if (ch) root.append(ch);
   if (b.navroute && b.navroute.length) root.append(navList(b.navroute, tg.name, appear));
   const sv = surveyTile(ctx.store.survey, appear);
   if (sv) root.append(sv);
   if (appear) countUp(root);
+}
+
+// B1: your own and favourite carriers known in this system - with where that
+// comes from and how old it is (never a live position)
+const CAR_HOW = { location: N_("your journal"), expected: N_("your journal – jump time passed"),
+  docked: N_("docked there"), sighted: N_("seen in the FSS"), jump: N_("jumped with you aboard"),
+  spansh: N_("Spansh lookup") };
+function carAge(s) {
+  if (s === null || s === undefined) return "?";
+  return s < 3600 ? t("{n} min ago", { n: Math.max(1, Math.round(s / 60)) }) : s < 172800 ? t("{n} h ago", { n: Math.round(s / 3600) })
+    : t("{n} days ago", { n: Math.round(s / 86400) });
+}
+function carriersTile(list, appear) {
+  if (!list || !list.length) return null;
+  const rows = list.map((c) => el("div", { class: "br-car" },
+    el("span", { class: c.kind === "own" ? "c-amber" : "c-cyan", text: (c.kind === "own" ? "◆ " : "★ ") + [c.name, c.callsign].filter(Boolean).join(" ") }),
+    el("span", { class: "c-dim", text: " · " + (c.kind === "own" ? t("your carrier") : t("favourite")) + " · "
+      + t(CAR_HOW[c.how] || "your journal") + (c.source === "stored" ? " (" + t("stored") + ")" : "") + " · " + carAge(c.age_s) }),
+    c.note ? el("div", { class: "small c-dim", text: c.note }) : null));
+  return frame(t("CARRIERS HERE"), t("last known"), el("div", {}, ...rows), { cls: "br-carriers", appear });
 }
 
 // Sphere progress (/api/survey) – a small tile beside the briefing.

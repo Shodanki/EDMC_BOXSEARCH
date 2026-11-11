@@ -188,6 +188,35 @@ class App:
                             "x": round(float(p[0]), 2), "y": round(float(p[1]), 2), "z": round(float(p[2]), 2)})
         return out
 
+    def carriers_here(self, live: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """B1 BRIEFING: your own and your favourite carriers known in the
+        current system - from the journal and the stored Spansh lookup, no
+        request. Cached per journal change, favourites file and minute."""
+        cur = (live or {}).get("system") or {}
+        if not (cur.get("id64") or cur.get("name")):
+            return []
+        try:
+            fmt = os.path.getmtime(self.favourites.path)
+        except OSError:
+            fmt = None
+        sig = (self.archive.rev, fmt, cur.get("id64"), cur.get("name"), int(time.time() // 60))
+
+        def build() -> List[Dict[str, Any]]:
+            from . import carriers, galaxy
+            try:
+                own = galaxy.carrier_now(self.archive, self.db)
+            except Exception:
+                own = None
+            try:
+                favs = carriers.build_known(self.archive, self.favourites, None, sighted=0)["favourites"]
+            except Exception:
+                favs = []
+            return carriers.carriers_here(cur.get("id64"), cur.get("name"), own, favs)
+        try:
+            return self.cached("carriers_here", sig, build)
+        except Exception:
+            return []
+
     def _with_carrier(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
         """Your carrier, when it is in this system or jumping here."""
         from . import galaxy
@@ -621,7 +650,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(404, "body not found")
             return self._json(out)
         if path == "/api/briefing":
-            return self._json(m.build_briefing(app.db, app.live_state()))
+            live = app.live_state()
+            out = m.build_briefing(app.db, live)
+            out["carriers_here"] = app.carriers_here(live)
+            return self._json(out)
         if path == "/api/ship":
             return self._json(m.build_ship(app.live_state()))
         if path == "/api/surface":

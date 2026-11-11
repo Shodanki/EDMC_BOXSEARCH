@@ -962,5 +962,12 @@ const DE = /*DE*/{
   "not checked": "nicht geprüft",
   "inhabited": "bewohnt",
   "inhabited – known to the databases": "bewohnt – den Datenbanken bekannt",
-  "not checked – outside our data frame": "nicht geprüft – außerhalb unseres Datenrahmens"
+  "not checked – outside our data frame": "nicht geprüft – außerhalb unseres Datenrahmens",
+  "your journal": "dein Journal",
+  "your journal – jump time passed": "dein Journal – Sprungzeit vorbei",
+  "docked there": "dort angedockt",
+  "Spansh lookup": "Spansh-Abfrage",
+  "your carrier": "dein Träger",
+  "CARRIERS HERE": "TRÄGER HIER",
+  "last known": "zuletzt bekannt"
 }/*END*/;

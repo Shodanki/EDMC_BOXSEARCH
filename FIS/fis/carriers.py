@@ -270,3 +270,85 @@ def mark_favourite_pois(poi: List[Dict[str, Any]], favs: Dict[str, Any]) -> List
         for i, p in zip(first, cars):
             out[i] = p
     return out
+
+
+def _epoch(ts: Any) -> Optional[float]:
+    """Journal ('2026-11-11T08:00:00Z') or Spansh ('2026-11-11 08:00:00+00')
+    time stamp, or a number of seconds, as epoch seconds (UTC)."""
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    if not ts:
+        return None
+    import calendar
+    import time as _t
+    try:
+        return float(calendar.timegm(_t.strptime(str(ts)[:19].replace(" ", "T"),
+                                                 "%Y-%m-%dT%H:%M:%S")))
+    except ValueError:
+        return None
+
+
+def _iso(ep: Optional[float]) -> Optional[str]:
+    import time as _t
+    return _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime(ep)) if ep is not None else None
+
+
+def carriers_here(sys_id64: Any, sys_name: Optional[str], own: Optional[Dict[str, Any]] = None,
+                  favourites: Iterable[Dict[str, Any]] = (), now: Optional[float] = None
+                  ) -> List[Dict[str, Any]]:
+    """
+    B1: your own carrier and your favourite carriers that are known to be in
+    this system - each with the source and the age of what says so, never as
+    a live position. No request: the own carrier from CarrierLocation /
+    CarrierJump (carrier_now), a favourite from its newest sighting - your
+    journal (docked, FSS, aboard on a jump; or the position stored with the
+    favourite) or the last Spansh lookup (K5). When the newest of those puts
+    it elsewhere, it is not listed here.
+    """
+    import time as _t
+    now = _t.time() if now is None else now
+    nm = (sys_name or "").strip().lower()
+
+    def here(id64: Any, name: Any) -> bool:
+        if sys_id64 and id64:
+            return str(id64) == str(sys_id64)
+        return bool(nm) and str(name or "").strip().lower() == nm
+
+    def age(ep: Optional[float]) -> Optional[int]:
+        return int(max(0.0, now - ep)) if ep is not None else None
+
+    out: List[Dict[str, Any]] = []
+    if own and here(own.get("id"), own.get("system")):
+        ep = _epoch(own.get("since"))
+        out.append({"kind": "own", "callsign": own.get("callsign"), "name": own.get("name"),
+                    "source": "journal", "how": "expected" if own.get("expected") else "location",
+                    "ts": _iso(ep), "age_s": age(ep)})
+    seen = {o.get("callsign") for o in out if o.get("callsign")}
+    for f in favourites or ():
+        cs = f.get("callsign")
+        if not cs or cs in seen:
+            continue
+        cands = []
+        if f.get("system") or f.get("id64"):
+            cands.append({"source": "stored" if f.get("from_store") else "journal",
+                          "how": f.get("how"), "ep": _epoch(f.get("ts")),
+                          "id64": f.get("id64"), "system": f.get("system")})
+        on = f.get("online") or {}
+        if on.get("found") and (on.get("system") or on.get("id64")):
+            cands.append({"source": "Spansh", "how": "spansh",
+                          "ep": _epoch(on.get("updated")) or _epoch(on.get("checked")),
+                          "id64": on.get("id64"), "system": on.get("system"),
+                          "checked": on.get("checked")})
+        if not cands:
+            continue
+        best = max(cands, key=lambda c: c["ep"] or 0.0)
+        if not here(best["id64"], best["system"]):
+            continue
+        item = {"kind": "favourite", "callsign": cs, "name": f.get("name"),
+                "source": best["source"], "how": best["how"], "ts": _iso(best["ep"]),
+                "age_s": age(best["ep"]), "note": f.get("note") or ""}
+        if best.get("checked"):
+            item["checked"] = best["checked"]
+        out.append(item)
+        seen.add(cs)
+    return out
