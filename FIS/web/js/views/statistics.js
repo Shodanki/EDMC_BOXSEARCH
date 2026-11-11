@@ -118,7 +118,7 @@ function render() {
     root.append(frame(t("STATISTICS"), "", el("div", { class: "empty" }, t("NO STATISTICS YET"), el("br"),
       el("span", { class: "c-dim", text: t("The game writes them at every login.") }))));
     const lr = data && learning();
-    if (lr) root.append(el("div", { class: "stat-grid scroll" }, lr));
+    if (lr) root.append(el("div", { class: "stat-wrap" }, el("div"), el("div", { class: "stat-side scroll" }, lr)));
     return;
   }
   const sel = el("select", { class: "lay-pick", onchange: (e) => {
@@ -132,7 +132,11 @@ function render() {
     el("div", { class: "c-dim small", text: t("The game's own numbers, written at every login; the journals reach back to {d}.",
       { d: new Date(data.first_ts * 1000).toLocaleDateString() }) }),
   ], { appear: false }), "statistics");
-  root.append(el("div", { class: "stat-grid scroll" }, head, ranks(), ...CARDS.map(card), learning()));
+  // the learning status in a column of its own on the right - no scrolling down to it (11.11.)
+  const lr = learning();
+  root.append(el("div", { class: "stat-wrap" + (lr ? "" : " solo") },
+    el("div", { class: "stat-grid scroll" }, head, ranks(), ...CARDS.map(card)),
+    lr ? el("div", { class: "stat-side scroll" }, lr) : null));
 }
 
 // L4: what the FIS has learnt from your own data - and where it is still thin

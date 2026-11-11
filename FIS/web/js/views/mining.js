@@ -63,8 +63,9 @@ function render() {
   root.replaceChildren();
   if (!data) { root.append(frame(t("MINING"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
   root.append(el("div", { class: "mine-grid" },
-    el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session(), limpets(), ships()),
-    el("div", { class: "mine-col" }, tritium(), hotspotRank(), hotspots(), goods(), history())));
+    // the sessions under the mining ships: the left column has the room (11.11.)
+    el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session(), limpets(), ships(), history()),
+    el("div", { class: "mine-col" }, tritium(), hotspotRank(), hotspots(), goods())));
 }
 
 // ------------------------------------------------------------ live status
