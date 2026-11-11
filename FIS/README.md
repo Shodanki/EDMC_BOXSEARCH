@@ -129,6 +129,16 @@ hardpoints out with the HUD in combat mode) or **COMBAT** (red, blinking:
 under attack, shields down, hull hit, interdiction - whatever the HUD); it
 calms down by itself 30 s after the last hit.
 
+### Cockpit
+
+For extra screens on the game PC: the settings page has **COCKPIT** - a list
+of windows, each with a view, a screen, position, size and zoom, stored in
+this browser. **open cockpit** opens them all at once, each without the window
+control; **close cockpit** closes them again. Chrome and Edge place windows on
+another screen after **detect screens** (the browser asks once whether the
+page may manage windows); other browsers open them on this screen. If some
+stay closed, allow pop-ups for the FIS page and click again.
+
 ### Themes
 
 The footer picks a theme for this browser (the tablet and the PC can differ):

@@ -240,6 +240,11 @@ body.motion .frame.appear > .frame-in { animation: frame-fill var(--t-draw) ease
 .sb-cell .v { overflow: hidden; text-overflow: ellipsis; }
 .sb-target .v { max-width: 24ch; color: var(--amber); }
 .sb-system .v { max-width: 24ch; color: var(--cyan); }
+/* M13: cockpit configuration rows */
+.ck-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+.ck-num { display: inline-flex; gap: 3px; align-items: center; font-size: 11px; }
+.ck-num input { width: 64px; font: inherit; background: rgba(0,0,0,.35); color: var(--text);
+  border: 1px solid rgba(var(--cyan-rgb), .25); padding: 1px 4px; }
 /* M8: combat mode - only tokens, so a theme decides how loud it gets */
 .sb-combat .v { font: 600 11px var(--font-display); letter-spacing: .14em; padding: 1px 6px; border: 1px solid currentColor; }
 .sb-combat.ready .v { color: var(--amber); }

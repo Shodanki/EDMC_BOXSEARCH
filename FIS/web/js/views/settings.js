@@ -10,6 +10,7 @@
 import { getJSON, postJSON, withToken } from "../api.js";
 import { el, frame } from "../ui.js";
 import { t } from "../i18n.js";
+import { cockpitRows } from "./cockpit.js";
 
 let root = null, data = null, msg = "", qrIndex = 0;
 // E6/P7: display links - one view alone, for OBS, a wall screen or a tablet
@@ -90,6 +91,8 @@ function render() {
     frame(t("SETTINGS"), t("only on this PC"), rows, { appear: false }),
     frame(t("DISPLAY LINKS"), t("one view alone"), linkRows(), { appear: false }),
     frame(t("APP"), t("only on this PC"), appRows(), { appear: false }),
+    frame(t("COCKPIT"), t("only on this PC"), cockpitRows((w) => linkUrl({ view: w.view, obs: false, kiosk: true, scale: w.scale }), render),
+      { appear: false }),
     data.lan ? frame(t("HOME NETWORK"), "", lanRows.length ? lanRows : el("div", { class: "c-dim", text: t("Save to create the address.") }), { appear: false }) : null,
     el("div", { class: "c-dim small", text: t("Stored in {f}.", { f: data.ini }) })));
 }
@@ -114,11 +117,11 @@ function appRows() {
 // The address of one view with a display profile - made here so nobody has
 // to type URL parameters. With the home network on, the game PC needs the
 // token too (taken from the first home-network address).
-function linkUrl() {
-  const q = new URLSearchParams({ solo: link.view });
-  if (link.obs) q.set("obs", "1");
-  else if (link.kiosk) q.set("kiosk", "1");
-  if (link.scale !== "1") q.set("scale", link.scale);
+function linkUrl(p = link) {
+  const q = new URLSearchParams({ solo: p.view });
+  if (p.obs) q.set("obs", "1");
+  else if (p.kiosk) q.set("kiosk", "1");
+  if (p.scale !== "1") q.set("scale", p.scale);
   if (data.lan && data.lan_urls && data.lan_urls.length) {
     const tok = new URL(data.lan_urls[0]).searchParams.get("token");
     if (tok) q.set("token", tok);
