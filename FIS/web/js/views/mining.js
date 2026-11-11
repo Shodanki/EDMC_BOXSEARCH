@@ -64,7 +64,7 @@ function render() {
   if (!data) { root.append(frame(t("MINING"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
   root.append(el("div", { class: "mine-grid" },
     el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session(), limpets(), ships()),
-    el("div", { class: "mine-col" }, tritium(), hotspots(), goods(), history())));
+    el("div", { class: "mine-col" }, tritium(), hotspotRank(), hotspots(), goods(), history())));
 }
 
 // ------------------------------------------------------------ live status
@@ -231,6 +231,21 @@ function hotspots() {
       el("span", { class: "num", text: h.ly === null ? "?" : h.ly < 0.1 ? t("here") : fmt(h.ly, 1) + " ly" }))))
       : el("div", { class: "c-dim", text: t("No hotspots known for this material - scan rings with the DSS.") }),
     el("div", { class: "c-dim small", text: t("Rings you mapped (plugin database). A click opens the system.") }),
+  ], { appear: false });
+}
+
+// L3: the nearby hotspots by what YOU refined there per hour
+const RANK_LEVEL = { ring: N_("your runs in this ring"), class: N_("your runs in rings of its class"), all: N_("your runs in any ring") };
+function hotspotRank() {
+  const list = data.hotspot_rank || [];
+  if (!list.length) return null;
+  return frame(t("BEST HOTSPOTS FOR YOU"), t("expected t/h"), [
+    el("div", { class: "mine-list" }, ...list.map(h => el("div", { class: "cg mine-hs", title: h.system + " · " + t(RANK_LEVEL[h.rate.level] || ""), onclick: () => detail(h.id) },
+      el("span", { text: h.ring + " · " + h.material }),
+      el("span", { class: "num" + (h.rate.thin ? " c-dim" : " c-green"), text: fmt(h.rate.t_h, 1) + " t/h"
+        + (h.rate.runs > 1 ? " (" + fmt(h.rate.lo, 0) + "–" + fmt(h.rate.hi, 0) + ")" : "") }),
+      el("span", { class: "num", text: h.ly === null ? "?" : h.ly < 0.1 ? t("here") : fmt(h.ly, 1) + " ly" })))),
+    el("div", { class: "c-dim small", text: t("From your own mining runs (all commanders): the main refined material per hour - in that ring, else rings of its class, else any ring. Dim: fewer than 3 runs.") }),
   ], { appear: false });
 }
 

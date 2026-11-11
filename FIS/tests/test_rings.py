@@ -53,6 +53,36 @@ class TestRingHotspots(unittest.TestCase):
         self.assertEqual(sorted((h["material"], h["count"]) for h in ring["hotspots"]),
                          [("Platinum", 1), ("Tritium", 2)])
 
+    def test_l3_rate_under_the_ring(self):
+        """L3: your mining runs in that ring give its t/h; a hotspot whose
+        label differs from the material ('Void Opal' / 'Opal') still matches."""
+        import json
+        from fis import fleet as fl
+        from .test_learn import _run, _ev
+        cx = sqlite3.connect(self.db.path)
+        cx.execute("INSERT INTO hotspots(sys_id64, body_id, body_name, material, label, count, ring_class, found)"
+                   " VALUES (?,30,?,'Opal','Void Opal',1,'Icy','2026-11-10')", (fx.SYS_ID, RING_A))
+        cx.commit()
+        cx.close()
+        try:
+            d = tempfile.mkdtemp(prefix="fis-rings-j-")
+            lines = ([_ev("01T09:00:00", "Commander", FID="F1", Name="T")]
+                     + _run("01", RING_A, "tritium", 30, 60) + _run("02", "Other 1 A Ring", "opal", 12, 60))
+            with open(os.path.join(d, "Journal.2026-11-01T090000.01.log"), "w", encoding="utf-8") as fh:
+                fh.write("".join(json.dumps(x) + chr(10) for x in lines))
+            b = self.model.build_body(self.db, fx.SYS_ID, 3, archive=fl.Archive(d))
+            ring = b["rings"][0]
+            self.assertEqual([(a["mat"], a["runs"], a["tonnes"]) for a in ring["rates"]], [("tritium", 1, 30)])
+            exp = {e["hotspot"]: e.get("rate") for e in ring["expected"]}
+            self.assertEqual(exp["Tritium"]["level"], "ring")
+            self.assertEqual(exp["Void Opal"]["level"], "all")         # mined opal elsewhere only
+            self.assertEqual(exp["Void Opal"]["tonnes"], 12)
+        finally:
+            cx = sqlite3.connect(self.db.path)
+            cx.execute("DELETE FROM hotspots WHERE material='Opal'")
+            cx.commit()
+            cx.close()
+
     def test_body_without_rings_has_none(self):
         b = self.model.build_body(self.db, fx.SYS_ID, 1)
         self.assertEqual(b["hotspots"], [])

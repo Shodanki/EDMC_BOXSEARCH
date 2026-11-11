@@ -871,9 +871,14 @@ def _ring_mining(db: Database, rings: List[Dict[str, Any]], archive: Any) -> Non
     each of its hotspots, what the rocks of rings of this class with such a
     hotspot held - the materials to expect next to it.
     """
-    from . import prospect
+    from . import learn, prospect
     pros = _ring_prospects(archive)
-    if not pros:
+    # L3: your mining runs (t/h) - every commander's, like the prospecting
+    try:
+        runs = learn.runs_of(archive)
+    except Exception:
+        runs = []
+    if not pros and not runs:
         return
     ring_hs: Dict[str, Any] = {}
     try:
@@ -883,16 +888,25 @@ def _ring_mining(db: Database, rings: List[Dict[str, Any]], archive: Any) -> Non
             ring_hs[h["body_name"]] = (cls, keys)
     except Exception:
         return
-    pool = prospect.expectations(pros, ring_hs)
+    pool = prospect.expectations(pros, ring_hs) if pros else {}
+    rates = learn.ring_rates(runs, learn.ring_classes(db)) if runs else {}
     for g in rings:
         name = g.get("name") or ""
         g["prospect"] = prospect.summary(pros.get(name))
         cls = prospect.ring_class(g.get("cls")) or ring_hs.get(name, ("", []))[0]
+        # L3: your tonnes per hour in this very ring, per material
+        own = [dict(a, mat=m) for (rn, m), a in (rates.get("ring") or {}).items() if rn == name]
+        g["rates"] = sorted(own, key=lambda a: -(a["t_h"] or 0))
         exp = []
         for h in g.get("hotspots") or []:
-            e = prospect.expected_for(pool, cls, prospect._key(h["material"]), skip_ring=name)
-            if e:
-                exp.append(dict(e, hotspot=h["material"]))
+            k = prospect._key(h.get("key") or h["material"])
+            e = prospect.expected_for(pool, cls, k, skip_ring=name) if pool else None
+            rate = learn.expected_rate(rates, name, cls, k) if rates else None
+            if e or rate:
+                item = dict(e or {}, hotspot=h["material"])
+                if rate:
+                    item["rate"] = rate
+                exp.append(item)
         g["expected"] = exp
 
 
@@ -932,6 +946,14 @@ def _ground_mining(db: Database, body_name: str, planet_class: Optional[str]) ->
             rigs = 0
         out["here"] = {"rigs": rigs, "tonnes": sum(here.values()),
                        "mats": [{"name": k, "t": v} for k, v in sorted(here.items(), key=lambda kv: -kv[1])]}
+    try:
+        # L3: rigs on bodies of this class - tonnes per rig, rigs per hour
+        from . import learn
+        rr = learn.rig_rates_db(db).get(planet_class or "?") if planet_class else None
+        if rr:
+            out["rate"] = dict(rr, cls=planet_class)
+    except Exception:
+        pass
     if pool:
         out["expected"] = {"cls": planet_class, "bodies": len(set().union(*(p["bodies"] for p in pool.values()))),
                            "mats": [{"name": k, "t": p["t"], "bodies": len(p["bodies"])}
@@ -955,12 +977,14 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
     # itself) - by the planet's body_id there are none (F4)
     ring_names = {g.get("name") for g in (_json(r["rings_json"], []) or []) if g.get("name")}
     hotspots = [{"material": h["label"] or h["material"], "count": h["count"],
-                 "ring": h["body_name"]} for h in db.hotspots_of(id64)
+                 "ring": h["body_name"], "key": h["material"]} for h in db.hotspots_of(id64)
                 if h["body_name"] in ring_names or h["body_id"] == body_id]
     hs_by_ring: Dict[str, List[Dict[str, Any]]] = {}
     for h in hotspots:
+        # the label for the view ("Void Opal"), the game's material ("Opal")
+        # to match the prospector reports and mining runs
         hs_by_ring.setdefault(h["ring"] or "", []).append(
-            {"material": h["material"], "count": h["count"]})
+            {"material": h["material"], "count": h["count"], "key": h.pop("key")})
     out: Dict[str, Any] = {
         "id64": id64, "body_id": body_id, "system": sysname,
         "name": r["name"], "short": p.sysroute.shorten(r["name"] or "", sysname),

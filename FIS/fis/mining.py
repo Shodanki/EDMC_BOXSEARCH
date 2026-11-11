@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional
 from .live import parse_ts
 
 GAP_S = 30 * 60
+RANK_NEAREST = 40          # L3: rank the nearest hotspots ...
+RANK_TOP = 8               # ... and show the best of them
 EVENTS = ("ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked")
 
 
@@ -453,6 +455,30 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     pos = (live.get("system") or {}).get("pos")
     out["hotspots"] = hotspots_near(db, pos)
     out["from"] = (live.get("system") or {}).get("name")
+    # L3: the nearby hotspots ranked by what YOU mined there per hour - in
+    # that ring, else in rings of its class, else in any ring
+    try:
+        from . import learn, prospect
+        rates = learn.ring_rates(learn.runs_of(archive), learn.ring_classes(db))
+        cls_of = {}
+        for r in db.query("SELECT body_name, ring_class FROM hotspots"):
+            cls_of[r["body_name"]] = prospect.ring_class(r["ring_class"])
+        rc = learn.ring_classes(db)
+        ranked, seen = [], set()
+        for h in out["hotspots"][:RANK_NEAREST]:
+            if (h["ring"], h["key"]) in seen:          # the same hotspot written twice
+                continue
+            seen.add((h["ring"], h["key"]))
+            rate = learn.expected_rate(rates, h["ring"], cls_of.get(h["ring"]) or rc.get(h["ring"]), h["key"])
+            if rate:
+                h["rate"] = {k: rate.get(k) for k in ("t_h", "lo", "hi", "runs", "level", "thin")}
+                ranked.append(h)
+        order = {"ring": 0, "class": 1, "all": 2}
+        ranked.sort(key=lambda h: (-(h["rate"]["t_h"] or 0), order.get(h["rate"]["level"], 3),
+                                   h["ly"] if h["ly"] is not None else 1e9))
+        out["hotspot_rank"] = ranked[:RANK_TOP]
+    except Exception:
+        out["hotspot_rank"] = []
     # ---------------------------------------------------------- mining ships
     ships = []
     for s in archive.fleet()["ships"]:

@@ -723,7 +723,14 @@ class Handler(BaseHTTPRequestHandler):
                 days = float((qs.get("days") or ["0"])[0]) or None
             except ValueError:
                 days = None
-            return self._json(stats.build_statistics(app.archive, days))
+            out = stats.build_statistics(app.archive, days)
+            try:
+                from . import learn
+                # L4: what the FIS has learnt from your own data so far
+                out["learning"] = learn.learning_status(app.archive, app.db)
+            except Exception:
+                out["learning"] = None
+            return self._json(out)
         if path == "/api/galaxy":
             from . import galaxy
             try:
