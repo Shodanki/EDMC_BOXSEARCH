@@ -435,6 +435,24 @@ class TestServer(_Base):
             st, h, _b = self.get(p)
             self.assertEqual((st, h.get("Content-Type")), (200, want), p)
 
+    def test_carriers_at_the_jump_target(self):
+        # 11.11.: with a jump target the briefing names the carriers THERE
+        from fis import carriers
+        seen = []
+        orig = carriers.carriers_here
+        carriers.carriers_here = lambda id64, name, own, favs, now=None: seen.append((id64, name)) or []
+        try:
+            live = {"system": {"id64": 1, "name": "Here"}}
+            self.app._cache.clear()
+            self.app.carriers_here(dict(live, target={"name": "There", "id64": 2}))
+            self.app._cache.clear()
+            self.app.carriers_here(live)
+        finally:
+            carriers.carriers_here = orig
+        self.assertEqual(seen, [(2, "There"), (1, "Here")])
+        st, js = self.getj("/api/briefing")
+        self.assertIn(js["carriers_where"], ("target", "here"))
+
     def test_static_revalidated_not_refetched(self):
         # 11.11.: a tablet fetched Three.js (1.3 MB) on every load - now 304
         import http.client

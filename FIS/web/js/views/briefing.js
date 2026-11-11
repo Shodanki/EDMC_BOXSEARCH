@@ -59,7 +59,7 @@ export function update(ctx, reason) {
         t("NO JUMP TARGET SET"), el("br"),
         el("span", { class: "c-dim", text: t("Pick a target in the galaxy map – the briefing appears by itself.") })),
       { cls: "br-main", appear }));
-    const ch0 = carriersTile(b && b.carriers_here, appear);
+    const ch0 = carriersTile(b && b.carriers_here, appear, "here");
     if (ch0) root.append(ch0);
     if (b && b.navroute && b.navroute.length) root.append(navList(b.navroute, null, appear));
     const sv0 = surveyTile(ctx.store.survey, appear);
@@ -137,7 +137,7 @@ export function update(ctx, reason) {
 
   root.append(frame("BRIEFING", np, el("div", { class: "br-rows" }, ...rows),
     { kind: unknown ? "disc" : "hot", cls: "br-main", appear }));
-  const ch = carriersTile(b.carriers_here, appear);
+  const ch = carriersTile(b.carriers_here, appear, b.carriers_where);
   if (ch) root.append(ch);
   if (b.navroute && b.navroute.length) root.append(navList(b.navroute, tg.name, appear));
   const sv = surveyTile(ctx.store.survey, appear);
@@ -155,14 +155,15 @@ function carAge(s) {
   return s < 3600 ? t("{n} min ago", { n: Math.max(1, Math.round(s / 60)) }) : s < 172800 ? t("{n} h ago", { n: Math.round(s / 3600) })
     : t("{n} days ago", { n: Math.round(s / 86400) });
 }
-function carriersTile(list, appear) {
+function carriersTile(list, appear, where) {
   if (!list || !list.length) return null;
   const rows = list.map((c) => el("div", { class: "br-car" },
     el("span", { class: c.kind === "own" ? "c-amber" : "c-cyan", text: (c.kind === "own" ? "◆ " : "★ ") + [c.name, c.callsign].filter(Boolean).join(" ") }),
     el("span", { class: "c-dim", text: " · " + (c.kind === "own" ? t("your carrier") : t("favourite")) + " · "
       + t(CAR_HOW[c.how] || "your journal") + (c.source === "stored" ? " (" + t("stored") + ")" : "") + " · " + carAge(c.age_s) }),
     c.note ? el("div", { class: "small c-dim", text: c.note }) : null));
-  return frame(t("CARRIERS HERE"), t("last known"), el("div", {}, ...rows), { cls: "br-carriers", appear });
+  return frame(where === "target" ? t("CARRIERS AT THE TARGET") : t("CARRIERS HERE"), t("last known"),
+    el("div", {}, ...rows), { cls: "br-carriers", appear });
 }
 
 // Sphere progress (/api/survey) – a small tile beside the briefing.

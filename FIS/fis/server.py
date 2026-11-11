@@ -201,9 +201,12 @@ class App:
 
     def carriers_here(self, live: Dict[str, Any]) -> List[Dict[str, Any]]:
         """B1 BRIEFING: your own and your favourite carriers known in the
-        current system - from the journal and the stored Spansh lookup, no
-        request. Cached per journal change, favourites file and minute."""
-        cur = (live or {}).get("system") or {}
+        jump target's system - or, without a target, in the current one -
+        from the journal and the stored Spansh lookup, no request. Cached per
+        journal change, favourites file and minute."""
+        tgt = self.model.current_target(live or {})
+        cur = ({"id64": tgt.get("id64"), "name": tgt.get("name")} if tgt
+               else (live or {}).get("system") or {})
         if not (cur.get("id64") or cur.get("name")):
             return []
         try:
@@ -665,6 +668,9 @@ class Handler(BaseHTTPRequestHandler):
             live = app.live_state()
             out = m.build_briefing(app.db, live)
             out["carriers_here"] = app.carriers_here(live)
+            # at the jump target when there is one (11.11.: a carrier left
+            # behind in the current system says nothing about the next one)
+            out["carriers_where"] = "target" if out.get("target") else "here"
             return self._json(out)
         if path == "/api/ship":
             return self._json(m.build_ship(app.live_state()))

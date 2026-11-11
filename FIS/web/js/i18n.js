@@ -1010,5 +1010,6 @@ const DE = /*DE*/{
   "{n} still thin": "{n} noch dünn",
   "{n} rocks · 1 ring": "{n} Brocken · 1 Ring",
   "1 body": "1 Körper",
-  "refuel at the target": "am Ziel tanken"
+  "refuel at the target": "am Ziel tanken",
+  "CARRIERS AT THE TARGET": "TRÄGER AM ZIEL"
 }/*END*/;
