@@ -50,6 +50,7 @@ class App:
         self.watch_restarts = 0
         self._watch_stop = threading.Event()
         self.db = db or Database(cfg.db_path)
+        self.db.main_setting = getattr(cfg, "main_cmdr", "") or ""
         self.hub = live.hub if live else Hub()
         self.live = live or LiveTracker(cfg.journal_dir, self.hub, cfg.poll_s)
         self.web_dir = web_dir
@@ -143,6 +144,13 @@ class App:
         return str(data.get("shboxsearch_offline", "")).lower() in ("true", "1")
 
     # ------------------------------------------------------------ routes
+    def fid(self) -> Optional[str]:
+        """C1: the commander playing (journal archive), for his own exploration."""
+        try:
+            return self.archive.commander()[0]
+        except Exception:
+            return None
+
     def system(self, id64: int) -> Dict[str, Any]:
         live = self.live_state()
         fx = live.get("last_fix") or {}
@@ -151,12 +159,13 @@ class App:
         sig = (self.db.mtime(), int(time.time() // 30), cur.get("id64"),
                fx.get("body_id"), fx.get("body"),
                int((fx.get("ts") or 0) // 60), id(self.calib.model),
-               tuple(self.cfg.filters), self.cfg.skip_arrival, self.archive.rev)
+               tuple(self.cfg.filters), self.cfg.skip_arrival, self.archive.rev,
+               self.fid())
         self.calib.maybe_refresh()
         cm, om = self.calib.model, self.calib.order_model
         out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
             self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om,
-            skip_arrival=self.cfg.skip_arrival, archive=self.archive))
+            skip_arrival=self.cfg.skip_arrival, archive=self.archive, fid=self.fid()))
         return self._with_favourites(self._with_carrier(out, id64))
 
     def _with_favourites(self, out: Dict[str, Any]) -> Dict[str, Any]:
@@ -445,11 +454,24 @@ class Handler(BaseHTTPRequestHandler):
                 fw = setup.firewall_rule_ok(cfg.port)
             except Exception:
                 fw = None
+        db = self.app.db
+        try:
+            cmdrs = [{"fid": c["fid"], "name": c["name"], "carrier": bool(c["carrier"]),
+                      "logins": c["logins"], "systems": c["systems"]} for c in db.commanders()]
+            auto = db.commander_name(db.suggest_main()) if cmdrs else None
+            prev, db.main_setting = db.main_setting, ""
+            auto_fid = db.main_fid()
+            db.main_setting = prev
+        except Exception:
+            cmdrs, auto, auto_fid = [], None, None
         return {"language": cfg.language, "open_browser": cfg.open_browser, "lan": cfg.lan,
                 "port": cfg.port, "ini": cfg.ini_path, "running_lan": self.app.lan_at_start,
                 # on the game PC only: the address for the tablet, with the token
                 "lan_urls": setup.lan_urls(cfg.port, cfg.token) if cfg.lan and cfg.token else [],
-                "firewall": fw}
+                "firewall": fw,
+                # C1: main commander ("" = automatic: the plugin's choice / suggestion)
+                "main_cmdr": cfg.main_cmdr, "commanders": cmdrs,
+                "main_auto": db.commander_name(auto_fid) or auto}
 
     def do_POST(self) -> None:
         wait = self._braked()
@@ -488,6 +510,12 @@ class Handler(BaseHTTPRequestHandler):
         cfg.language = lang if lang in config_mod.LANGUAGES else cfg.language
         cfg.open_browser = bool(body.get("open_browser", cfg.open_browser))
         cfg.lan = bool(body.get("lan", cfg.lan))
+        if "main_cmdr" in body:
+            mc = str(body.get("main_cmdr") or "")
+            known = {c["fid"] for c in self.app.db.commanders()}
+            if mc == "" or mc in known:
+                cfg.main_cmdr = mc
+                self.app.db.main_setting = mc
         if cfg.lan:
             cfg.ensure_token(save=False)
         changed = False
@@ -666,7 +694,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(out)
         if path == "/api/briefing":
             live = app.live_state()
-            out = m.build_briefing(app.db, live)
+            out = m.build_briefing(app.db, live, fid=app.fid())
             out["carriers_here"] = app.carriers_here(live)
             # at the jump target when there is one (11.11.: a carrier left
             # behind in the current system says nothing about the next one)

@@ -138,6 +138,10 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
             out.append(("checked: %s" % ", ".join(info["checked_by"]), COL["dim"]))
     if info.get("visited"):
         out.append(("visited before", COL["dim"]))
+    if info.get("also_by"):
+        # C1: another commander on this PC has been there - your own
+        # exploration is still open, the knowledge is shared
+        out.append(("also explored by %s" % ", ".join(info["also_by"])[:26], COL["dim"]))
     if info.get("bodies"):
         nb = info.get("bodies_new") or 0
         out.append(("BODIES  %d%s" % (info["bodies"], ("  %d undiscovered" % nb) if nb else ""),
@@ -391,6 +395,9 @@ def _selftest() -> int:
           and "INHABITED - known to the databases" in texts(known_sources=[], level="inhabited"),
           "I1: inhabited -> known, no request")
     check("KNOWN  EDSM" in texts(known_sources=["EDSM"], level="known"), "I1: known stays known")
+    check("also explored by Xerxes" in texts(also_by=["Xerxes"])
+          and not any(t.startswith("also") for t in texts()),
+          "C1: 'also explored by' only when another commander was there")
     print("failures: %d" % fails)
     return fails
 

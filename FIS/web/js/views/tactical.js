@@ -285,6 +285,10 @@ function renderSide() {
     title: t("The beacon hands over every body: data, but no discovery and no exploration data of your own – mapping and bio still count."),
     text: "◈ " + (sys.nav_beacon.bodies ? t("nav beacon scanned – all {n} bodies known", { n: sys.nav_beacon.bodies })
       : t("nav beacon scanned – all bodies known")) + (sys.nav_beacon.ts ? " · " + String(sys.nav_beacon.ts).slice(0, 10) : "") }));
+  // C1: what is shown is your own exploration; the knowledge is shared
+  if (sys.also_by && sys.also_by.length) head.push(el("div", { class: "c-dim",
+    title: t("Scans, maps and samples are kept per commander; what was found here is shared."),
+    text: t("also explored by {n}", { n: sys.also_by.join(", ") }) }));
   // I1: "in no database" only where a source was really asked
   const lvl = sys.info_level;
   const noDb = !sys.known_sources.length && (!lvl || lvl === "checked");

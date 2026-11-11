@@ -88,6 +88,8 @@ export function update(ctx, reason) {
     row("STATUS", statusEl),
   ];
   if (tg.visited) rows.push(row(t("VISITED"), el("span", { class: "c-dim", text: t("You have been there") + (tg.body_count ? " · " + t("{n} bodies", { n: tg.body_count }) : "") })));
+  // C1: another commander on this PC was there - your own exploration is still open
+  if (tg.also_by && tg.also_by.length) rows.push(row(t("ALSO"), el("span", { class: "c-dim", text: t("also explored by {n}", { n: tg.also_by.join(", ") }) })));
   if (b.expectation && b.expectation.length)
     rows.push(row(t("EXPECTED"), el("div", {}, ...b.expectation.map(x => el("div", { text: expectation(x) })))));
   const f = b.fuel;
@@ -196,6 +198,9 @@ function surveyTile(s, appear) {
   if (s.boxels && s.boxels.total)
     body.push(hbar("BOXEL ✓", s.boxels.complete, s.boxels.total, s.boxels.complete + "/" + s.boxels.total));
   const extra = [];
+  // C1: the survey counts for the main commander
+  if (s.commander) extra.push(el("span", { class: "c-dim", text: t("for {n}", { n: s.commander }) +
+    (s.also_by && s.also_by.length ? " · " + t("also explored by {n}", { n: s.also_by.map((a) => a.name + " (" + a.visited + ")").join(", ") }) : "") }));
   if (n.only_us) extra.push(el("span", { class: "c-violet", text: t("{n} only known to us", { n: n.only_us }) }));
   if (s.carrier && s.carrier.system) extra.push(el("span", { class: "c-dim", text: "Carrier " + (s.carrier.callsign || s.carrier.name || "") + " · " + s.carrier.system }));
   if (extra.length) body.push(el("div", { class: "sv-extra" }, ...extra));

@@ -40,6 +40,7 @@ if _PLUGIN_DIR not in sys.path:
 
 from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
 from sysdb import SystemDB, Q_ESTIMATE, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
+from sysdb import CMDR_READY, CURRENT, PLAN                     # noqa: E402
 from sources import SourceManager                              # noqa: E402
 from netgate import Gateway                                    # noqa: E402
 import netgate                                                 # noqa: E402
@@ -117,6 +118,7 @@ CFG = {
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
     "overlay_mining": "%s_overlay_mining" % PLUGIN_NAME,
     "fis_autostart": "%s_fis_autostart" % PLUGIN_NAME,
+    "main_cmdr": "%s_main_cmdr" % PLUGIN_NAME,      # C1: FID, "" = suggestion
 }
 
 # Where releases live. A check is a single call to the GitHub releases API.
@@ -356,6 +358,7 @@ def plugin_start3(plugin_dir: str) -> str:
     elif any(not ST.db.get_meta(t) for t in REPLAY_TAGS):
         _run_async(_upgrade_replay, label="upgrade")
 
+    _apply_main_cmdr()
     ST.carrier = ST.db.get_carrier()
     if ST.carrier:
         logger.info("fleet carrier remembered at %s", ST.carrier["system"])
@@ -849,6 +852,35 @@ def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, floa
     return None
 
 
+def _main_cmdr_choices() -> List[Tuple[str, str]]:
+    """(label, FID) for the main-commander setting; '' = the suggestion."""
+    if not ST.db:
+        return []
+    with ST.lock:
+        cmdrs = ST.db.commanders()
+        best = ST.db.suggest_main()
+    name = {c["fid"]: c["name"] or c["fid"] for c in cmdrs}
+    out = [("automatic (%s)" % name.get(best, "-"), "")]
+    for c in sorted(cmdrs, key=lambda c: (c["name"] or c["fid"]).lower()):
+        tag = "carrier" if c["carrier"] else "%d sessions" % c["logins"]
+        out.append(("%s (%s)" % (name[c["fid"]], tag), c["fid"]))
+    return out
+
+
+def _apply_main_cmdr() -> None:
+    """C1: the survey plan and statistics follow the main commander -
+    the one chosen in the settings, else the suggestion (own carrier,
+    then most sessions)."""
+    if not ST.db:
+        return
+    try:
+        with ST.lock:
+            use = ST.db.set_main_commander(cfg_str(CFG["main_cmdr"], "") or None)
+        logger.debug("main commander: %s", use)
+    except Exception:
+        logger.exception("could not set the main commander")
+
+
 def _commander_switched() -> None:
     """
     Another commander logged in on this PC (two accounts share one journal
@@ -1001,7 +1033,7 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
         if row is None and name:
             row = ST.db.system(name)
         if kind == "arrival" and id64:
-            p = ST.db.system_progress(id64)
+            p = ST.db.system_progress(id64, CURRENT)
             if p.get("body_count"):
                 info["bodies"] = p["body_count"]
             info["bodies_new"] = p.get("new_discoveries") or 0
@@ -1021,8 +1053,13 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     except Exception:
         regions = {}
     info["level"], info["checked_by"] = shells.info_level(srcs, pos, regions)
-    if row is not None and row["visited"] and kind == "target":
-        info["visited"] = True
+    if row is not None and kind == "target":
+        with ST.lock:
+            if ST.db.is_visited(row, CURRENT):
+                info["visited"] = True
+            also = ST.db.explorers(row["id64"], but=ST.db.fid) if ST.db.fid else []
+        if also:
+            info["also_by"] = also          # C1: another commander was here
     pn = parse_name(name or "")
     if pn and ST.probe:
         info["boxel_open"] = sum(1 for q in ST.probe if q.boxel_key == pn.boxel_key)
@@ -1088,7 +1125,8 @@ def _rebuild_route() -> None:
         logger.info("route | no current system known yet")
         return
     with ST.lock:
-        rows = ST.db.bodies_of(ST.cur_id64)
+        # C1: what THIS commander still has to do here (knowledge is shared)
+        rows = ST.db.bodies_for(ST.cur_id64, ST.db.view_fid(CURRENT))
     if not rows and ST.cur_id64 not in _replayed_for:
         # Nothing stored for this system - the scans may predate the plugin or
         # have happened while it was not running. Replay the recent journals
@@ -1103,7 +1141,7 @@ def _rebuild_route() -> None:
             res = ST.db.import_journals(d, max_files=6, lock=ST.lock)
             logger.info("route | replayed %s", res)
             with ST.lock:
-                rows = ST.db.bodies_of(ST.cur_id64)
+                rows = ST.db.bodies_for(ST.cur_id64, ST.db.view_fid(CURRENT))
     if not rows:
         logger.info("route | %s has no scanned bodies yet - run a system scan",
                     ST.cur_system)
@@ -2978,7 +3016,12 @@ def _stats_window_refresh() -> None:
     try:
         with ST.lock:
             lt = ST.db.lifetime()
-        table("All time", [
+        who = []
+        if lt.get("commander"):
+            who.append(("Commander", "%s (main)" % lt["commander"]))
+        for nm, n in lt.get("also") or []:
+            who.append(("Also explored by", "%s: %d systems" % (nm, n)))
+        table("All time", who + [
             ("Systems visited", "%d" % lt["systems_visited"]),
             ("Distance flown", "%.0f ly" % lt["jumps_ly"]),
             ("Bodies scanned", "%d" % lt["bodies"]),
@@ -3028,9 +3071,9 @@ def _prune_queues() -> None:
             row = ST.db.system(t.name)
             done = False
             if t.kind == K_NEW:
-                done = row is not None and bool(row["visited"])
+                done = ST.db.is_visited(row, PLAN)
             elif row is not None and row["id64"]:
-                p = ST.db.system_progress(row["id64"])
+                p = ST.db.system_progress(row["id64"], PLAN)
                 if t.kind == K_SCAN:
                     done = p["fss_complete"] or (
                         p["body_count"] and p["scanned"] >= p["body_count"])
@@ -3062,6 +3105,11 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         if ST.cmdr is not None:
             _commander_switched()
         ST.cmdr = cmdr
+    fid = state.get("FID") if isinstance(state, dict) else None
+    if fid and fid != ST.db.fid:
+        with ST.lock:
+            ST.db.set_commander(fid, cmdr)
+        _apply_main_cmdr()
     try:
         # Before the dispatch chain: any event naming a body updates where we
         # are. Putting this inside the chain meant whichever branch matched
@@ -4018,7 +4066,7 @@ def _refresh() -> None:
             line = ST.cur_system
             if ST.cur_id64 and ST.db:
                 with ST.lock:
-                    pr = ST.db.system_progress(ST.cur_id64)
+                    pr = ST.db.system_progress(ST.cur_id64, CURRENT)
                 bits = []
                 if pr["body_count"]:
                     bits.append("FSS %d/%d" % (pr["scanned"], pr["body_count"]))
@@ -4286,6 +4334,20 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     field(right, "right", "", nb.Checkbutton(
         right, text="show the route line in the panel", variable=_p["show_route"]))
 
+    # C1: more than one commander on this PC
+    choices = _main_cmdr_choices()
+    if len(choices) > 1:
+        head(right, "right", "Commanders")
+        labels = [c[0] for c in choices]
+        cur = cfg_str(CFG["main_cmdr"], "")
+        sel = next((c[0] for c in choices if c[1] == cur), labels[0])
+        _p["main_cmdr"] = tk.StringVar(value=sel)
+        _p["main_cmdr_map"] = {c[0]: c[1] for c in choices}
+        field(right, "right", "Main commander",
+              ttk.OptionMenu(right, _p["main_cmdr"], sel, *labels))
+        note(right, "right", "survey plan and statistics; each commander's own")
+        note(right, "right", "visits and scans are kept apart, finds are shared")
+
     head(right, "right", "Cockpit overlay (needs EDMCModernOverlay)")
     _p["overlay"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay"], True) else 0)
     _p["overlay_brief"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_brief"], True) else 0)
@@ -4423,6 +4485,9 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["show_route"], bool(_p["show_route"].get()))
         cfg_set(CFG["route_all"], bool(_p["route_all"].get()))
         cfg_set(CFG["route_arrival"], bool(_p["route_arrival"].get()))
+        if "main_cmdr" in _p:
+            cfg_set(CFG["main_cmdr"], _p["main_cmdr_map"].get(_p["main_cmdr"].get(), ""))
+            _apply_main_cmdr()
         cfg_set(CFG["route_top"], bool(_p["route_top"].get()))
         cfg_set(CFG["route_map"], bool(_p["route_map"].get()))
         cfg_set(CFG["map_size"], _p["map_size"].get())
@@ -4522,6 +4587,7 @@ def _first_run_migration() -> None:
         for t in REPLAY_TAGS:                 # a fresh import already has it all
             ST.db.set_meta(t, now)
     logger.info("first-run import finished: %s", st)
+    _apply_main_cmdr()
     _rebuild_route()
     _set_status("first-run import done: %d systems, %d bodies"
                 % (st["systems"], st["bodies"]))
@@ -4530,8 +4596,10 @@ def _first_run_migration() -> None:
 # Releases that need one full journal replay to fill what they store new.
 # upgrade_44b: barycentre parents (binary moons placed far from their planet)
 # upgrade_46_rigs: Rhino rig collection points from MiningRefined + the track
+# upgrade_48_cmdr (C1): exploration per commander - visited, FSS, scans,
+# maps, first discoveries and species analysed sorted by FID
 REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44", "upgrade_44b",
-               "upgrade_46_rigs")
+               "upgrade_46_rigs", CMDR_READY)
 
 
 def _upgrade_replay() -> None:
@@ -4563,8 +4631,10 @@ def _upgrade_replay() -> None:
             ST.db.set_meta(t, now)
         n_sig = len(ST.db.signal_kinds())
         n_mat = len(ST.db.material_kinds())
-    logger.info("upgrade finished - atlas: %d signal kinds, %d materials",
-                n_sig, n_mat)
+        n_cmdr = len(ST.db.commanders())
+    logger.info("upgrade finished - atlas: %d signal kinds, %d materials, "
+                "%d commanders", n_sig, n_mat, n_cmdr)
+    _apply_main_cmdr()
     _rebuild_route()
 
 

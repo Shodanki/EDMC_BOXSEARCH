@@ -17,7 +17,7 @@ import math
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .data import Database, _json
+from .data import MAIN, Database, _json
 
 G0 = 9.80665
 ATM = 101325.0
@@ -301,13 +301,17 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
                  cost_model: Any = None,
                  order_model: Any = None,
                  skip_arrival: bool = False,
-                 archive: Any = None) -> Dict[str, Any]:
-    """Everything TAKTIK needs: bodies at Kepler positions, orbits, route, fix."""
+                 archive: Any = None,
+                 fid: Optional[str] = None) -> Dict[str, Any]:
+    """Everything TAKTIK needs: bodies at Kepler positions, orbits, route, fix.
+
+    fid (C1): the commander playing - scans, maps, first discoveries and
+    species are his own, what is known about the bodies is shared."""
     p = plugin()
     sr = p.sysroute
     now = time.time() if now is None else now
-    srow = db.system_by_id64(id64)
-    rows = db.bodies_of(id64)
+    srow = db.system_for(db.system_by_id64(id64), fid)
+    rows = db.bodies_for(id64, fid)
     name = srow["name"] if srow is not None else None
     if not name and rows:
         # derive system name from the main star's name
@@ -323,6 +327,8 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         "known_sources": Database.known_sources(srow),
         "info_level": info_level(srow, db.shell_regions())[0],
         "bodies": [], "route": None, "fix": None, "generated": now,
+        # C1: other commanders on this PC who have been here
+        "also_by": db.explorers(id64, but=fid) if fid else [],
     }
     if not rows:
         out["fix"] = _fix(out, {}, live, now)
@@ -1442,6 +1448,19 @@ def _navpoints(db: Database, live: Dict[str, Any], limit: int = 14) -> List[Dict
     return out
 
 
+def _navpoints_for(db: Database, live: Dict[str, Any], fid: Optional[str]) -> List[Dict[str, Any]]:
+    """_navpoints with 'visited' as this commander's own (C1)."""
+    pts = _navpoints(db, live)
+    if not fid or not db.cmdr_ready():
+        return pts
+    ids = [p["id64"] for p in pts if p.get("id64")]
+    rows = db.with_visits([{"id64": i, "visited": 0, "fss_complete": 0} for i in ids], fid)
+    seen = {r["id64"]: bool(r["visited"]) for r in rows}
+    for p in pts:
+        p["visited"] = seen.get(p.get("id64"), False)
+    return pts
+
+
 def _sphere_of(db: Database, pos: Optional[Sequence[float]]) -> Optional[Dict[str, Any]]:
     """Where the target lies relative to the active survey sphere."""
     if not pos:
@@ -1494,11 +1513,12 @@ def approach_info(db: Database, live: Dict[str, Any]) -> Optional[Dict[str, Any]
     return out
 
 
-def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def build_briefing(db: Database, live: Optional[Dict[str, Any]],
+                   fid: Optional[str] = None) -> Dict[str, Any]:
     live = live or {}
     tgt = current_target(live)
     out: Dict[str, Any] = {"target": None, "generated": time.time(),
-                           "navroute": _navpoints(db, live)}
+                           "navroute": _navpoints_for(db, live, fid)}
     try:
         out["approach"] = approach_info(db, live)
     except Exception:                     # never cost the briefing
@@ -1507,6 +1527,8 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
         return out
     name, id64 = tgt.get("name"), tgt.get("id64")
     row = (db.system_by_id64(id64) if id64 else None) or (db.system_by_name(name) if name else None)
+    shared = row
+    row = db.system_for(row, fid) if fid else row       # C1: visited = by you
     star = tgt.get("star_class") or (row["star_class"] if row is not None else None)
     tpos = tgt.get("pos") or ([row["x"], row["y"], row["z"]] if row is not None and row["x"] is not None else None)
     cpos = (live.get("system") or {}).get("pos")
@@ -1526,6 +1548,8 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
         "body_count": row["body_count"] if row is not None else None,
         "remaining_jumps": tgt.get("remaining_jumps"),
         "navpoint": [idx, len(route) - 1] if idx is not None and len(route) > 1 else None,
+        "also_by": (db.explorers(shared["id64"], but=fid)
+                    if fid and shared is not None and shared["id64"] else []),
     }
     out["boxel"] = boxel_info(db, name) if name else None
     out["sphere"] = _sphere_of(db, tpos)
@@ -1652,6 +1676,18 @@ def build_survey(db: Database) -> Dict[str, Any]:
     visited = [r for r in rows if r["visited"]]
     regions = db.shell_regions()
     only_us = [r for r in visited if info_level(r, regions)[0] == "checked"]
+    # C1: the survey counts for the main commander; the others are named
+    main = db.view_fid(MAIN)
+    if main:
+        out["commander"] = db.commander_name(main) or main
+        also = []
+        for c in db.commanders():
+            if c["fid"] == main:
+                continue
+            n = sum(1 for r in db.with_visits(rows, c["fid"]) if r["visited"])
+            if n:
+                also.append({"name": c["name"] or c["fid"], "visited": n})
+        out["also_by"] = also
     out["systems"] = {
         "known": len(rows), "visited": len(visited),
         "fss_complete": sum(1 for r in rows if r["fss_complete"]),

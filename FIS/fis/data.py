@@ -20,6 +20,11 @@ import time
 from typing import Any, Dict, List, Optional
 
 EXTERNAL_DBS = ("EDDiscovery", "Spansh", "EDSM")
+# C1 (plugin 4.8): exploration per commander. The plugin sets this meta key
+# once its journal replay sorted the history by FID; before that (and for an
+# older plugin database) everything is the shared view, as up to 4.7.
+CMDR_READY = "upgrade_48_cmdr"
+MAIN = "main"            # fid=MAIN: the main commander (survey, statistics)
 
 
 def _json(raw: Any, default: Any = None) -> Any:
@@ -36,6 +41,9 @@ class Database:
         self.path = path
         self._lock = threading.Lock()
         self._bio_cache: Optional[tuple] = None   # (mtime, rows)
+        # C1: the main commander from the FIS settings ("" = automatic: the
+        # plugin's choice, else the suggestion) - survey and statistics
+        self.main_setting = ""
 
     # ------------------------------------------------------------ plumbing
     @property
@@ -299,15 +307,118 @@ class Database:
     def spheres(self) -> List[sqlite3.Row]:
         return self.query("SELECT * FROM spheres ORDER BY id")
 
-    def systems_in_sphere(self, cx: float, cy: float, cz: float, r: float
-                          ) -> List[sqlite3.Row]:
-        return self.query(
+    def systems_in_sphere(self, cx: float, cy: float, cz: float, r: float,
+                          fid: Optional[str] = MAIN) -> List[Any]:
+        """Systems of the survey sphere; visited / FSS complete as the main
+        commander (default) or the given FID explored them (C1)."""
+        rows = self.query(
             "SELECT name, id64, x, y, z, quality, visited, fss_complete, sources, body_count "
             "FROM systems WHERE x BETWEEN ? AND ? AND y BETWEEN ? AND ? "
             "AND z BETWEEN ? AND ? "
             "AND (x-?)*(x-?)+(y-?)*(y-?)+(z-?)*(z-?) <= ?",
             (cx - r, cx + r, cy - r, cy + r, cz - r, cz + r,
              cx, cx, cy, cy, cz, cz, r * r))
+        return self.with_visits(rows, fid)
+
+    # ------------------------------------------------ commanders (C1, 4.8)
+    def cmdr_ready(self) -> bool:
+        """Plugin 4.8+ with its per-commander history filled (one replay)."""
+        if not self.has_table("cmdr_bodies"):
+            return False
+        return self.one("SELECT 1 FROM meta WHERE k=?", (CMDR_READY,)) is not None
+
+    def commanders(self) -> List[Dict[str, Any]]:
+        if not self.has_table("commanders"):
+            return []
+        return [dict(r) for r in self.query(
+            "SELECT c.fid, c.name, c.carrier, c.last_seen, "
+            "(SELECT COUNT(*) FROM cmdr_logins l WHERE l.fid=c.fid) logins, "
+            "(SELECT COUNT(*) FROM cmdr_systems s WHERE s.fid=c.fid "
+            " AND s.visited_ts IS NOT NULL) systems FROM commanders c")]
+
+    def suggest_main(self) -> Optional[str]:
+        """The commander with an own carrier, else most sessions, else most systems."""
+        best = sorted(self.commanders(), key=lambda c: (c["carrier"], c["logins"], c["systems"],
+                                                        c["last_seen"] or ""), reverse=True)
+        return best[0]["fid"] if best else None
+
+    def main_fid(self) -> Optional[str]:
+        """The main commander: the FIS setting, else the plugin's, else the suggestion."""
+        if self.main_setting:
+            return self.main_setting
+        if not self.has_table("commanders"):
+            return None
+        r = self.one("SELECT v FROM meta WHERE k='main_fid'")
+        return (r["v"] if r is not None and r["v"] else None) or self.suggest_main()
+
+    def commander_name(self, fid: Optional[str]) -> Optional[str]:
+        if not fid or not self.has_table("commanders"):
+            return None
+        r = self.one("SELECT name FROM commanders WHERE fid=?", (fid,))
+        return r["name"] if r is not None else None
+
+    def view_fid(self, fid: Optional[str]) -> Optional[str]:
+        """MAIN -> the main commander's FID; None (shared view, anyone) while
+        the plugin has no per-commander history."""
+        if fid == MAIN:
+            fid = self.main_fid()
+        return str(fid) if fid and self.cmdr_ready() else None
+
+    def with_visits(self, rows, fid: Optional[str] = MAIN) -> List[Any]:
+        """System rows with visited / fss_complete of one commander."""
+        fid = self.view_fid(fid)
+        if not fid or not rows:
+            return list(rows)
+        mine = {r["sys_id64"]: r for r in self.query(
+            "SELECT sys_id64, visited_ts, fss_complete FROM cmdr_systems WHERE fid=?", (fid,))}
+        out = []
+        for r in rows:
+            d = dict(r)
+            m = mine.get(d.get("id64"))
+            d["visited"] = 1 if m is not None and m["visited_ts"] else 0
+            d["fss_complete"] = m["fss_complete"] if m is not None else 0
+            if "visited_ts" in d:
+                d["visited_ts"] = m["visited_ts"] if m is not None else None
+            out.append(d)
+        return out
+
+    def system_for(self, row, fid: Optional[str]) -> Any:
+        """One system row as `fid` explored it (None row stays None)."""
+        if row is None:
+            return None
+        return self.with_visits([row], fid)[0]
+
+    def bodies_for(self, id64: int, fid: Optional[str]) -> List[Any]:
+        """Bodies with this commander's scanned / mapped / first discovery /
+        species analysed; knowledge (classes, signals, rings) stays shared."""
+        rows = self.bodies_of(id64)
+        fid = self.view_fid(fid)
+        if not fid:
+            return rows
+        own = {r["body_id"]: r for r in self.query(
+            "SELECT * FROM cmdr_bodies WHERE fid=? AND sys_id64=?", (fid, int(id64)))}
+        out = []
+        for r in rows:
+            d = dict(r)
+            o = own.get(d["body_id"])
+            d["scanned"] = o["scanned"] if o else 0
+            d["mapped"] = o["mapped"] if o else 0
+            d["organics"] = o["organics"] if o else 0
+            d["bio_species"] = o["bio_species"] if o else None
+            for k in ("was_discovered", "was_mapped", "was_footfalled"):
+                if o is not None and o[k] is not None:
+                    d[k] = o[k]
+            out.append(d)
+        return out
+
+    def explorers(self, id64: Optional[int], but: Optional[str] = None) -> List[str]:
+        """C1 'also explored by': names of the commanders who were here."""
+        if not id64 or not self.has_table("cmdr_systems"):
+            return []
+        rows = self.query("SELECT s.fid, c.name FROM cmdr_systems s LEFT JOIN commanders c "
+                          "ON c.fid=s.fid WHERE s.sys_id64=? AND s.visited_ts IS NOT NULL "
+                          "ORDER BY s.visited_ts", (int(id64),))
+        return [r["name"] or r["fid"] for r in rows if r["fid"] != but]
 
     def boxel_counts(self) -> Dict[str, int]:
         row = self.one("SELECT COUNT(*) AS n, SUM(complete) AS done FROM boxels")
@@ -340,4 +451,4 @@ class Database:
         return out
 
 
-__all__ = ["Database", "EXTERNAL_DBS", "_json"]
+__all__ = ["Database", "EXTERNAL_DBS", "CMDR_READY", "MAIN", "_json"]

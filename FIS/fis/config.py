@@ -71,6 +71,7 @@ class Config:
         self.firewall = ""          # "", "ok" or "declined" (LAN rule offer)
         self.poll_s = 0.5
         self.ini_path = INI_PATH
+        self.main_cmdr = ""         # C1: FID of the main commander, "" = automatic
 
     @property
     def filters(self) -> List[str]:
@@ -145,6 +146,7 @@ class Config:
         self.open_browser = _bool(s.get("open_browser", "true"))
         self.setup_done = _bool(s.get("setup_done", "false"))
         self.firewall = (s.get("firewall", "") or "").strip().lower()
+        self.main_cmdr = (s.get("main_cmdr", "") or "").strip()
         if self.lan:
             self.host = "0.0.0.0"
         return self
@@ -181,7 +183,7 @@ class Config:
             "open_browser": "true" if self.open_browser else "false",
             "setup_done": "true" if self.setup_done else "false",
             "firewall": self.firewall, "route_filters": self.route_filters,
-            "route_source": self.route_source,
+            "route_source": self.route_source, "main_cmdr": self.main_cmdr,
         }
         for k, v in vals.items():
             cp.set("fis", k, v)

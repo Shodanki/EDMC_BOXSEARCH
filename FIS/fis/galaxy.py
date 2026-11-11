@@ -253,6 +253,7 @@ def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
     # known systems
     rows = db.query("SELECT name, id64, x, y, z, quality, visited, fss_complete, sources FROM systems "
                     "WHERE x IS NOT NULL") if db.has_table("systems") else []
+    rows = db.with_visits(rows)            # C1: visited as the main commander
     regions = db.shell_regions()
     out["systems"] = [{"n": r["name"], "id": r["id64"], "x": _r(r["x"]), "y": _r(r["y"]), "z": _r(r["z"]),
                        "v": 1 if r["visited"] else 0, "f": 1 if r["fss_complete"] else 0,
