@@ -848,16 +848,19 @@ _PROSPECTS: Dict[str, Any] = {"key": None, "pros": {}}
 
 
 def _ring_prospects(archive: Any) -> Dict[str, Dict[str, Any]]:
-    """Prospecting per ring from the journals, computed once per archive change."""
+    """Prospecting per ring from the journals of EVERY commander (the
+    knowledge is shared, only the exploration is per commander), computed
+    once per archive change."""
     if archive is None:
         return {}
     from . import prospect
+    from .fleet import ALL_COMMANDERS
     try:
-        key = (getattr(archive, "rev", None), archive.commander()[0])
+        key = (id(archive), getattr(archive, "rev", None))
     except Exception:
         key = None
     if key is None or _PROSPECTS["key"] != key:
-        _PROSPECTS["pros"] = prospect.ring_prospects(archive.events())
+        _PROSPECTS["pros"] = prospect.ring_prospects(archive.events(ALL_COMMANDERS))
         _PROSPECTS["key"] = key
     return _PROSPECTS["pros"]
 

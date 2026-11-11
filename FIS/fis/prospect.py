@@ -6,7 +6,8 @@
 """
 What the rocks of a ring held - and what to expect at a kind of hotspot.
 
-From your own journals only (read only):
+From your own journals only - those of every commander on this PC: what a
+ring holds is shared knowledge (read only):
 
 * the ring you mine in: SupercruiseExit at a "PlanetaryRing" names it; it
   ends with SupercruiseEntry or a jump

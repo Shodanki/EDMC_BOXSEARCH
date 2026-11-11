@@ -371,6 +371,9 @@ def rate_loadout(lo: Dict[str, Any], vehicles: Optional[Iterable[str]] = None) -
 
 # --------------------------------------------------------------- archive
 
+ALL_COMMANDERS = "*"      # Archive.events(ALL_COMMANDERS): every commander's events
+
+
 class Archive:
     """Relevant journal events from every journal, rescanned when files change."""
 
@@ -467,13 +470,17 @@ class Archive:
         return (last["_fid"], last.get("Name")) if last else (None, None)
 
     def events(self, fid: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Events of one commander (default: the one logged in last)."""
+        """Events of one commander (default: the one logged in last). With
+        ALL_COMMANDERS every commander's events - for shared knowledge (what
+        rings and planets yield): only the exploration is per commander."""
         self.refresh()
         if fid is None:
             fid = self.commander()[0]
+        every = fid == ALL_COMMANDERS
         with self._lock:
             evs = [e for _p, (_s, lst) in sorted(self._files.items()) for e in lst
-                   if e["event"] != "Commander" and (fid is None or e.get("_fid") in (fid, None))]
+                   if e["event"] != "Commander"
+                   and (every or fid is None or e.get("_fid") in (fid, None))]
         evs.sort(key=lambda e: e.get("timestamp") or "")
         return evs
 
