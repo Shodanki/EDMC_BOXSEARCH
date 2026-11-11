@@ -419,7 +419,7 @@ class Database:
         if not fid:
             return []
         try:
-            rows = self.query("SELECT b.sys_id64, b.lost_ts, b.lost_what, s.name FROM cmdr_bodies b "
+            rows = self.query("SELECT b.sys_id64, b.lost_ts, b.lost_what, s.name, s.x, s.y, s.z FROM cmdr_bodies b "
                               "LEFT JOIN systems s ON s.id64=b.sys_id64 "
                               "WHERE b.fid=? AND b.lost_what IS NOT NULL", (fid,))
         except sqlite3.Error:                 # a plugin database before the crash marks
@@ -427,7 +427,10 @@ class Database:
         out: Dict[int, Dict[str, Any]] = {}
         for r in rows:
             d = out.setdefault(r["sys_id64"], {"id64": r["sys_id64"], "name": r["name"],
+                                               "pos": [r["x"], r["y"], r["z"]] if r["x"] is not None else None,
                                                "ts": r["lost_ts"], "scan": 0, "map": 0, "bio": []})
+            if (r["lost_ts"] or "") > (d["ts"] or ""):      # several crashes: the newest loss
+                d["ts"] = r["lost_ts"]
             for w in _json(r["lost_what"], []):
                 if w == "scan":
                     d["scan"] += 1

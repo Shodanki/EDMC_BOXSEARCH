@@ -63,6 +63,9 @@ class App:
         from .favourites import FavouriteStore
         # personal (K2): next to fis.ini, never in the repository
         self.favourites = FavouriteStore(os.path.join(os.path.dirname(cfg.ini_path), "favourites.json"))
+        from .losthidden import LostHiddenStore
+        # SHIP -> LOST DATA: crash losses hidden from the list (FIS-owned file)
+        self.lost_hidden = LostHiddenStore(os.path.join(os.path.dirname(cfg.ini_path), "lost_hidden.json"))
         # K5: the one online lookup of the FIS (on a click, through the plugin's gateway)
         from .online import CarrierLookup
         self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
@@ -493,6 +496,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._post_favourite(raw)
         if url.path == "/api/carriers/lookup":
             return self._post_lookup(raw)
+        if url.path == "/api/ship/lost_hidden":
+            return self._post_lost_hidden(raw)
         if url.path != "/api/settings":
             return self._error(404, "not found")
         if not self._local():
@@ -581,6 +586,56 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._error(400, str(exc))
         return self._json({"callsign": cs, "favourite": fav is not None, "note": (fav or {}).get("note", "")})
+
+    def _post_lost_hidden(self, raw: bytes) -> None:
+        """SHIP -> LOST DATA: hide crash losses from the list, or show them
+        all again. Only the FIS's own lost_hidden.json changes - the plugin
+        database stays read-only, the tasks stay planned.
+          {"hide": [{"id64": n, "what": null | "scan" | "map" | "bio:<species>"}]}
+          {"cap": 100 | 250 | 500 | 1000}   every listed system farther away
+          {"reset": true}"""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, UnicodeDecodeError):
+            return self._error(400, "bad request")
+        from . import losthidden
+        app = self.app
+        fid = app.archive.commander()[0]
+        store = app.lost_hidden
+        if body.get("reset") is True:
+            return self._json({"shown": store.reset(fid)})
+        try:
+            lost = app.db.lost_summary(fid)
+        except Exception:
+            lost = []
+        items: List[Tuple[int, Optional[str]]] = []
+        if "cap" in body:
+            if body["cap"] not in losthidden.CAPS_LY or isinstance(body["cap"], bool):
+                return self._error(400, "bad cap")
+            pos = (app.live_state().get("system") or {}).get("pos")
+            if not pos:
+                return self._error(409, "position unknown")
+            vis, _ = losthidden.apply(lost, store.get(fid), pos)
+            items = [(s["id64"], None) for s in losthidden.beyond(vis, body["cap"])]
+        else:
+            hide = body.get("hide")
+            if not isinstance(hide, list) or not hide or len(hide) > 50:
+                return self._error(400, "bad request")
+            for h in hide:
+                if not isinstance(h, dict) or not isinstance(h.get("id64"), int) \
+                        or isinstance(h.get("id64"), bool) or not losthidden.valid_what(h.get("what")):
+                    return self._error(400, "bad entry")
+                items.append((h["id64"], h.get("what")))
+        try:
+            n = store.hide(fid, items, lost)
+        except ValueError as exc:
+            return self._error(400, str(exc))
+        return self._json({"hidden": n})
 
     def _post_lookup(self, raw: bytes) -> None:
         """K5: one favourite's position at Spansh - on a click, cached 6 h."""
@@ -736,7 +791,8 @@ class Handler(BaseHTTPRequestHandler):
                 live = dict(live, fuel_warning=m._fuel_state(live).warning() if live.get("ship") else None)
             except Exception:
                 pass
-            return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db))
+            return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
+                                                        lost_hidden=app.lost_hidden))
         if path == "/api/carrier":
             from . import shipview
             from . import capi

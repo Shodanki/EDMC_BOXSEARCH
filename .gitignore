@@ -16,5 +16,6 @@ __pycache__/
 # FIS: personal settings (token) and local test data
 FIS/fis.ini
 FIS/favourites.json*
+FIS/lost_hidden.json*
 FIS/tests/data/
 FIS/.run.lock

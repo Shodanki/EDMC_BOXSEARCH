@@ -12,7 +12,7 @@
 // name slots, not positions), the engineer's column (power, modules, damage
 // and function report) and the loadmaster's column (cargo, fuel, locker).
 
-import { getJSON } from "../api.js";
+import { getJSON, postJSON } from "../api.js";
 import { el, frame, fmt, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
@@ -46,7 +46,12 @@ const REPORT = {
   power_over: N_("power draw {v} % of the power plant"),
 };
 
-let root = null, data = null, busy = false;
+let root = null, data = null, busy = false, lostMsg = "";
+const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
+// more lost systems than this: a summary line in UNSOLD DATA, the list in its own tab
+const LOST_INLINE = 10;
+let tab = store("fis.ship.tab") === "lost" ? "lost" : "ship";
+const lostMany = () => !!(data && data.unsold && (data.unsold.lost_systems || []).length > LOST_INLINE);
 
 export function mount(r) {
   root = r;
@@ -77,9 +82,18 @@ function render() {
       el("span", { class: "c-dim", text: t("Log in to the game – the fitting is written at start, docking and outfitting.") }))));
     return;
   }
+  root.append(annunciator());
+  // many crash losses: SHIP | LOST DATA, the same sub-tabs as CARRIER
+  if (lostMany()) {
+    const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
+      onclick: () => { tab = k; store("fis.ship.tab", k); render(); } });
+    root.append(el("div", { class: "kc-tabs" }, tb("ship", t("SHIP")),
+      tb("lost", t("LOST DATA") + " · " + data.unsold.lost_systems.length)));
+    if (tab === "lost") { root.append(lostData()); return; }
+  }
   // left: the picture and the hold; right (the wide side): report and the
   // engineer's module list, which needs the room (user, 05.11.2026)
-  root.append(annunciator(), el("div", { class: "sh-grid" },
+  root.append(el("div", { class: "sh-grid" },
     el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), jumponium()),
     el("div", { class: "sh-col sh-right" }, target(), unsold(), report(), hazards(), engineer())));
 }
@@ -124,17 +138,95 @@ function unsold() {
 // data that went down with the ship - planned again in SYSTEM until redone
 function lostRows(U) {
   const L = U.lost_systems || [];
-  if (!L.length) return [];
-  const out = [el("div", { class: "c-red pl-line", text: "✖ " + t("Lost in a crash, to redo:") })];
+  if (L.length > LOST_INLINE) return [el("button", { class: "sh-lost-sum c-red", text: "✖ " + t("{n} systems lost in crashes - see LOST DATA", { n: L.length }),
+    onclick: () => { tab = "lost"; store("fis.ship.tab", "lost"); render(); } })];
+  const out = [];
+  if (L.length) out.push(el("div", { class: "c-red pl-line", text: "✖ " + t("Lost in a crash, to redo:") }));
   for (const s of L) {
-    const n = {};
-    for (const b of s.bio) n[b] = (n[b] || 0) + 1;          // the same species on several bodies
-    const bio = Object.entries(n).map(([b, k]) => (k > 1 ? k + "× " : "") + b).join(", ");
-    out.push(el("div", { class: "small" }, (s.name || "?") + " ",
+    const bio = bioCount(s).map(([b, k]) => (k > 1 ? k + "× " : "") + b).join(", ");
+    out.push(el("div", { class: "small sh-lost-line" }, hideBtn(s, null), (s.name || "?") + " ",
       el("span", { class: "c-dim", text: [s.scan ? t("{n} scans", { n: s.scan }) : null, s.map ? t("{n} maps", { n: s.map }) : null,
-        bio || null, s.ts ? String(s.ts).slice(0, 10) : null].filter(Boolean).join(" · ") })));
+        bio || null, distText(s), s.ts ? String(s.ts).slice(0, 10) : null].filter(Boolean).join(" · ") })));
   }
+  out.push(...lostFoot(U));
   return out;
+}
+
+// ------------------------------------------------------------ LOST DATA
+// Every lost system, newest day first, then nearest. Hiding takes an entry
+// off this list only (FIS/lost_hidden.json) - route and SYSTEM keep planning
+// the task until it is redone; a later crash in the same system lists it again.
+function bioCount(s) {
+  const n = {};
+  for (const b of s.bio || []) n[b] = (n[b] || 0) + 1;          // the same species on several bodies
+  return Object.entries(n);
+}
+const distText = (s) => (s.dist === null || s.dist === undefined ? null : fmt(s.dist, 1) + " ly");
+const itemsOf = (s) => (s.scan ? 1 : 0) + (s.map ? 1 : 0) + bioCount(s).length;
+
+function hideBtn(s, what, label) {
+  const name = s.name || "#" + s.id64;
+  const desc = what === null ? name : what === "scan" ? t("{n} scans", { n: s.scan }) + " · " + name
+    : what === "map" ? t("{n} maps", { n: s.map }) + " · " + name : what.slice(4) + " · " + name;
+  return el("button", { class: "sh-hide", title: t("hide from the list"), "aria-label": t("hide from the list") + ": " + desc,
+    text: label ? label + " ✕" : "✕",
+    onclick: () => askHide(desc, what === null ? 1 : 0, what === null ? itemsOf(s) : 1, { hide: [{ id64: s.id64, what }] }) });
+}
+
+// every hide asks twice; the second time with what it hides and how it comes back
+async function askHide(desc, nSys, nItems, body) {
+  if (!window.confirm(t("Hide {what} from the list?", { what: desc }))) return;
+  if (!window.confirm(t("Hiding from the list: {s} system(s), {i} item(s). It cannot be undone from the list - only \"Show hidden again\" in this view brings them back. Continue?", { s: nSys, i: nItems }))) return;
+  await sendLost(body);
+}
+
+async function sendLost(body) {
+  try {
+    await postJSON("/api/ship/lost_hidden", body);
+    lostMsg = "";
+    data = await getJSON("/api/shipstatus");
+  } catch (e) { lostMsg = t("Could not save: {e}", { e: e.message }); }
+  render();
+}
+
+function lostFoot(U) {
+  const out = [];
+  if (lostMsg) out.push(el("div", { class: "c-red small", text: lostMsg }));
+  if (U.lost_hidden) out.push(el("button", { class: "sh-unhide", text: t("Show hidden again ({n})", { n: U.lost_hidden }),
+    onclick: () => { if (window.confirm(t("Show all {n} hidden entries again?", { n: U.lost_hidden }))) sendLost({ reset: true }); } }));
+  return out;
+}
+
+function lostData() {
+  const U = data.unsold || {};
+  const L = U.lost_systems || [];
+  const rows = [];
+  const known = L.some((s) => s.dist !== null && s.dist !== undefined);
+  rows.push(el("div", { class: "sh-caps" }, el("span", { class: "c-dim", text: t("Hide farther than:") + " " }),
+    ...(U.lost_caps || []).map((ly) => {
+      const far = L.filter((s) => s.dist !== null && s.dist !== undefined && s.dist > ly);
+      return el("button", { text: ly + " ly · " + far.length, disabled: far.length ? null : "disabled",
+        onclick: () => askHide(t("everything farther than {ly} ly from here", { ly }), far.length,
+          far.reduce((a, s) => a + itemsOf(s), 0), { cap: ly }) });
+    }),
+    known ? null : el("span", { class: "c-amber small", text: " " + t("position unknown - the distance caps need the current system") })));
+  rows.push(el("div", { class: "sh-lost-row sh-lost-head c-dim small" }, el("span", { text: "" }), el("span", { text: t("System") }),
+    el("span", { class: "num", text: t("Distance") }), el("span", { text: t("Lost") }), el("span", { text: t("To redo") })));
+  for (const s of L) {
+    rows.push(el("div", { class: "sh-lost-row" }, hideBtn(s, null),
+      el("span", {}, el("span", { text: s.name || "?" }), el("span", { class: "c-dim small", text: " · " + s.id64 })),
+      el("span", { class: "num", text: distText(s) || "?" }),
+      el("span", { class: "c-dim", text: s.ts ? String(s.ts).slice(0, 10) : "" }),
+      el("span", { class: "sh-lost-items" },
+        s.scan ? hideBtn(s, "scan", t("{n} scans", { n: s.scan })) : null,
+        s.map ? hideBtn(s, "map", t("{n} maps", { n: s.map })) : null,
+        ...bioCount(s).map(([b, k]) => hideBtn(s, "bio:" + b, (k > 1 ? k + "× " : "") + b)))));
+  }
+  if (!L.length) rows.push(el("div", { class: "c-dim", text: t("Nothing listed - every loss is redone or hidden.") }));
+  rows.push(...lostFoot(U));
+  rows.push(el("div", { class: "c-dim small", text: t("Newest day first, then nearest. Hiding only takes entries off this list - route and SYSTEM still plan them until they are redone; a later crash in the same system lists it again.") }));
+  return frame(t("LOST DATA"), t("{n} systems · {h} hidden", { n: L.length, h: U.lost_hidden || 0 }), rows,
+    { cls: "sh-lost", appear: false, kind: L.length ? "warn" : "" });
 }
 
 // ------------------------------------------------------------ target (E5)

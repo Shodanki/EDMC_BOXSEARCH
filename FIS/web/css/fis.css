@@ -682,6 +682,19 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .kc-act { display: flex; gap: 4px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
 .kc-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
 .kc-tabs button.on { color: var(--amber); border-color: var(--amber); }
+/* SHIP -> LOST DATA */
+.sh-lost-sum { color: var(--red); border-color: rgba(var(--red-rgb), .5); text-align: left; }
+.sh-hide { padding: 0 6px; margin: 1px 4px 1px 0; font-size: 12px; color: var(--dim); }
+.sh-hide:hover { color: var(--red); border-color: var(--red); }
+.sh-unhide { margin-top: 4px; color: var(--cyan); }
+.sh-caps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.sh-lost-row { display: grid; grid-template-columns: 30px minmax(0, 1.4fr) 80px 90px minmax(0, 2fr); gap: 8px;
+  align-items: baseline; padding: 3px 0; border-bottom: 1px solid rgba(var(--cyan-rgb), .08); }
+.sh-lost-row .num { text-align: right; }
+.sh-lost-items { display: flex; flex-wrap: wrap; gap: 2px; }
+.lay-phone .sh-lost-row { grid-template-columns: 30px minmax(0, 1fr) 70px; }
+.lay-phone .sh-lost-row > :nth-child(4), .lay-phone .sh-lost-head > :nth-child(5) { display: none; }
+.lay-phone .sh-lost-row > :nth-child(5) { grid-column: 2 / -1; }
 .kc-market summary { cursor: pointer; color: var(--cyan); margin-top: 2px; }
 .kc-good { display: grid; grid-template-columns: minmax(0, 1fr) 80px 90px; gap: 8px; padding-left: 10px; }
 .kc-good .num { text-align: right; }
