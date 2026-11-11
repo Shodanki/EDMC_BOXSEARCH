@@ -67,7 +67,9 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           # unsold exploration data: which bodies you scanned (kept slim)
           "Scan",
           # which ring the rocks were prospected in (fis/prospect.py)
-          "SupercruiseEntry")
+          "SupercruiseEntry",
+          # first footfall (unsold data: the x5 bonus is paid only there)
+          "Disembark")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
 
 # carrier tritium per jump: 5 + ly * (load + tritium + BASE) / DIV, rounded.
@@ -451,8 +453,15 @@ class Archive:
                         e = slim
                     elif e.get("event") == "Scan":
                         # only who and what - the full scan is in the plugin database
-                        e = {k: e.get(k) for k in ("event", "timestamp", "StarSystem", "SystemAddress",
-                                                   "BodyID", "BodyName", "ScanType")}
+                        slim = {k: e.get(k) for k in ("event", "timestamp", "StarSystem", "SystemAddress",
+                                                      "BodyID", "BodyName", "ScanType")}
+                        # first discovery / first footfall (unsold risk) - only when present
+                        slim.update({k: e[k] for k in ("DistanceFromArrivalLS", "WasDiscovered",
+                                                       "WasFootfalled", "Landable") if k in e})
+                        e = slim
+                    elif e.get("event") == "Disembark":
+                        e = {k: e.get(k) for k in ("event", "timestamp", "SystemAddress", "Body",
+                                                   "BodyID", "OnPlanet", "SRV")}
                     elif e.get("event") == "ShipTargeted":
                         if not str(e.get("PilotName") or "").startswith("$RolePanel2_unmanned"):
                             continue

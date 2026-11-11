@@ -97,9 +97,9 @@ function unsold() {
   if (B.count) {
     rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exobiology") + " " }),
       el("span", { class: "c-amber", text: t("{n} analysed, not sold", { n: B.count }) + (B.value ? " · ≈ " + Mcr(B.value) : "") }),
-      B.first ? el("span", { class: "c-green", text: " · " + t("{n} first logged", { n: B.first }) }) : null));
+      B.first ? el("span", { class: "c-green", text: " · " + t("{n} with first-footfall bonus ×5", { n: B.first }) }) : null));
     if (B.unknown) rows.push(el("div", { class: "c-dim small", text: t("{n} species without a known value (never sold by you)", { n: B.unknown }) }));
-    for (const x of B.items.slice(-5)) rows.push(el("div", { class: "small" }, "◐ " + (x.variant || x.species),
+    for (const x of B.items.slice(-5)) rows.push(el("div", { class: "small" }, (x.footfall ? "★ " : "◐ ") + (x.variant || x.species),
       el("span", { class: "c-dim", text: (x.system ? " · " + x.system : "") + (x.value ? " · " + Mcr(x.value) : "") })));
   }
   if (X.systems) rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exploration") + " " }),
@@ -112,7 +112,7 @@ function unsold() {
   if (U.first_systems || U.footfall_bio) rows.push(el("div", { class: "c-violet" }, "★ " + [
     U.first_systems ? t("{n} systems discovered first by you", { n: U.first_systems }) : null,
     U.footfall_bio ? t("{n} species on bodies of your first footfall", { n: U.footfall_bio }) : null].filter(Boolean).join(" · ")));
-  rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; exploration data only counted.") }));
+  rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; the ×5 bonus only on bodies of your first footfall; exploration data only counted.") }));
   if (U.advice === "sell") rows.push(el("div", { class: "c-red", text: t("A lot at stake - consider selling at the next station or carrier with Vista Genomics / Universal Cartographics.") }));
   return frame(t("UNSOLD DATA"), B.value ? "≈ " + Mcr(B.value) : "", rows, { cls: "sh-unsold", appear: false,
     kind: U.risk === "high" ? "alert" : U.advice || U.risk === "moderate" ? "warn" : "" });
