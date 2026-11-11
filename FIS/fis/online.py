@@ -144,5 +144,7 @@ class CarrierLookup:
             pos = [hit.get("system_x"), hit.get("system_y"), hit.get("system_z")]
             out.update(found=True, system=hit.get("system_name"), id64=hit.get("system_id64"),
                        market_id=hit.get("market_id"), updated=hit.get("updated_at"),
+                       # A1: who may dock - part of the same answer, no extra request
+                       docking_access=hit.get("carrier_docking_access") or None,
                        pos=pos if all(v is not None for v in pos) else None)
         return out

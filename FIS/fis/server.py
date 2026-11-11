@@ -160,17 +160,28 @@ class App:
         return self._with_favourites(self._with_carrier(out, id64))
 
     def _with_favourites(self, out: Dict[str, Any]) -> Dict[str, Any]:
-        """K4: a star at your favourite carriers among the points of interest."""
+        """K4: a star at your favourite carriers among the points of interest;
+        A1: their docking access where known, carriers refusing us left out."""
         if not out.get("poi"):
             return out
         try:
-            from .carriers import mark_favourite_pois
-            favs = self.favourites.get(self.archive.commander()[0])["favourites"]
+            from .carriers import docking_access, mark_docking_pois, mark_favourite_pois
+            saved = self.favourites.get(self.archive.commander()[0])
         except Exception:
             return out
-        if not favs:
+        favs = saved.get("favourites") or {}
+        poi = out["poi"]
+        hidden = 0
+        try:
+            acc = docking_access(self.archive.events(), saved.get("markets"), favs)
+            poi, hidden = mark_docking_pois(poi, acc)
+        except Exception:
+            pass
+        if favs:
+            poi = mark_favourite_pois(poi, favs)
+        if poi is out["poi"] and not hidden:
             return out
-        return dict(out, poi=mark_favourite_pois(out["poi"], favs))
+        return dict(out, poi=poi, poi_hidden=hidden)
 
     def favourite_carriers_at(self) -> List[Dict[str, Any]]:
         """K4 GALAXY: your favourite carriers at their last known position."""

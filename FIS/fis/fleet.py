@@ -60,6 +60,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "FSSSignalDiscovered",
           # known carriers (K1): where you docked, what you started there
           "Undocked", "MissionAccepted", "CommunityGoalJoin",
+          # may we dock there (A1): the carrier's access, granted / refused
+          "Market", "DockingGranted", "DockingDenied",
           # which ring the rocks were prospected in (fis/prospect.py)
           "SupercruiseEntry")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)

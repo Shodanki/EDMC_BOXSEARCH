@@ -18,7 +18,7 @@ from fis.online import CACHE_S, CarrierLookup
 
 ROW_EXACT = {"name": "K7Q-12Z", "type": "Drake-Class Carrier", "system_name": "Test System",
              "system_id64": 42, "market_id": 555, "updated_at": "2026-11-09T10:00:00Z",
-             "system_x": 1.0, "system_y": 2.0, "system_z": 3.0}
+             "system_x": 1.0, "system_y": 2.0, "system_z": 3.0, "carrier_docking_access": "all"}
 ROW_OTHER = dict(ROW_EXACT, name="ABC-K7Q", system_name="Elsewhere")      # token match only
 
 
@@ -60,6 +60,7 @@ class TestOnline(unittest.TestCase):
         self.assertTrue(r["found"])
         self.assertEqual((r["system"], r["pos"], r["updated"]), ("Test System", [1.0, 2.0, 3.0],
                                                                  "2026-11-09T10:00:00Z"))
+        self.assertEqual(r["docking_access"], "all")       # A1: from the same answer
         method, url, body, headers = FakeSession.sent[0]
         self.assertEqual((method, url), ("POST", "https://spansh.co.uk/api/stations/search"))
         self.assertEqual(body["filters"]["name"]["value"], "K7Q-12Z")

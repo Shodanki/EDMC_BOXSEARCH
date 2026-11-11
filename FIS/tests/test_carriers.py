@@ -148,5 +148,69 @@ class TestCarriersHere(unittest.TestCase):
         self.assertEqual(ca.carriers_here(None, None, own, fav), [])
 
 
+class TestDockingAccess(unittest.TestCase):
+    """A1: may we dock - local sources only, the newest decides."""
+
+    def test_sources_and_states(self):
+        evs = [
+            _e("02T10:00:00", "Market", MarketID=1, StationName="AAA-111", StationType="FleetCarrier",
+               CarrierDockingAccess="all", StarSystem="S"),
+            _e("02T10:00:00", "Market", MarketID=2, StationName="BBB-222", StationType="FleetCarrier",
+               CarrierDockingAccess="squadronfriends", StarSystem="S"),
+            _e("02T10:00:00", "Market", MarketID=3, StationName="CCC-333", StationType="FleetCarrier",
+               CarrierDockingAccess="friends", StarSystem="S"),
+            _e("01T09:00:00", "DockingGranted", MarketID=3, StationName="CCC-333",
+               StationType="FleetCarrier", LandingPad=5),
+            _e("02T11:00:00", "DockingDenied", MarketID=4, StationName="DDD-444",
+               StationType="FleetCarrier", Reason="RestrictedAccess"),
+            _e("02T11:00:00", "DockingDenied", MarketID=5, StationName="EEE-555",
+               StationType="FleetCarrier", Reason="NoSpace"),
+            _e("02T11:00:00", "DockingGranted", MarketID=6, StationName="Some Port",
+               StationType="Coriolis", LandingPad=5),
+            # all at first, then the owner closed it
+            _e("01T08:00:00", "Market", MarketID=7, StationName="GGG-777", StationType="FleetCarrier",
+               CarrierDockingAccess="all"),
+        ]
+        markets = {"GGG-777": {"ts": "2026-11-03T08:00:00Z", "access": "none"},
+                   "HHH-888": {"ts": "2026-11-03T08:00:00Z"}}
+        favs = {"FFF-666": {"online": {"found": True, "docking_access": "all",
+                                       "updated": "2026-11-04 10:00:00+00"}},
+                "III-999": {"online": {"found": True, "docking_access": "", "updated": "2026-11-04 10:00:00+00"}}}
+        acc = ca.docking_access(evs, markets, favs)
+        st = {cs: a["state"] for cs, a in acc.items()}
+        self.assertEqual(st, {"AAA-111": "dock", "BBB-222": "maybe", "CCC-333": "dock",
+                              "DDD-444": "none", "FFF-666": "dock", "GGG-777": "none"})
+        self.assertEqual((acc["CCC-333"]["access"], acc["CCC-333"]["granted"]), ("friends", True))
+        self.assertEqual((acc["FFF-666"]["source"], acc["FFF-666"]["ts"]), ("Spansh", "2026-11-04T10:00:00Z"))
+        self.assertEqual(acc["AAA-111"]["source"], "market")
+
+    def test_mark_pois(self):
+        poi = [{"kind": "station", "name": "Port"},
+               {"kind": "carrier", "name": "OPEN ONE AAA-111"},
+               {"kind": "carrier", "name": "DDD-444"},
+               {"kind": "carrier", "name": "UNKNOWN ZZZ-000"}]
+        acc = {"AAA-111": {"state": "dock", "access": "all", "source": "market", "ts": "x"},
+               "DDD-444": {"state": "none", "access": None, "source": "journal", "ts": "y"}}
+        out, hidden = ca.mark_docking_pois(poi, acc)
+        self.assertEqual(hidden, 1)
+        self.assertEqual([p["name"] for p in out], ["Port", "OPEN ONE AAA-111", "UNKNOWN ZZZ-000"])
+        self.assertEqual((out[1]["access"], out[1]["access_word"]), ("dock", "all"))
+        self.assertNotIn("access", out[2])
+        self.assertNotIn("access", poi[1])                        # the cached list is untouched
+        self.assertEqual(ca.mark_docking_pois(poi, {}), (poi, 0))
+
+    def test_archive_keeps_the_events(self):
+        d = tempfile.mkdtemp()
+        lines = [_e("01T09:00:00", "Commander", FID="F7", Name="Tester"),
+                 _e("02T10:00:00", "Market", MarketID=1, StationName="AAA-111",
+                    StationType="FleetCarrier", CarrierDockingAccess="all"),
+                 _e("02T10:01:00", "MarketSell", MarketID=1, Type="gold", Count=1)]
+        with open(os.path.join(d, "Journal.2026-11-02T090000.01.log"), "w", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(x) + chr(10) for x in lines))
+        evs = fl.Archive(d).events()
+        self.assertEqual([e["event"] for e in evs], ["Market", "MarketSell"])
+        self.assertEqual(ca.docking_access(evs)["AAA-111"]["state"], "dock")
+
+
 if __name__ == "__main__":
     unittest.main()

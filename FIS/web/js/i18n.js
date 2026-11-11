@@ -969,5 +969,11 @@ const DE = /*DE*/{
   "Spansh lookup": "Spansh-Abfrage",
   "your carrier": "dein Träger",
   "CARRIERS HERE": "TRÄGER HIER",
-  "last known": "zuletzt bekannt"
+  "last known": "zuletzt bekannt",
+  "its market": "sein Markt",
+  "your docking": "dein Andocken",
+  "docking access: {a}": "Andock-Erlaubnis: {a}",
+  "dockable": "andockbar",
+  "friends/squadron only": "nur Freunde/Geschwader",
+  "{n} carriers that refuse docking hidden": "{n} Träger ohne Andock-Erlaubnis ausgeblendet"
 }/*END*/;

@@ -212,6 +212,17 @@ function systemReport(sys) {
 const POI_ICON = { station: "▣", settlement: "⌂", carrier: "◈", extraction: "⛏", beacon: "◎" };
 const POI_KIND = { station: N_("station"), settlement: N_("settlement"), carrier: N_("fleet carrier"),
   extraction: N_("extraction site"), beacon: N_("nav beacon") };
+// A1: may we dock at this carrier? Where the access is known, with source and date
+const ACCESS_SRC = { market: N_("its market"), journal: N_("your docking"), Spansh: "Spansh" };
+function accessTag(p) {
+  if (!p.access) return null;
+  const tip = t("docking access: {a}", { a: p.access_word || "–" }) + " · " + t(ACCESS_SRC[p.access_src] || p.access_src || "")
+    + (p.access_ts ? " · " + String(p.access_ts).slice(0, 10) : "");
+  return p.access === "dock"
+    ? el("span", { class: "chip mapped", title: tip, text: t("dockable") })
+    : el("span", { class: "chip", title: tip, text: t("friends/squadron only") });
+}
+
 function poiFrame(sys) {
   const list = sys.poi || [];
   if (!list.length) return null;
@@ -228,8 +239,10 @@ function poiFrame(sys) {
     return el("div", { class: "sr-line" },
       p.favourite ? el("span", { class: "poi-fav", title: t("favourite"), text: "★ " }) : null,
       el("span", { class: "c-cyan", text: (POI_ICON[p.kind] || "·") + " " + p.name }),
+      accessTag(p),
       el("span", { class: "c-dim small", text: "  " + bits.join(" · ") }));
   });
+  if (sys.poi_hidden) rows.push(el("div", { class: "c-dim small", text: t("{n} carriers that refuse docking hidden", { n: sys.poi_hidden }) }));
   if (nCar > CARRIERS_SHOWN) rows.push(el("div", { class: "c-dim small", text: t("+{n} more fleet carriers seen here", { n: nCar - CARRIERS_SHOWN }) }));
   rows.push(el("div", { class: "c-dim small", text: t("From your own journals - carriers move on.") }));
   return frame(t("POINTS OF INTEREST"), String(list.length), rows, { cls: "sr-frame", appear: false });

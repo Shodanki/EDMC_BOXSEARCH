@@ -141,7 +141,7 @@ class FavouriteStore:
     def set_online(self, fid: Optional[str], callsign: str, info: Dict[str, Any]) -> bool:
         """K5: keep the answer of an online lookup with the favourite."""
         keep = {k: info.get(k) for k in ("checked", "found", "source", "system", "id64",
-                                           "market_id", "updated", "pos")}
+                                           "market_id", "updated", "pos", "docking_access")}
         with self._lock:
             f = self._cmdr(fid)["favourites"].get(callsign)
             if not f:
@@ -157,7 +157,7 @@ class FavouriteStore:
         ts = vis.get("market_ts") or ""
         if not is_callsign(cs) or not ts:
             return False
-        snap = {"ts": ts, "system": vis.get("system"),
+        snap = {"ts": ts, "system": vis.get("system"), "access": vis.get("access"),
                 "buys": [{k: b.get(k) for k in ("key", "name", "price", "demand")}
                          for b in (vis.get("buys") or [])[:MAX_ITEMS]],
                 "sells": [{k: s.get(k) for k in ("key", "name", "price", "stock")}

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 # "SOME NAME K7Q-12Z" - the FSS signal of a fleet carrier
 _SIGNAL = re.compile(r"^(.*?)\s*\b([A-Z0-9]{3}-[A-Z0-9]{3})$")
@@ -352,3 +352,95 @@ def carriers_here(sys_id64: Any, sys_name: Optional[str], own: Optional[Dict[str
         out.append(item)
         seen.add(cs)
     return out
+
+
+# A1: may we dock? Market.json / the journal's Market event write the
+# carrier's CarrierDockingAccess; Spansh reports carrier_docking_access.
+ACCESS_DOCK = {"all"}
+ACCESS_MAYBE = {"friends", "squadron", "squadronfriends"}
+ACCESS_NONE = {"none"}
+
+
+def docking_access(evs: Iterable[Dict[str, Any]], markets: Optional[Dict[str, Any]] = None,
+                   favourites: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, Any]]:
+    """
+    callsign -> {'state': 'dock' | 'maybe' | 'none', 'access', 'source', 'ts',
+    'granted'} from local data only:
+
+      Market (journal) / Market.json snapshot (K3)  CarrierDockingAccess
+      DockingGranted at a fleet carrier             you were let in
+      DockingDenied, Reason RestrictedAccess        you were turned away
+      the stored Spansh lookup of a favourite (K5)  carrier_docking_access
+
+    The newest record decides; friends/squadron access counts as 'dock' when
+    you were granted docking there before (then you are one of them), else
+    'maybe'. 'none' or a refusal: 'none' (the view hides those).
+    """
+    recs: Dict[str, List[Dict[str, Any]]] = {}
+
+    def add(cs: Any, access: Any, source: str, ts: Any) -> None:
+        if not is_callsign(cs) or not access:
+            return
+        recs.setdefault(cs, []).append({"access": str(access).lower(), "source": source,
+                                         "ep": _epoch(ts) or 0.0, "ts": ts})
+
+    for e in evs or ():
+        ev = e.get("event")
+        if e.get("StationType") != "FleetCarrier":
+            continue
+        cs = e.get("StationName")
+        if ev == "Market" and e.get("CarrierDockingAccess"):
+            add(cs, e.get("CarrierDockingAccess"), "market", e.get("timestamp"))
+        elif ev == "DockingGranted":
+            add(cs, "granted", "journal", e.get("timestamp"))
+        elif ev == "DockingDenied" and e.get("Reason") == "RestrictedAccess":
+            add(cs, "denied", "journal", e.get("timestamp"))
+    for cs, m in (markets or {}).items():
+        if (m or {}).get("access"):
+            add(cs, m["access"], "market", m.get("ts"))
+    for cs, f in (favourites or {}).items():
+        on = (f or {}).get("online") or {}
+        if on.get("found") and on.get("docking_access"):
+            add(cs, on["docking_access"], "Spansh", on.get("updated") or on.get("checked"))
+    out: Dict[str, Dict[str, Any]] = {}
+    for cs, lst in recs.items():
+        lst.sort(key=lambda r: r["ep"])
+        last = lst[-1]
+        granted = any(r["access"] == "granted" for r in lst)
+        a = last["access"]
+        if a in ACCESS_NONE or a == "denied":
+            state = "none"
+        elif a in ACCESS_DOCK or a == "granted":
+            state = "dock"
+        elif a in ACCESS_MAYBE:
+            state = "dock" if granted else "maybe"
+        else:
+            continue                                   # an unknown word: say nothing
+        # the access word itself (not "granted") from the newest record that has one
+        word = next((r["access"] for r in reversed(lst) if r["access"] not in ("granted", "denied")), None)
+        out[cs] = {"state": state, "access": word, "source": last["source"],
+                   "ts": _iso(last["ep"]) if last["ep"] else last["ts"], "granted": granted}
+    return out
+
+
+def mark_docking_pois(poi: List[Dict[str, Any]], access: Dict[str, Dict[str, Any]]
+                      ) -> Tuple[List[Dict[str, Any]], int]:
+    """A1: SYSTEM points of interest - carriers we may dock at get their
+    access, carriers that refuse us are left out. Returns (new list, number
+    hidden); the cached list stays untouched."""
+    if not access:
+        return poi, 0
+    out, hidden = [], 0
+    for p in poi:
+        if p.get("kind") == "carrier":
+            nm = p.get("name") or ""
+            cs = nm if is_callsign(nm) else (parse_signal(nm) or {}).get("callsign")
+            a = access.get(cs) if cs else None
+            if a:
+                if a["state"] == "none":
+                    hidden += 1
+                    continue
+                p = dict(p, access=a["state"], access_word=a.get("access"),
+                         access_src=a["source"], access_ts=a["ts"])
+        out.append(p)
+    return out, hidden

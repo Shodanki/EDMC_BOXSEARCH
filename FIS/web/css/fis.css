@@ -683,6 +683,7 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .fav-star { background: none; border: 0; color: var(--dim); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }
 .fav-star.on { color: var(--amber); }
 .poi-fav { color: var(--amber); }
+.sr-line .chip { margin-left: 8px; text-indent: 0; }
 /* MINING */
 .mh-row { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; }
 .mh-bar { position: relative; display: flex; height: 16px; background: rgba(var(--cyan-rgb), .06); border: 1px solid rgba(var(--cyan-rgb), .25); }
