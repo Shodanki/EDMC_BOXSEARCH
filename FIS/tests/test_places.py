@@ -45,8 +45,34 @@ class Places(_Base):
         fresh, old = self.place([
             {"kind": "carrier", "name": "X1Y-2Z3", "_dist": 79.3, "seen": "2026-11-12T08:00:00Z"},
             {"kind": "carrier", "name": "A1B-2C3", "_dist": 79.3, "seen": "2026-11-10T08:00:00Z"}])
-        self.assertEqual(fresh["near"]["body_id"], 3)
-        self.assertNotIn("near", old)                                   # docked two days ago: moved on?
+        self.assertEqual((fresh["near"]["body_id"], fresh["near"]["fresh"]), (3, True))
+        self.assertEqual((old["near"]["body_id"], old["near"]["fresh"]), (3, False))  # two days ago
+
+    def test_map_places_own_favourites_others(self):
+        from fis import carriers
+        poi = [{"kind": "station", "name": "Port", "near": {"body_id": 3}},
+               {"kind": "station", "name": "Seen only in the FSS"},
+               {"kind": "carrier", "name": "OWN-001", "near": {"body_id": 3, "fresh": True}},
+               {"kind": "carrier", "name": "FAV ONE X1Y-2Z3", "favourite": True, "callsign": "X1Y-2Z3",
+                "near": {"body_id": 3, "fresh": False}},
+               {"kind": "carrier", "name": "OLD A1B-2C3", "near": {"body_id": 3, "fresh": False}},
+               {"kind": "carrier", "name": "NEW Q1Q-1Q1", "near": {"body_id": 4, "fresh": True}},
+               {"kind": "carrier", "name": "FAV GONE K7K-7K7", "favourite": True, "callsign": "K7K-7K7",
+                "near": {"body_id": 3, "fresh": True}}]
+        here = [{"kind": "favourite", "callsign": "X1Y-2Z3", "name": "FAV ONE", "source": "journal"},
+                {"kind": "favourite", "callsign": "S5S-5S5", "name": "FAV SPANSH", "source": "Spansh",
+                 "ts": "2026-11-12T08:00:00Z"}]
+        out, extra = carriers.map_places(poi, "OWN-001", here)
+        drawn = {p["name"]: p.get("map") for p in out}
+        self.assertEqual(drawn, {"Port": True, "Seen only in the FSS": False, "OWN-001": False,
+                                 "FAV ONE X1Y-2Z3": True, "OLD A1B-2C3": False,
+                                 "NEW Q1Q-1Q1": True,
+                                 "FAV GONE K7K-7K7": False})    # docked today, but newest position elsewhere
+        self.assertTrue(out[2]["own"])                          # drawn by the own-carrier layer only
+        self.assertEqual([(e["callsign"], e["here_source"], e["map"]) for e in extra],
+                         [("S5S-5S5", "Spansh", True)])        # known here only from Spansh: beside the star
+        self.assertNotIn("map", poi[0])                         # the cached list stays untouched
+        self.assertEqual(carriers.map_places([], "OWN-001", [{"callsign": "OWN-001"}])[1], [])
 
     def test_settlements_and_undocked_stay_as_they_are(self):
         s, u = self.place([{"kind": "settlement", "name": "Camp", "body": "A 1"},

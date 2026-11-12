@@ -188,6 +188,7 @@ const DE = /*DE*/{
   "corridor": "Korridor",
   "plot to {n} · {b} boxels never probed · ~{j} jumps": "plotten nach {n} · {b} nie geprüfte Boxel · ~{j} Sprünge",
   "near {b}": "bei {b}",
+  "here per Spansh {d}": "hier laut Spansh {d}",
   "TANK SIZE": "TANKGRÖSSE",
   "{p} % of the full tank - learnt after a refuel synthesis, {d}": "{p} % des vollen Tanks – gelernt nach einer Treibstoff-Synthese, {d}",
   "the full tank is learnt after a refuel synthesis": "der volle Tank wird nach einer Treibstoff-Synthese gelernt",

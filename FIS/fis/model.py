@@ -309,7 +309,9 @@ def place_pois(poi: List[Dict[str, Any]], rows: Iterable[Any],
     the arrival star (DistFromStarLS), the scans give every body's. The body
     whose distance matches (within PLACE_TOL_LS, or PLACE_TOL_REL far out) is
     where it is; with none, it stays in the list only - no guessed place.
-    Carriers only within CARRIER_PLACE_H of docking. Sets p["near"].
+    Sets p["near"]; for a carrier also "fresh" (docked within CARRIER_PLACE_H):
+    another commander's carrier is drawn only while fresh, your favourites as
+    long as their newest known position is this system (server, S2b).
     """
     short = {b.get("body_id"): b.get("short") or b.get("name") for b in bodies}
     cand = []
@@ -325,14 +327,13 @@ def place_pois(poi: List[Dict[str, Any]], rows: Iterable[Any],
         d = p.pop("_dist", None)
         if d is None or not cand or p.get("kind") not in ("station", "carrier"):
             continue
-        if p["kind"] == "carrier":
-            seen = parse_ts(p.get("seen")) if p.get("seen") else None
-            if seen is None or now - seen > CARRIER_PLACE_H * 3600:
-                continue
         ls, bid, name = min(cand, key=lambda c: abs(c[0] - d))
         if abs(ls - d) <= max(PLACE_TOL_LS, PLACE_TOL_REL * d):
             p["near"] = {"body_id": bid, "name": name, "short": short.get(bid) or name,
                          "off_ls": _r(abs(ls - d), 2)}
+            if p["kind"] == "carrier":
+                seen = parse_ts(p.get("seen")) if p.get("seen") else None
+                p["near"]["fresh"] = seen is not None and now - seen <= CARRIER_PLACE_H * 3600
 
 
 def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,

@@ -172,7 +172,22 @@ class App:
         out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
             self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om,
             skip_arrival=self.cfg.skip_arrival, archive=self.archive, fid=self.fid()))
-        return self._with_favourites(self._with_carrier(out, id64))
+        return self._with_places(self._with_favourites(self._with_carrier(out, id64)), id64)
+
+    def _with_places(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
+        """S2b: what the SYSTEM map draws - your favourite carriers as long as
+        their newest known position is here, other carriers while fresh, never
+        your own a second time (carriers.map_places)."""
+        try:
+            from . import carriers
+            favs = carriers.build_known(self.archive, self.favourites, None, sighted=0)["favourites"]
+            here = [f for f in carriers.carriers_here(id64, out.get("name"), None, favs)
+                    if f.get("kind") == "favourite"]
+            own = (out.get("carrier") or {}).get("callsign")
+            poi, extra = carriers.map_places(out.get("poi") or [], own, here)
+        except Exception:
+            return out
+        return dict(out, poi=poi, fav_here=extra)
 
     def _with_favourites(self, out: Dict[str, Any]) -> Dict[str, Any]:
         """K4: a star at your favourite carriers among the points of interest;

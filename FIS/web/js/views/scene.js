@@ -310,11 +310,14 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
 
   // S2: stations and carriers you docked at, beside the body whose distance
   // from the star matches theirs (the game names no parent body)
+  const star = scene.bodies.find((x) => x.kind === "Star") || scene.bodies[0];
+  let atStar = 0;
   for (const p of scene.places || []) {
-    const b = scene.byId.get(p.near.body_id);
+    const b = (p.near && scene.byId.get(p.near.body_id)) || (p.here_now ? star : null);
     const s = b && screen.get(b.id);
     if (!s) continue;
-    const q = { x: s.x - (s.rad || 4) - 10, y: s.y + (s.rad || 4) + 9, ok: true };
+    const below = p.near ? 0 : 14 * atStar++;        // several without a body: one under the other
+    const q = { x: s.x - (s.rad || 4) - 10, y: s.y + (s.rad || 4) + 9 + below, ok: true };
     items.push({ s: q, text: (p.favourite ? "★ " : "") + (p.kind === "carrier" ? "◈ " : "▣ ") + p.name, tags: [],
                  pri: p.favourite ? 72 : 44, colour: p.kind === "carrier" ? UI.amber : UI.text });
   }

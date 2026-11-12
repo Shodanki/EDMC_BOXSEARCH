@@ -2133,10 +2133,13 @@ numbered anew. The FIS README follows the same order.
 
 ### Places in the SYSTEM map
 
-Stations you docked at stand beside their body in the map - and carriers
-for a day after docking. The game names no parent body for a station, so it
-is matched on its distance from the arrival star against the scanned
-bodies; without a match it stays in the list.
+Stations you docked at stand beside their body in the map. The game names
+no parent body for a station, so it is matched on its distance from the
+arrival star against the scanned bodies; without a match it stays in the
+list. Your own carrier is always drawn where the game says it parks; your
+favourite carriers stay in the map as long as their newest known position -
+your journal or the Spansh lookup - is this system (beside their body, else
+beside the main star); other carriers for a day after docking.
 
 ### Finding unknown systems
 
