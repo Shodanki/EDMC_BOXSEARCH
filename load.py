@@ -187,6 +187,7 @@ class State:
         self._mine_shown = 0.0
         self._mine_drawn = False
         self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera, lost)
+        self._route_checked: Optional[Tuple[str, ...]] = None  # I1: the route checked last
         self.last_dest_id64: Optional[int] = None
 
         self.sphere_id: Optional[int] = None
@@ -1110,6 +1111,90 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     elif ST.fuel and ST.fuel.jumps_left is not None:
         info["jumps_left"] = ST.fuel.jumps_left
     return info
+
+
+ROUTE_CHECK_MAX = 40          # I1: names in the one EDSM request of a route check
+ROUTE_CHECK_R = 0.1           # ly: the region a route check leaves - one system
+ROUTE_CHECK_TTL_S = 14 * 86400
+ROUTE_CHECK_EDD_R = 0.1       # ly: EDD positions are exact to 1/32 ly
+
+
+def _route_check(hops: List[Tuple[str, Any, Any]]) -> None:
+    """
+    I1 (fair use): a plotted route of two jumps or more through space we have
+    no data for ("not checked") is checked ONCE - first in EDDiscovery's file
+    (local), then the rest with ONE bundled EDSM request through the plugin's
+    gateway (pacing, daily cap, offline switch, EDSM switch). Found systems
+    get their source (known); every system asked is remembered as a tiny
+    checked region for 14 days, so the briefing can say "in no database
+    (checked: EDSM)" and the same route plotted again asks nothing.
+    Runs in the background.
+    """
+    with ST.lock:
+        regions = {k: ST.db.valid_shells(k) for k in ("edd", "spansh", "edsm")}
+        todo: List[Tuple[str, Tuple[float, float, float]]] = []
+        for name, _cls, pos in hops[1:]:
+            if not name or pos is None:
+                continue
+            row = ST.db.system(name)
+            srcs = set((row["sources"] or "").split(",")) if row is not None else set()
+            if shells.info_level(srcs, pos, regions)[0] == "unchecked":
+                todo.append((name, tuple(pos)))
+    todo = todo[:ROUTE_CHECK_MAX]
+    if not todo:
+        return
+    ttl = shells.ttl_seconds()
+    known: List[Dict] = []
+    rest = list(todo)
+    edd = ST.sources.sources.get("edd") if ST.sources else None
+    if edd is not None and cfg_bool(CFG["src_edd"], True) and edd.available()[0]:
+        left = []
+        for name, pos in rest:
+            try:
+                rows = edd.fetch(pos, ROUTE_CHECK_EDD_R)
+            except Exception:
+                rows = None
+            if rows is None:
+                left.append((name, pos))
+                continue
+            with ST.lock:
+                ST.db.record_shell("edd", pos, 0.0, ROUTE_CHECK_R, len(rows), ttl)
+            if rows:
+                known.append({"name": name, "x": pos[0], "y": pos[1], "z": pos[2],
+                              "source": edd.name})
+            else:
+                left.append((name, pos))
+        rest = left
+    asked_edsm = 0
+    edsm = ST.sources.sources.get("edsm") if ST.sources else None
+    if rest and edsm is not None and cfg_bool(CFG["src_edsm"], True):
+        res = edsm.lookup([n for n, _p in rest])
+        _log_net(_flush_net_log())
+        if res is not None:
+            asked_edsm = len(rest)
+            for name, pos in rest:
+                hit = res.get(name.lower())
+                with ST.lock:
+                    ST.db.record_shell("edsm", pos, 0.0, ROUTE_CHECK_R, 1 if hit else 0, ttl)
+                if hit:
+                    known.append(dict(hit, name=name, x=hit.get("x", pos[0]),
+                                      y=hit.get("y", pos[1]), z=hit.get("z", pos[2])))
+    if known:
+        _store_rows(known)
+    logger.info("route check | %d systems not checked before: %d known, %d asked EDSM in one "
+                "request, %d in no database", len(todo), len(known), asked_edsm,
+                len(todo) - len(known) if asked_edsm or len(rest) == 0 else 0)
+
+
+def _maybe_route_check(hops: List[Tuple[str, Any, Any]]) -> None:
+    """A plotted route of two jumps or more (I1); the same route only once."""
+    if len(hops) < 3:
+        return
+    sig = tuple(h[0] for h in hops)
+    if sig == ST._route_checked:
+        return
+    ST._route_checked = sig
+    _run_async(_route_check, hops, label="route check")
 
 
 def _note_navroute(route: Any) -> None:
@@ -3236,6 +3321,10 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         # EDMC enriches NavRoute with the full Route array
         if ev == "NavRoute" and entry.get("Route"):
             _note_navroute(entry.get("Route"))
+            try:
+                _maybe_route_check(list(ST.navroute))
+            except Exception:
+                logger.debug("route check not started", exc_info=True)
         elif ev == "NavRouteClear":
             ST.navroute = []
         if ev == "NavRoute" and not cfg_bool(CFG["harvest_navroute"], True):

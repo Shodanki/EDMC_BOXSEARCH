@@ -43,6 +43,7 @@ from shells import edsm_queries, in_shell
 logger = logging.getLogger(__name__)
 
 EDSM_SPHERE = "https://www.edsm.net/api-v1/sphere-systems"
+EDSM_SYSTEMS = "https://www.edsm.net/api-v1/systems"      # I1 route check: by name
 EDSM_CUBE = "https://www.edsm.net/api-v1/cube-systems"
 SPANSH_SEARCH = "https://spansh.co.uk/api/systems/search"
 
@@ -100,6 +101,41 @@ class EDSMSource(Source):
                 continue
             out[s["name"]] = {"name": s["name"], "x": float(c["x"]), "y": float(c["y"]),
                               "z": float(c["z"]), "id64": s.get("id64")}
+
+    def lookup(self, names: Sequence[str]) -> Optional[Dict[str, Dict]]:
+        """
+        I1 route check: ONE request for several systems by name
+        (systemName[] repeated). Returns {lower-case name: row} of those EDSM
+        knows - with coordinates where it has them - or None when EDSM was
+        not asked (offline, resting, daily cap) or the answer failed.
+        """
+        names = [n for n in names if n]
+        if not names:
+            return {}
+        resp = self.gw.request("edsm", "GET", EDSM_SYSTEMS, "systems", timeout=self.timeout,
+                               params={"systemName[]": list(names), "showCoordinates": 1,
+                                       "showId": 1},
+                               headers={"Accept": "application/json"})
+        if resp is None:
+            return None
+        try:
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.warning("EDSM route check failed: %s", e)
+            return None
+        if isinstance(data, dict):           # EDSM answers {} when it knows none
+            data = data.get("systems") or []
+        out: Dict[str, Dict] = {}
+        for s in data if isinstance(data, list) else []:
+            if not isinstance(s, dict) or not s.get("name"):
+                continue
+            c = s.get("coords") or {}
+            row = {"name": s["name"], "id64": s.get("id64"), "source": self.name}
+            if c:
+                row.update(x=float(c["x"]), y=float(c["y"]), z=float(c["z"]))
+            out[s["name"].lower()] = row
+        return out
 
     def fetch(self, center, radius, progress: ProgressCB = None,
               r_min: float = 0.0) -> List[Dict]:

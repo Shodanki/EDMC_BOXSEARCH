@@ -537,6 +537,15 @@ The plugin notices a locked file and reads it again later.
 at a favourite carrier (where it was last reported), through the same
 gateway and daily cap, at most once per carrier every six hours.
 
+*Route check.* When you plot a route of two jumps or more through space no
+source was asked about (outside the fetched shells), its systems are checked
+once: first in EDDiscovery's file (local), then the rest - at most 40 - with
+ONE EDSM request by name, through the same gateway, daily cap, offline switch
+and EDSM switch. Every system asked is remembered for 14 days, so plotting
+the same route again asks nothing, and the briefing can tell *known* from
+*in no database (checked: EDSM)* there instead of *not checked*. A single
+jump is never checked.
+
 *Limits.* At most 50 requests per service and UTC day (a 50 ly survey needs
 about five), at most 20 Spansh pages (10 000 systems) per shell. The
 statistics window shows *external today: EDSM n of 50 · Spansh n of 50*.

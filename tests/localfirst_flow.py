@@ -66,6 +66,12 @@ class Sess:
         self.headers = {}
 
     def request(self, method, url, **kw):
+        if "api-v1/systems" in url:              # I1 route check: names, one request
+            names = kw["params"]["systemName[]"]
+            Sess.log.append(("edsm-names", len(names)))
+            have = dict(GAL, **{"Far Hop": (600.0, 0.0, 0.0)})
+            return Resp([{"name": n, "coords": {"x": have[n][0], "y": have[n][1], "z": have[n][2]}}
+                         for n in names if n in have])
         if "edsm" in url:
             p = kw["params"]
             c = (p["x"], p["y"], p["z"])
@@ -306,6 +312,38 @@ with tempfile.TemporaryDirectory() as d:
               and not any("lost" in blk[0][0] for blk in shown[n:]),
               "overlay NAV: redone -> no longer lost (%r)" % (ST._nav_cache or [None] * 5)[4])
     ST.overlay = None
+
+    # 13) I1 route check: a plotted route through space we have no data for
+    #     is checked once - one bundled EDSM request, remembered 14 days
+    from netgate import Gateway
+    from sources import SourceManager
+    ST.net = Gateway(load.VERSION, session_factory=Sess)       # a fresh day, no cap reached
+    ST.sources = SourceManager(None, gateway=ST.net)
+    hops = [("Here", "K", (0.0, 0.0, 0.0)), ("Far Hop", "M", (600.0, 0.0, 0.0)),
+            ("Nobody Knows AB-C d1", "M", (610.0, 0.0, 0.0)), ("No Pos", "M", None)]
+    n0 = len(Sess.log)
+    ran.clear()
+    load._maybe_route_check(hops)
+    calls = [x for x in Sess.log[n0:] if x[0] == "edsm-names"]
+    check(ran == ["route check"] and calls == [("edsm-names", 2)],
+          "route check: one EDSM request for the two unchecked hops (%r)" % calls)
+    with ST.lock:
+        regions = {k: ST.db.valid_shells(k) for k in ("edd", "spansh", "edsm")}
+        row = ST.db.system("Far Hop")
+        lv_known = shells.info_level(set((row["sources"] or "").split(",")), (600.0, 0.0, 0.0),
+                                     regions)[0]
+        lv_none = shells.info_level(set(), (610.0, 0.0, 0.0), regions)
+    check(lv_known == "known", "route check: EDSM knows it -> known (%s)" % lv_known)
+    check(lv_none == ("checked", ["EDSM"]),
+          "route check: EDSM does not -> in no database, checked: EDSM (%r)" % (lv_none,))
+    load._maybe_route_check(hops)
+    ST._route_checked = None
+    load._maybe_route_check(hops)                    # plotted again later: nothing left to ask
+    check(len([x for x in Sess.log[n0:] if x[0] == "edsm-names"]) == 1,
+          "route check: the same route asks nothing again")
+    load._maybe_route_check(hops[:2])
+    check(len([x for x in Sess.log[n0:] if x[0] == "edsm-names"]) == 1,
+          "route check: a single jump is never checked")
     ST.db.close()
 
 print("failures: %d" % fails)
