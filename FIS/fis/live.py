@@ -78,6 +78,7 @@ class Hub:
 # State
 # ---------------------------------------------------------------------------
 
+FILL_WINDOW_S = 15.0     # V1b: Status.json after a refuel synthesis = the full tank
 SCAN_EVENTS = {"Scan", "FSSDiscoveryScan", "FSSAllBodiesFound", "SAAScanComplete",
                "FSSBodySignals", "SAASignalsFound", "ScanOrganic", "ScanBaryCentre",
                "CodexEntry"}
@@ -279,6 +280,12 @@ class LiveTracker:
             elif ev in ("DockSRV", "DockVessel", "SRVDestroyed", "VesselDestroyed"):
                 s["vehicle"] = None
                 self._srv_end(s, ts, "docked" if ev.startswith("Dock") else "lost")
+                out = "status"
+            elif ev == "Synthesis" and s.get("srv") and \
+                    (e.get("Name") or "").strip().lower().startswith("fuel "):
+                # V1b: a refuel synthesis fills the vehicle's tank at once - the
+                # next Status.json reading is the full tank (vehicletanks.py)
+                s["srv"]["fill_at"] = ts
                 out = "status"
             elif s.get("srv") and ev in ("MiningRefined", "Cargo", "ScanOrganic", "MaterialCollected",
                                          "Disembark", "Embark", "Touchdown", "Liftoff"):
@@ -489,6 +496,12 @@ class LiveTracker:
                         v["fuel"] = r
                         if v["fuel_start"] is None:
                             v["fuel_start"] = r
+                        fa = v.get("fill_at")
+                        if fa is not None and ts is not None and 0 <= ts - fa <= FILL_WINDOW_S:
+                            v["tank_full"] = {"t": r, "ts": ts}
+                            v["fill_at"] = None
+                        elif fa is not None and ts is not None and ts - fa > FILL_WINDOW_S:
+                            v["fill_at"] = None
                     if st.get("Cargo") is not None:
                         v["cargo"] = st.get("Cargo")
                     v["flags"] = new["flags"]

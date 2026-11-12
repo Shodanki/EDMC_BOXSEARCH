@@ -139,14 +139,18 @@ function render() {
   ];
   const tank = [kv([
     [t("FUEL"), v.fuel !== null && v.fuel !== undefined ? num(v.fuel, 2, "t") : null],
+    [t("TANK SIZE"), v.capacity ? fmt(v.capacity, 2) + " t" : null],
     [t("AT LAUNCH"), v.fuel_start !== null && v.fuel_start !== undefined ? fmt(v.fuel_start, 2) + " t" : null],
     [t("USED"), v.fuel_used !== null && v.fuel_used !== undefined ? fmt(v.fuel_used, 3) + " t" : null],
   ])];
-  if (v.fuel_start) {
-    const pct = Math.max(0, Math.min(100, 100 * (v.fuel || 0) / v.fuel_start));
+  const base = v.capacity || v.fuel_start;
+  if (base) {
+    const pct = Math.max(0, Math.min(100, 100 * (v.fuel || 0) / base));
     tank.push(el("div", { class: "bar vh-fuel" + (pct < 25 ? " alert" : pct < 50 ? " warn" : "") },
       el("i", { style: { width: pct.toFixed(1) + "%" } })));
-    tank.push(el("div", { class: "c-dim small", text: t("compared with the tank at launch") }));
+    tank.push(el("div", { class: "c-dim small", text: v.capacity
+      ? t("{p} % of the full tank - learnt after a refuel synthesis, {d}", { p: fmt(pct, 0), d: stamp(v.capacity_ts) || "–" })
+      : t("compared with the tank at launch") + " · " + t("the full tank is learnt after a refuel synthesis") }));
   }
   const cargo = [kv([
     [t("CARGO"), num(v.cargo || 0, 0, "t")],
@@ -178,7 +182,7 @@ function render() {
   ]);
   root.append(el("div", { class: "vh-grid" },
     withPopout(frame(t("VEHICLE"), live ? t("out now") : t("last trip"), head, { appear: false }), "vehicle"),
-    frame(t("TANK"), t("the vehicle's own"), tank, { appear: false, kind: v.fuel_start && v.fuel / v.fuel_start < 0.25 ? "warn" : "" }),
+    frame(t("TANK"), t("the vehicle's own"), tank, { appear: false, kind: base && v.fuel / base < 0.25 ? "warn" : "" }),
     frame(t("CARGO"), v.type === "mev_rhino" ? t("Rhino: refined from rigs") : "", cargo, { appear: false }),
     frame(t("POSITION"), "", where.length ? where : el("div", { class: "c-dim", text: "–" }), { appear: false }),
     frame(t("SWITCHES"), "Status.json", switches.length ? el("div", {}, ...switches) : el("div", { class: "c-dim", text: live && v.on_foot ? t("on foot") : "–" }), { appear: false }),

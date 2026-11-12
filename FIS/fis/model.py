@@ -1732,7 +1732,8 @@ def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
 
 
-def _vehicle_view(v: Dict[str, Any], now: float) -> Dict[str, Any]:
+def _vehicle_view(v: Dict[str, Any], now: float,
+                  tanks: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     flags = int(v.get("flags") or 0)
     on = [n for bit, n in VEHICLE_FLAGS if flags & (1 << bit)]
     if v.get("nomad"):
@@ -1749,6 +1750,13 @@ def _vehicle_view(v: Dict[str, Any], now: float) -> Dict[str, Any]:
     out["fuel_start"] = _r(v.get("fuel_start"), 3)
     if v.get("fuel") is not None and v.get("fuel_start") is not None:
         out["fuel_used"] = _r(max(0.0, v["fuel_start"] - v["fuel"]), 3)
+    # V1b: the tank size learnt after a refuel synthesis (vehicletanks.py)
+    cap = (tanks or {}).get(v.get("type") or "")
+    if cap and cap.get("t"):
+        out["capacity"] = cap["t"]
+        out["capacity_ts"] = cap.get("ts")
+        if v.get("fuel") is not None:
+            out["fuel_pct"] = _r(min(100.0, 100.0 * v["fuel"] / cap["t"]), 0)
     pos = v.get("pos")
     out["pos"] = ({"body": pos.get("body"), "lat": _r(pos.get("lat"), 4), "lon": _r(pos.get("lon"), 4),
                    "alt": _r(pos.get("alt"), 0), "heading": pos.get("heading")} if pos else None)
@@ -1763,7 +1771,8 @@ def _vehicle_view(v: Dict[str, Any], now: float) -> Dict[str, Any]:
     return out
 
 
-def build_vehicle(live: Optional[Dict[str, Any]], now: Optional[float] = None) -> Dict[str, Any]:
+def build_vehicle(live: Optional[Dict[str, Any]], now: Optional[float] = None,
+                  tanks: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     V1: the surface vehicle - SRV (Scarab, Rhino) or Nomad - from what the
     game really writes: type and edition (Launch*), the vehicle's own tank
@@ -1775,8 +1784,8 @@ def build_vehicle(live: Optional[Dict[str, Any]], now: Optional[float] = None) -
     now = time.time() if now is None else now
     v, last = live.get("srv"), live.get("srv_last")
     return {"active": v is not None,
-            "vehicle": _vehicle_view(v, now) if v else None,
-            "last": _vehicle_view(last, now) if last and not v else None,
+            "vehicle": _vehicle_view(v, now, tanks) if v else None,
+            "last": _vehicle_view(last, now, tanks) if last and not v else None,
             "generated": now}
 
 

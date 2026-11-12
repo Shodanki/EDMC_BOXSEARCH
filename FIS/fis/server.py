@@ -66,6 +66,9 @@ class App:
         from .losthidden import LostHiddenStore
         # SHIP -> LOST DATA: crash losses hidden from the list (FIS-owned file)
         self.lost_hidden = LostHiddenStore(os.path.join(os.path.dirname(cfg.ini_path), "lost_hidden.json"))
+        from .vehicletanks import VehicleTankStore
+        # V1b: tank size per vehicle type, learnt after a refuel synthesis (FIS-owned file)
+        self.vehicle_tanks = VehicleTankStore(os.path.join(os.path.dirname(cfg.ini_path), "vehicle_tanks.json"))
         # K5: the one online lookup of the FIS (on a click, through the plugin's gateway)
         from .online import CarrierLookup
         self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
@@ -758,7 +761,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ship":
             return self._json(m.build_ship(app.live_state()))
         if path == "/api/vehicle":
-            out = m.build_vehicle(app.live_state())
+            live = app.live_state()
+            v = live.get("srv") or {}
+            full = v.get("tank_full")
+            if full and v.get("type"):              # V1b: a full tank after a refuel synthesis
+                app.vehicle_tanks.learn(v["type"], full.get("t"), v.get("name"),
+                                        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(full.get("ts") or 0)))
+            out = m.build_vehicle(live, tanks=app.vehicle_tanks.all())
             try:                                  # V1c: recipes from your own Synthesis events
                 from . import synthesis
                 out["synthesis"] = synthesis.build_synthesis(app.archive)
