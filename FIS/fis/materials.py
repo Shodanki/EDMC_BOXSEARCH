@@ -37,15 +37,18 @@ def _k(name: Optional[str]) -> str:
 
 
 def stock(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-    """Raw materials on board: {name: count}, plus when the stock was read
-    and the FSD injections synthesised since."""
+    """Materials on board (raw, manufactured, encoded): {name: count}, plus
+    when the stock was read and the FSD injections synthesised since."""
     evs = [e for e in events if e["event"] in EVENTS]
     base = next((i for i in range(len(evs) - 1, -1, -1) if evs[i]["event"] == "Materials"), None)
     have: Dict[str, int] = {}
     synth: List[Dict[str, Any]] = []
     if base is not None:
-        for m in evs[base].get("Raw") or []:
-            have[_k(m.get("Name"))] = int(m.get("Count") or 0)
+        # raw for jumponium; manufactured and encoded too, since the vehicle's
+        # recipes (V1c, synthesis.py) may need them (mechanical equipment ...)
+        for cat in ("Raw", "Manufactured", "Encoded"):
+            for m in evs[base].get(cat) or []:
+                have[_k(m.get("Name"))] = int(m.get("Count") or 0)
     start = base + 1 if base is not None else 0
 
     def add(name, n):

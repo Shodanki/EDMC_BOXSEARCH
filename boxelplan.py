@@ -34,7 +34,7 @@ The commander checks a candidate in the galaxy map search:
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from procgen import (MASSCODES, boxel_center, boxel_index_of_coords,
                      boxel_intersects_sphere, boxel_size,
@@ -172,6 +172,109 @@ class ProspectMap:
         return 2.5 * fill_rate + 1.0 * density + 1.5 * underreport
 
 
+# H3 #7 (4.9): the formula above is a guess about which neighbourhood pays.
+# What it actually paid is in the database: boxels no database knows where the
+# game client proved a system (route plot, target selection, a jump) - hits -
+# and boxels whose first system the galaxy map search ruled out - misses.
+CLIENT_SOURCES = {"navroute", "fsdtarget", "destination", "journal", "scan", "startjump",
+                  "fss", "inhabited", "carrier"}
+NOT_CLIENT = set(EXTERNAL_SOURCES) | {"external"}
+SCORE_BANDS = (1.0, 2.0, 3.0, 4.0)       # edges of the formula score
+LEARN_WEIGHT = 20.0                       # outcomes a band needs to outweigh the formula
+LEARN_MIN_HITS = 5                        # below this the formula alone orders the probes
+
+
+def _wilson(k: int, n: int, z: float = 1.96) -> Tuple[float, float]:
+    if n <= 0:
+        return 0.0, 1.0
+    p = k / n
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return max(0.0, c - h), min(1.0, c + h)
+
+
+class ProspectCalibration:
+    """
+    How often a boxel nobody had in a database really held a system, per
+    band of the formula score - per mass code, leaning on all mass codes
+    where one is thin, and on the formula where both are thin.
+
+    The formula says which neighbourhood is MORE promising, not how often it
+    pays; so the outcomes are read relative to their own average:
+
+        pooled = (hits + W * f) / (n + W)          f = mean formula chance
+        prior  = pooled * p_formula / f            (no data: the formula)
+        p_all  = (hits_band + W * prior) / (n_band + W)
+        p_mc   = (hits_mc   + W * p_all) / (n_mc   + W)          W = 20
+        score  = 5 * p_mc * f / pooled             (the formula's own scale)
+
+    A band that paid better than the average climbs, one that paid worse
+    drops; a band without outcomes keeps its formula score. Nothing changes
+    before LEARN_MIN_HITS hits: misses alone say nothing about what pays.
+    Counting only - no model. Bias, said openly: hits come from route plots
+    and targets the commander picked, misses from galaxy map searches.
+    """
+
+    def __init__(self) -> None:
+        self.cells: Dict[Tuple[Any, int], List[int]] = {}
+        self.hits = 0
+        self.n = 0
+        self.sum_p0 = 0.0
+
+    @staticmethod
+    def band(raw: float) -> int:
+        return sum(1 for e in SCORE_BANDS if raw >= e)
+
+    @staticmethod
+    def _p0(raw: float) -> float:
+        return max(0.0, min(raw / 5.0, 1.0))
+
+    def add(self, mc: int, raw: float, hit: bool) -> None:
+        b = self.band(raw)
+        for k in ((mc, b), ("*", b)):
+            c = self.cells.setdefault(k, [0, 0])
+            c[0] += 1 if hit else 0
+            c[1] += 1
+        self.hits += 1 if hit else 0
+        self.n += 1
+        self.sum_p0 += self._p0(raw)
+
+    def outcomes(self) -> int:
+        return self.n
+
+    def active(self) -> bool:
+        return self.hits >= LEARN_MIN_HITS
+
+    def score(self, mc: int, raw: float) -> float:
+        if not self.active():
+            return raw
+        f = self.sum_p0 / self.n
+        if f <= 0:
+            return raw
+        pooled = (self.hits + LEARN_WEIGHT * f) / (self.n + LEARN_WEIGHT)
+        b = self.band(raw)
+        prior = min(1.0, pooled * self._p0(raw) / f)
+        ha, na = self.cells.get(("*", b), (0, 0))
+        pa = (ha + LEARN_WEIGHT * prior) / (na + LEARN_WEIGHT)
+        hm, nm = self.cells.get((mc, b), (0, 0))
+        pm = (hm + LEARN_WEIGHT * pa) / (nm + LEARN_WEIGHT)
+        return 5.0 * pm * f / pooled
+
+    def summary(self) -> List[Dict[str, Any]]:
+        """Per band over all mass codes: outcomes, hits, rate, 95 % range."""
+        out = []
+        for b in range(len(SCORE_BANDS) + 1):
+            h, n = self.cells.get(("*", b), (0, 0))
+            lo = SCORE_BANDS[b - 1] if b else 0.0
+            lo_r, hi_r = _wilson(h, n)
+            out.append({"band": b, "from": lo,
+                        "to": SCORE_BANDS[b] if b < len(SCORE_BANDS) else None,
+                        "n": n, "hits": h, "rate": (h / n) if n else None,
+                        "low": lo_r, "high": hi_r, "thin": n < LEARN_WEIGHT})
+        return out
+
+
 class Planner:
     def __init__(self, db: SystemDB):
         self.db = db
@@ -198,6 +301,21 @@ class Planner:
         margin = radius + boxel_size(max(masscodes) if masscodes else 0) * 2
         pmap = ProspectMap(self.db.sphere(center, margin), masscodes)
         boxel_score: Dict[str, float] = {}
+        raw_score: Dict[str, Tuple[int, float]] = {}
+        calib = ProspectCalibration()
+        # boxels the game client proved a system in, and boxels some
+        # database knows - a hit counts only where no database knew it
+        client_boxels: Set[str] = set()
+        db_boxels: Set[str] = set()
+        for r in known_rows:
+            p = parse_name(r["name"])
+            if p is None:
+                continue
+            src = {v for v in (r["sources"] or "").split(",") if v}
+            if src & NOT_CLIENT:
+                db_boxels.add(p.boxel_key)
+            elif src & CLIENT_SOURCES:
+                client_boxels.add(p.boxel_key)
 
         targets: List[Target] = []
         counts = {k: 0 for k in PRIORITY}
@@ -243,7 +361,12 @@ class Planner:
                 probe0 = make_name(sect, mc, bx, 0)
                 key = parse_name(probe0).boxel_key
                 known = boxel_n2.get(key, set())
-                boxel_score[key] = pmap.score(mc, gidx)
+                raw = pmap.score(mc, gidx)
+                raw_score[key] = (mc, raw)
+                if key in client_boxels and key not in db_boxels:
+                    calib.add(mc, raw, True)
+                elif not known and probe0 in absent:
+                    calib.add(mc, raw, False)
 
                 closed = self.db.boxel_end(key) is not None
                 if closed:
@@ -301,6 +424,9 @@ class Planner:
                                           id64=t["id64"]))
                     counts[K_BIO] += 1
 
+        for key, (mc, raw) in raw_score.items():
+            boxel_score[key] = calib.score(mc, raw)
+
         set_origin(targets, origin if origin is not None else center)
         targets.sort(key=lambda t: (int(t.dist_origin // 5), PRIORITY[t.kind],
                                     t.dist_origin, t.n2 if t.n2 is not None else 0))
@@ -343,6 +469,9 @@ class Planner:
             "boxel_untested": boxel_untested,
             "probed_sample": probed,
             "boxel_score": boxel_score,
+            "prospect_learning": calib.summary(),
+            "prospect_outcomes": calib.outcomes(),
+            "prospect_active": calib.active(),
             "masscodes": list(masscodes),
             "sectors_missing": sorted(sectors_missing),
         }
@@ -433,6 +562,9 @@ class Planner:
 
         return {
             "source_coverage": cov,
+            "prospect_learning": plan.get("prospect_learning") or [],
+            "prospect_outcomes": plan.get("prospect_outcomes") or 0,
+            "prospect_active": bool(plan.get("prospect_active")),
             "hot_boxels": hot[:10],
             "hot_count": len(hot),
             "avg_bodies": avg_bodies,
@@ -512,6 +644,22 @@ class Planner:
             if cov["disagreement_pct"] >= 15:
                 rows.append(("Verdict", "thin reporting - good odds here"))
             out.append(("Database coverage", rows))
+
+        if st.get("prospect_outcomes"):
+            rows = []
+            for b in st.get("prospect_learning") or []:
+                if not b["n"]:
+                    continue
+                band = ("score %.0f+" % b["from"] if b["to"] is None
+                        else "score %.0f-%.0f" % (b["from"], b["to"]))
+                rows.append((band, "%d of %d held a system (%.0f-%.0f%%)%s"
+                             % (b["hits"], b["n"], 100 * b["low"], 100 * b["high"],
+                                ", thin" if b["thin"] else "")))
+            rows.append(("Used for", "probe order - thin bands lean on the formula"
+                         if st.get("prospect_active") else
+                         "nothing yet - the formula orders the probes until %d of them "
+                         "held a system" % LEARN_MIN_HITS))
+            out.append(("Prospecting learnt from your probes", rows))
 
         return out
 
@@ -697,6 +845,33 @@ def _selftest() -> int:
     p, b = bundled_probe_prefix([T("Synuefe XV-C d"), T("Synuefe VA-I b2")])
     check(p == "Synuefe XV-C d" and b == ["Synuefe XV-C d"],
           "nothing to bundle: the single boxel's own prefix")
+    # H3 #7: calibration on own probe outcomes
+    c = ProspectCalibration()
+    check(c.score(0, 2.5) == 2.5 and c.score(1, 6.0) == 6.0,
+          "no outcomes: the formula itself")
+    for _ in range(70):
+        c.add(0, 2.5, False)
+    check(not c.active() and c.score(0, 2.5) == 2.5,
+          "misses alone (as in the real survey, 0 of 131) change nothing")
+    for _ in range(40):
+        c.add(0, 3.5, False)                       # band 3 never paid in mass code a
+    for _ in range(10):
+        c.add(0, 0.5, True)                        # band 0 always did
+    check(c.active() and c.score(0, 0.5) > c.score(0, 3.5),
+          "measured outcomes turn the order round: %.2f vs %.2f"
+          % (c.score(0, 0.5), c.score(0, 3.5)))
+    check(abs(c.score(0, 1.5) - 1.5) < 1e-9,
+          "a band without outcomes keeps its formula score")
+    check(c.score(0, 3.5) < c.score(2, 3.5) < 3.5,
+          "a mass code without outcomes leans on all mass codes, less strongly")
+    sm = {x["band"]: x for x in c.summary()}
+    check(sm[3]["n"] == 40 and sm[3]["hits"] == 0 and not sm[3]["thin"]
+          and sm[0]["thin"] and sm[0]["rate"] == 1.0 and sm[1]["n"] == 0,
+          "summary per band with thin marker")
+    lo, hi = _wilson(0, 40)
+    check(lo == 0.0 and 0.05 < hi < 0.1, "Wilson range of 0 of 40: 0-%.0f%%" % (100 * hi))
+    check(ProspectCalibration.band(0.99) == 0 and ProspectCalibration.band(4.0) == 4,
+          "band edges")
     p, b = bundled_probe_prefix([T("Synuefe VA-I b2"), T("Synuefe VA-I b3")], n=1)
     check(p == "Synuefe VA-I b2-" and len(b) == 1, "n=1: just the next boxel")
     check(bundled_probe_prefix([]) == ("", []), "empty queue")

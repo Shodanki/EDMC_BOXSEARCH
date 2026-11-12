@@ -383,6 +383,45 @@ def carriers_here(sys_id64: Any, sys_name: Optional[str], own: Optional[Dict[str
     return out
 
 
+def map_places(poi: List[Dict[str, Any]], own_callsign: Optional[str],
+               favourites_here: Iterable[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    S2b: which carriers stand in the SYSTEM map. Your own carrier is drawn by
+    its own layer (CarrierLocation names its body) - never a second time here.
+    A favourite stays in the map as long as its newest known position
+    (journal or the Spansh lookup, carriers_here) is this system: beside the
+    body its docking distance matched, else beside the main star. Other
+    carriers only while fresh (place_pois). Returns (poi with "map": true on
+    the ones to draw, favourites here that are not in the list at all).
+    Returns new dicts; the cached system stays untouched.
+    """
+    here = {f.get("callsign"): f for f in favourites_here or () if f.get("callsign")}
+    out: List[Dict[str, Any]] = []
+    used = set()
+    for p in poi:
+        if p.get("kind") == "carrier":
+            nm = p.get("name") or ""
+            cs = p.get("callsign") or (nm if is_callsign(nm) else (parse_signal(nm) or {}).get("callsign"))
+            near = p.get("near") or {}
+            if own_callsign and cs == own_callsign:
+                p = dict(p, own=True, map=False)
+            elif cs and cs in here:
+                used.add(cs)
+                f = here[cs]
+                p = dict(p, map=True, here_now=True, here_source=f.get("source"), here_ts=f.get("ts"))
+            elif p.get("favourite"):
+                p = dict(p, map=False)            # its newest known position is elsewhere
+            else:
+                p = dict(p, map=bool(near.get("fresh")))
+        elif p.get("kind") == "station":
+            p = dict(p, map=bool(p.get("near")))
+        out.append(p)
+    extra = [{"kind": "carrier", "name": f.get("name") or cs, "callsign": cs, "favourite": True,
+              "map": True, "here_now": True, "here_source": f.get("source"), "here_ts": f.get("ts")}
+             for cs, f in here.items() if cs not in used and cs != own_callsign]
+    return out, extra
+
+
 # A1: may we dock? Market.json / the journal's Market event write the
 # carrier's CarrierDockingAccess; Spansh reports carrier_docking_access.
 ACCESS_DOCK = {"all"}

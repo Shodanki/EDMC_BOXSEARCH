@@ -385,10 +385,12 @@ class TestServer(_Base):
     def test_endpoints(self):
         for p in ("/api/health", "/api/system/current", "/api/system/%d" % fx.SYS_ID,
                   "/api/body/%d/1" % fx.SYS_ID, "/api/briefing", "/api/ship",
-                  "/api/survey", "/api/live"):
+                  "/api/survey", "/api/live", "/api/vehicle"):
             st, js = self.getj(p)
             self.assertEqual(st, 200, p)
             self.assertIsInstance(js, dict, p)
+        st, js = self.getj("/api/vehicle")                     # V1c
+        self.assertIn("kinds", js["synthesis"])
         st, js = self.getj("/api/system/current")
         self.assertEqual(js["id64"], fx.SYS_ID)
         st, js = self.getj("/api/health")

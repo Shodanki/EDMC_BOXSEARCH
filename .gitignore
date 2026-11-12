@@ -17,5 +17,6 @@ __pycache__/
 FIS/fis.ini
 FIS/favourites.json*
 FIS/lost_hidden.json*
+FIS/vehicle_tanks.json*
 FIS/tests/data/
 FIS/.run.lock

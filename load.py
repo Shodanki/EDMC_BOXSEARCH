@@ -27,7 +27,7 @@ import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, ttk
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # EDMC API
 import myNotebook as nb
@@ -61,7 +61,7 @@ from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E40
 import surfacenav  # noqa: E402
 import miningstat  # noqa: E402
 
-VERSION = "4.8.0"
+VERSION = "4.9.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -186,7 +186,8 @@ class State:
         self.mine = miningstat.MiningTracker()          # overlay mining block
         self._mine_shown = 0.0
         self._mine_drawn = False
-        self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera)
+        self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera, lost)
+        self._route_checked: Optional[Tuple[str, ...]] = None  # I1: the route checked last
         self.last_dest_id64: Optional[int] = None
 
         self.sphere_id: Optional[int] = None
@@ -733,6 +734,7 @@ def _update_route_targets() -> None:
         cands = [{"name": r["name"], "x": r["x"], "y": r["y"], "z": r["z"]}
                  for r in rows if not r["name"].startswith("#")]
         ST.route_targets = corridor_targets(origin, cands, empties, jr)
+        _store_corridor(origin, jr)
         for r in ST.route_targets:
             logger.info("navroute | plot to %s: %.0f ly, ~%d jumps, %d unprobed "
                         "boxels on the way", r["name"], r["dist"], r["jumps"],
@@ -740,6 +742,20 @@ def _update_route_targets() -> None:
         _ui(_probe_window_refresh)
     except Exception:
         logger.exception("route target suggestion failed")
+
+
+def _store_corridor(origin: Sequence[float], jump_range: float) -> None:
+    """H3 #2: the suggestion for SHBOX FIS GALAXY (it opens the database
+    read-only and cannot run the planner) - meta "route_corridor"."""
+    half = min(20.0, max(10.0, max(10.0, float(jump_range or 0.0)) * 0.5))   # as corridor_targets
+    doc = {"ts": time.time(), "half": round(half, 1),
+           "from": [round(float(v), 2) for v in origin[:3]],
+           "targets": [{"name": t["name"], "x": round(t["pos"][0], 2), "y": round(t["pos"][1], 2),
+                        "z": round(t["pos"][2], 2), "ly": round(float(t["dist"]), 1),
+                        "jumps": int(t["jumps"]), "boxels": int(t["boxels"])}
+                       for t in ST.route_targets]}
+    with ST.lock:
+        ST.db.set_meta(CORRIDOR_META, json.dumps(doc))
 
 
 def _copy_route_target() -> None:
@@ -1110,6 +1126,91 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     elif ST.fuel and ST.fuel.jumps_left is not None:
         info["jumps_left"] = ST.fuel.jumps_left
     return info
+
+
+CORRIDOR_META = "route_corridor"   # H3 #2: plot suggestion for the FIS (JSON)
+ROUTE_CHECK_MAX = 40          # I1: names in the one EDSM request of a route check
+ROUTE_CHECK_R = 0.1           # ly: the region a route check leaves - one system
+ROUTE_CHECK_TTL_S = 14 * 86400
+ROUTE_CHECK_EDD_R = 0.1       # ly: EDD positions are exact to 1/32 ly
+
+
+def _route_check(hops: List[Tuple[str, Any, Any]]) -> None:
+    """
+    I1 (fair use): a plotted route of two jumps or more through space we have
+    no data for ("not checked") is checked ONCE - first in EDDiscovery's file
+    (local), then the rest with ONE bundled EDSM request through the plugin's
+    gateway (pacing, daily cap, offline switch, EDSM switch). Found systems
+    get their source (known); every system asked is remembered as a tiny
+    checked region for 14 days, so the briefing can say "in no database
+    (checked: EDSM)" and the same route plotted again asks nothing.
+    Runs in the background.
+    """
+    with ST.lock:
+        regions = {k: ST.db.valid_shells(k) for k in ("edd", "spansh", "edsm")}
+        todo: List[Tuple[str, Tuple[float, float, float]]] = []
+        for name, _cls, pos in hops[1:]:
+            if not name or pos is None:
+                continue
+            row = ST.db.system(name)
+            srcs = set((row["sources"] or "").split(",")) if row is not None else set()
+            if shells.info_level(srcs, pos, regions)[0] == "unchecked":
+                todo.append((name, tuple(pos)))
+    todo = todo[:ROUTE_CHECK_MAX]
+    if not todo:
+        return
+    ttl = shells.ttl_seconds()
+    known: List[Dict] = []
+    rest = list(todo)
+    edd = ST.sources.sources.get("edd") if ST.sources else None
+    if edd is not None and cfg_bool(CFG["src_edd"], True) and edd.available()[0]:
+        left = []
+        for name, pos in rest:
+            try:
+                rows = edd.fetch(pos, ROUTE_CHECK_EDD_R)
+            except Exception:
+                rows = None
+            if rows is None:
+                left.append((name, pos))
+                continue
+            with ST.lock:
+                ST.db.record_shell("edd", pos, 0.0, ROUTE_CHECK_R, len(rows), ttl)
+            if rows:
+                known.append({"name": name, "x": pos[0], "y": pos[1], "z": pos[2],
+                              "source": edd.name})
+            else:
+                left.append((name, pos))
+        rest = left
+    asked_edsm = 0
+    edsm = ST.sources.sources.get("edsm") if ST.sources else None
+    if rest and edsm is not None and cfg_bool(CFG["src_edsm"], True):
+        res = edsm.lookup([n for n, _p in rest])
+        _log_net(_flush_net_log())
+        if res is not None:
+            asked_edsm = len(rest)
+            for name, pos in rest:
+                hit = res.get(name.lower())
+                with ST.lock:
+                    ST.db.record_shell("edsm", pos, 0.0, ROUTE_CHECK_R, 1 if hit else 0, ttl)
+                if hit:
+                    known.append(dict(hit, name=name, x=hit.get("x", pos[0]),
+                                      y=hit.get("y", pos[1]), z=hit.get("z", pos[2])))
+    if known:
+        _store_rows(known)
+    logger.info("route check | %d systems not checked before: %d known, %d asked EDSM in one "
+                "request, %d in no database", len(todo), len(known), asked_edsm,
+                len(todo) - len(known) if asked_edsm or len(rest) == 0 else 0)
+
+
+def _maybe_route_check(hops: List[Tuple[str, Any, Any]]) -> None:
+    """A plotted route of two jumps or more (I1); the same route only once."""
+    if len(hops) < 3:
+        return
+    sig = tuple(h[0] for h in hops)
+    if sig == ST._route_checked:
+        return
+    ST._route_checked = sig
+    _run_async(_route_check, hops, label="route check")
 
 
 def _note_navroute(route: Any) -> None:
@@ -3236,6 +3337,10 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         # EDMC enriches NavRoute with the full Route array
         if ev == "NavRoute" and entry.get("Route"):
             _note_navroute(entry.get("Route"))
+            try:
+                _maybe_route_check(list(ST.navroute))
+            except Exception:
+                logger.debug("route check not started", exc_info=True)
         elif ev == "NavRouteClear":
             ST.navroute = []
         if ev == "NavRoute" and not cfg_bool(CFG["harvest_navroute"], True):
@@ -3451,6 +3556,16 @@ def _surface_status(entry: Dict[str, Any]) -> None:
 
 
 NAV_EVERY_S = 1.0         # compass refresh while a position is reported
+NAV_LOST_S = 30.0         # how often the compass looks at the loss marks again
+
+
+def _nav_lost(sys_id64: int, body_id: Optional[int]) -> List[str]:
+    """Loss marks of this body for the commander playing (caller holds ST.lock)."""
+    try:
+        return ST.db.lost_of_body(ST.db.view_fid(CURRENT), sys_id64, body_id)
+    except Exception:
+        logger.debug("nav: lost marks failed", exc_info=True)
+        return []
 
 
 def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> None:
@@ -3465,19 +3580,21 @@ def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> N
             or not cfg_bool(CFG["overlay_nav"], True) or now - ST._nav_shown < NAV_EVERY_S):
         return
     ST._nav_shown = now
-    key = (ST.cur_id64, pos["body"], ST.db.marks_rev)
+    # a crash writes no surface mark: look at the loss marks twice a minute
+    key = (ST.cur_id64, pos["body"], ST.db.marks_rev, int(now // NAV_LOST_S))
     c = ST._nav_cache
     if c is None or c[0] != key:
         with ST.lock:
             marks = [dict(m) for m in ST.db.marks_of(ST.cur_id64, pos["body"])]
-            r = ST.db.cx.execute("SELECT sig_bio, genuses FROM bodies WHERE sys_id64=? "
-                                 "AND name=?", (ST.cur_id64, pos["body"])).fetchone()
+            r = ST.db.cx.execute("SELECT body_id, sig_bio, genuses FROM bodies WHERE "
+                                 "sys_id64=? AND name=?", (ST.cur_id64, pos["body"])).fetchone()
+            lost = _nav_lost(ST.cur_id64, r["body_id"] if r else None)
         genera = [g for g in ((r["genuses"] if r else None) or "").split(",") if g]
-        c = ST._nav_cache = (key, marks, r["sig_bio"] if r else None, genera)
+        c = ST._nav_cache = (key, marks, r["sig_bio"] if r else None, genera, lost)
         _bio_resume(pos["body"], marks)
     from overlay import COL
     lines = surfacenav.compass_lines(pos, c[1], radius, sig_bio=c[2], genera=c[3],
-                                     colours=COL, orbit=not low)
+                                     colours=COL, orbit=not low, lost=c[4])
     if lines:
         ov.show_nav(lines, seconds=4)
 

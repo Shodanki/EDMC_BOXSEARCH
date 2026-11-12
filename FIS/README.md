@@ -13,48 +13,20 @@ own database and maths.
 
 **It only reads.** The plugin database (opened read-only), the game's journal
 and its state files (`Status.json`, `NavRoute.json`, `ModulesInfo.json`,
-`Cargo.json`, ...). It sends nothing to the game and automates nothing. It
-asks a service on the internet in one case only: when you click *online* at a
+`Cargo.json`, ...). It sends nothing to the game and automates nothing. It asks
+a service on the internet in one case only: when you click *online* at a
 favourite carrier in CARRIER - one request to Spansh for where someone last
 reported it, through the plugin's polite gateway (pacing, the daily cap shared
-with the plugin, the plugin's *offline* switch), at most once per carrier
-every six hours. The 3D library Three.js (0.170.0, MIT) ships
-with it in `web/vendor/three` - licence and origin in `SOURCE.md` there - so
-the 3D views work offline too. The QR code on the settings page is drawn
-with Project Nayuki's QR Code generator (`fis/vendor/qrcodegen.py`, MIT,
-licence header kept - origin in `fis/vendor/SOURCE.md`). The FIS itself is
-under the Mozilla Public License 2.0 like the plugin (`LICENSE` in the plugin folder).
+with the plugin, the plugin's *offline* switch), at most once per carrier every
+six hours.
 
-## Screenshots
+The FIS itself is under the Mozilla Public License 2.0 like the plugin
+(`LICENSE` in the plugin folder).
 
-Demo data: a copy of a real plugin database with the commander's current
-area, carrier, earnings and surface tracks removed; commander and ship are
-called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English.
-
-**SYSTEM** - the system in 3D with Kepler orbits, flight plan legs, bio and
-first-footfall marks, and a rule-based system report.
-
-![SYSTEM view](docs/screenshots/demo_system.png)
-
-**GALAXY** - the survey sphere and its boxels in 3D, flight path, known
-systems; the focus panel and flight log on the right.
-
-![GALAXY view in 3D](docs/screenshots/demo_galaxy.png)
-
-**PLANET INFO** - datasheet, science report, atmosphere and surface, biology
-of the selected body.
-
-![PLANET INFO view](docs/screenshots/demo_planetinfo.png)
-
-**SHIP** - status lamps from `Status.json`, schematic cutaway, damage and
-function report, engineer view of power and module health.
-
-![SHIP view](docs/screenshots/demo_ship.png)
-
-**ATLAS** - signals, rings, materials and finds of every known body, nearest
-first, with a top view around you.
-
-![ATLAS view](docs/screenshots/demo_atlas.png)
+**Contents:** [Start](#start) · [Views](#views) ·
+[Third-party parts](#third-party-parts) ·
+[Notes on what the files allow](#notes-on-what-the-files-allow) ·
+[History](#history) · [For developers](#for-developers)
 
 ## Start
 
@@ -158,18 +130,31 @@ and copy or open the address. In OBS: *Sources → + → Browser*, paste the
 address, set width and height. With the home network on, the address
 contains the access token - keep it out of the stream picture.
 
+### Files
+
+```
+start_fis.bat      start (first start asks, then remembers)
+fis_settings.bat   change the settings
+fis.ini.example    every setting, explained
+fis/               the server (Python standard library only)
+web/               the pages (no build step)
+tests/             python -m unittest discover -s tests -t .  (not needed to run)
+```
+
+Settings beyond the questions (all optional) are listed in `fis.ini.example`.
+
 ## Views
 
 | Key | View | What it shows |
 |---|---|---|
 | 1 | **BRIEFING** | the jump target: distance, star and scoopable, whether any database knows it - *in no database* only where a source was asked, *inhabited* or *not checked* otherwise -, what the neighbours in its boxel held, fuel after the jump, open boxel candidates, the plotted route; *carriers here*: your own carrier and your favourites last known in this system, with source and age |
 | 2 | **PLANET** | the surface of a body: your track (ship, SRV, on foot), finds, colony circles for exobiology sampling, where the SRV is parked or the ship waits, Rhino mining rigs (Rig 1, 2 ... per launch, with tonnes) |
-| 3 | **SYSTEM** | the current system in 3D at its Kepler positions, the course line in the plugin's order with leg times, your last position fix, biology per body, points of interest from your own journals (stations, settlements with a ⌂ on their body, fleet carriers seen there - the latest eight, with *dockable* or *friends/squadron only* where their access is known, those that refuse you left out -, nav beacons); *nav beacon scanned - all bodies known* |
-| 4 | **GALAXY** | your flight path through the galaxy over time, the carrier's path and where it is now (with a pending jump), survey spheres with the status of every boxel, visited systems, notable finds; flat map or 3D with a replay of the flight path; starts on your system, a click moves the focus, a double click opens the system as a detail window; *copy name* copies the focused system for the game's galaxy map (on a tablet over the home network the browser may refuse the clipboard - then the name shows selected, to copy by hand) |
+| 3 | **SYSTEM** | the current system in 3D at its Kepler positions, the course line in the plugin's order with leg times, your last position fix, biology per body, points of interest from your own journals (stations, settlements with a ⌂ on their body, fleet carriers seen there - the latest eight, with *dockable* or *friends/squadron only* where their access is known, those that refuse you left out -, nav beacons); stations you docked at also in the map beside the body whose distance from the star matches theirs (the game names no parent body; with no match they stay in the list); your own carrier always where the game says it parks, your favourite carriers as long as their newest known position - your journal or the Spansh lookup - is this system (beside their body, else beside the main star), other carriers for a day after docking; *nav beacon scanned - all bodies known* |
+| 4 | **GALAXY** | your flight path through the galaxy over time, the carrier's path and where it is now (with a pending jump), the plugin's plot suggestion as a corridor (where a route would run through the most boxels never probed - plotting stays yours), survey spheres with the status of every boxel, visited systems, notable finds; flat map or 3D with a replay of the flight path; starts on your system, a click moves the focus, a double click opens the system as a detail window; *copy name* copies the focused system for the game's galaxy map (on a tablet over the home network the browser may refuse the clipboard - then the name shows selected, to copy by hand) |
 | 5 | **PLANET INFO** | datasheet of a body: gravity, temperature, atmosphere, volcanism, materials, rings and hotspots, signals, species, genus forecast; opens on the body of your last fix; under each ring what your prospected rocks held there and what rocks of rings like it held at such hotspots, your tonnes per hour there and what to expect at its hotspots; GROUND MINING: what your Rhino rigs yielded here and on bodies of the same class, tonnes per rig and rigs per hour |
 | 6 | **ATLAS** | everything found, by kind - ring hotspots, body signals, materials picked up, finds on the ground, bio signals - nearest first, within a chosen distance; SYSTEMS lists the survey sphere by state (not visited, visited, surveyed, known to no online source, checked and not existing) and exports it as CSV or JSON |
 | 7 | **SHIP** | status panel (warning / caution / advisory lamps), schematic cutaway, power by priority, modules with integrity and ammunition, damage and function report, cargo and fuel; unsold data with a risk level (low / moderate from 50 M / high from 100 M Cr), first discoveries and first-footfall species named apart; data lost with the ship to redo (with more than ten systems a LOST DATA tab: copy a name, hide systems, items or everything beyond 100-1000 ly from the list) |
-| | **VEHICLE** | the SRV or Nomad out now, or the last trip: edition, state, its own tank and use, cargo and refined tonnes, position and heading with distance and direction to the ship, switches, bio scans and landings |
+| | **VEHICLE** | the SRV or Nomad out now, or the last trip: edition, state, its own tank and use (against the full tank once a refuel synthesis showed its size), cargo and refined tonnes, position and heading with distance and direction to the ship, switches, bio scans and landings; SYNTHESIS: refuel, ammunition and repair per tier as you made them (learnt from your own synthesis, nothing copied), with how often each can still be made from the materials on board and what limits it |
 | 8 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range (with the tritium in your ship and - from EDMC's Frontier data - in the carrier's hold, what you mined and the trip to your route's end), hold with its goods, finances, services - and the air wing: every ship in the hangar with role ratings (combat, mining, transport, exploration, passengers, search and rescue); docked at someone else's carrier: what its market buys (what you carry first, tritium next) and sells, from the market you opened; **known carriers** - also without a carrier of your own: the carriers you docked at, started a mission or community goal from, rode along with or saw in the FSS, with their last known system, how old that is and how far from you, what you started there and what their market bought when you last opened it. Mark the ones you want to find again with ☆ (and a note); favourites come first, get a ★ in SYSTEM's points of interest and on the GALAXY map. With a carrier of your own the known carriers have a tab of their own; each shows whether you may dock, the services it offered when you docked, its last market to unfold (with its date), the system name to copy - and *open system* when the plugin database knows that system's bodies |
 | 9 | **MINING** | everything about mining, tritium first: the session (yield per hour, limpets, best and last rock), tritium for the carrier (tank, in your ship, mined, delivered), the best hotspots for you (nearby hotspots ranked by your own tonnes per hour), ring hotspots near you, mining ships, goods with what selling them earned against the carrier's upkeep, every session so far |
 | 0 | **STATISTICS** | the game's own record of you (written at every login): ranks with progress, exploration, exobiology, mining, the carrier, wealth and time played - with the growth over 24 h, 7, 30 or 90 days; *learning status*: how many rocks, mining runs, rigs and analysed bodies the FIS has learnt from, and where it is still thin |
@@ -177,7 +162,52 @@ contains the access token - keep it out of the stream picture.
 Planet, system, galaxy: the same place at three scales. Addresses work with the
 names too (`/#system`, `/#planetinfo`, `/#stats`).
 
-Notes on what the files allow:
+### Screenshots
+
+Demo data: a copy of a real plugin database with the commander's current
+area, carrier, earnings and surface tracks removed; commander and ship are
+called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English.
+
+**SYSTEM** - the system in 3D with Kepler orbits, flight plan legs, bio and
+first-footfall marks, and a rule-based system report.
+
+![SYSTEM view](docs/screenshots/demo_system.png)
+
+**GALAXY** - the survey sphere and its boxels in 3D, flight path, known
+systems; the focus panel and flight log on the right.
+
+![GALAXY view in 3D](docs/screenshots/demo_galaxy.png)
+
+**PLANET INFO** - datasheet, science report, atmosphere and surface, biology
+of the selected body.
+
+![PLANET INFO view](docs/screenshots/demo_planetinfo.png)
+
+**SHIP** - status lamps from `Status.json`, schematic cutaway, damage and
+function report, engineer view of power and module health.
+
+![SHIP view](docs/screenshots/demo_ship.png)
+
+**ATLAS** - signals, rings, materials and finds of every known body, nearest
+first, with a top view around you.
+
+![ATLAS view](docs/screenshots/demo_atlas.png)
+
+## Third-party parts
+
+The 3D library Three.js (0.170.0, MIT) ships with it in `web/vendor/three` -
+licence and origin in `SOURCE.md` there - so the 3D views work offline too. The
+QR code on the settings page is drawn with Project Nayuki's QR Code generator
+(`fis/vendor/qrcodegen.py`, MIT, licence header kept - origin in
+`fis/vendor/SOURCE.md`).
+
+The FIS reads the game's own journal and state files and, from EDMC's
+Frontier data (Companion API), what the journal does not say about your
+carrier; Spansh is asked only on your click at *online* (above). All
+third-party parts of the project, and Frontier's data:
+[Third-party parts](../README.md#third-party-parts) in the plugin README.
+
+## Notes on what the files allow
 
 * Module integrity and ammunition are written by the game at login, docking
   and outfitting - the SHIP view shows them with that time, not live in combat.
@@ -211,19 +241,15 @@ Notes on what the files allow:
 * Entries you hide from the list of data lost with the ship are kept per
   commander in `lost_hidden.json` next to `fis.ini` - like `favourites.json`
   keep it when you update.
+* A vehicle's tank size is in no game file. Right after a refuel synthesis
+  the tank is full, so the FIS takes that reading as the size of this vehicle
+  type and keeps it in `vehicle_tanks.json` next to `fis.ini` - keep it too.
 
-## Files
+## History
 
-```
-start_fis.bat      start (first start asks, then remembers)
-fis_settings.bat   change the settings
-fis.ini.example    every setting, explained
-fis/               the server (Python standard library only)
-web/               the pages (no build step)
-tests/             python -m unittest discover -s tests -t .  (not needed to run)
-```
-
-Settings beyond the questions (all optional) are listed in `fis.ini.example`.
+The FIS arrived with SHBOXSEARCH 4.4. What changed in each version - the
+FIS under *SHBOX FIS* in every chapter - is in the plugin README,
+[Version history](../README.md#version-history).
 
 ## For developers
 

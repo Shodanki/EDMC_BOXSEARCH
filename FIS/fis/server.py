@@ -66,6 +66,9 @@ class App:
         from .losthidden import LostHiddenStore
         # SHIP -> LOST DATA: crash losses hidden from the list (FIS-owned file)
         self.lost_hidden = LostHiddenStore(os.path.join(os.path.dirname(cfg.ini_path), "lost_hidden.json"))
+        from .vehicletanks import VehicleTankStore
+        # V1b: tank size per vehicle type, learnt after a refuel synthesis (FIS-owned file)
+        self.vehicle_tanks = VehicleTankStore(os.path.join(os.path.dirname(cfg.ini_path), "vehicle_tanks.json"))
         # K5: the one online lookup of the FIS (on a click, through the plugin's gateway)
         from .online import CarrierLookup
         self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
@@ -169,7 +172,22 @@ class App:
         out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
             self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om,
             skip_arrival=self.cfg.skip_arrival, archive=self.archive, fid=self.fid()))
-        return self._with_favourites(self._with_carrier(out, id64))
+        return self._with_places(self._with_favourites(self._with_carrier(out, id64)), id64)
+
+    def _with_places(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
+        """S2b: what the SYSTEM map draws - your favourite carriers as long as
+        their newest known position is here, other carriers while fresh, never
+        your own a second time (carriers.map_places)."""
+        try:
+            from . import carriers
+            favs = carriers.build_known(self.archive, self.favourites, None, sighted=0)["favourites"]
+            here = [f for f in carriers.carriers_here(id64, out.get("name"), None, favs)
+                    if f.get("kind") == "favourite"]
+            own = (out.get("carrier") or {}).get("callsign")
+            poi, extra = carriers.map_places(out.get("poi") or [], own, here)
+        except Exception:
+            return out
+        return dict(out, poi=poi, fav_here=extra)
 
     def _with_favourites(self, out: Dict[str, Any]) -> Dict[str, Any]:
         """K4: a star at your favourite carriers among the points of interest;
@@ -758,7 +776,19 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ship":
             return self._json(m.build_ship(app.live_state()))
         if path == "/api/vehicle":
-            return self._json(m.build_vehicle(app.live_state()))
+            live = app.live_state()
+            v = live.get("srv") or {}
+            full = v.get("tank_full")
+            if full and v.get("type"):              # V1b: a full tank after a refuel synthesis
+                app.vehicle_tanks.learn(v["type"], full.get("t"), v.get("name"),
+                                        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(full.get("ts") or 0)))
+            out = m.build_vehicle(live, tanks=app.vehicle_tanks.all())
+            try:                                  # V1c: recipes from your own Synthesis events
+                from . import synthesis
+                out["synthesis"] = synthesis.build_synthesis(app.archive)
+            except Exception:
+                out["synthesis"] = None
+            return self._json(out)
         if path == "/api/surface":
             sid = (qs.get("sys") or [None])[0]
             body = (qs.get("body") or [None])[0]

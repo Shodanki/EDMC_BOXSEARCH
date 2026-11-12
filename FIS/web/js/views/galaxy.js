@@ -19,7 +19,8 @@ import { el, frame, fmt, withPopout, copyText, C, alpha } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const LAYERS = [["path", N_("flight path")], ["carrier", N_("carrier")], ["systems", N_("systems")],
-  ["boxels", N_("boxels")], ["spheres", N_("spheres")], ["finds", N_("finds")], ["navroute", N_("route")]];
+  ["boxels", N_("boxels")], ["spheres", N_("spheres")], ["finds", N_("finds")], ["navroute", N_("route")],
+  ["corridor", N_("corridor")]];
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
 const MC = "abcdefgh";
 // interface colours: C / alpha() from ui.js (theme tokens)
@@ -27,11 +28,17 @@ const FIND_COL = { guardian: C.blue, nonhuman: C.green, brain: C.violet };
 const FIND_NAME = { guardian: N_("Guardian site"), nonhuman: N_("non-human site"), brain: N_("Brain Trees") };
 const BOX_NAME = { closed: N_("closed"), open: N_("open"), unchecked: N_("never checked") };
 
+function corridorText(tg) {
+  return t("plot to {n} · {b} boxels never probed · ~{j} jumps", { n: tg.name, b: tg.boxels, j: tg.jumps });
+}
+
 let root = null, cv = null, g = null, side = null, data = null, hover = null;
 let view = { scale: null, cx: 0, cz: 0 };
 let drag = null, picks = [];
 const on = JSON.parse(localStorage.getItem("fis.gal.layers") || "null") ||
   { path: true, carrier: true, systems: true, boxels: true, spheres: true, finds: true, navroute: true };
+// a layer added later (H3 #2 corridor) starts switched on, also with saved settings
+for (const [k] of LAYERS) if (on[k] === undefined) on[k] = true;
 let days = Number(localStorage.getItem("fis.gal.days") || "0");
 let mc = localStorage.getItem("fis.gal.mc") || "";
 let mode = new URLSearchParams(location.search).has("2d") ? "2d" : (localStorage.getItem("fis.gal.mode") || "2d");
@@ -150,7 +157,7 @@ async function setMode(m) {
       g3load = g3load || Promise.race([import("./galaxy3d.js"),
         new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000))]);   // a tablet on Wi-Fi
       const mod = await g3load;
-      if (!g3) g3 = mod.createGalaxy3D(stage, ov, { t, label, carrierTexts, pick: pickFocus, open: (p) => openDetail(p.id) });
+      if (!g3) g3 = mod.createGalaxy3D(stage, ov, { t, label, carrierTexts, corridorText, pick: pickFocus, open: (p) => openDetail(p.id) });
       g3.setReplay(replay);
       if (data) { g3.setData(data, on); if (focus) g3.focusOn(focus, { me: focusMe, instant: true, dist: g3.meDistance() }); }
       ui.eng.textContent = "";
@@ -361,6 +368,21 @@ function draw() {
       f.kinds.forEach((k, i) => { g.fillStyle = FIND_COL[k] || C.text; g.font = "13px monospace"; g.fillText("◆", sx - 5 + i * 9, sy - 6); });
       picks.push({ sx, sy, kind: "find", f, id: f.id });
     }
+  }
+  // H3 #2: where to plot - the plugin's suggestion through unprobed boxels
+  if (on.corridor !== false && data.corridor) {
+    const cr = data.corridor, [fx, fy] = toScreen(cr.from.x, cr.from.z);
+    cr.targets.forEach((tg, i) => {
+      const [tx, ty] = toScreen(tg.x, tg.z);
+      const w = Math.max(2, Math.min(40, 2 * (cr.half || 10) * view.scale));
+      g.strokeStyle = alpha("violet", i ? .07 : .14); g.lineWidth = w; g.lineCap = "round";
+      g.beginPath(); g.moveTo(fx, fy); g.lineTo(tx, ty); g.stroke(); g.lineCap = "butt";
+      g.strokeStyle = alpha("violet", i ? .45 : .9); g.lineWidth = 1.2; g.setLineDash([3, 5]);
+      g.beginPath(); g.moveTo(fx, fy); g.lineTo(tx, ty); g.stroke(); g.setLineDash([]);
+      g.fillStyle = alpha("violet", i ? .6 : 1); g.font = "11px monospace";
+      g.fillText(corridorText(tg), tx + 8, ty + 4);
+      picks.push({ sx: tx, sy: ty, kind: "corridor", tg });
+    });
   }
   // plotted route
   if (on.navroute && data.navroute.length > 1) {

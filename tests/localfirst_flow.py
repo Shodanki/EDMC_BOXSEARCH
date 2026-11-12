@@ -66,6 +66,12 @@ class Sess:
         self.headers = {}
 
     def request(self, method, url, **kw):
+        if "api-v1/systems" in url:              # I1 route check: names, one request
+            names = kw["params"]["systemName[]"]
+            Sess.log.append(("edsm-names", len(names)))
+            have = dict(GAL, **{"Far Hop": (600.0, 0.0, 0.0)})
+            return Resp([{"name": n, "coords": {"x": have[n][0], "y": have[n][1], "z": have[n][2]}}
+                         for n in names if n in have])
         if "edsm" in url:
             p = kw["params"]
             c = (p["x"], p["y"], p["z"])
@@ -263,6 +269,95 @@ with tempfile.TemporaryDirectory() as d:
                         "StarPos": [1.0, 2.0, 3.0], "timestamp": "2026-11-11T07:00:05Z"}, {})
     check(ST.cur_id64 == 815 and not ST.awaiting_position,
           "the new commander's Location sets the system")
+
+    # 12) overlay KNOWN POINTS / NAV (4.9): a species lost in a crash is not
+    #     "done" - "lost - redo"; picked up within NAV_LOST_S without a new mark
+    ev = ST.db.ingest_journal_event
+    ST.db.set_meta(load.CMDR_READY, "2026-11-12T00:00:00Z")
+    ev({"event": "Commander", "FID": "F9", "Name": "Gamma", "timestamp": "2026-11-12T10:00:00Z"})
+    ev({"event": "FSDJump", "StarSystem": "Nav Alpha", "SystemAddress": 601,
+        "StarPos": [5.0, 0.0, 0.0], "timestamp": "2026-11-12T10:01:00Z"})
+    ev({"event": "Scan", "ScanType": "Detailed", "StarSystem": "Nav Alpha", "SystemAddress": 601,
+        "BodyName": "Nav Alpha 1", "BodyID": 1, "PlanetClass": "Rocky body",
+        "DistanceFromArrivalLS": 10.0, "Radius": 400000.0, "timestamp": "2026-11-12T10:02:00Z"})
+    ev({"event": "FSSBodySignals", "SystemAddress": 601, "BodyID": 1, "BodyName": "Nav Alpha 1",
+        "Signals": [{"Type": "$SAA_SignalType_Biological;", "Count": 1}]})
+    ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 601, "Body": 1,
+        "Species_Localised": "Stratum Tectonicas", "Genus_Localised": "Stratum",
+        "timestamp": "2026-11-12T10:20:00Z"})
+    ev({"event": "Died", "timestamp": "2026-11-12T10:30:00Z"})
+    shown = []
+
+    class FakeOverlay:
+        enabled = True
+
+        def show_nav(self, lines, seconds=4):
+            shown.append(list(lines))
+            return True
+
+    ST.overlay, ST.cur_id64, ST._nav_cache, ST._nav_shown = FakeOverlay(), 601, None, 0.0
+    pos = {"body": "Nav Alpha 1", "lat": 0.0, "lon": 0.0, "heading": 0.0}
+    t0 = 1800000000.0
+    with mock.patch.object(load, "cfg_bool", lambda k, d: True):
+        load._nav_overlay(pos, 400000.0, t0, False)      # in orbital cruise
+        head = shown[-1][0][0] if shown else None
+        check(head == "KNOWN POINTS  bio 0 done, 1 lost - redo",          # 44 chars max
+              "overlay KNOWN POINTS: species lost in the crash -> 'lost - redo' (%r)" % head)
+        ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 601, "Body": 1,
+            "Species_Localised": "Stratum Tectonicas", "Genus_Localised": "Stratum",
+            "timestamp": "2026-11-12T11:20:00Z"})
+        n = len(shown)
+        load._nav_overlay(pos, 400000.0, t0 + load.NAV_LOST_S + 1, True)
+        check(ST._nav_cache is not None and ST._nav_cache[4] == ["scan"]
+              and not any("lost" in blk[0][0] for blk in shown[n:]),
+              "overlay NAV: redone -> no longer lost (%r)" % (ST._nav_cache or [None] * 5)[4])
+    ST.overlay = None
+
+    # 13) I1 route check: a plotted route through space we have no data for
+    #     is checked once - one bundled EDSM request, remembered 14 days
+    from netgate import Gateway
+    from sources import SourceManager
+    ST.net = Gateway(load.VERSION, session_factory=Sess)       # a fresh day, no cap reached
+    ST.sources = SourceManager(None, gateway=ST.net)
+    hops = [("Here", "K", (0.0, 0.0, 0.0)), ("Far Hop", "M", (600.0, 0.0, 0.0)),
+            ("Nobody Knows AB-C d1", "M", (610.0, 0.0, 0.0)), ("No Pos", "M", None)]
+    n0 = len(Sess.log)
+    ran.clear()
+    load._maybe_route_check(hops)
+    calls = [x for x in Sess.log[n0:] if x[0] == "edsm-names"]
+    check(ran == ["route check"] and calls == [("edsm-names", 2)],
+          "route check: one EDSM request for the two unchecked hops (%r)" % calls)
+    with ST.lock:
+        regions = {k: ST.db.valid_shells(k) for k in ("edd", "spansh", "edsm")}
+        row = ST.db.system("Far Hop")
+        lv_known = shells.info_level(set((row["sources"] or "").split(",")), (600.0, 0.0, 0.0),
+                                     regions)[0]
+        lv_none = shells.info_level(set(), (610.0, 0.0, 0.0), regions)
+    check(lv_known == "known", "route check: EDSM knows it -> known (%s)" % lv_known)
+    check(lv_none == ("checked", ["EDSM"]),
+          "route check: EDSM does not -> in no database, checked: EDSM (%r)" % (lv_none,))
+    load._maybe_route_check(hops)
+    ST._route_checked = None
+    load._maybe_route_check(hops)                    # plotted again later: nothing left to ask
+    check(len([x for x in Sess.log[n0:] if x[0] == "edsm-names"]) == 1,
+          "route check: the same route asks nothing again")
+    load._maybe_route_check(hops[:2])
+    check(len([x for x in Sess.log[n0:] if x[0] == "edsm-names"]) == 1,
+          "route check: a single jump is never checked")
+
+    # 14) H3 #2: the plot suggestion goes to meta for SHBOX FIS GALAXY
+    ST.route_targets = [{"name": "Fake 9", "dist": 61.04, "jumps": 3, "boxels": 14, "score": 20.0,
+                         "pos": (60.0, 1.0, -40.0)}]
+    load._store_corridor((10.0, 0.0, -5.0), 32.0)
+    doc = json.loads(ST.db.get_meta(load.CORRIDOR_META))
+    check(doc["from"] == [10.0, 0.0, -5.0] and doc["half"] == 16.0
+          and doc["targets"] == [{"name": "Fake 9", "x": 60.0, "y": 1.0, "z": -40.0, "ly": 61.0,
+                                  "jumps": 3, "boxels": 14}],
+          "corridor: suggestion stored for the FIS (%r)" % doc)
+    ST.route_targets = []
+    load._store_corridor((10.0, 0.0, -5.0), 32.0)
+    check(json.loads(ST.db.get_meta(load.CORRIDOR_META))["targets"] == [],
+          "corridor: no target -> the FIS shows none")
     ST.db.close()
 
 print("failures: %d" % fails)

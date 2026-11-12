@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.8
+# SHBOXSEARCH v4.9
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -14,30 +14,14 @@ tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
 folder of this plugin. See [FIS/README.md](FIS/README.md) - with
 screenshots (demo data).
-**New in 4.8:** several commanders on one PC - each keeps their own
-exploration, what is found is shared, a main commander for the survey. The
-first route after a carrier ride starts at the carrier; on a plotted route
-the briefing says where to scoop at the latest. In the FIS: a VEHICLE tab
-for SRV and Nomad, themes that change shapes as well as colours, unsold
-data with a risk level and the x5 bonus only where it is paid - and data
-lost with the ship is planned again - see "What changed in 4.8".
-
-**What you need**
-
-| | | |
-|---|---|---|
-| **EDMC** (Elite Dangerous Market Connector) 5.10 or newer | required | the plugin runs inside it; tested against 6.1.2 / Python 3.13 |
-| **Elite Dangerous: Odyssey** | required | the plugin reads its journals and status files |
-| **EDDiscovery** | recommended | its system database is the local source: while it is current the plugin does not ask Spansh at all, EDSM once per shell (see *Fair use*). Open it now and then so its data stays current, then close it |
-| **Python 3.11 or newer** (python.org) | for SHBOX FIS only | the flight information system runs on it; the plugin itself needs nothing beyond EDMC |
-| **EDMCModernOverlay** | optional | for the cockpit overlay (route targets, surface compass, mining block) |
-
-> **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
-> all. On the first start 4.1 repairs boxel records written under a wrong
-> naming rule and replays your journals once in the background to fill the
-> new per-body fields. See [What changed in 4.1](#what-changed-in-41).
-
-Repository: <https://github.com/Shodanki/EDMC_BOXSEARCH>
+**New in 4.9:** this README in a new order - operation first, then the
+third-party parts, how it works, the history. The overlay names the
+absolute course to every point and says "lost - redo" for species lost in a
+crash; a plotted route through space nobody was asked about is checked once.
+In the FIS: synthesis per tier in the VEHICLE tab with how often each can
+still be made, the vehicle's tank size, stations beside their body in the
+SYSTEM map and the plot suggestion as a corridor in GALAXY - see
+[What changed in 4.9](#what-changed-in-49).
 
 **Licence:** [Mozilla Public License 2.0](LICENSE) since 4.7 - use, change and
 share it freely; whoever passes on a changed file of this project keeps that
@@ -45,13 +29,46 @@ file open under the same licence (files of your own next to it are yours).
 4.6 and earlier were released under MIT and stay MIT. Third-party parts keep
 their own licence: Three.js 0.170.0 (MIT, `FIS/web/vendor/three`) and
 Project Nayuki's QR Code generator (MIT, `FIS/fis/vendor`) - origin and
-licence text in the `SOURCE.md` / `LICENSE` files there.
+licence text in the `SOURCE.md` / `LICENSE` files there; all of them in
+[Third-party parts](#third-party-parts).
+
+Repository: <https://github.com/Shodanki/EDMC_BOXSEARCH>
 
 Provided **as is**. The plugin checks once a day whether a newer release is
 tagged and says so - it never replaces its own files. Updating stays a
 deliberate act, because the thing worth protecting here is a database that
 grows over months, and a half-applied update in the same folder is the one
 failure that actually hurts.
+
+**Contents**
+
+1. [Operation](#operation) - what you need, install, update, files, first
+   start and maintenance, preferences, known limits
+2. [Third-party parts](#third-party-parts) - what is shipped with it, what
+   it reads and asks, Frontier's data
+3. [How it works: the why and the maths](#how-it-works-the-why-and-the-maths) -
+   names, gap logic, existence checks, sources, routing, fuel, learning
+4. [Version history](#version-history) - every release, oldest first
+5. [For maintainers](#for-maintainers) - releasing
+
+---
+
+# Operation
+
+## What you need
+
+| | | |
+|---|---|---|
+| **EDMC** (Elite Dangerous Market Connector) 5.10 or newer | required | the plugin runs inside it; tested against 6.1.2 / Python 3.13 |
+| **Elite Dangerous: Odyssey** | required | the plugin reads its journals and status files |
+| **EDDiscovery** | recommended | its system database is the local source: while it is current the plugin does not ask Spansh at all, EDSM once per shell (see [Fair use](#7-external-sources)). Open it now and then so its data stays current, then close it |
+| **Python 3.11 or newer** (python.org) | for SHBOX FIS only | the flight information system runs on it; the plugin itself needs nothing beyond EDMC |
+| **EDMCModernOverlay** | optional | for the cockpit overlay (route targets, surface compass, mining block) |
+
+> **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
+> all. On the first start 4.1 repairs boxel records written under a wrong
+> naming rule and replays your journals once in the background to fill the
+> new per-body fields. See [What changed in 4.1](#what-changed-in-41).
 
 ## Install
 
@@ -99,9 +116,9 @@ before it changes the schema or repairs records (the last three are kept).
 
 SHBOX FIS keeps running when EDMC is closed: after an update close its
 window (or end `python -m fis`) so it starts with the new files. Keep
-`FIS/fis.ini`, `FIS/favourites.json` and `FIS/lost_hidden.json` - your
-settings, favourites and hidden losses.
-
+`FIS/fis.ini`, `FIS/favourites.json`, `FIS/lost_hidden.json` and
+`FIS/vehicle_tanks.json` - your settings, favourites, hidden losses and the
+tank sizes the FIS learnt.
 
 ## Files
 
@@ -110,21 +127,21 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4512 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 2192 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
-| `sysroute.py` | 795 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
-| `boxelplan.py` | 772 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
-| `sources.py` | 735 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
-| `netgate.py` | 469 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
-| `shells.py` | 224 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
-| `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
-| `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
-| `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
-| `overlay.py` | 318 | Cockpit overlay through EDMCModernOverlay (optional) | — |
-| `biopredict.py` | 199 | Genus prediction learned from your own samples | — |
-| `diagnostics.py` | 284 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
-| `surfacenav.py` | 263 | Surface compass: parked SRV, open samples, known points | — |
-| `miningstat.py` | 282 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
+| `load.py` | 4936 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 3127 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `sysroute.py` | 935 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
+| `boxelplan.py` | 952 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
+| `sources.py` | 776 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
+| `netgate.py` | 474 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
+| `shells.py` | 321 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
+| `procgen.py` | 445 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
+| `deepspace.py` | 441 | Fuel model, tritium rings, carrier staging | — |
+| `migrate.py` | 77 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
+| `overlay.py` | 424 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `biopredict.py` | 204 | Genus prediction learned from your own samples | — |
+| `diagnostics.py` | 289 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
+| `surfacenav.py` | 493 | Surface compass: parked SRV, open samples, known points | — |
+| `miningstat.py` | 337 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
 | `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain
@@ -158,15 +175,143 @@ personal data - they belong on your disk, not in the repository. So does
 Delete the folder. `shboxsearch.sqlite` goes with it, so copy it out first if
 you want to keep the survey record.
 
+## First start and maintenance
+
+**No Python installation is required.** EDMC ships its own interpreter and the
+migration runs inside the plugin.
+
+1. Copy the `.py` files into
+   `%LOCALAPPDATA%\EDMarketConnector\plugins\SHBOXSEARCH\` (see
+   [Install](#install) at the top). If you come from v3 and still have
+   `neareststars.json` and `survey_state.json`, leave them in place for the
+   first import; they are read once and never modified.
+2. Restart EDMC.
+
+On first start the **initial import runs automatically in the background**:
+
+* `neareststars.json` and `survey_state.json` are read (never modified),
+* every existing journal is replayed to rebuild the scan state,
+* a marker is then stored so it never runs again unasked.
+
+Progress appears in the plugin status line (`first-run import: journals`,
+`journals 12/340`) and in full in the EDMC log. With years of flight history
+this can take a few minutes; EDMC stays usable throughout.
+
+3. Open Preferences → SHBOXSEARCH and check:
+   * *Journal folder* — must show a path, not `NOT FOUND`
+   * *First import* — shows the timestamp of the run
+   * *EDDSystem.sqlite* — set the path via `...` if needed
+   * per-source status — `ok`, or the reason it is not
+4. Press **Self test**. It verifies the procgen maths and writes the result to
+   the EDMC log (`selftest | failures: 0`).
+5. Fly to the start system, pick a radius, press **Start**.
+
+### Maintenance buttons
+
+| Button | Effect |
+|---|---|
+| **Run first import** | repeats the whole initial import (idempotent, loses nothing) |
+| **Replay journals** | re-reads the journals only |
+| **Import JSON** | re-reads the two JSON files only |
+| **Export plan (CSV)** | writes the full target list |
+| **Export boxel prefixes** | writes the prefix list for the galaxy map search |
+| **Self test** | verifies maths and reports database statistics |
+
+`migrate.py` is included only in case you ever have your own Python. It is not
+needed for normal operation.
+
+## Preferences
+
+**Survey** — radius (50/100/150), active mass codes, probe depth above the
+boxel maximum, empty probes on/off, queue outstanding scans on/off, jump range,
+carrier start on/off, statistics block on/off. Shows the remembered carrier and
+the last six surveyed spheres.
+
+**Data sources** — EDDiscovery / Spansh / EDSM individually switchable, path to
+`EDDSystem.sqlite` with a file picker, per-source status line.
+
+**Automatic harvesting** — read NavRoute, read target selection, auto-copy.
+
+**Maintenance** — run first import, replay journals, import JSON, export plan
+as CSV, export boxel prefixes, self test, database statistics.
+
+## Preferences layout
+
+Two columns instead of one stack, because the full set ran off the bottom of a
+1080p window. Left holds everything about the survey itself (sphere, mass
+codes, what counts as needing a visit); right holds sources, harvesting and
+window behaviour; maintenance buttons run full width in a 3x2 grid underneath.
+
+## Known limits
+
+* **Sectors without a name mapping.** The plugin learns the sector name ↔
+  sector index mapping from observed systems; Frontier's sector name generator
+  is not reimplemented. One known system per sector is enough. At 150 ly a few
+  neighbouring sectors are typically missing at first — an EDSM/Spansh query or
+  a single jump there resolves it. The count appears in the plan summary.
+* **Mass code h** has culling gaps; the gap logic does not apply there.
+* **Spansh** lags by up to 48 hours.
+* **Position uncertainty** for unconfirmed candidates is half the boxel space
+  diagonal (a ±9 ly, b ±17 ly, c ±35 ly, d ±69 ly). After the first jump the
+  position is exact.
+* The EDDiscovery source supplies names and exact coordinates, but no
+  SystemAddress. Catalogue numbers (HD, HIP …) are packed in a format that is
+  not decoded yet and still come from EDSM/Spansh.
+* Named "... Sector" regions (NGC 2232 Sector, Cephei Sector …) are
+  hand-authored and have their own boxel origin; the planner's grid does not
+  apply to them, so they are flown but never probed.
+
 ---
+
+# Third-party parts
+
+What in this project comes from others, and how it is used. To run the
+plugin you need nothing of it beyond EDMC and the game.
+
+**Shipped with SHBOX FIS, unchanged, under their own licence:**
+
+| Part | Licence | Where | Used for |
+|---|---|---|---|
+| Three.js 0.170.0 (three.js authors) | MIT | `FIS/web/vendor/three` - `three.module.js`, `addons/controls/OrbitControls.js` | the 3D views, also offline |
+| QR Code generator by Project Nayuki | MIT | `FIS/fis/vendor/qrcodegen.py` | the QR code on the FIS settings page |
+
+Origin, version and checksum are in the `SOURCE.md` next to each; the licence
+texts stay with the files (`LICENSE` there, the header of `qrcodegen.py`).
+
+**Used, not included** - no code of these is part of this project:
+
+* **EDMC** (Elite Dangerous Market Connector) - the host the plugin runs in,
+  through its plugin interface; it also hands over Frontier's Companion API
+  answer for your fleet carrier.
+* **EDMCModernOverlay** (or the older EDMCOverlay) - optional; the cockpit
+  overlay is drawn through its `edmcoverlay` interface when it is installed.
+* **EDDiscovery** - its system database `EDDSystem.sqlite` is read as the
+  local source; nothing is written to it.
+* **Spansh** and **EDSM** - asked over their public web interfaces, in shells
+  and only when needed, at most 50 requests per service and UTC day, one at a
+  time through one polite gateway (`netgate.py`). The rules are in
+  [External sources](#7-external-sources) under *Fair use*.
+
+**Frontier's data.** Elite Dangerous is a game by Frontier Developments plc.
+The plugin and the FIS read the game's own journal and state files on your PC
+(`Status.json`, `NavRoute.json`, `Cargo.json`, ...) and, through EDMC, the
+Companion API answer for your carrier. They only display: nothing is sent to
+the game and nothing is automated. SHBOXSEARCH is a free fan project, not
+affiliated with or endorsed by Frontier.
+
+**Ship data.** Ship values (mass, tank, jump range, cargo) come from the
+game's own `Loadout` event; no data files of outfitting tools such as Coriolis
+or EDSY are included.
+
+---
+
+# How it works: the why and the maths
 
 Goal: completely explore a chosen radius (50 / 100 / 150 ly) around a start
 point — find every system, fly there, scan it and map it, with particular
 weight on systems that appear in no public database.
 
 Tested against EDMC 6.1.2 / Python 3.13.
-
----
 
 ## 1. Why this is necessary
 
@@ -180,8 +325,6 @@ genuinely complete sphere survey has to ask it.
 
 SHBOXSEARCH does exactly that: it derives from the procedural naming rules
 which systems *must* exist, and lets the client confirm them.
-
----
 
 ## 2. How a system name is built
 
@@ -215,8 +358,6 @@ against every procgen system in the supplied journals and JSON files —
 Consequence: any name yields a position accurate to the boxel size, and any
 id64 yields the full name back.
 
----
-
 ## 3. The gap logic
 
 Within a boxel, `n2` runs **contiguously from 0** (true for mass codes a–g;
@@ -230,9 +371,25 @@ Three kinds of candidate follow from that:
 | **probe** | `n2` above the known maximum → finds the end of the boxel |
 | **empty** | boxel with no known system at all → one lookup on `-0` decides whether it holds any stars |
 
----
+## 4. Gap logic, re-checked
 
-## 4. Existence checks without guesswork
+Verified against the current database:
+
+```
+boxels total: 44 | contiguous: 18 | with gaps: 26 | missing n2 values: 231
+
+Synuefe KV-M b40   missing [0, 1, 2, 3, 4]  (highest known 5)
+Synuefe MG-L b41   missing [0, 1, 2, 3, 4]  (highest known 5)
+Synuefe OB-L b41   missing [2]              (highest known 4)
+```
+
+Those 231 names are systems that must exist - `n2` runs contiguously from 0 -
+and that no database has. The negative cache is still empty because none have
+been checked yet, which is consistent: nothing has been ruled out because
+nothing has been looked at. The logic is doing what it should; it just needs
+the galaxy map work to convert candidates into finds.
+
+## 5. Existence checks without guesswork
 
 **There is no journal event that lists nearby systems.** Every one of the
 250-plus events in the Odyssey journal schema was checked against
@@ -320,7 +477,7 @@ above 15% flags the opposite — the plugin says so explicitly:
 `thin reporting here - good odds for undiscovered systems`. That is the cue to
 probe hard here before moving the carrier.
 
-## 5. Automatic harvesting
+## 6. Automatic harvesting
 
 These channels run in the background without any action from you:
 
@@ -341,9 +498,7 @@ the real galaxy. Plot a route across the sphere and dozens of systems land in
 the database with exact coordinates — regardless of whether anyone ever
 uploaded them. One action, a large haul.
 
----
-
-## 6. External sources
+## 7. External sources
 
 | Source | Priority | Notes |
 |---|---|---|
@@ -382,6 +537,15 @@ The plugin notices a locked file and reads it again later.
 at a favourite carrier (where it was last reported), through the same
 gateway and daily cap, at most once per carrier every six hours.
 
+*Route check.* When you plot a route of two jumps or more through space no
+source was asked about (outside the fetched shells), its systems are checked
+once: first in EDDiscovery's file (local), then the rest - at most 40 - with
+ONE EDSM request by name, through the same gateway, daily cap, offline switch
+and EDSM switch. Every system asked is remembered for 14 days, so plotting
+the same route again asks nothing, and the briefing can tell *known* from
+*in no database (checked: EDSM)* there instead of *not checked*. A single
+jump is never checked.
+
 *Limits.* At most 50 requests per service and UTC day (a 50 ly survey needs
 about five), at most 20 Spansh pages (10 000 systems) per shell. The
 statistics window shows *external today: EDSM n of 50 · Spansh n of 50*.
@@ -411,9 +575,7 @@ Deliberately **not** used:
   Too risky for data integrity.
 * **Frontier cAPI** — commander, ship and station data only.
 
----
-
-## 7. Data integrity
+## 8. Data integrity
 
 Every coordinate carries a quality level. **A lower-quality write never
 overwrites a higher-quality one.**
@@ -444,9 +606,7 @@ keeps the latest answer as it is in `capi_fleetcarrier.json` in the plugin
 folder - nothing is sent anywhere. SHBOX FIS reads it for what the journal does
 not say: the goods in the carrier's hold, above all the tritium.
 
----
-
-## 8. The two work queues
+## 9. The two work queues
 
 There are two, because these are two different activities.
 
@@ -494,9 +654,7 @@ so count only the names without a dash. The probe window says so.
 n1 = 0 occurs in the bottom two boxel layers (lowest z) of every sector, and
 always for mass code h.
 
----
-
-## 9. In-system routing
+## 10. In-system routing
 
 Arriving in a 40-body system, which order do you fly it in? The journal has
 everything needed to answer that properly.
@@ -764,7 +922,7 @@ their planet is what makes this work: it collapses a 46-body tour into 16
 decisions, which is small enough that 2-opt reliably finds the best answer.
 There is no gain to be had from a smarter solver here.
 
-## 9b. Interface
+## 11. Interface
 
 EDMC's window is shared with every other plugin, so the main panel shows only
 what you act on between jumps:
@@ -807,24 +965,7 @@ Clicking **Fly** or **Probe** in the main panel copies that name.
 they share sector, letters and mass code - `Synuefe VA-I b` lists b2, b3 and
 b17 (and the other b boxels of VA-I) in one galaxy-map search.
 
-## 10. Preferences
-
-**Survey** — radius (50/100/150), active mass codes, probe depth above the
-boxel maximum, empty probes on/off, queue outstanding scans on/off, jump range,
-carrier start on/off, statistics block on/off. Shows the remembered carrier and
-the last six surveyed spheres.
-
-**Data sources** — EDDiscovery / Spansh / EDSM individually switchable, path to
-`EDDSystem.sqlite` with a file picker, per-source status line.
-
-**Automatic harvesting** — read NavRoute, read target selection, auto-copy.
-
-**Maintenance** — run first import, replay journals, import JSON, export plan
-as CSV, export boxel prefixes, self test, database statistics.
-
----
-
-## 11. Orders of magnitude
+## 12. Orders of magnitude
 
 Measured on a live survey (sector `Synuefe`, mass codes a–d):
 
@@ -842,101 +983,7 @@ At 100 and 150 ly the empty-probe list is not workable by hand. Recommended:
   10 ly across and dominate the list.
 * Do gaps and probes first — they have by far the highest hit rate.
 
----
-
-## 12. Known limits
-
-* **Sectors without a name mapping.** The plugin learns the sector name ↔
-  sector index mapping from observed systems; Frontier's sector name generator
-  is not reimplemented. One known system per sector is enough. At 150 ly a few
-  neighbouring sectors are typically missing at first — an EDSM/Spansh query or
-  a single jump there resolves it. The count appears in the plan summary.
-* **Mass code h** has culling gaps; the gap logic does not apply there.
-* **Spansh** lags by up to 48 hours.
-* **Position uncertainty** for unconfirmed candidates is half the boxel space
-  diagonal (a ±9 ly, b ±17 ly, c ±35 ly, d ±69 ly). After the first jump the
-  position is exact.
-* The EDDiscovery source supplies names and exact coordinates, but no
-  SystemAddress. Catalogue numbers (HD, HIP …) are packed in a format that is
-  not decoded yet and still come from EDSM/Spansh.
-* Named "... Sector" regions (NGC 2232 Sector, Cephei Sector …) are
-  hand-authored and have their own boxel origin; the planner's grid does not
-  apply to them, so they are flown but never probed.
-
----
-
-## 13. Installation
-
-**No Python installation is required.** EDMC ships its own interpreter and the
-migration runs inside the plugin.
-
-1. Copy the `.py` files into
-   `%LOCALAPPDATA%\EDMarketConnector\plugins\SHBOXSEARCH\` (see
-   [Install](#install) at the top). If you come from v3 and still have
-   `neareststars.json` and `survey_state.json`, leave them in place for the
-   first import; they are read once and never modified.
-2. Restart EDMC.
-
-On first start the **initial import runs automatically in the background**:
-
-* `neareststars.json` and `survey_state.json` are read (never modified),
-* every existing journal is replayed to rebuild the scan state,
-* a marker is then stored so it never runs again unasked.
-
-Progress appears in the plugin status line (`first-run import: journals`,
-`journals 12/340`) and in full in the EDMC log. With years of flight history
-this can take a few minutes; EDMC stays usable throughout.
-
-3. Open Preferences → SHBOXSEARCH and check:
-   * *Journal folder* — must show a path, not `NOT FOUND`
-   * *First import* — shows the timestamp of the run
-   * *EDDSystem.sqlite* — set the path via `...` if needed
-   * per-source status — `ok`, or the reason it is not
-4. Press **Self test**. It verifies the procgen maths and writes the result to
-   the EDMC log (`selftest | failures: 0`).
-5. Fly to the start system, pick a radius, press **Start**.
-
-### Maintenance buttons
-
-| Button | Effect |
-|---|---|
-| **Run first import** | repeats the whole initial import (idempotent, loses nothing) |
-| **Replay journals** | re-reads the journals only |
-| **Import JSON** | re-reads the two JSON files only |
-| **Export plan (CSV)** | writes the full target list |
-| **Export boxel prefixes** | writes the prefix list for the galaxy map search |
-| **Self test** | verifies maths and reports database statistics |
-
-`migrate.py` is included only in case you ever have your own Python. It is not
-needed for normal operation.
-
----
-
-## 14. Fixed since v3.0.8
-
-* **Preferences tab crashed.** `myNotebook.Entry` was removed in EDMC 6.0
-  (`AttributeError: module 'myNotebook' has no attribute 'Entry'`, line 1287).
-  Now `nb.EntryMenu`, with `tk.Button` for buttons.
-* **Preferences tab crashed again in 4.0.0-rc.** Nested `nb.Frame` containers
-  used `pack()` inside a grid-managed notebook frame
-  (`TclError: cannot use geometry manager pack inside ... managed by grid`).
-  The whole tab is now laid out with `grid()` and no nested containers.
-* **EDDiscovery hook pointed nowhere.** It looked for `EDDUser.sqlite`; the
-  system data lives in `EDDSystem.sqlite`.
-* **Wasteful cube tiling.** 27 tiles of 200 ly edge length for a 50 ly radius.
-  Replaced by a single sphere query, or a clean 100 ly decomposition.
-* **id64 was thrown away.** `survey_state.json` had `id64` null throughout,
-  making the exact boxel geometry unusable.
-* **Boxel designations were treated as untargetable.** Names like
-  `Synuefe XV-C d12` were held back entirely. With exact coordinates behind
-  them they are real systems, and their boxels need no probing at all.
-* **No durable knowledge store.** `neareststars.json` was rewritten on every
-  run and `survey_state.json` was throwaway state.
-
-
----
-
-## 15. Deep space operations
+## 13. Deep space operations
 
 Three things decide how far out you can work, and all three are measured from
 the journal rather than assumed.
@@ -1013,10 +1060,7 @@ That is also the practical argument for keeping the **has rings** filter on
 while working a sphere: every icy ring you scan becomes a candidate for the
 next hop.
 
-
----
-
-## 16. Orbital drift, and when the route goes stale
+## 14. Orbital drift, and when the route goes stale
 
 Bodies keep orbiting while the game is paused, while you sit landed, and while
 it is shut down. The orbital elements in a `Scan` event are a snapshot taken at
@@ -1045,7 +1089,7 @@ route | game restart: order changed, 11412 LS -> 11208 LS (-204)
 It triggers on `Liftoff` - which is what ends a surface pause - and on the
 synthesised `StartUp` after a game restart, whenever tasks are still open.
 
-## 17. The map
+## 15. The map
 
 Three sizes via the **size** button (340 / 480 / 640 px), because a dense
 system needs the room. The default is now medium rather than small.
@@ -1056,7 +1100,7 @@ the closest thing to "you are here" that the data allows - and it is deliberatel
 a colour that never appears in the theme, so it cannot be confused with a route
 marker.
 
-## 18. Statistics window
+## 16. Statistics window
 
 **stats** now opens its own window, in the host's colours, as labelled tables
 rather than a wall of text. Only figures that inform the next decision are
@@ -1116,17 +1160,7 @@ Time per system comes from measured intervals between jumps, discarding
 anything under 30 seconds or over three hours so that pauses and instant hops
 do not distort it.
 
-## 19. Preferences layout
-
-Two columns instead of one stack, because the full set ran off the bottom of a
-1080p window. Left holds everything about the survey itself (sphere, mass
-codes, what counts as needing a visit); right holds sources, harvesting and
-window behaviour; maintenance buttons run full width in a 3x2 grid underneath.
-
-
----
-
-## 20. What the survey actually pays
+## 17. What the survey actually pays
 
 Sales are recorded from `MultiSellExplorationData`, `SellExplorationData` and
 `SellOrganicData`, and reported in the info window:
@@ -1158,10 +1192,112 @@ Two practical consequences:
 The figures are yours, not estimates: they come from what the game actually
 paid at the counter.
 
+## 18. Mining hotspots
+
+Ring scans report their mining materials in `SAASignalsFound`, right next to
+the biological ones:
+
+```json
+{"BodyName": "Synuefe CC-G b3-0 5 A Ring",
+ "Signals": [{"Type": "Rhodplumsite", "Count": 2}, {"Type": "Monazite", "Count": 3},
+             {"Type": "Platinum", "Count": 3}, {"Type": "Painite", "Count": 1}]}
+```
+
+Those were being discarded - the ingest only looked for Biological and
+Geological. Keeping them turns the survey into a mining atlas of your own
+making. From the test journals alone:
+
+```
+Monazite              7 rings, 17 hotspots
+Low Temp. Diamonds    5 rings, 14 hotspots
+Rhodplumsite          3 rings, 13 hotspots
+Platinum              4 rings,  8 hotspots
+Tritium               3 rings,  3 hotspots
+```
+
+**mining** opens a searchable list, nearest first:
+
+```
+material [Platinum v] [refresh] [close]
+
+system                     ring                        x  ring type  distance
+Synuefe ZB-J d10-61        13 A Ring                   3  Icy             12 ly
+Synuefe ZB-J d10-61        13 B Ring                   1  Icy             12 ly
+Synuefe TH-J b42-2         D 4 A Ring                  1  MetalRich       21 ly
+Synuefe CC-G b3-0          5 A Ring                    3  MetalRich      981 ly
+```
+
+Clicking a row copies the system name. Choose `(all)` to see everything with
+the material named in the last column. The point is the months-later case:
+when the carrier needs tritium or you want a platinum run, the answer is
+already in your own data rather than a forum search.
+
+## 19. Learning, fuel and commanders
+
+Three later parts are described where they arrived, in the version history:
+
+* **Learning from your own data** (4.7) - counting, averages and 95 % ranges
+  from your own prospected rocks, mining runs and Rhino rigs; a thin group
+  leans on the broader one (that ring, else rings of its class, else any
+  ring), and a value resting on little data is marked as thin. See
+  [Learning from your own data](#learning-from-your-own-data); the genus
+  forecast from your own samples is in
+  [Bio prediction from your own finds](#bio-prediction-from-your-own-finds).
+* **Fuel** - the model is in [Deep space operations](#13-deep-space-operations).
+  The burn curve is learnt per ship and commander (4.7, [Plugin](#plugin)); on
+  a plotted route the briefing names the star to scoop at the latest, with one
+  jump in hand (4.8, [Scoop at the latest](#scoop-at-the-latest)).
+* **Commanders** - exploration per commander, knowledge shared, a main
+  commander for the survey (4.8,
+  [Several commanders on one PC](#several-commanders-on-one-pc)); the first
+  route after a carrier ride starts at the carrier
+  ([First route from the carrier](#first-route-from-the-carrier)).
 
 ---
 
-## 21. Fitting on a 1080p screen
+# Version history
+
+Oldest first: the versions at a glance, the fixes of 3.x and 4.0, then
+what changed in each release from 4.1 on.
+
+## Version numbers so far
+
+| Version | Notes |
+|---|---|
+| 4.0.0 | first release: sphere survey, boxel gaps, in-system routing, deep space, mining atlas |
+| 4.1.0 | n1 = 0 naming rule fixed, EDDiscovery source working again, bio counter fixed, physical body data stored |
+| 4.2.0 | cockpit overlay, bio prediction from own finds, route plot targets through unprobed boxels |
+| 4.3.0 | discovery filters fixed, supercruise timing on real legs, atlas for body signals and materials, 30 s briefing |
+| 4.4.0 | surface track and finds on bodies, exobiology sample distance in the overlay, SHBOX FIS |
+| 4.5.0 | mining block in the overlay, carrier hold from Frontier's Companion API, FIS: galaxy 3D, mining, statistics |
+| 4.5.1 | fixes: FIS keeps following a journal the game rewrote, live-link watchdog; mining block only from a prospector in a mining ship |
+| 4.6.0 | local first: online sources in shells when needed, daily cap, offline switch, EDDiscovery first; FIS: Rhino rigs and hold, open bio signals, data at risk, on foot, QR code, OBS mode |
+| 4.7.0 | Mozilla Public License 2.0; honest information levels in the briefing; fuel model per ship; FIS: known and favourite carriers with docking access, learning from your own mining, themes, combat mode, cockpit configuration, ATLAS SYSTEMS |
+| 4.8.0 | exploration per commander with a main commander; first route from the carrier; latest scoop on a plotted route; data lost with the ship planned again; FIS: VEHICLE tab, deeper themes, unsold data with risk level and the first-footfall bonus |
+| 4.9.0 | README in a new order; overlay: absolute course, "lost - redo"; route check of a plotted route (one EDSM request); prospecting learnt from your probes; FIS: synthesis per tier and tank size in VEHICLE, docked stations in the SYSTEM map, plot corridor in GALAXY |
+
+## Fixed since v3.0.8
+
+* **Preferences tab crashed.** `myNotebook.Entry` was removed in EDMC 6.0
+  (`AttributeError: module 'myNotebook' has no attribute 'Entry'`, line 1287).
+  Now `nb.EntryMenu`, with `tk.Button` for buttons.
+* **Preferences tab crashed again in 4.0.0-rc.** Nested `nb.Frame` containers
+  used `pack()` inside a grid-managed notebook frame
+  (`TclError: cannot use geometry manager pack inside ... managed by grid`).
+  The whole tab is now laid out with `grid()` and no nested containers.
+* **EDDiscovery hook pointed nowhere.** It looked for `EDDUser.sqlite`; the
+  system data lives in `EDDSystem.sqlite`.
+* **Wasteful cube tiling.** 27 tiles of 200 ly edge length for a 50 ly radius.
+  Replaced by a single sphere query, or a clean 100 ly decomposition.
+* **id64 was thrown away.** `survey_state.json` had `id64` null throughout,
+  making the exact boxel geometry unusable.
+* **Boxel designations were treated as untargetable.** Names like
+  `Synuefe XV-C d12` were held back entirely. With exact coordinates behind
+  them they are real systems, and their boxels need no probing at all.
+* **No durable knowledge store.** `neareststars.json` was rewritten on every
+  run and `survey_state.json` was throwaway state.
+
+## Fitting on a 1080p screen
 
 A 29-body system produces a route taller than the monitor. Three changes:
 
@@ -1209,10 +1345,7 @@ info window already. What remains is four lines and one row of buttons; the
 fuel line and queue counters stay off unless switched on, and a fuel **warning**
 always shows regardless.
 
-
----
-
-## 22. Ticks are remembered
+## Ticks are remembered
 
 Working a 30-body system takes longer than one sitting. The ticks are therefore
 stored per body in the database, not in a session list - fly out, come back
@@ -1236,10 +1369,7 @@ Two ways a stop gets ticked:
 removed. The database also tracks which systems are part-worked, which is the
 list you want when deciding where to go back to.
 
-
----
-
-## 23. Why the map was a straight line
+## Why the map was a straight line
 
 Early versions projected every system onto the X/Z plane, on the assumption
 that orbits sit near the galactic plane. Measured across real systems, that is
@@ -1280,50 +1410,7 @@ Two changes on top of that:
 On the 29-stop system that takes the map from 29 overlapping labels to 17
 readable ones.
 
-
----
-
-## 24. Mining hotspots
-
-Ring scans report their mining materials in `SAASignalsFound`, right next to
-the biological ones:
-
-```json
-{"BodyName": "Synuefe CC-G b3-0 5 A Ring",
- "Signals": [{"Type": "Rhodplumsite", "Count": 2}, {"Type": "Monazite", "Count": 3},
-             {"Type": "Platinum", "Count": 3}, {"Type": "Painite", "Count": 1}]}
-```
-
-Those were being discarded - the ingest only looked for Biological and
-Geological. Keeping them turns the survey into a mining atlas of your own
-making. From the test journals alone:
-
-```
-Monazite              7 rings, 17 hotspots
-Low Temp. Diamonds    5 rings, 14 hotspots
-Rhodplumsite          3 rings, 13 hotspots
-Platinum              4 rings,  8 hotspots
-Tritium               3 rings,  3 hotspots
-```
-
-**mining** opens a searchable list, nearest first:
-
-```
-material [Platinum v] [refresh] [close]
-
-system                     ring                        x  ring type  distance
-Synuefe ZB-J d10-61        13 A Ring                   3  Icy             12 ly
-Synuefe ZB-J d10-61        13 B Ring                   1  Icy             12 ly
-Synuefe TH-J b42-2         D 4 A Ring                  1  MetalRich       21 ly
-Synuefe CC-G b3-0          5 A Ring                    3  MetalRich      981 ly
-```
-
-Clicking a row copies the system name. Choose `(all)` to see everything with
-the material named in the last column. The point is the months-later case:
-when the carrier needs tritium or you want a platinum run, the answer is
-already in your own data rather than a forum search.
-
-## 25. "last here" pointed at the wrong body
+## "last here" pointed at the wrong body
 
 `BodyID` is only unique **within a system**. The marker recorded the id but
 not which system it came from, so on arriving somewhere new it happily pointed
@@ -1333,28 +1420,7 @@ plausible-looking but wrong planet.
 The system address is now stored alongside, and the marker is drawn only when
 the two agree.
 
-## 26. Gap logic, re-checked
-
-Verified against the current database:
-
-```
-boxels total: 44 | contiguous: 18 | with gaps: 26 | missing n2 values: 231
-
-Synuefe KV-M b40   missing [0, 1, 2, 3, 4]  (highest known 5)
-Synuefe MG-L b41   missing [0, 1, 2, 3, 4]  (highest known 5)
-Synuefe OB-L b41   missing [2]              (highest known 4)
-```
-
-Those 231 names are systems that must exist - `n2` runs contiguously from 0 -
-and that no database has. The negative cache is still empty because none have
-been checked yet, which is consistent: nothing has been ruled out because
-nothing has been looked at. The logic is doing what it should; it just needs
-the galaxy map work to convert candidates into finds.
-
-
----
-
-## 27. Two fixes
+## Two fixes
 
 ### "last here" stopped moving
 
@@ -1383,93 +1449,6 @@ child in the widget tree - so walking children to apply the theme never
 reached it, and it kept Tk's defaults. It is now fetched through the widget's
 `menu` option and configured directly, including the highlight colours. The
 radius picker in the main panel got the same treatment.
-
-
----
-
-## 28. Releasing (for whoever maintains this)
-
-The update check compares the running `VERSION` against the newest release
-tag, so the two have to be set together or the notice lies.
-
-### Checklist
-
-1. **Bump `VERSION` in `load.py`.** It is the single source of truth:
-
-   ```python
-   VERSION = "4.1.0"
-   ```
-
-2. **Decide the number by what changed**, since the notice is the only thing
-   the user reads before updating:
-
-   | Change | Bump | Note in the release |
-   |---|---|---|
-   | fix, no new data stored | patch, `4.0.1` | — |
-   | new feature, new database column | minor, `4.1.0` | **say to run *Replay journals*** |
-   | database rebuilt, settings reset | major, `5.0.0` | say what is lost |
-
-   The migration adds columns by itself, but it cannot fill them from history -
-   only the commander can decide to replay. If an update adds per-body data
-   and the note omits that, the new fields silently stay empty.
-
-3. **Run the self test** - `python procgen.py` must print `failures: 0`.
-
-4. **Commit, tag and push.** The tag has to match `VERSION`; a leading `v` is
-   optional because the comparison strips it (4.0.0 was tagged `4.0.0`). Stick
-   to one style - `v4.1.0` from now on:
-
-   ```
-   git add -A
-   git commit -m "4.1.0: <what changed>"
-   git tag -a v4.1.0 -m "4.1.0"
-   git push && git push --tags
-   ```
-
-5. **Create the release on GitHub** from that tag. The description becomes the
-   `body` the plugin writes into the log, so write it for a reader deciding
-   whether to bother - the first eight lines are what get logged.
-
-6. **AI disclosure.** End the release notes with the footer from
-   [AI_TRANSPARENCY.md](AI_TRANSPARENCY.md), section 4, and end every commit
-   the AI assistant took part in with the `Co-Authored-By: Claude …` trailer.
-   If a release adds an AI feature that runs inside the plugin, update
-   `AI_TRANSPARENCY.md` and `ai-disclosure.json` first (section 3 there says
-   what changes).
-
-### How the check behaves
-
-* Once per start, and at most once per 24 hours; the timestamp is remembered.
-* `Preferences -> Check for update` forces one, and reports `up to date` when
-  there is nothing new.
-* Every failure is swallowed, and every way out of the check - switched off,
-  checked less than 24 h ago, rate limited, no network - is logged at INFO
-  (from 4.1; 4.0 left no trace at all). Rate limiting (GitHub
-  allows 60 unauthenticated calls per hour per address), no network, no
-  release published yet - none of it produces an error the user sees. An
-  update check must never be the reason something appears broken.
-* Version comparison is numeric per component, so `v4.10.0` correctly beats
-  `v4.9.0`. Anything unparseable sorts lowest and therefore never triggers a
-  false notice.
-* Switchable off in the preferences.
-
-### Version numbers so far
-
-| Version | Notes |
-|---|---|
-| 4.0.0 | first release: sphere survey, boxel gaps, in-system routing, deep space, mining atlas |
-| 4.1.0 | n1 = 0 naming rule fixed, EDDiscovery source working again, bio counter fixed, physical body data stored |
-| 4.2.0 | cockpit overlay, bio prediction from own finds, route plot targets through unprobed boxels |
-| 4.3.0 | discovery filters fixed, supercruise timing on real legs, atlas for body signals and materials, 30 s briefing |
-| 4.4.0 | surface track and finds on bodies, exobiology sample distance in the overlay, SHBOX FIS |
-| 4.5.0 | mining block in the overlay, carrier hold from Frontier's Companion API, FIS: galaxy 3D, mining, statistics |
-| 4.5.1 | fixes: FIS keeps following a journal the game rewrote, live-link watchdog; mining block only from a prospector in a mining ship |
-| 4.6.0 | local first: online sources in shells when needed, daily cap, offline switch, EDDiscovery first; FIS: Rhino rigs and hold, open bio signals, data at risk, on foot, QR code, OBS mode |
-| 4.7.0 | Mozilla Public License 2.0; honest information levels in the briefing; fuel model per ship; FIS: known and favourite carriers with docking access, learning from your own mining, themes, combat mode, cockpit configuration, ATLAS SYSTEMS |
-| 4.8.0 | exploration per commander with a main commander; first route from the carrier; latest scoop on a plotted route; data lost with the ship planned again; FIS: VEHICLE tab, deeper themes, unsold data with risk level and the first-footfall bonus |
-
-
----
 
 ## What changed in 4.1
 
@@ -1510,9 +1489,6 @@ for stars mass, absolute magnitude, age, luminosity class and subclass. Every
 Nothing is shown with it yet. It is the groundwork for bio predictions
 (which genera are possible on a body before landing) and for features to
 come.
-
-
----
 
 ## What changed in 4.2
 
@@ -1602,9 +1578,6 @@ The bio prediction compares value ranges and counts from your own samples -
 simple statistics, no trained model. Like the rest of the plugin it is not an
 AI system under the EU AI Act; see [AI_TRANSPARENCY.md](AI_TRANSPARENCY.md).
 
-
----
-
 ## What changed in 4.3
 
 ### Fix: "not discovered by anyone yet" never matched
@@ -1675,9 +1648,6 @@ the update (logged as `upgrade finished - atlas: N signal kinds, M materials`).
   (`database repair (destination phantoms)`).
 * **not discovered by anyone yet** no longer routes to rings as separate
   stops - they are discovered together with their planet.
-
-
----
 
 ## What changed in 4.4
 
@@ -1809,8 +1779,6 @@ The parent is now taken from the moons' own `Parents` chain. On the test data
 4.7 LS from its planet. Existing data is repaired by one automatic journal
 replay after the update.
 
----
-
 ## What changed in 4.5
 
 ### Mining in the overlay
@@ -1854,7 +1822,7 @@ Switch it off under "mining" in the settings.
 ### Your carrier from Frontier's data
 
 With EDMC logged in to Frontier, the plugin keeps the Companion API's answer
-for your fleet carrier in `capi_fleetcarrier.json` (see "Database"). SHBOX FIS
+for your fleet carrier in `capi_fleetcarrier.json` (see [Data integrity](#8-data-integrity)). SHBOX FIS
 reads the goods in the hold from it - above all the tritium, so the carrier's
 range counts the hold too - and the upkeep per week as Frontier bills it.
 
@@ -1880,8 +1848,6 @@ search-and-rescue role for the air wing and a settings page. Details:
 * FIS CARRIER: hovering a role column explains how its dots are earned; a
   commander without a carrier of their own sees the ships without a hint that
   assumes one.
-
----
 
 ## What changed in 4.6
 
@@ -1944,8 +1910,6 @@ the survey allows (details in "External sources", *Fair use*):
 After the update the plugin replays your journals once (Rhino rigs from
 earlier outings). Close the FIS window once so it starts with the new files.
 
-
----
 ## What changed in 4.7
 
 ### Licence: Mozilla Public License 2.0
@@ -2066,23 +2030,21 @@ commander.
 
 After the update close the FIS window once so it starts with the new files.
 
----
-
 ## What changed in 4.8
 
 ### Several commanders on one PC
 
 Two commanders sharing one PC used to share one "visited / scanned / mapped"
 record, so the second commander's route skipped bodies the first had mapped.
-Now each commander (by his Frontier ID) keeps his **own exploration** -
-visited, FSS complete, bodies scanned and mapped, first discoveries as his
+Now each commander (by their Frontier ID) keeps their **own exploration** -
+visited, FSS complete, bodies scanned and mapped, first discoveries as their
 own scan saw them, species analysed - while the **knowledge stays shared**:
 body classes, orbits, signals, rings, hotspots, finds and the bio model.
 
 * **Main commander** - a setting in the plugin and in the FIS settings;
   *automatic* picks the commander with a fleet carrier of their own, else the
   one with the most sessions. The survey sphere, its work queue, the
-  statistics and GALAXY count for him.
+  statistics and GALAXY count for that commander.
 * The **in-system route**, the panel line and the briefing show what the
   commander playing still has to do; *also explored by ...* where another
   commander of this PC has been.
@@ -2137,3 +2099,134 @@ list (asked twice; the tasks stay planned).
   first-discovery bonus (x5) is counted only on a body of your first
   footfall - checked against real sales; "first logged" alone pays the base
   value.
+
+## What changed in 4.9
+
+### This README in a new order
+
+Operation first - what you need, install, update, files, first start,
+preferences, known limits -, then the third-party parts, then how it works
+with the maths, the version history oldest first and the part for
+maintainers. Nothing was dropped; the chapters of "How it works" are
+numbered anew. The FIS README follows the same order.
+
+### Overlay: course and losses
+
+* Every point in NAV / KNOWN POINTS names its **absolute course** next to
+  the turn - *brg 255 < 30* - to compare with the game's own compass.
+* A species **lost in a crash** no longer counts as done: the head says
+  *n lost - redo*, and a line points to where it was sampled until it is
+  analysed again.
+* The head line keeps to the block's width; the genera the DSS named and
+  nobody found yet are listed as *to find:*.
+
+### Synthesis and tank in the VEHICLE tab
+
+* **SYNTHESIS** - refuel, ammunition and repair by tier, learnt only from
+  your own synthesis: what each needs and what is on board, how often it can
+  still be made and what limits it; a tier not made yet is named as such.
+  Anything else made while a vehicle is out (the Rhino's rig) is learnt the
+  same way under its own name. Nothing is copied from a wiki.
+* **Tank size** - no game file names it. Right after a refuel synthesis the
+  tank is full, so that reading is kept as the size of the vehicle type
+  (`FIS/vehicle_tanks.json`) and the tank shows its fill against it.
+
+### Places in the SYSTEM map
+
+Stations you docked at stand beside their body in the map. The game names
+no parent body for a station, so it is matched on its distance from the
+arrival star against the scanned bodies; without a match it stays in the
+list. Your own carrier is always drawn where the game says it parks; your
+favourite carriers stay in the map as long as their newest known position -
+your journal or the Spansh lookup - is this system (beside their body, else
+beside the main star); other carriers for a day after docking.
+
+### Finding unknown systems
+
+* **Route check** - a plotted route of two jumps or more through space no
+  source was asked about is checked once: EDDiscovery's file first, then
+  the rest with ONE EDSM request by name. The briefing then says *known* or
+  *in no database (checked: EDSM)* there instead of *not checked*; the same
+  route plotted again asks nothing (see *Fair use*).
+* **Prospecting learnt from your probes** - the statistics window shows how
+  often boxels of each score band really held a system. From five such
+  finds on, the probe order follows what actually paid.
+* **Corridor in GALAXY** - the plugin's plot suggestion (where a route
+  crosses the most boxels never probed) as a layer of its own, 2D and 3D.
+  Plotting stays yours.
+
+After the update close the FIS window once so it starts with the new files,
+and keep `FIS/vehicle_tanks.json` like `favourites.json`.
+
+---
+
+# For maintainers
+
+## Releasing (for whoever maintains this)
+
+The update check compares the running `VERSION` against the newest release
+tag, so the two have to be set together or the notice lies.
+
+### Checklist
+
+1. **Bump `VERSION` in `load.py`.** It is the single source of truth:
+
+   ```python
+   VERSION = "4.1.0"
+   ```
+
+2. **Decide the number by what changed**, since the notice is the only thing
+   the user reads before updating:
+
+   | Change | Bump | Note in the release |
+   |---|---|---|
+   | fix, no new data stored | patch, `4.0.1` | — |
+   | new feature, new database column | minor, `4.1.0` | **say to run *Replay journals*** |
+   | database rebuilt, settings reset | major, `5.0.0` | say what is lost |
+
+   The migration adds columns by itself, but it cannot fill them from history -
+   only the commander can decide to replay. If an update adds per-body data
+   and the note omits that, the new fields silently stay empty.
+
+3. **Run the self test** - `python procgen.py` must print `failures: 0`.
+
+4. **Commit, tag and push.** The tag has to match `VERSION`; a leading `v` is
+   optional because the comparison strips it (4.0.0 was tagged `4.0.0`). Stick
+   to one style - `v4.1.0` from now on:
+
+   ```
+   git add -A
+   git commit -m "4.1.0: <what changed>"
+   git tag -a v4.1.0 -m "4.1.0"
+   git push && git push --tags
+   ```
+
+5. **Create the release on GitHub** from that tag. The description becomes the
+   `body` the plugin writes into the log, so write it for a reader deciding
+   whether to bother - the first eight lines are what get logged.
+
+6. **AI disclosure.** End the release notes with the footer from
+   [AI_TRANSPARENCY.md](AI_TRANSPARENCY.md), section 4, and end every commit
+   the AI assistant took part in with the `Co-Authored-By: Claude …` trailer.
+   If a release adds an AI feature that runs inside the plugin, update
+   `AI_TRANSPARENCY.md` and `ai-disclosure.json` first (section 3 there says
+   what changes).
+
+### How the check behaves
+
+* Once per start, and at most once per 24 hours; the timestamp is remembered.
+* `Preferences -> Check for update` forces one, and reports `up to date` when
+  there is nothing new.
+* Every failure is swallowed, and every way out of the check - switched off,
+  checked less than 24 h ago, rate limited, no network - is logged at INFO
+  (from 4.1; 4.0 left no trace at all). Rate limiting (GitHub
+  allows 60 unauthenticated calls per hour per address), no network, no
+  release published yet - none of it produces an error the user sees. An
+  update check must never be the reason something appears broken.
+* Version comparison is numeric per component, so `v4.10.0` correctly beats
+  `v4.9.0`. Anything unparseable sorts lowest and therefore never triggers a
+  false notice.
+* Switchable off in the preferences.
+
+After a release, add its row to
+[Version numbers so far](#version-numbers-so-far).

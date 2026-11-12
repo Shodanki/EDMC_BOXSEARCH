@@ -138,7 +138,13 @@ function toggleAuto() {
 function rebuild(keepView) {
   const sys = ctxRef.store.system;
   scene = sys && sys.bodies && sys.bodies.length ? buildScene(sys, prefs.mode) : null;
-  if (scene) { scene.carrier = sys.carrier || null; scene.carrierIn = sys.carrier_incoming || null; }
+  if (scene) {
+    scene.carrier = sys.carrier || null; scene.carrierIn = sys.carrier_incoming || null;
+    // S2: stations you docked at beside their body; carriers: your favourites
+    // as long as their newest known position is here (beside the main star
+    // when no docking placed them), other carriers for a day after docking
+    scene.places = (sys.poi || []).filter((p) => p.map).concat(sys.fav_here || []);
+  }
   if (renderer) {
     if (scene) renderer.setScene(scene, keepView);
     else renderer.setScene({ bodies: [], route: [], rings: [], extent: 10, byId: new Map() }, false);
@@ -233,6 +239,8 @@ function poiFrame(sys) {
   const rows = shown.map(p => {
     const bits = [t(POI_KIND[p.kind] || p.kind)];
     if (p.body) bits.push(p.body);
+    if (p.near && !p.own) bits.push(t("near {b}", { b: p.near.short }));   // own carrier: its own BodyID counts
+    if (p.here_now && p.here_source === "Spansh") bits.push(t("here per Spansh {d}", { d: String(p.here_ts || "").slice(0, 10) }));
     if (p.dist_ls !== undefined && p.dist_ls !== null) bits.push(fmt(p.dist_ls, 0) + " LS");
     if (p.docked) bits.push(t("docked"));
     if (p.seen) bits.push(t("seen {d}", { d: String(p.seen).slice(0, 10) }));

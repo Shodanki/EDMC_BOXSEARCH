@@ -15,7 +15,7 @@ from __future__ import annotations
 import calendar
 import math
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .data import MAIN, Database, _json
 
@@ -247,6 +247,7 @@ def system_poi(db: Database, id64: int, archive: Any = None) -> List[Dict[str, A
             p["docked"] = True
             if e.get("DistFromStarLS") is not None:
                 p["dist_ls"] = _r(e.get("DistFromStarLS"), 0)
+                p["_dist"] = float(e.get("DistFromStarLS"))       # S2: exact, for place_pois
     srow = db.system_by_id64(id64)
     sysname = srow["name"] if srow is not None else ""
     try:
@@ -293,6 +294,46 @@ def system_poi(db: Database, id64: int, archive: Any = None) -> List[Dict[str, A
     before = [p for p in rest if POI_ORDER.get(p["kind"], 9) < POI_ORDER["carrier"]]
     after = [p for p in rest if POI_ORDER.get(p["kind"], 9) > POI_ORDER["carrier"]]
     return before + carriers + after
+
+
+PLACE_TOL_LS = 1.0       # S2: a station orbits within a light second or so of its body
+PLACE_TOL_REL = 0.003    # ... or 0.3 % of its distance from the star, far out
+CARRIER_PLACE_H = 24.0   # a carrier moves on: placed only this long after docking
+
+
+def place_pois(poi: List[Dict[str, Any]], rows: Iterable[Any],
+               bodies: Iterable[Dict[str, Any]], now: float) -> None:
+    """
+    S2: a station or carrier you docked at, beside its body in the map. The
+    game names no parent body for a station - Docked gives its distance from
+    the arrival star (DistFromStarLS), the scans give every body's. The body
+    whose distance matches (within PLACE_TOL_LS, or PLACE_TOL_REL far out) is
+    where it is; with none, it stays in the list only - no guessed place.
+    Sets p["near"]; for a carrier also "fresh" (docked within CARRIER_PLACE_H):
+    another commander's carrier is drawn only while fresh, your favourites as
+    long as their newest known position is this system (server, S2b).
+    """
+    short = {b.get("body_id"): b.get("short") or b.get("name") for b in bodies}
+    cand = []
+    for r in rows:
+        try:
+            ls = r["arrival_ls"]
+        except (KeyError, IndexError):
+            ls = None
+        if ls is not None:
+            cand.append((float(ls), r["body_id"], r["name"]))
+    from .live import parse_ts
+    for p in poi:
+        d = p.pop("_dist", None)
+        if d is None or not cand or p.get("kind") not in ("station", "carrier"):
+            continue
+        ls, bid, name = min(cand, key=lambda c: abs(c[0] - d))
+        if abs(ls - d) <= max(PLACE_TOL_LS, PLACE_TOL_REL * d):
+            p["near"] = {"body_id": bid, "name": name, "short": short.get(bid) or name,
+                         "off_ls": _r(abs(ls - d), 2)}
+            if p["kind"] == "carrier":
+                seen = parse_ts(p.get("seen")) if p.get("seen") else None
+                p["near"]["fresh"] = seen is not None and now - seen <= CARRIER_PLACE_H * 3600
 
 
 def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
@@ -439,6 +480,11 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         out["poi"] = system_poi(db, id64, archive)
     except Exception:
         out["poi"] = []
+    try:
+        place_pois(out["poi"], rows, out["bodies"], now)
+    except Exception:                       # a place must never cost the map
+        for p in out["poi"]:
+            p.pop("_dist", None)
     out["nav_beacon"] = nav_beacon(archive, id64)
     by_body = {}
     for p in out["poi"]:
@@ -1732,7 +1778,8 @@ def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
 
 
-def _vehicle_view(v: Dict[str, Any], now: float) -> Dict[str, Any]:
+def _vehicle_view(v: Dict[str, Any], now: float,
+                  tanks: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     flags = int(v.get("flags") or 0)
     on = [n for bit, n in VEHICLE_FLAGS if flags & (1 << bit)]
     if v.get("nomad"):
@@ -1749,6 +1796,13 @@ def _vehicle_view(v: Dict[str, Any], now: float) -> Dict[str, Any]:
     out["fuel_start"] = _r(v.get("fuel_start"), 3)
     if v.get("fuel") is not None and v.get("fuel_start") is not None:
         out["fuel_used"] = _r(max(0.0, v["fuel_start"] - v["fuel"]), 3)
+    # V1b: the tank size learnt after a refuel synthesis (vehicletanks.py)
+    cap = (tanks or {}).get(v.get("type") or "")
+    if cap and cap.get("t"):
+        out["capacity"] = cap["t"]
+        out["capacity_ts"] = cap.get("ts")
+        if v.get("fuel") is not None:
+            out["fuel_pct"] = _r(min(100.0, 100.0 * v["fuel"] / cap["t"]), 0)
     pos = v.get("pos")
     out["pos"] = ({"body": pos.get("body"), "lat": _r(pos.get("lat"), 4), "lon": _r(pos.get("lon"), 4),
                    "alt": _r(pos.get("alt"), 0), "heading": pos.get("heading")} if pos else None)
@@ -1763,7 +1817,8 @@ def _vehicle_view(v: Dict[str, Any], now: float) -> Dict[str, Any]:
     return out
 
 
-def build_vehicle(live: Optional[Dict[str, Any]], now: Optional[float] = None) -> Dict[str, Any]:
+def build_vehicle(live: Optional[Dict[str, Any]], now: Optional[float] = None,
+                  tanks: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     V1: the surface vehicle - SRV (Scarab, Rhino) or Nomad - from what the
     game really writes: type and edition (Launch*), the vehicle's own tank
@@ -1775,8 +1830,8 @@ def build_vehicle(live: Optional[Dict[str, Any]], now: Optional[float] = None) -
     now = time.time() if now is None else now
     v, last = live.get("srv"), live.get("srv_last")
     return {"active": v is not None,
-            "vehicle": _vehicle_view(v, now) if v else None,
-            "last": _vehicle_view(last, now) if last and not v else None,
+            "vehicle": _vehicle_view(v, now, tanks) if v else None,
+            "last": _vehicle_view(last, now, tanks) if last and not v else None,
             "generated": now}
 
 
