@@ -2066,6 +2066,8 @@ commander.
 
 After the update close the FIS window once so it starts with the new files.
 
+---
+
 ## What changed in 4.8
 
 ### Several commanders on one PC
@@ -2135,7 +2137,3 @@ list (asked twice; the tasks stay planned).
   first-discovery bonus (x5) is counted only on a body of your first
   footfall - checked against real sales; "first logged" alone pays the base
   value.
-
-
----
-
