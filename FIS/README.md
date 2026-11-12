@@ -195,7 +195,7 @@ Notes on what the files allow:
   went silent (tablet asleep, Wi-Fi) reconnects within about 40 seconds.
 * The route uses the same filters as the plugin (read from EDMC's settings).
 * If one journal folder holds several commanders, the FIS shows the one who
-  logged in last - with his own exploration (visited, scanned, mapped,
+  logged in last - with their own exploration (visited, scanned, mapped,
   species); survey and GALAXY count for the main commander (settings). What
   rings and planets yield (prospecting, mining runs, Rhino rigs, the bio
   model) is learnt from all of them together.
