@@ -185,6 +185,7 @@ const DE = /*DE*/{
   "No data from the FIS service.": "Keine Daten vom FIS-Dienst.",
   "No vehicle out.": "Kein Fahrzeug draußen.",
   "REFUEL": "BETANKEN",
+  "near {b}": "bei {b}",
   "TANK SIZE": "TANKGRÖSSE",
   "{p} % of the full tank - learnt after a refuel synthesis, {d}": "{p} % des vollen Tanks – gelernt nach einer Treibstoff-Synthese, {d}",
   "the full tank is learnt after a refuel synthesis": "der volle Tank wird nach einer Treibstoff-Synthese gelernt",

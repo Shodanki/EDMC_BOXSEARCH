@@ -308,6 +308,17 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
     if (p) { hull(p, true); items.push({ s: p, text: "→ " + (scene.carrierIn.name || "FC"), tags: [], pri: 86, colour: UI.amber }); }
   }
 
+  // S2: stations and carriers you docked at, beside the body whose distance
+  // from the star matches theirs (the game names no parent body)
+  for (const p of scene.places || []) {
+    const b = scene.byId.get(p.near.body_id);
+    const s = b && screen.get(b.id);
+    if (!s) continue;
+    const q = { x: s.x - (s.rad || 4) - 10, y: s.y + (s.rad || 4) + 9, ok: true };
+    items.push({ s: q, text: (p.favourite ? "★ " : "") + (p.kind === "carrier" ? "◈ " : "▣ ") + p.name, tags: [],
+                 pri: p.favourite ? 72 : 44, colour: p.kind === "carrier" ? UI.amber : UI.text });
+  }
+
   items.sort((a, b) => b.pri - a.pri);
   ctx2d.font = "12px " + getComputedStyle(document.body).getPropertyValue("--font-mono");
   const OFFS = [[14, -16], [14, 8], [-14, -16], [-14, 8], [0, -28], [0, 20], [26, -30], [-26, 22]];

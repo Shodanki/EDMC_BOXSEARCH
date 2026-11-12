@@ -15,7 +15,7 @@ from __future__ import annotations
 import calendar
 import math
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .data import MAIN, Database, _json
 
@@ -247,6 +247,7 @@ def system_poi(db: Database, id64: int, archive: Any = None) -> List[Dict[str, A
             p["docked"] = True
             if e.get("DistFromStarLS") is not None:
                 p["dist_ls"] = _r(e.get("DistFromStarLS"), 0)
+                p["_dist"] = float(e.get("DistFromStarLS"))       # S2: exact, for place_pois
     srow = db.system_by_id64(id64)
     sysname = srow["name"] if srow is not None else ""
     try:
@@ -293,6 +294,45 @@ def system_poi(db: Database, id64: int, archive: Any = None) -> List[Dict[str, A
     before = [p for p in rest if POI_ORDER.get(p["kind"], 9) < POI_ORDER["carrier"]]
     after = [p for p in rest if POI_ORDER.get(p["kind"], 9) > POI_ORDER["carrier"]]
     return before + carriers + after
+
+
+PLACE_TOL_LS = 1.0       # S2: a station orbits within a light second or so of its body
+PLACE_TOL_REL = 0.003    # ... or 0.3 % of its distance from the star, far out
+CARRIER_PLACE_H = 24.0   # a carrier moves on: placed only this long after docking
+
+
+def place_pois(poi: List[Dict[str, Any]], rows: Iterable[Any],
+               bodies: Iterable[Dict[str, Any]], now: float) -> None:
+    """
+    S2: a station or carrier you docked at, beside its body in the map. The
+    game names no parent body for a station - Docked gives its distance from
+    the arrival star (DistFromStarLS), the scans give every body's. The body
+    whose distance matches (within PLACE_TOL_LS, or PLACE_TOL_REL far out) is
+    where it is; with none, it stays in the list only - no guessed place.
+    Carriers only within CARRIER_PLACE_H of docking. Sets p["near"].
+    """
+    short = {b.get("body_id"): b.get("short") or b.get("name") for b in bodies}
+    cand = []
+    for r in rows:
+        try:
+            ls = r["arrival_ls"]
+        except (KeyError, IndexError):
+            ls = None
+        if ls is not None:
+            cand.append((float(ls), r["body_id"], r["name"]))
+    from .live import parse_ts
+    for p in poi:
+        d = p.pop("_dist", None)
+        if d is None or not cand or p.get("kind") not in ("station", "carrier"):
+            continue
+        if p["kind"] == "carrier":
+            seen = parse_ts(p.get("seen")) if p.get("seen") else None
+            if seen is None or now - seen > CARRIER_PLACE_H * 3600:
+                continue
+        ls, bid, name = min(cand, key=lambda c: abs(c[0] - d))
+        if abs(ls - d) <= max(PLACE_TOL_LS, PLACE_TOL_REL * d):
+            p["near"] = {"body_id": bid, "name": name, "short": short.get(bid) or name,
+                         "off_ls": _r(abs(ls - d), 2)}
 
 
 def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
@@ -439,6 +479,11 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         out["poi"] = system_poi(db, id64, archive)
     except Exception:
         out["poi"] = []
+    try:
+        place_pois(out["poi"], rows, out["bodies"], now)
+    except Exception:                       # a place must never cost the map
+        for p in out["poi"]:
+            p.pop("_dist", None)
     out["nav_beacon"] = nav_beacon(archive, id64)
     by_body = {}
     for p in out["poi"]:
