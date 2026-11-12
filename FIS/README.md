@@ -13,48 +13,20 @@ own database and maths.
 
 **It only reads.** The plugin database (opened read-only), the game's journal
 and its state files (`Status.json`, `NavRoute.json`, `ModulesInfo.json`,
-`Cargo.json`, ...). It sends nothing to the game and automates nothing. It
-asks a service on the internet in one case only: when you click *online* at a
+`Cargo.json`, ...). It sends nothing to the game and automates nothing. It asks
+a service on the internet in one case only: when you click *online* at a
 favourite carrier in CARRIER - one request to Spansh for where someone last
 reported it, through the plugin's polite gateway (pacing, the daily cap shared
-with the plugin, the plugin's *offline* switch), at most once per carrier
-every six hours. The 3D library Three.js (0.170.0, MIT) ships
-with it in `web/vendor/three` - licence and origin in `SOURCE.md` there - so
-the 3D views work offline too. The QR code on the settings page is drawn
-with Project Nayuki's QR Code generator (`fis/vendor/qrcodegen.py`, MIT,
-licence header kept - origin in `fis/vendor/SOURCE.md`). The FIS itself is
-under the Mozilla Public License 2.0 like the plugin (`LICENSE` in the plugin folder).
+with the plugin, the plugin's *offline* switch), at most once per carrier every
+six hours.
 
-## Screenshots
+The FIS itself is under the Mozilla Public License 2.0 like the plugin
+(`LICENSE` in the plugin folder).
 
-Demo data: a copy of a real plugin database with the commander's current
-area, carrier, earnings and surface tracks removed; commander and ship are
-called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English.
-
-**SYSTEM** - the system in 3D with Kepler orbits, flight plan legs, bio and
-first-footfall marks, and a rule-based system report.
-
-![SYSTEM view](docs/screenshots/demo_system.png)
-
-**GALAXY** - the survey sphere and its boxels in 3D, flight path, known
-systems; the focus panel and flight log on the right.
-
-![GALAXY view in 3D](docs/screenshots/demo_galaxy.png)
-
-**PLANET INFO** - datasheet, science report, atmosphere and surface, biology
-of the selected body.
-
-![PLANET INFO view](docs/screenshots/demo_planetinfo.png)
-
-**SHIP** - status lamps from `Status.json`, schematic cutaway, damage and
-function report, engineer view of power and module health.
-
-![SHIP view](docs/screenshots/demo_ship.png)
-
-**ATLAS** - signals, rings, materials and finds of every known body, nearest
-first, with a top view around you.
-
-![ATLAS view](docs/screenshots/demo_atlas.png)
+**Contents:** [Start](#start) · [Views](#views) ·
+[Third-party parts](#third-party-parts) ·
+[Notes on what the files allow](#notes-on-what-the-files-allow) ·
+[History](#history) · [For developers](#for-developers)
 
 ## Start
 
@@ -158,6 +130,19 @@ and copy or open the address. In OBS: *Sources → + → Browser*, paste the
 address, set width and height. With the home network on, the address
 contains the access token - keep it out of the stream picture.
 
+### Files
+
+```
+start_fis.bat      start (first start asks, then remembers)
+fis_settings.bat   change the settings
+fis.ini.example    every setting, explained
+fis/               the server (Python standard library only)
+web/               the pages (no build step)
+tests/             python -m unittest discover -s tests -t .  (not needed to run)
+```
+
+Settings beyond the questions (all optional) are listed in `fis.ini.example`.
+
 ## Views
 
 | Key | View | What it shows |
@@ -177,7 +162,52 @@ contains the access token - keep it out of the stream picture.
 Planet, system, galaxy: the same place at three scales. Addresses work with the
 names too (`/#system`, `/#planetinfo`, `/#stats`).
 
-Notes on what the files allow:
+### Screenshots
+
+Demo data: a copy of a real plugin database with the commander's current
+area, carrier, earnings and surface tracks removed; commander and ship are
+called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English.
+
+**SYSTEM** - the system in 3D with Kepler orbits, flight plan legs, bio and
+first-footfall marks, and a rule-based system report.
+
+![SYSTEM view](docs/screenshots/demo_system.png)
+
+**GALAXY** - the survey sphere and its boxels in 3D, flight path, known
+systems; the focus panel and flight log on the right.
+
+![GALAXY view in 3D](docs/screenshots/demo_galaxy.png)
+
+**PLANET INFO** - datasheet, science report, atmosphere and surface, biology
+of the selected body.
+
+![PLANET INFO view](docs/screenshots/demo_planetinfo.png)
+
+**SHIP** - status lamps from `Status.json`, schematic cutaway, damage and
+function report, engineer view of power and module health.
+
+![SHIP view](docs/screenshots/demo_ship.png)
+
+**ATLAS** - signals, rings, materials and finds of every known body, nearest
+first, with a top view around you.
+
+![ATLAS view](docs/screenshots/demo_atlas.png)
+
+## Third-party parts
+
+The 3D library Three.js (0.170.0, MIT) ships with it in `web/vendor/three` -
+licence and origin in `SOURCE.md` there - so the 3D views work offline too. The
+QR code on the settings page is drawn with Project Nayuki's QR Code generator
+(`fis/vendor/qrcodegen.py`, MIT, licence header kept - origin in
+`fis/vendor/SOURCE.md`).
+
+The FIS reads the game's own journal and state files and, from EDMC's
+Frontier data (Companion API), what the journal does not say about your
+carrier; Spansh is asked only on your click at *online* (above). All
+third-party parts of the project, and Frontier's data:
+[Third-party parts](../README.md#third-party-parts) in the plugin README.
+
+## Notes on what the files allow
 
 * Module integrity and ammunition are written by the game at login, docking
   and outfitting - the SHIP view shows them with that time, not live in combat.
@@ -212,18 +242,11 @@ Notes on what the files allow:
   commander in `lost_hidden.json` next to `fis.ini` - like `favourites.json`
   keep it when you update.
 
-## Files
+## History
 
-```
-start_fis.bat      start (first start asks, then remembers)
-fis_settings.bat   change the settings
-fis.ini.example    every setting, explained
-fis/               the server (Python standard library only)
-web/               the pages (no build step)
-tests/             python -m unittest discover -s tests -t .  (not needed to run)
-```
-
-Settings beyond the questions (all optional) are listed in `fis.ini.example`.
+The FIS arrived with SHBOXSEARCH 4.4. What changed in each version - the
+FIS under *SHBOX FIS* in every chapter - is in the plugin README,
+[Version history](../README.md#version-history).
 
 ## For developers
 
