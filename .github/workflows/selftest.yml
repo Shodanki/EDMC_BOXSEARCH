@@ -46,6 +46,8 @@ jobs:
         run: python tests/localfirst_flow.py
       - name: plugin journal hooks (load.py against a scripted session, no network)
         run: python tests/plugin_hooks.py
+      - name: dispatch lint (no dead branch in a journal event chain)
+        run: python tests/dispatch_lint.py
       - name: plain-python modules import without EDMC
         run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan; print('imports ok')"
       - name: FIS tests (flight information system)

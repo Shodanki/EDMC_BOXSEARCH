@@ -3190,14 +3190,14 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                                      name="SHBOX-navroute").start()
                     _maybe_extend()
             if ev == "CarrierJump":
-                # the branch below never sees CarrierJump (this one matches
-                # first), so the carrier position is refreshed here as well
+                # CarrierJump is handled here, not in the carrier branch below
+                # (one if/elif chain: the first match wins), so refresh it here
                 with ST.lock:
                     ST.carrier = ST.db.get_carrier()
             _request_route()
             _ui(_refresh)
 
-        elif ev in ("CarrierJump", "CarrierLocation", "CarrierStats") or (
+        elif ev in ("CarrierLocation", "CarrierStats") or (   # CarrierJump: see above
                 ev == "Docked" and entry.get("StationType") == "FleetCarrier"):
             with ST.lock:
                 ST.carrier = ST.db.get_carrier()
