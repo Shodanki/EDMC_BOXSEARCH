@@ -509,6 +509,14 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(n) if 0 < n <= 4096 else b""
         if n > 4096 or n < 0:
             self.close_connection = True
+            if 4096 < n <= 65536:
+                # a too large body is still read (and dropped) up to 64 KiB, or
+                # Windows resets the connection before the 400 arrives
+                # (test_losthidden.test_locks failed about once in three runs)
+                try:
+                    self.rfile.read(n)
+                except OSError:
+                    pass
             return self._error(400, "bad request")
         if url.path == "/api/carriers/favourite":
             return self._post_favourite(raw)
