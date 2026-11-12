@@ -3431,6 +3431,11 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                     threading.Thread(target=_update_route_targets, daemon=True,
                                      name="SHBOX-navroute").start()
                     _maybe_extend()
+            if ev == "CarrierJump":
+                # the branch below never sees CarrierJump (this one matches
+                # first), so the carrier position is refreshed here as well
+                with ST.lock:
+                    ST.carrier = ST.db.get_carrier()
             _request_route()
             _ui(_refresh)
 
@@ -3444,6 +3449,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
             _ui(_refresh)
 
         elif ev in ("ApproachBody", "Touchdown"):
+            if ev == "ApproachBody" and entry.get("Body"):
+                ST._arrive[entry["Body"]] = time.time()   # start of the DSS timing
             _route_auto_tick(entry.get("Body") or entry.get("BodyName"),
                              "approach" if ev == "ApproachBody" else "landed")
 
@@ -3479,10 +3486,6 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         elif ev == "Liftoff":
             # Lifting off usually ends a pause spent on the surface.
             _run_async(_recheck_route, "lift-off", label="route recheck")
-
-        elif ev == "ApproachBody":
-            if entry.get("Body"):
-                ST._arrive[entry["Body"]] = time.time()
 
         elif ev in ("Scan", "SAAScanComplete", "SAASignalsFound", "FSSBodySignals",
                     "FSSDiscoveryScan", "FSSAllBodiesFound", "ScanOrganic"):
