@@ -2025,15 +2025,15 @@ After the update close the FIS window once so it starts with the new files.
 
 Two commanders sharing one PC used to share one "visited / scanned / mapped"
 record, so the second commander's route skipped bodies the first had mapped.
-Now each commander (by his Frontier ID) keeps his **own exploration** -
-visited, FSS complete, bodies scanned and mapped, first discoveries as his
+Now each commander (by their Frontier ID) keeps their **own exploration** -
+visited, FSS complete, bodies scanned and mapped, first discoveries as their
 own scan saw them, species analysed - while the **knowledge stays shared**:
 body classes, orbits, signals, rings, hotspots, finds and the bio model.
 
 * **Main commander** - a setting in the plugin and in the FIS settings;
   *automatic* picks the commander with a fleet carrier of their own, else the
   one with the most sessions. The survey sphere, its work queue, the
-  statistics and GALAXY count for him.
+  statistics and GALAXY count for that commander.
 * The **in-system route**, the panel line and the briefing show what the
   commander playing still has to do; *also explored by ...* where another
   commander of this PC has been.
