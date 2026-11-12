@@ -127,7 +127,7 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4936 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `load.py` | 4761 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
 | `sysdb.py` | 3127 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 935 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 952 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
@@ -142,6 +142,7 @@ on first run and is **your data** - never overwrite it on an update.
 | `diagnostics.py` | 289 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
 | `surfacenav.py` | 493 | Surface compass: parked SRV, open samples, known points | — |
 | `miningstat.py` | 337 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
+| `journalscan.py` | 322 | Reading the journal files: last location and body, work timings (live and replay), fuel replay, self test | — |
 | `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain

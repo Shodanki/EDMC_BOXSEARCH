@@ -36,6 +36,8 @@ jobs:
         run: python netgate.py
       - name: EDDiscovery name decoding self test
         run: python sources.py
+      - name: journal reading self test
+        run: python journalscan.py
       - name: probe bundle prefix self test
         run: python boxelplan.py
       - name: local-first shells self test
@@ -45,7 +47,7 @@ jobs:
       - name: plugin journal hooks (load.py against a scripted session, no network)
         run: python tests/plugin_hooks.py
       - name: plain-python modules import without EDMC
-        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells; print('imports ok')"
+        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan; print('imports ok')"
       - name: FIS tests (flight information system)
         working-directory: FIS
         run: python -m unittest discover -s tests -t .

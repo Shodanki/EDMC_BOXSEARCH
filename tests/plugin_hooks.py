@@ -109,6 +109,19 @@ try:
         je({"event": "SAAScanComplete", "BodyName": "Hook B 2", "BodyID": 2,
             "SystemAddress": 1002, "ProbesUsed": 5, "EfficiencyTarget": 6})
         check(ST.work_dss == [95.0], "no approach seen -> no timing")
+        NOW[0] += 30
+        je({"event": "SupercruiseExit", "StarSystem": "Hook B", "SystemAddress": 1002,
+            "Body": "Hook B 3", "BodyID": 3, "BodyType": "Planet"})
+        NOW[0] += 70
+        je({"event": "SAAScanComplete", "BodyName": "Hook B 3", "BodyID": 3,
+            "SystemAddress": 1002, "ProbesUsed": 4, "EfficiencyTarget": 6})
+        check(ST.work_dss == [95.0, 70.0],
+              "live like the replay: SupercruiseExit at the body starts the timing too")
+        NOW[0] += 200
+        je({"event": "SAAScanComplete", "BodyName": "Hook B 4", "BodyID": 4,
+            "SystemAddress": 1002, "ProbesUsed": 6, "EfficiencyTarget": 6})
+        check(ST.work_dss == [95.0, 70.0, 200.0],
+              "live like the replay: no arrival -> the gap since the last mapping")
 
         # 4) sampling timing: Log ... Analyse of one species
         ST.work_bio.clear()

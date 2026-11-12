@@ -60,6 +60,7 @@ from overlay import CockpitOverlay, POSITIONS as OVERLAY_POSITIONS  # noqa: E402
 from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E402
 import surfacenav  # noqa: E402
 import miningstat  # noqa: E402
+import journalscan  # noqa: E402
 
 VERSION = "4.9.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
@@ -210,8 +211,7 @@ class State:
         self.work_dss: List[float] = []
         self.work_bio: List[float] = []
         self.work_approach: List[float] = []
-        self._arrive: Dict[str, float] = {}
-        self._bio_log: Dict[Tuple, float] = {}
+        self.work_meter = journalscan.WorkMeter()   # live DSS / sampling timing
         self.sys_times: List[Tuple[str, float, int]] = []
         self.fuel = FuelState()
         self.staging: List[Dict[str, Any]] = []
@@ -834,42 +834,8 @@ def _rebuild_plan() -> None:
 
 
 def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, float, float]]]:
-    """
-    Read the current system straight out of the newest journal file.
-
-    EDMC synthesises StartUp when the game is already running, so a session
-    that begins parked in a system never sees FSDJump or Location and the
-    plugin would otherwise have no idea where it is. Scanning the newest
-    journal backwards for the last location event answers it exactly - name,
-    id64 and coordinates, no guessing.
-    """
-    import glob
-    d = _journal_dir()
-    if not d:
-        return None
-    files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
-                   + glob.glob(os.path.join(d, "Journal_*.log")))
-    for fn in reversed(files[-3:]):
-        try:
-            with open(fn, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-        except OSError:
-            continue
-        for line in reversed(lines):
-            line = line.strip()
-            if not line or '"StarSystem"' not in line:
-                continue
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if e.get("event") not in ("FSDJump", "Location", "CarrierJump"):
-                continue
-            pos = e.get("StarPos") or []
-            if e.get("StarSystem") and e.get("SystemAddress") and len(pos) >= 3:
-                return (e["StarSystem"], e["SystemAddress"],
-                        (pos[0], pos[1], pos[2]))
-    return None
+    """The current system out of the newest journal (journalscan.newest_location)."""
+    return journalscan.newest_location(_journal_dir())
 
 
 def _lost_here() -> str:
@@ -2233,30 +2199,17 @@ def _route_window_refresh() -> None:
 
 def _measure_work(ev: str, entry: Dict[str, Any]) -> None:
     """
-    Time the work at a body as it happens.
-
-    These intervals are clean in a way supercruise timings are not: a surface
-    scan is bracketed by arrival and SAAScanComplete, a sample by its own Log
-    and Analyse events. Nothing can stretch them except the commander pausing,
-    which the trimmed median then discards.
+    Time the work at a body as it happens (journalscan.WorkMeter, the same
+    code as the replay at start). A surface scan is bracketed by the arrival
+    and SAAScanComplete, a sample by its own Log and Analyse; nothing can
+    stretch them except the commander pausing, which the trimmed median
+    then discards. Fed with every event, so it knows arrivals and jumps.
     """
     try:
-        now = time.time()
-        if ev == "SAAScanComplete":
-            b = entry.get("BodyName")
-            t0 = ST._arrive.pop(b, None) if b else None
-            if t0 and 10 < now - t0 < 1800:
-                ST.work_dss.append(now - t0)
-        elif ev == "ScanOrganic":
-            key = (entry.get("SystemAddress"), entry.get("Body"),
-                   entry.get("Species"))
-            kind = entry.get("ScanType")
-            if kind in ("Log", "Sample"):
-                ST._bio_log.setdefault(key, now)
-            elif kind == "Analyse":
-                t0 = ST._bio_log.pop(key, None)
-                if t0 and 20 < now - t0 < 3600:
-                    ST.work_bio.append(now - t0)
+        got = ST.work_meter.feed(entry, time.time())
+        if not got:
+            return
+        (ST.work_dss if got[0] == "dss" else ST.work_bio).append(got[1])
         total = len(ST.work_dss) + len(ST.work_bio)
         if total and total % 5 == 0:
             ST.cost_model = calibrate_work_from_journal(
@@ -2268,84 +2221,11 @@ def _measure_work(ev: str, entry: Dict[str, Any]) -> None:
 
 def _bootstrap_work_model() -> None:
     """Measure the work constants once from the existing journals."""
-    import glob
-    import calendar
     d = _journal_dir()
     if not d:
         return
-    files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
-                   + glob.glob(os.path.join(d, "Journal_*.log")))[-30:]
-    dss: List[float] = []
-    bio: List[float] = []
-    arrive: Dict[str, float] = {}
-    blog: Dict[Tuple, float] = {}
-    last_saa: Dict[int, float] = {}
-    # supercruise legs body A -> body B: (system, A, B, entry time, seconds)
-    here: Dict[str, Any] = {"sys": None, "body": None}
-    sc_from: Optional[Tuple[int, str, float]] = None
-    sc_legs: List[Tuple[int, str, str, float, float]] = []
-    for fn in files:
-        try:
-            with open(fn, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        e = json.loads(line)
-                        ts = calendar.timegm(time.strptime(
-                            e["timestamp"], "%Y-%m-%dT%H:%M:%SZ"))
-                    except (ValueError, KeyError):
-                        continue
-                    v = e.get("event")
-                    if v in ("FSDJump", "CarrierJump", "Location"):
-                        here = {"sys": e.get("SystemAddress"), "body": None}
-                        sc_from = None
-                    elif v == "SupercruiseEntry":
-                        sc_from = ((here["sys"], here["body"], ts)
-                                   if here["sys"] and here["body"] else None)
-                    elif v == "SupercruiseExit":
-                        b = e.get("Body")
-                        if (sc_from and b and b != sc_from[1]
-                                and e.get("SystemAddress") == sc_from[0]
-                                and 5 < ts - sc_from[2] < 3600):
-                            sc_legs.append((sc_from[0], sc_from[1], b,
-                                            sc_from[2], ts - sc_from[2]))
-                        sc_from = None
-                        if b and e.get("SystemAddress"):
-                            here = {"sys": e["SystemAddress"], "body": b}
-                    elif v in ("ApproachBody", "Touchdown", "Liftoff"):
-                        if e.get("Body") and e.get("SystemAddress"):
-                            here = {"sys": e["SystemAddress"], "body": e["Body"]}
-                    elif v in ("Shutdown", "LoadGame", "Died", "Resurrect"):
-                        sc_from = None
-                    if v in ("ApproachBody", "SupercruiseExit"):
-                        if e.get("Body"):
-                            arrive[e["Body"]] = ts
-                    elif v == "SAAScanComplete":
-                        # Most mapping is done straight from supercruise with
-                        # no ApproachBody at all, so the honest bracket is the
-                        # gap between consecutive mappings in one system: it
-                        # covers the transfer plus the probe run, which is
-                        # exactly the per-body rate the estimate needs.
-                        t0 = arrive.pop(e.get("BodyName"), None)
-                        prev = last_saa.get(e.get("SystemAddress"))
-                        if t0 and 10 < ts - t0 < 1800:
-                            dss.append(ts - t0)
-                        elif prev and 20 < ts - prev < 1800:
-                            dss.append(ts - prev)
-                        last_saa[e.get("SystemAddress")] = ts
-                    elif v == "ScanOrganic":
-                        key = (e.get("SystemAddress"), e.get("Body"),
-                               e.get("Species"))
-                        if e.get("ScanType") in ("Log", "Sample"):
-                            blog.setdefault(key, ts)
-                        elif e.get("ScanType") == "Analyse":
-                            t0 = blog.pop(key, None)
-                            if t0 and 20 < ts - t0 < 3600:
-                                bio.append(ts - t0)
-        except OSError:
-            continue
+    m = journalscan.replay_work(journalscan.journal_files(d, 30))
+    dss, bio, sc_legs = m.dss, m.bio, m.sc_legs
     ST.work_dss, ST.work_bio = dss, bio
     before = ST.cost_model.as_dict()
     ST.cost_model = calibrate_work_from_journal(dss, bio, [], ST.cost_model)
@@ -2604,83 +2484,27 @@ def _bootstrap_session() -> None:
 
 
 def _bootstrap_last_body() -> None:
-    """
-    Recover the last body we were at.
-
-    The live position appears in no journal event, so the newest
-    ApproachBody / SupercruiseExit / Touchdown is the closest thing to it.
-    Read backwards so the first hit wins.
-    """
-    import glob
+    """Recover the last body we were at (journalscan.last_body)."""
     d = _journal_dir()
     if not d:
         return
-    files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
-                   + glob.glob(os.path.join(d, "Journal_*.log")))
-    for fn in reversed(files[-3:]):
-        try:
-            with open(fn, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-        except OSError:
-            continue
-        for line in reversed(lines):
-            line = line.strip()
-            if not line or '"BodyID"' not in line:
-                continue
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if e.get("event") in ("ApproachBody", "SupercruiseExit",
-                                  "Touchdown", "Liftoff",
-                                  "SAAScanComplete") and e.get("BodyID") is not None:
-                ST.last_body_id = e["BodyID"]
-                ST.last_body_name = e.get("Body") or e.get("BodyName") or ""
-                ST.last_body_sys = e.get("SystemAddress")
-                logger.info("last known position: %s (body %d)",
-                            ST.last_body_name or "?", ST.last_body_id)
-                return
+    lb = journalscan.last_body(d)
+    if lb:
+        ST.last_body_id = lb["body_id"]
+        ST.last_body_name = lb["name"]
+        ST.last_body_sys = lb["sys"]
+        logger.info("last known position: %s (body %d)",
+                    ST.last_body_name or "?", ST.last_body_id)
+        return
     logger.info("last position unknown - no body approach in recent journals")
 
 
 def _bootstrap_fuel() -> None:
     """Read ship fuel figures out of the recent journals."""
-    import glob
     d = _journal_dir()
     if not d:
         return
-    files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
-                   + glob.glob(os.path.join(d, "Journal_*.log")))[-6:]
-    cmdr: Optional[str] = None
-    for fn in files:
-        try:
-            with open(fn, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        e = json.loads(line)
-                    except ValueError:
-                        continue
-                    v = e.get("event")
-                    if v in ("Commander", "LoadGame"):
-                        cmdr = e.get("Name") or e.get("Commander") or cmdr
-                    if v in ("LoadGame", "Loadout") and e.get("ShipID") is not None:
-                        ST.fuel.set_ship((cmdr, e.get("ShipID")))
-                    if v == "Loadout":
-                        if e.get("MaxJumpRange"):
-                            ST.fuel.max_jump = float(e["MaxJumpRange"])
-                        cap = (e.get("FuelCapacity") or {}).get("Main")
-                        if cap:
-                            ST.fuel.capacity = float(cap)
-                    elif v == "FSDJump":
-                        if e.get("FuelUsed") is not None:
-                            ST.fuel.add_jump(e.get("JumpDist"), e.get("FuelUsed"))
-                        if e.get("FuelLevel") is not None:
-                            ST.fuel.level = float(e["FuelLevel"])
-        except (OSError, TypeError, ValueError):
-            continue
+    journalscan.replay_fuel(journalscan.journal_files(d, 6), ST.fuel)
     logger.info("fuel | %s", ST.fuel.summary())
 
 
@@ -3348,6 +3172,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
 
         with ST.lock:
             ST.db.ingest_journal_event(entry)
+        _measure_work(ev, entry)
 
         # Supercruise timing, measured on the legs the route actually plans:
         # body A -> body B inside one system. The distance comes from the
@@ -3449,8 +3274,6 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
             _ui(_refresh)
 
         elif ev in ("ApproachBody", "Touchdown"):
-            if ev == "ApproachBody" and entry.get("Body"):
-                ST._arrive[entry["Body"]] = time.time()   # start of the DSS timing
             _route_auto_tick(entry.get("Body") or entry.get("BodyName"),
                              "approach" if ev == "ApproachBody" else "landed")
 
@@ -3489,7 +3312,6 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
 
         elif ev in ("Scan", "SAAScanComplete", "SAASignalsFound", "FSSBodySignals",
                     "FSSDiscoveryScan", "FSSAllBodiesFound", "ScanOrganic"):
-            _measure_work(ev, entry)
             if not ST.cur_id64 and entry.get("SystemAddress"):
                 ST.cur_id64 = entry["SystemAddress"]
                 ST.cur_system = (entry.get("StarSystem") or entry.get("SystemName")
