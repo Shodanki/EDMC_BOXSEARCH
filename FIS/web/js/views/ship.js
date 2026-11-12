@@ -13,7 +13,7 @@
 // and function report) and the loadmaster's column (cargo, fuel, locker).
 
 import { getJSON, postJSON } from "../api.js";
-import { el, frame, fmt, withPopout } from "../ui.js";
+import { el, frame, fmt, withPopout, copyText } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const LAMP = {
@@ -144,7 +144,7 @@ function lostRows(U) {
   if (L.length) out.push(el("div", { class: "c-red pl-line", text: "✖ " + t("Lost in a crash, to redo:") }));
   for (const s of L) {
     const bio = bioCount(s).map(([b, k]) => (k > 1 ? k + "× " : "") + b).join(", ");
-    out.push(el("div", { class: "small sh-lost-line" }, hideBtn(s, null), (s.name || "?") + " ",
+    out.push(el("div", { class: "small sh-lost-line" }, hideBtn(s, null), (s.name || "?") + " ", copyBtn(s),
       el("span", { class: "c-dim", text: [s.scan ? t("{n} scans", { n: s.scan }) : null, s.map ? t("{n} maps", { n: s.map }) : null,
         bio || null, distText(s), s.ts ? String(s.ts).slice(0, 10) : null].filter(Boolean).join(" · ") })));
   }
@@ -163,6 +163,13 @@ function bioCount(s) {
 }
 const distText = (s) => (s.dist === null || s.dist === undefined ? null : fmt(s.dist, 1) + " ly");
 const itemsOf = (s) => (s.scan ? 1 : 0) + (s.map ? 1 : 0) + bioCount(s).length;
+
+// the name for the game's galaxy map - paste it there to plot the way back
+function copyBtn(s) {
+  if (!s.name) return null;
+  return el("button", { class: "sh-copy", text: t("copy"), title: t("copy the system name - paste it in the galaxy map to plot the jump"),
+    onclick: (e) => copyText(s.name, e.currentTarget) });
+}
 
 function hideBtn(s, what, label) {
   const name = s.name || "#" + s.id64;
@@ -214,7 +221,7 @@ function lostData() {
     el("span", { class: "num", text: t("Distance") }), el("span", { text: t("Lost") }), el("span", { text: t("To redo") })));
   for (const s of L) {
     rows.push(el("div", { class: "sh-lost-row" }, hideBtn(s, null),
-      el("span", {}, el("span", { text: s.name || "?" }), el("span", { class: "c-dim small", text: " · " + s.id64 })),
+      el("span", {}, el("span", { text: s.name || "?" }), copyBtn(s), el("span", { class: "c-dim small", text: " · " + s.id64 })),
       el("span", { class: "num", text: distText(s) || "?" }),
       el("span", { class: "c-dim", text: s.ts ? String(s.ts).slice(0, 10) : "" }),
       el("span", { class: "sh-lost-items" },
