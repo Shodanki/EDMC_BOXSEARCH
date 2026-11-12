@@ -11,7 +11,8 @@ changing behaviour:
 
   position after FSDJump / Location, fuel per jump, Loadout, plotted route,
   DSS and sampling timings, the own carrier after a carrier jump, a second
-  commander, and that a broken event never escapes the hook.
+  commander, the target briefing, Status.json (fuel, selected destination),
+  and that a broken event never escapes the hook.
 
     python tests/plugin_hooks.py      (from the plugin folder)
 """
@@ -155,6 +156,34 @@ try:
         except Exception:
             ok = False
         check(ok, "a malformed event does not raise out of journal_entry")
+
+        # 6b) briefing (what the overlay shows before a jump), own data only
+        calls.clear()
+        je({"event": "FSDTarget", "Name": "Hook B", "SystemAddress": 1002, "StarClass": "K"})
+        check("briefing target" in calls, "FSDTarget asks for a target briefing")
+        bi = load._briefing_info("target", "Hook B", 1002, "K")
+        check(bi.get("visited") and bi.get("scoopable") and bi["level"] == "unchecked"
+              and bi["known_sources"] == [],
+              "briefing: Hook B visited, scoopable, in no data frame (no source asked)")
+        bi = load._briefing_info("target", "Nowhere Q", None, "Y")
+        check(not bi.get("visited") and bi.get("scoopable") is False and bi["level"] == "unchecked",
+              "briefing: unknown brown dwarf - not scoopable, not visited")
+
+        # 6c) Status.json: fuel and a selected destination (id64 in no database)
+        load.dashboard_entry("Tester", False, {"Flags": 0, "Fuel": {"FuelMain": 21.5}})
+        check(ST.fuel.level == 21.5, "Status.json: fuel level")
+        dest = {"Flags": 0, "Destination": {"System": 422810994947, "Body": 0,
+                                            "Name": "Synuefe XV-C d12"}}
+        load.dashboard_entry("Tester", False, dest)
+        row = ST.db.system_by_id64(422810994947)
+        check(row is not None and row["name"] == "Synuefe XV-C d12",
+              "Status.json: the selected destination is stored with its id64")
+        seen = []
+        real = ST.db.ingest_status_destination
+        ST.db.ingest_status_destination = lambda d: seen.append(d) or real(d)
+        load.dashboard_entry("Tester", False, dest)
+        ST.db.ingest_status_destination = real
+        check(seen == [], "the same destination again is not looked at twice")
 
         # 7) a second commander: nothing of the first one's position is kept
         je({"event": "LoadGame", "Commander": "Other"}, cmdr="Other", state={"FID": "F2"})
