@@ -798,6 +798,11 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 .vh-arrow { display: inline-block; color: var(--cyan); font-size: 22px; text-shadow: var(--glow); transition: transform .4s; }
 .vh-note { margin-top: 8px; }
 .lay-phone .vh-grid { grid-template-columns: 1fr; }
+/* V1c: SYNTHESIS */
+.vh-synth { grid-column: 1 / -1; }
+.vh-syn-kind { font: 600 11px var(--font-display); letter-spacing: .12em; color: var(--cyan); margin: 8px 0 2px; }
+.vh-syn { display: grid; grid-template-columns: 90px 44px 1fr; gap: 8px; align-items: baseline; font-size: 12px; margin: 2px 0; }
+.vh-syn-n { font-size: 18px; text-align: right; }
 
 /* ---------------------------------------------------------------- H1b: deeper themes
    Beyond the colours, each styled theme changes the SHAPE and FEEL within

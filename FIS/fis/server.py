@@ -758,7 +758,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ship":
             return self._json(m.build_ship(app.live_state()))
         if path == "/api/vehicle":
-            return self._json(m.build_vehicle(app.live_state()))
+            out = m.build_vehicle(app.live_state())
+            try:                                  # V1c: recipes from your own Synthesis events
+                from . import synthesis
+                out["synthesis"] = synthesis.build_synthesis(app.archive)
+            except Exception:
+                out["synthesis"] = None
+            return self._json(out)
         if path == "/api/surface":
             sid = (qs.get("sys") or [None])[0]
             body = (qs.get("body") or [None])[0]
