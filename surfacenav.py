@@ -228,6 +228,45 @@ def bio_summary(state: Dict[str, Any], sig_bio: Optional[int],
             "signals": sig_bio}
 
 
+LINE_MAX = 44          # characters per overlay line (the block may stand at x = 900 of 1280)
+
+
+def head_line(label: str, done: int, open_n: int = 0, lost_n: int = 0,
+              to_find: Sequence[str] = (), signals: Optional[int] = None) -> str:
+    """
+    The head of the NAV / KNOWN POINTS block, never longer than LINE_MAX:
+    "KNOWN POINTS  bio 1 done, 1 open, 2 lost - redo | to find: Bacterium".
+    What gives way first: the signal count, then genera still to find (named
+    while they fit, the rest as "+n"), then " - redo".
+    """
+    core = "bio %d done" % done + (", %d open" % open_n if open_n else "")
+    base = ""
+    for redo in (True, False):
+        lost = (", %d lost%s" % (lost_n, " - redo" if redo else "")) if lost_n else ""
+        base = "%s  %s%s" % (label, core, lost)
+        if len(base) <= LINE_MAX:
+            break
+    if len(base) > LINE_MAX:
+        return base[:LINE_MAX]
+    if to_find:
+        names: List[str] = []
+        for i, g in enumerate(to_find):
+            more = len(to_find) - i - 1
+            t = base + " | to find: " + ", ".join(names + [g]) + (" +%d" % more if more else "")
+            if len(t) > LINE_MAX:
+                break
+            names.append(g)
+        if names:
+            more = len(to_find) - len(names)
+            return base + " | to find: " + ", ".join(names) + (" +%d" % more if more else "")
+        t = base + " | %d to find" % len(to_find)
+        return t if len(t) <= LINE_MAX else base
+    if signals:
+        t = base + " | %d signal%s" % (signals, "" if signals == 1 else "s")
+        return t if len(t) <= LINE_MAX else base
+    return base
+
+
 def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
                   sig_bio: Optional[int] = None, genera: Sequence[str] = (),
                   colours: Optional[Dict[str, str]] = None, limit: int = 6,
@@ -293,22 +332,16 @@ def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
              for s in _merge_sites(st["sites"], radius) if s["label"] not in busy]
     rows += [l for _d, l in sorted(sites, key=lambda t: t[0])]
 
-    bio_txt = ""
-    if summ["analysed"] or summ["in_progress"] or sig_bio or lost_sp:
-        # species, not signals: one Brain Trees signal holds several species
-        bio_txt = "bio %d done" % len(done)
-        if summ["in_progress"]:
-            bio_txt += ", %d open" % len(summ["in_progress"])
-        if lost_sp:
-            bio_txt += ", %d lost - redo" % len(lost_sp)
-        if summ["open_genera"]:
-            bio_txt += " | not found: " + ", ".join(summ["open_genera"])[:40]
-        elif sig_bio and not genera:
-            bio_txt += " | %d signal%s" % (sig_bio, "" if sig_bio == 1 else "s")
     if not rows and not summ["open_genera"] and not lost_sp:
         return []
-    head = "%s  %s" % ("KNOWN POINTS" if orbit else "NAV", bio_txt)
-    out: List[Line] = [(head.rstrip(), c_head)]
+    label = "KNOWN POINTS" if orbit else "NAV"
+    if summ["analysed"] or summ["in_progress"] or sig_bio or lost_sp:
+        # species, not signals: one Brain Trees signal holds several species
+        head = head_line(label, len(done), len(summ["in_progress"]), len(lost_sp),
+                         summ["open_genera"], sig_bio if sig_bio and not genera else None)
+    else:
+        head = label
+    out: List[Line] = [(head, c_head)]
     out += rows[:limit]
     if len(rows) > limit:
         out.append(("+%d more" % (len(rows) - limit), c_dim))
@@ -342,7 +375,7 @@ def _selftest() -> None:
     lines = compass_lines({"lat": 0.0, "lon": 0.001, "heading": 0}, marks, 400000.0,
                           sig_bio=2, genera=["Brain Trees", "Bacterium"])
     assert lines[1][0].startswith("NOMAD PARKED"), lines
-    assert "not found: Bacterium" in lines[0][0], lines
+    assert "to find: Bacterium" in lines[0][0], lines
     assert not any(l[0].startswith("Roseum Brain Tree ") and "/3" not in l[0]
                    for l in lines), lines
     # every point names its absolute course next to the turn
@@ -379,8 +412,20 @@ def _selftest() -> None:
     lm.append({"ts": "6", "kind": "bio_log", "label": "Stratum Tectonicas",
                "detail": "Stratum", "lat": 0.0, "lon": 0.02})
     redo = compass_lines(here, lm, 400000.0, sig_bio=2, orbit=True, lost=lost)
-    assert redo[0][0].startswith("KNOWN POINTS  bio 0 done, 1 open, 1 lost - redo"), redo
+    assert redo[0][0] == "KNOWN POINTS  bio 0 done, 1 open, 1 lost", redo   # 44 chars
     assert any(l[0].startswith("Stratum Tectoni 1/3") for l in redo), redo
+    # the head never runs past 44 characters - what gives way, in order
+    assert head_line("NAV", 2, signals=3) == "NAV  bio 2 done | 3 signals"
+    h = head_line("KNOWN POINTS", 1, 1, 2, ["Bacterium", "Fungoida", "Stratum"], 5)
+    assert h == "KNOWN POINTS  bio 1 done, 1 open, 2 lost", h
+    h = head_line("NAV", 0, 0, 0, ["Bacterium", "Fungoida", "Stratum", "Tussock"])
+    assert h == "NAV  bio 0 done | to find: Bacterium +3", h
+    h = head_line("NAV", 0, 0, 1, ["Bacterium"])
+    assert h == "NAV  bio 0 done, 1 lost - redo | 1 to find", h
+    for args in [(3, 2, 4, ["Aleoida", "Bacterium", "Cactoida", "Clypeus", "Concha"], 9),
+                 (12, 12, 12, ["Electricae"], None), (0, 0, 0, [], 1)]:
+        for lb in ("NAV", "KNOWN POINTS"):
+            assert len(head_line(lb, *args)) <= LINE_MAX, head_line(lb, *args)
     # a lost species without any position still shows in the head
     assert compass_lines(here, [], 400000.0, lost=["bio:Aleoida Gravis"])[0][0] \
         == "NAV  bio 0 done, 1 lost - redo"

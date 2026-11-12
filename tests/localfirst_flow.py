@@ -301,7 +301,7 @@ with tempfile.TemporaryDirectory() as d:
     with mock.patch.object(load, "cfg_bool", lambda k, d: True):
         load._nav_overlay(pos, 400000.0, t0, False)      # in orbital cruise
         head = shown[-1][0][0] if shown else None
-        check(head == "KNOWN POINTS  bio 0 done, 1 lost - redo | 1 signal",
+        check(head == "KNOWN POINTS  bio 0 done, 1 lost - redo",          # 44 chars max
               "overlay KNOWN POINTS: species lost in the crash -> 'lost - redo' (%r)" % head)
         ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 601, "Body": 1,
             "Species_Localised": "Stratum Tectonicas", "Genus_Localised": "Stratum",
