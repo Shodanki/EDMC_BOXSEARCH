@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.8
+# SHBOXSEARCH v4.9
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -14,14 +14,14 @@ tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
 folder of this plugin. See [FIS/README.md](FIS/README.md) - with
 screenshots (demo data).
-**New in 4.8:** several commanders on one PC - each keeps their own
-exploration, what is found is shared, a main commander for the survey. The
-first route after a carrier ride starts at the carrier; on a plotted route
-the briefing says where to scoop at the latest. In the FIS: a VEHICLE tab
-for SRV and Nomad, themes that change shapes as well as colours, unsold
-data with a risk level and the x5 bonus only where it is paid - and data
-lost with the ship is planned again - see
-[What changed in 4.8](#what-changed-in-48).
+**New in 4.9:** this README in a new order - operation first, then the
+third-party parts, how it works, the history. The overlay names the
+absolute course to every point and says "lost - redo" for species lost in a
+crash; a plotted route through space nobody was asked about is checked once.
+In the FIS: synthesis per tier in the VEHICLE tab with how often each can
+still be made, the vehicle's tank size, stations beside their body in the
+SYSTEM map and the plot suggestion as a corridor in GALAXY - see
+[What changed in 4.9](#what-changed-in-49).
 
 **Licence:** [Mozilla Public License 2.0](LICENSE) since 4.7 - use, change and
 share it freely; whoever passes on a changed file of this project keeps that
@@ -127,21 +127,21 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4512 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 2192 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
-| `sysroute.py` | 795 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
-| `boxelplan.py` | 772 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
-| `sources.py` | 735 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
-| `netgate.py` | 469 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
-| `shells.py` | 224 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
-| `procgen.py` | 440 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
-| `deepspace.py` | 313 | Fuel model, tritium rings, carrier staging | — |
-| `migrate.py` | 72 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
-| `overlay.py` | 318 | Cockpit overlay through EDMCModernOverlay (optional) | — |
-| `biopredict.py` | 199 | Genus prediction learned from your own samples | — |
-| `diagnostics.py` | 284 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
-| `surfacenav.py` | 263 | Surface compass: parked SRV, open samples, known points | — |
-| `miningstat.py` | 282 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
+| `load.py` | 4936 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 3127 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `sysroute.py` | 935 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
+| `boxelplan.py` | 952 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
+| `sources.py` | 776 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
+| `netgate.py` | 474 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
+| `shells.py` | 321 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
+| `procgen.py` | 445 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
+| `deepspace.py` | 441 | Fuel model, tritium rings, carrier staging | — |
+| `migrate.py` | 77 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
+| `overlay.py` | 424 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `biopredict.py` | 204 | Genus prediction learned from your own samples | — |
+| `diagnostics.py` | 289 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
+| `surfacenav.py` | 493 | Surface compass: parked SRV, open samples, known points | — |
+| `miningstat.py` | 337 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
 | `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain
@@ -1274,6 +1274,7 @@ what changed in each release from 4.1 on.
 | 4.6.0 | local first: online sources in shells when needed, daily cap, offline switch, EDDiscovery first; FIS: Rhino rigs and hold, open bio signals, data at risk, on foot, QR code, OBS mode |
 | 4.7.0 | Mozilla Public License 2.0; honest information levels in the briefing; fuel model per ship; FIS: known and favourite carriers with docking access, learning from your own mining, themes, combat mode, cockpit configuration, ATLAS SYSTEMS |
 | 4.8.0 | exploration per commander with a main commander; first route from the carrier; latest scoop on a plotted route; data lost with the ship planned again; FIS: VEHICLE tab, deeper themes, unsold data with risk level and the first-footfall bonus |
+| 4.9.0 | README in a new order; overlay: absolute course, "lost - redo"; route check of a plotted route (one EDSM request); prospecting learnt from your probes; FIS: synthesis per tier and tank size in VEHICLE, docked stations in the SYSTEM map, plot corridor in GALAXY |
 
 ## Fixed since v3.0.8
 
@@ -2098,6 +2099,61 @@ list (asked twice; the tasks stay planned).
   first-discovery bonus (x5) is counted only on a body of your first
   footfall - checked against real sales; "first logged" alone pays the base
   value.
+
+## What changed in 4.9
+
+### This README in a new order
+
+Operation first - what you need, install, update, files, first start,
+preferences, known limits -, then the third-party parts, then how it works
+with the maths, the version history oldest first and the part for
+maintainers. Nothing was dropped; the chapters of "How it works" are
+numbered anew. The FIS README follows the same order.
+
+### Overlay: course and losses
+
+* Every point in NAV / KNOWN POINTS names its **absolute course** next to
+  the turn - *brg 255 < 30* - to compare with the game's own compass.
+* A species **lost in a crash** no longer counts as done: the head says
+  *n lost - redo*, and a line points to where it was sampled until it is
+  analysed again.
+* The head line keeps to the block's width; the genera the DSS named and
+  nobody found yet are listed as *to find:*.
+
+### Synthesis and tank in the VEHICLE tab
+
+* **SYNTHESIS** - refuel, ammunition and repair by tier, learnt only from
+  your own synthesis: what each needs and what is on board, how often it can
+  still be made and what limits it; a tier not made yet is named as such.
+  Anything else made while a vehicle is out (the Rhino's rig) is learnt the
+  same way under its own name. Nothing is copied from a wiki.
+* **Tank size** - no game file names it. Right after a refuel synthesis the
+  tank is full, so that reading is kept as the size of the vehicle type
+  (`FIS/vehicle_tanks.json`) and the tank shows its fill against it.
+
+### Places in the SYSTEM map
+
+Stations you docked at stand beside their body in the map - and carriers
+for a day after docking. The game names no parent body for a station, so it
+is matched on its distance from the arrival star against the scanned
+bodies; without a match it stays in the list.
+
+### Finding unknown systems
+
+* **Route check** - a plotted route of two jumps or more through space no
+  source was asked about is checked once: EDDiscovery's file first, then
+  the rest with ONE EDSM request by name. The briefing then says *known* or
+  *in no database (checked: EDSM)* there instead of *not checked*; the same
+  route plotted again asks nothing (see *Fair use*).
+* **Prospecting learnt from your probes** - the statistics window shows how
+  often boxels of each score band really held a system. From five such
+  finds on, the probe order follows what actually paid.
+* **Corridor in GALAXY** - the plugin's plot suggestion (where a route
+  crosses the most boxels never probed) as a layer of its own, 2D and 3D.
+  Plotting stays yours.
+
+After the update close the FIS window once so it starts with the new files,
+and keep `FIS/vehicle_tanks.json` like `favourites.json`.
 
 ---
 
