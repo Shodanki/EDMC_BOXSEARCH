@@ -410,6 +410,7 @@ class Database:
                     d[k] = o[k]
             # lost with the ship, not redone yet (plugin 4.8, after the crash replay)
             d["lost_what"] = o["lost_what"] if o is not None and "lost_what" in o.keys() else None
+            d["lost_ts"] = o["lost_ts"] if o is not None and "lost_ts" in o.keys() else None
             out.append(d)
         return out
 

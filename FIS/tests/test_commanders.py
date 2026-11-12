@@ -136,6 +136,25 @@ class TestPerCommander(_Base):
         self.assertTrue(any(leg["lost"] for leg in s["route"]["legs"] if leg["body_id"] == 1))
         self.assertEqual((lost[0]["name"], lost[0]["map"], lost[0]["bio"]), (fx.SYS, 1, ["Bacterium Cerbrus"]))
 
+    def test_lost_in_the_planet_sheet(self):
+        cx = sqlite3.connect(self.db_path)
+        cx.execute("UPDATE cmdr_bodies SET mapped=0, lost_what=?, lost_ts='2026-11-11T19:27:41Z' "
+                   "WHERE fid=? AND body_id=1", ('["bio:Bacterium Cerbrus", "map"]', MAIN_FID))
+        cx.commit()
+        cx.close()
+        try:
+            mine = self.model.build_body(self.db, fx.SYS_ID, 1, fid=MAIN_FID)
+            shared = self.model.build_body(self.db, fx.SYS_ID, 1)
+        finally:
+            cx = sqlite3.connect(self.db_path)
+            cx.execute("UPDATE cmdr_bodies SET mapped=1, lost_what=NULL, lost_ts=NULL WHERE body_id=1")
+            cx.commit()
+            cx.close()
+        self.assertEqual(mine["lost"], {"what": ["bio:Bacterium Cerbrus", "map"], "ts": "2026-11-11"})
+        self.assertFalse(mine["flags"]["mapped"])            # his own map went down with the ship
+        self.assertEqual(mine["gravity_g"], shared["gravity_g"])   # the body's data stays
+        self.assertIsNone(shared["lost"])
+
     def test_lost_in_the_briefing(self):
         cx = sqlite3.connect(self.db_path)
         cx.execute("UPDATE cmdr_bodies SET lost_what=?, lost_ts='2026-11-11T19:27:41Z' "

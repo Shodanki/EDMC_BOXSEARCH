@@ -1013,10 +1013,18 @@ def _ground_mining(db: Database, body_name: str, planet_class: Optional[str]) ->
     return out or None
 
 
-def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Optional[Dict[str, Any]]:
+def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
+               fid: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """PLANET INFO. fid: the commander playing - scanned, mapped and species
+    analysed are his own (C1), and what he lost in a crash is named until
+    he has redone it; the body's data itself is shared knowledge."""
     r = db.body(id64, body_id)
     if r is None:
         return None
+    if fid:
+        own = next((x for x in db.bodies_for(id64, fid) if x["body_id"] == body_id), None)
+        if own is not None:
+            r = own
     p = plugin()
     srow = db.system_by_id64(id64)
     sysname = srow["name"] if srow is not None else ""
@@ -1085,6 +1093,9 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
             "prediction": [],
         },
         "hotspots": hotspots,
+        # lost with the ship, not redone yet: "scan", "map", "bio:<species>"
+        "lost": ({"what": _json(r["lost_what"], []), "ts": (r["lost_ts"] or "")[:10]}
+                 if "lost_what" in r.keys() and r["lost_what"] else None),
         "signals": body_signals(db.signals_of(id64, body_id)),
         "materials_found": [{"label": m["label"], "category": m["category"],
                              "count": m["count"], "last": (m["last"] or "")[:10]}
