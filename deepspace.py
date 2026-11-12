@@ -203,6 +203,112 @@ def is_scoopable(star_type: Optional[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# F1: where to scoop at the latest along a plotted route
+# ---------------------------------------------------------------------------
+
+SCOOP_RESERVE = 0.15     # at most this share of the tank is kept back ...
+# ... and otherwise one jump in hand: the dearest jump of the route
+
+
+def scoop_plan(fs: FuelState, hops: Sequence[Tuple[str, Optional[str], float]],
+               here: Optional[Tuple[str, Optional[str]]] = None,
+               reserve_frac: float = SCOOP_RESERVE) -> Optional[Dict[str, Any]]:
+    """
+    F1: along a plotted multi-jump route, the star at which you must scoop
+    AT THE LATEST so you never run dry.
+
+    hops: the jumps still to fly, in order - (system, star class, jump ly).
+    here: (system, star class) where you are now; a scoopable star here is
+    a refuel point before the first jump.
+
+    The fuel per jump comes from the commander's own fitted curve
+    (FuelState.cost_of), the start from the current tank. A scoopable star
+    (KGBFOAM) is a refuel point; scooping there is assumed to fill the tank.
+    Walking the route, whenever the next jump would leave less than the
+    reserve (fuel for the dearest jump of the route, at most SCOOP_RESERVE
+    of the tank - one jump in hand for the model's error), the LAST refuel
+    point passed since
+    the last fill becomes a "scoop here at the latest" mark and the walk
+    goes on from there with a full tank. No refuel point left -> stranded.
+
+    Separately, every stretch between two refuel points (or to the end)
+    that needs more than a full tank is a gap - no scooping can bridge it,
+    the route has to be plotted differently.
+
+    Returns None without a tank size or fuel model, else
+      jumps, latest [{n, name, star_class}] (n = jumps flown when you are
+      there, 0 = here), gaps [{from, to, need, cap}], stranded {n, name} or
+      None (hard: not even the jump itself, else only the reserve), arrive
+      (t left at the end with the marked stops), ok (no stop
+      needed at all), reserve (t).
+    """
+    cap = float(fs.capacity or 0.0)
+    if cap <= 0 or not hops:
+        return None
+    costs: List[float] = []
+    for _name, _cls, d in hops:
+        c = fs.cost_of(float(d or 0.0)) if d else 0.0
+        if c is None:
+            return None
+        costs.append(max(0.0, c))
+    n = len(hops)
+    reserve = min(cap * reserve_frac, max(costs))
+    names = [here[0] if here else None] + [h[0] for h in hops]
+    classes = [here[1] if here else None] + [h[1] for h in hops]
+    point = [is_scoopable(c) for c in classes]      # refuel possible at position p
+
+    latest: List[Dict[str, Any]] = []
+    stranded = None
+    lvl = min(float(fs.level or 0.0), cap)
+    last = 0 if point[0] else None                  # latest refuel point since the last fill
+    used_at = -1
+    i = 0
+    while i < n:
+        if lvl - costs[i] < reserve:
+            if last is None or last == used_at:
+                stranded = {"n": i + 1, "name": names[i + 1], "hard": lvl < costs[i]}
+                break
+            latest.append({"n": last, "name": names[last], "star_class": classes[last]})
+            used_at = last
+            lvl = cap - sum(costs[last:i])
+            if lvl - costs[i] < reserve:
+                stranded = {"n": i + 1, "name": names[i + 1], "hard": lvl < costs[i]}
+                break
+        lvl -= costs[i]
+        i += 1
+        if point[i]:
+            last = i
+    gaps = []
+    marks = [p for p in range(n + 1) if point[p]]
+    for a, b in zip(marks, marks[1:] + [n]):
+        need = sum(costs[a:b])
+        if b > a and need > cap:
+            gaps.append({"from": a + 1, "to": b, "need": round(need, 1), "cap": round(cap, 1)})
+    return {"jumps": n, "latest": latest, "gaps": gaps, "stranded": stranded,
+            "arrive": None if stranded else round(max(0.0, lvl), 1),
+            "ok": not latest and stranded is None, "reserve": round(reserve, 1)}
+
+
+def scoop_line(plan: Optional[Dict[str, Any]]) -> Optional[Tuple[str, str]]:
+    """One overlay line for the plan: (text, level 'ok' | 'warn' | 'alert')."""
+    if not plan:
+        return None
+    if plan["stranded"]:
+        s = plan["stranded"]
+        return ("FUEL %s by jump %d - plot via scoop stars"
+                % ("OUT" if s.get("hard") else "LOW", s["n"]), "alert")
+    if plan["gaps"]:
+        g = plan["gaps"][0]
+        return ("NO SCOOP STAR jumps %d-%d: %.0f t > tank" % (g["from"], g["to"], g["need"]), "alert")
+    if plan["latest"]:
+        m = plan["latest"][0]
+        where = "here" if m["n"] == 0 else "jump %d/%d" % (m["n"], plan["jumps"])
+        more = " (+%d)" % (len(plan["latest"]) - 1) if len(plan["latest"]) > 1 else ""
+        return ("SCOOP at the latest %s %s%s" % (where, m["star_class"] or "", more), "warn")
+    return ("FUEL OK for %d jumps (~%.0f t left)" % (plan["jumps"], plan["arrive"] or 0), "ok")
+
+
+# ---------------------------------------------------------------------------
 # Rings and tritium
 # ---------------------------------------------------------------------------
 

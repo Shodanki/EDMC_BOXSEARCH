@@ -92,7 +92,7 @@ def _ammo_full(archive: fl.Archive) -> Dict[tuple, int]:
 
 
 def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str, db: Any = None,
-                     now: Optional[float] = None) -> Dict[str, Any]:
+                     now: Optional[float] = None, lost_hidden: Any = None) -> Dict[str, Any]:
     now = time.time() if now is None else now
     st = live.get("status") or {}
     flags, flags2 = int(st.get("flags") or 0), int(st.get("flags2") or 0)
@@ -244,6 +244,19 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
     }
     out["target"] = build_target(live, db)
     out["unsold"] = _unsold(archive)
+    if out["unsold"] is not None and db is not None and hasattr(db, "lost_summary"):
+        try:
+            # where data went down with the ship and is not redone yet - all
+            # of it, without what the commander hid from the list (SHIP ->
+            # LOST DATA), with the distance from here
+            from . import losthidden
+            fid = archive.commander()[0]
+            hid = lost_hidden.get(fid) if lost_hidden is not None else []
+            vis, n_hid = losthidden.apply(db.lost_summary(fid), hid, (live.get("system") or {}).get("pos"))
+            out["unsold"] = dict(out["unsold"], lost_systems=vis, lost_hidden=n_hid,
+                                 lost_caps=list(losthidden.CAPS_LY))
+        except Exception:
+            pass
     return out
 
 

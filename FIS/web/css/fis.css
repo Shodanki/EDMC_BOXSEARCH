@@ -682,6 +682,21 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .kc-act { display: flex; gap: 4px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
 .kc-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
 .kc-tabs button.on { color: var(--amber); border-color: var(--amber); }
+/* SHIP -> LOST DATA */
+.sh-lost-sum { color: var(--red); border-color: rgba(var(--red-rgb), .5); text-align: left; }
+.sh-hide { padding: 0 6px; margin: 1px 4px 1px 0; font-size: 12px; color: var(--dim); }
+.sh-hide:hover { color: var(--red); border-color: var(--red); }
+.sh-copy { padding: 0 6px; margin: 1px 6px 1px 4px; font-size: 11px; color: var(--dim); }
+.sh-copy:hover { color: var(--cyan); border-color: var(--cyan); }
+.sh-unhide { margin-top: 4px; color: var(--cyan); }
+.sh-caps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.sh-lost-row { display: grid; grid-template-columns: 30px minmax(0, 1.4fr) 80px 90px minmax(0, 2fr); gap: 8px;
+  align-items: baseline; padding: 3px 0; border-bottom: 1px solid rgba(var(--cyan-rgb), .08); }
+.sh-lost-row .num { text-align: right; }
+.sh-lost-items { display: flex; flex-wrap: wrap; gap: 2px; }
+.lay-phone .sh-lost-row { grid-template-columns: 30px minmax(0, 1fr) 70px; }
+.lay-phone .sh-lost-row > :nth-child(4), .lay-phone .sh-lost-head > :nth-child(5) { display: none; }
+.lay-phone .sh-lost-row > :nth-child(5) { grid-column: 2 / -1; }
 .kc-market summary { cursor: pointer; color: var(--cyan); margin-top: 2px; }
 .kc-good { display: grid; grid-template-columns: minmax(0, 1fr) 80px 90px; gap: 8px; padding-left: 10px; }
 .kc-good .num { text-align: right; }
@@ -767,3 +782,137 @@ html:has(body.obs), body.obs { background: transparent !important; }
 body.obs .frame > .frame-in { background: linear-gradient(180deg, rgba(var(--bg-2-rgb), .82), rgba(var(--bg-1-rgb), .82)); }
 body.obs #solo-ctl, body.kiosk #solo-ctl { display: none; }
 body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
+
+/* lost with the ship - to redo */
+.leg.lost .lg-name { color: var(--red); }
+.leg.lost .lg-name::after { content: " ✖"; color: var(--red); }
+
+/* V1: VEHICLE - tokens only */
+.vh-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; align-content: start;
+  height: 100%; overflow: auto; }
+.vh-name { font: 600 17px var(--font-display); letter-spacing: .06em; margin-bottom: 6px; }
+.vh-fuel { width: 100%; margin: 6px 0 2px; }
+.vh-list { margin-top: 6px; font-size: 12px; }
+.vh-ship { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 14px; }
+.vh-ship .k { font: 600 11px var(--font-display); letter-spacing: .12em; color: var(--dim); }
+.vh-arrow { display: inline-block; color: var(--cyan); font-size: 22px; text-shadow: var(--glow); transition: transform .4s; }
+.vh-note { margin-top: 8px; }
+.lay-phone .vh-grid { grid-template-columns: 1fr; }
+
+/* ---------------------------------------------------------------- H1b: deeper themes
+   Beyond the colours, each styled theme changes the SHAPE and FEEL within
+   limits: frame outlines, header and tab bar, line weights, glow, small
+   animations. CSS only, per :root[data-theme], tokens only, system fonts,
+   same layout and sizes - readability first. Own designs.
+   console    - rounded console: soft arcs and pill bars instead of chamfers
+   industrial - belt industrial: notched steel plates, rivets, hazard stripes
+   station    - station era: phosphor glow, a fine grid, tube-dark edges */
+
+/* -- console ---------------------------------------------------------- */
+:root[data-theme="console"] { --r: 14px; --glow: 0 0 10px rgba(var(--cyan-rgb), .35); }
+:root[data-theme="console"] .frame {
+  clip-path: none; border-radius: var(--r) 4px var(--r) 4px; padding: 2px 2px 2px 6px; }
+:root[data-theme="console"] .frame > .frame-in {
+  clip-path: none; border-radius: calc(var(--r) - 3px) 3px calc(var(--r) - 3px) 3px; }
+:root[data-theme="console"] .frame-title {
+  border-bottom: 0; padding: 3px 12px 3px 10px; margin: -2px -4px 8px -6px;
+  background: linear-gradient(90deg, rgba(var(--cyan-rgb), .20), rgba(var(--cyan-rgb), .04) 70%, transparent);
+  border-radius: 999px 0 0 999px; }
+:root[data-theme="console"] button {
+  clip-path: none; border-radius: 999px; border-width: 1px 1px 1px 4px; padding: 5px 10px 5px 9px; }
+:root[data-theme="console"] #tabs button[aria-selected="true"] {
+  background: var(--cyan); color: var(--ink); border-color: var(--cyan); text-shadow: none; }
+:root[data-theme="console"] #top {
+  clip-path: none; border-radius: 0 0 22px 22px; border-bottom: 2px solid var(--line);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1)); }
+:root[data-theme="console"] .tac-stage { clip-path: none; border-radius: var(--r) 4px var(--r) 4px; }
+:root[data-theme="console"] .chip { border-radius: 999px; padding: 1px 8px; }
+:root[data-theme="console"] .hbar .track, :root[data-theme="console"] .hbar .track > i,
+:root[data-theme="console"] .bar, :root[data-theme="console"] .bar > i { border-radius: 999px; }
+:root[data-theme="console"] body.motion .frame.appear { animation: h1b-glide 420ms ease-out both; }
+:root[data-theme="console"] body.motion .frame.appear > .frame-in { animation: none; }
+@keyframes h1b-glide { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+
+/* -- industrial ------------------------------------------------------- */
+:root[data-theme="industrial"] { --notch: 16px; --glow: none; }
+:root[data-theme="industrial"] .frame {
+  clip-path: polygon(0 0, calc(100% - var(--notch)) 0, 100% var(--notch), 100% 100%, 0 100%);
+  padding: 2px; background: rgba(var(--dim-rgb), .45); }
+:root[data-theme="industrial"] .frame.hot { background: var(--line); }
+:root[data-theme="industrial"] .frame.warn { background: rgba(var(--amber-rgb), .75); }
+:root[data-theme="industrial"] .frame.alert { background: rgba(var(--red-rgb), .8); }
+:root[data-theme="industrial"] .frame.disc { background: rgba(var(--violet-rgb), .75); }
+/* rivets in three corners of the plate (the fourth is the notch) */
+:root[data-theme="industrial"] body:not(.obs) .frame > .frame-in {
+  background:
+    radial-gradient(circle at left 6px top 6px, rgba(var(--dim-rgb), .75) 0 1.6px, transparent 2.4px),
+    radial-gradient(circle at left 6px bottom 6px, rgba(var(--dim-rgb), .75) 0 1.6px, transparent 2.4px),
+    radial-gradient(circle at right 6px bottom 6px, rgba(var(--dim-rgb), .75) 0 1.6px, transparent 2.4px),
+    linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background-repeat: no-repeat; }
+:root[data-theme="industrial"] .frame-title { border-bottom: 2px solid rgba(var(--dim-rgb), .5); }
+:root[data-theme="industrial"] .frame.warn .frame-title, :root[data-theme="industrial"] .frame.alert .frame-title {
+  border-bottom: 4px solid transparent;
+  border-image: repeating-linear-gradient(-45deg, var(--amber) 0 7px, var(--ink) 7px 14px) 4; }
+/* stencilled lettering: heavier, wider, no glow */
+:root[data-theme="industrial"] h2, :root[data-theme="industrial"] .frame-title h2 {
+  font-weight: 700; letter-spacing: .16em; text-shadow: none; }
+:root[data-theme="industrial"] .brand b { text-shadow: none; }
+:root[data-theme="industrial"] button {
+  clip-path: none; border-width: 2px; border-color: rgba(var(--dim-rgb), .45); padding: 4px 11px; }
+:root[data-theme="industrial"] #tabs button[aria-selected="true"] {
+  background: rgba(var(--amber-rgb), .16); border-color: var(--amber); color: var(--amber);
+  text-shadow: none; box-shadow: inset 0 -3px 0 var(--amber); }
+:root[data-theme="industrial"] #top {
+  position: relative; clip-path: none; border-bottom: 2px solid rgba(var(--dim-rgb), .5);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1)); }
+:root[data-theme="industrial"] #top::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 5px; pointer-events: none;
+  background: repeating-linear-gradient(-45deg, rgba(var(--amber-rgb), .8) 0 10px, rgba(var(--bg-rgb), .9) 10px 20px); }
+:root[data-theme="industrial"] .tac-stage {
+  clip-path: polygon(0 0, calc(100% - var(--notch)) 0, 100% var(--notch), 100% 100%, 0 100%); border-width: 2px; }
+:root[data-theme="industrial"] .hbar .track > i {
+  background-image: repeating-linear-gradient(90deg, transparent 0 6px, rgba(var(--bg-rgb), .65) 6px 8px); }
+:root[data-theme="industrial"] .chip { border-width: 2px; }
+:root[data-theme="industrial"] body.motion .frame.appear { animation: h1b-clamp 300ms cubic-bezier(.2, .9, .3, 1.2) both; }
+:root[data-theme="industrial"] body.motion .frame.appear > .frame-in { animation: none; }
+@keyframes h1b-clamp { from { opacity: 0; transform: translateY(6px) scaleY(.98); } to { opacity: 1; transform: none; } }
+
+/* -- station ---------------------------------------------------------- */
+:root[data-theme="station"] {
+  --glow: 0 0 2px rgba(var(--cyan-rgb), .9), 0 0 9px rgba(var(--cyan-rgb), .55); }
+:root[data-theme="station"] .frame { clip-path: none; border-radius: 7px; }
+:root[data-theme="station"] .frame > .frame-in { clip-path: none; border-radius: 6px; }
+/* fine phosphor grid, the screen darker towards its edges */
+:root[data-theme="station"] body:not(.obs) .frame > .frame-in {
+  background:
+    repeating-linear-gradient(0deg, rgba(var(--cyan-rgb), .035) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(90deg, rgba(var(--cyan-rgb), .035) 0 1px, transparent 1px 22px),
+    radial-gradient(ellipse at 50% 40%, var(--bg-2) 0%, var(--bg-1) 100%);
+  box-shadow: inset 0 0 26px rgba(var(--bg-rgb), .8); }
+:root[data-theme="station"] .frame-title { border-bottom: 1px solid var(--line); box-shadow: 0 1px 6px rgba(var(--cyan-rgb), .18); }
+:root[data-theme="station"] .num { text-shadow: 0 0 6px rgba(var(--green-rgb), .45); }
+:root[data-theme="station"] .frame-title .tag { text-shadow: 0 0 4px rgba(var(--dim-rgb), .6); }
+:root[data-theme="station"] button { clip-path: none; border-radius: 3px; }
+:root[data-theme="station"] #tabs button[aria-selected="true"] {
+  box-shadow: 0 0 10px rgba(var(--cyan-rgb), .45), inset 0 0 8px rgba(var(--cyan-rgb), .25); }
+:root[data-theme="station"] #top {
+  clip-path: none; border-radius: 0 0 10px 10px; border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  box-shadow: 0 2px 14px rgba(var(--cyan-rgb), .22); }
+:root[data-theme="station"] .tac-stage { clip-path: none; border-radius: 7px; box-shadow: inset 0 0 40px rgba(var(--bg-rgb), .9); }
+/* faint scanlines even without the scanline switch (that one stays stronger) */
+:root[data-theme="station"] body:not(.scanlines):not(.obs)::after {
+  content: ""; pointer-events: none; position: fixed; inset: 0; z-index: 50;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(var(--bg-rgb), .10) 3px, transparent 4px); }
+:root[data-theme="station"] body.motion .frame.appear { animation: h1b-tube 520ms ease-out both; }
+:root[data-theme="station"] body.motion .frame.appear > .frame-in { animation: none; }
+@keyframes h1b-tube {
+  0% { opacity: 0; filter: brightness(2); } 10% { opacity: .85; } 16% { opacity: .35; }
+  26% { opacity: 1; filter: brightness(1.35); } 100% { opacity: 1; filter: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="console"] body.motion .frame.appear,
+  :root[data-theme="industrial"] body.motion .frame.appear,
+  :root[data-theme="station"] body.motion .frame.appear { animation: none; }
+}

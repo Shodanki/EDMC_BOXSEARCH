@@ -50,6 +50,7 @@ class App:
         self.watch_restarts = 0
         self._watch_stop = threading.Event()
         self.db = db or Database(cfg.db_path)
+        self.db.main_setting = getattr(cfg, "main_cmdr", "") or ""
         self.hub = live.hub if live else Hub()
         self.live = live or LiveTracker(cfg.journal_dir, self.hub, cfg.poll_s)
         self.web_dir = web_dir
@@ -62,6 +63,9 @@ class App:
         from .favourites import FavouriteStore
         # personal (K2): next to fis.ini, never in the repository
         self.favourites = FavouriteStore(os.path.join(os.path.dirname(cfg.ini_path), "favourites.json"))
+        from .losthidden import LostHiddenStore
+        # SHIP -> LOST DATA: crash losses hidden from the list (FIS-owned file)
+        self.lost_hidden = LostHiddenStore(os.path.join(os.path.dirname(cfg.ini_path), "lost_hidden.json"))
         # K5: the one online lookup of the FIS (on a click, through the plugin's gateway)
         from .online import CarrierLookup
         self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
@@ -143,6 +147,13 @@ class App:
         return str(data.get("shboxsearch_offline", "")).lower() in ("true", "1")
 
     # ------------------------------------------------------------ routes
+    def fid(self) -> Optional[str]:
+        """C1: the commander playing (journal archive), for his own exploration."""
+        try:
+            return self.archive.commander()[0]
+        except Exception:
+            return None
+
     def system(self, id64: int) -> Dict[str, Any]:
         live = self.live_state()
         fx = live.get("last_fix") or {}
@@ -151,12 +162,13 @@ class App:
         sig = (self.db.mtime(), int(time.time() // 30), cur.get("id64"),
                fx.get("body_id"), fx.get("body"),
                int((fx.get("ts") or 0) // 60), id(self.calib.model),
-               tuple(self.cfg.filters), self.cfg.skip_arrival, self.archive.rev)
+               tuple(self.cfg.filters), self.cfg.skip_arrival, self.archive.rev,
+               self.fid())
         self.calib.maybe_refresh()
         cm, om = self.calib.model, self.calib.order_model
         out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
             self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om,
-            skip_arrival=self.cfg.skip_arrival, archive=self.archive))
+            skip_arrival=self.cfg.skip_arrival, archive=self.archive, fid=self.fid()))
         return self._with_favourites(self._with_carrier(out, id64))
 
     def _with_favourites(self, out: Dict[str, Any]) -> Dict[str, Any]:
@@ -445,11 +457,24 @@ class Handler(BaseHTTPRequestHandler):
                 fw = setup.firewall_rule_ok(cfg.port)
             except Exception:
                 fw = None
+        db = self.app.db
+        try:
+            cmdrs = [{"fid": c["fid"], "name": c["name"], "carrier": bool(c["carrier"]),
+                      "logins": c["logins"], "systems": c["systems"]} for c in db.commanders()]
+            auto = db.commander_name(db.suggest_main()) if cmdrs else None
+            prev, db.main_setting = db.main_setting, ""
+            auto_fid = db.main_fid()
+            db.main_setting = prev
+        except Exception:
+            cmdrs, auto, auto_fid = [], None, None
         return {"language": cfg.language, "open_browser": cfg.open_browser, "lan": cfg.lan,
                 "port": cfg.port, "ini": cfg.ini_path, "running_lan": self.app.lan_at_start,
                 # on the game PC only: the address for the tablet, with the token
                 "lan_urls": setup.lan_urls(cfg.port, cfg.token) if cfg.lan and cfg.token else [],
-                "firewall": fw}
+                "firewall": fw,
+                # C1: main commander ("" = automatic: the plugin's choice / suggestion)
+                "main_cmdr": cfg.main_cmdr, "commanders": cmdrs,
+                "main_auto": db.commander_name(auto_fid) or auto}
 
     def do_POST(self) -> None:
         wait = self._braked()
@@ -471,6 +496,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._post_favourite(raw)
         if url.path == "/api/carriers/lookup":
             return self._post_lookup(raw)
+        if url.path == "/api/ship/lost_hidden":
+            return self._post_lost_hidden(raw)
         if url.path != "/api/settings":
             return self._error(404, "not found")
         if not self._local():
@@ -488,6 +515,12 @@ class Handler(BaseHTTPRequestHandler):
         cfg.language = lang if lang in config_mod.LANGUAGES else cfg.language
         cfg.open_browser = bool(body.get("open_browser", cfg.open_browser))
         cfg.lan = bool(body.get("lan", cfg.lan))
+        if "main_cmdr" in body:
+            mc = str(body.get("main_cmdr") or "")
+            known = {c["fid"] for c in self.app.db.commanders()}
+            if mc == "" or mc in known:
+                cfg.main_cmdr = mc
+                self.app.db.main_setting = mc
         if cfg.lan:
             cfg.ensure_token(save=False)
         changed = False
@@ -553,6 +586,56 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._error(400, str(exc))
         return self._json({"callsign": cs, "favourite": fav is not None, "note": (fav or {}).get("note", "")})
+
+    def _post_lost_hidden(self, raw: bytes) -> None:
+        """SHIP -> LOST DATA: hide crash losses from the list, or show them
+        all again. Only the FIS's own lost_hidden.json changes - the plugin
+        database stays read-only, the tasks stay planned.
+          {"hide": [{"id64": n, "what": null | "scan" | "map" | "bio:<species>"}]}
+          {"cap": 100 | 250 | 500 | 1000}   every listed system farther away
+          {"reset": true}"""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, UnicodeDecodeError):
+            return self._error(400, "bad request")
+        from . import losthidden
+        app = self.app
+        fid = app.archive.commander()[0]
+        store = app.lost_hidden
+        if body.get("reset") is True:
+            return self._json({"shown": store.reset(fid)})
+        try:
+            lost = app.db.lost_summary(fid)
+        except Exception:
+            lost = []
+        items: List[Tuple[int, Optional[str]]] = []
+        if "cap" in body:
+            if body["cap"] not in losthidden.CAPS_LY or isinstance(body["cap"], bool):
+                return self._error(400, "bad cap")
+            pos = (app.live_state().get("system") or {}).get("pos")
+            if not pos:
+                return self._error(409, "position unknown")
+            vis, _ = losthidden.apply(lost, store.get(fid), pos)
+            items = [(s["id64"], None) for s in losthidden.beyond(vis, body["cap"])]
+        else:
+            hide = body.get("hide")
+            if not isinstance(hide, list) or not hide or len(hide) > 50:
+                return self._error(400, "bad request")
+            for h in hide:
+                if not isinstance(h, dict) or not isinstance(h.get("id64"), int) \
+                        or isinstance(h.get("id64"), bool) or not losthidden.valid_what(h.get("what")):
+                    return self._error(400, "bad entry")
+                items.append((h["id64"], h.get("what")))
+        try:
+            n = store.hide(fid, items, lost)
+        except ValueError as exc:
+            return self._error(400, str(exc))
+        return self._json({"hidden": n})
 
     def _post_lookup(self, raw: bytes) -> None:
         """K5: one favourite's position at Spansh - on a click, cached 6 h."""
@@ -660,13 +743,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(app.system(int(mm.group(1))))
         mm = _RE_BODY.match(path)
         if mm:
-            out = m.build_body(app.db, int(mm.group(1)), int(mm.group(2)), app.archive)
+            out = m.build_body(app.db, int(mm.group(1)), int(mm.group(2)), app.archive, fid=app.fid())
             if out is None:
                 return self._error(404, "body not found")
             return self._json(out)
         if path == "/api/briefing":
             live = app.live_state()
-            out = m.build_briefing(app.db, live)
+            out = m.build_briefing(app.db, live, fid=app.fid())
             out["carriers_here"] = app.carriers_here(live)
             # at the jump target when there is one (11.11.: a carrier left
             # behind in the current system says nothing about the next one)
@@ -674,6 +757,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(out)
         if path == "/api/ship":
             return self._json(m.build_ship(app.live_state()))
+        if path == "/api/vehicle":
+            return self._json(m.build_vehicle(app.live_state()))
         if path == "/api/surface":
             sid = (qs.get("sys") or [None])[0]
             body = (qs.get("body") or [None])[0]
@@ -706,7 +791,8 @@ class Handler(BaseHTTPRequestHandler):
                 live = dict(live, fuel_warning=m._fuel_state(live).warning() if live.get("ship") else None)
             except Exception:
                 pass
-            return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db))
+            return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
+                                                        lost_hidden=app.lost_hidden))
         if path == "/api/carrier":
             from . import shipview
             from . import capi

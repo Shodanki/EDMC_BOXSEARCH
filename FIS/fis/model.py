@@ -17,7 +17,7 @@ import math
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .data import Database, _json
+from .data import MAIN, Database, _json
 
 G0 = 9.80665
 ATM = 101325.0
@@ -301,13 +301,17 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
                  cost_model: Any = None,
                  order_model: Any = None,
                  skip_arrival: bool = False,
-                 archive: Any = None) -> Dict[str, Any]:
-    """Everything TAKTIK needs: bodies at Kepler positions, orbits, route, fix."""
+                 archive: Any = None,
+                 fid: Optional[str] = None) -> Dict[str, Any]:
+    """Everything TAKTIK needs: bodies at Kepler positions, orbits, route, fix.
+
+    fid (C1): the commander playing - scans, maps, first discoveries and
+    species are his own, what is known about the bodies is shared."""
     p = plugin()
     sr = p.sysroute
     now = time.time() if now is None else now
-    srow = db.system_by_id64(id64)
-    rows = db.bodies_of(id64)
+    srow = db.system_for(db.system_by_id64(id64), fid)
+    rows = db.bodies_for(id64, fid)
     name = srow["name"] if srow is not None else None
     if not name and rows:
         # derive system name from the main star's name
@@ -323,6 +327,8 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         "known_sources": Database.known_sources(srow),
         "info_level": info_level(srow, db.shell_regions())[0],
         "bodies": [], "route": None, "fix": None, "generated": now,
+        # C1: other commanders on this PC who have been here
+        "also_by": db.explorers(id64, but=fid) if fid else [],
     }
     if not rows:
         out["fix"] = _fix(out, {}, live, now)
@@ -357,12 +363,23 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
     # order with the model the plugin uses, times with the measured one
     cm = cost_model or sr.DEFAULT_MODEL
     om = order_model or cm
+    # R3: arrived on board a carrier in a system you had not explored - the
+    # route of this visit starts at the carrier's body, the arrival star left
+    # out (the plugin decided it at the arrival; same rule, same data)
+    start, route_from = (0.0, 0.0, 0.0), None
+    r3 = db.route_start(fid, id64) if fid else None
+    if r3 and hasattr(sr, "start_at_body"):
+        at = sr.start_at_body(bodies, r3[0])
+        if at:
+            start, skip_arrival = at, True
+            route_from = {"body_id": r3[0], "name": r3[1],
+                          "short": sr.shorten(r3[1], name or "") if r3[1] else None}
     route = sr.plan_route(name or "", bodies, model=om, filters=flist,
-                          skip_arrival=skip_arrival)
+                          skip_arrival=skip_arrival, start=start)
     full = False
     if not route.stops and "all" not in flist:
         route = sr.plan_route(name or "", bodies, model=om, filters=["all"],
-                              skip_arrival=skip_arrival)
+                              skip_arrival=skip_arrival, start=start)
     if om is not cm:
         _recost(route, cm)
         full = True
@@ -404,11 +421,19 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
                 "valuable": (r["planet_class"] in sr.VALUABLE
                              or (r["terraform"] or "") == "Terraformable"),
                 "wants_dss": b.wants_dss, "wants_bio": b.wants_bio,
+                # lost with the ship, still to redo: "scan", "map", "bio:<species>"
+                "lost": _json(r["lost_what"], []) if "lost_what" in r.keys() else [],
             },
             "bio_hint": b.bio_hint,
         })
 
     out["bio"] = bio_list(db, id64, rows, out["bodies"])
+    lost = [b for b in out["bodies"] if b["flags"]["lost"]]
+    if lost:
+        out["lost"] = {"bodies": len(lost),
+                       "scan": sum(1 for b in lost if "scan" in b["flags"]["lost"]),
+                       "map": sum(1 for b in lost if "map" in b["flags"]["lost"]),
+                       "bio": [w[4:] for b in lost for w in b["flags"]["lost"] if w.startswith("bio:")]}
     # M10: stations, settlements, carriers, beacons - and a mark on the body
     try:
         out["poi"] = system_poi(db, id64, archive)
@@ -431,9 +456,10 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
         out["report"] = []
 
     done_ids = {r["body_id"] for r in rows if r["route_done"]}
+    lost_ids = {b["body_id"] for b in out["bodies"] if b["flags"]["lost"]}
     legs = []
     next_idx = None
-    prev = (0.0, 0.0, 0.0)
+    prev = start
     for i, s in enumerate(route.stops, 1):
         b = s.body
         done = b.body_id in done_ids        # the plugin's own route ticks
@@ -446,12 +472,13 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
             "cum_min": round(s.cum_s / 60.0, 1),
             "work": (s.work + (" | " + b.bio_hint if b.bio_hint and b.wants_bio else "")),
             "group": s.group, "group_start": s.group_start, "moon": s.is_moon,
-            "done": done,
+            "done": done, "lost": bool(lost_ids and b.body_id in lost_ids),
             "label": "LEG %d · %.0f LS · ~%.0f min" % (i, s.leg_ls, max(1.0, s.leg_s / 60.0)),
         })
         prev = b.pos
     out["route"] = {
         "filters": flist, "full_tour": full, "legs": legs, "next": next_idx,
+        "start": route_from,
         "summary": route.summary(), "total_ls": round(route.total_ls, 0),
         "total_min": round(route.total_s / 60.0, 1), "skipped": route.skipped,
         "cost_model": cm.as_dict(),
@@ -986,10 +1013,18 @@ def _ground_mining(db: Database, body_name: str, planet_class: Optional[str]) ->
     return out or None
 
 
-def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Optional[Dict[str, Any]]:
+def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
+               fid: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """PLANET INFO. fid: the commander playing - scanned, mapped and species
+    analysed are his own (C1), and what he lost in a crash is named until
+    he has redone it; the body's data itself is shared knowledge."""
     r = db.body(id64, body_id)
     if r is None:
         return None
+    if fid:
+        own = next((x for x in db.bodies_for(id64, fid) if x["body_id"] == body_id), None)
+        if own is not None:
+            r = own
     p = plugin()
     srow = db.system_by_id64(id64)
     sysname = srow["name"] if srow is not None else ""
@@ -1058,6 +1093,9 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None) -> Op
             "prediction": [],
         },
         "hotspots": hotspots,
+        # lost with the ship, not redone yet: "scan", "map", "bio:<species>"
+        "lost": ({"what": _json(r["lost_what"], []), "ts": (r["lost_ts"] or "")[:10]}
+                 if "lost_what" in r.keys() and r["lost_what"] else None),
         "signals": body_signals(db.signals_of(id64, body_id)),
         "materials_found": [{"label": m["label"], "category": m["category"],
                              "count": m["count"], "last": (m["last"] or "")[:10]}
@@ -1442,6 +1480,60 @@ def _navpoints(db: Database, live: Dict[str, Any], limit: int = 14) -> List[Dict
     return out
 
 
+def fuel_route(live: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    F1: along a plotted route of two or more jumps, where to scoop at the
+    latest (deepspace.scoop_plan with the ship's own fuel curve and tank).
+    Marks are route indices like the navpoints' "n"; None without a route,
+    a ship or a fuel model.
+    """
+    route = live.get("navroute") or []
+    cur = (live.get("system") or {}).get("name")
+    start = 0
+    for i, h in enumerate(route):
+        if h.get("name") == cur:
+            start = i + 1
+    rest = route[start:]
+    if len(rest) < 2 or not live.get("ship"):
+        return None
+    ds = plugin().deepspace
+    if not hasattr(ds, "scoop_plan"):
+        return None
+    prev = (live.get("system") or {}).get("pos") or (route[start - 1].get("pos") if start else None)
+    hops = []
+    for h in rest:
+        pos = h.get("pos")
+        d = _dist3(prev, pos) if prev and pos else 0.0
+        hops.append((h.get("name"), h.get("star_class"), d))
+        prev = pos
+    here_cls = route[start - 1].get("star_class") if start else None
+    plan = ds.scoop_plan(_fuel_state(live), hops, here=(cur, here_cls))
+    if plan is None:
+        return None
+    for m in plan["latest"]:
+        m["idx"] = start + m["n"] - 1          # route index; -1 + start = here
+    for g in plan["gaps"]:
+        g["idx"] = [start + g["from"] - 1, start + g["to"] - 1]
+    if plan["stranded"]:
+        plan["stranded"]["idx"] = start + plan["stranded"]["n"] - 1
+    return plan
+
+
+def _navpoints_for(db: Database, live: Dict[str, Any], fid: Optional[str]) -> List[Dict[str, Any]]:
+    """_navpoints with 'visited' as this commander's own (C1)."""
+    pts = _navpoints(db, live)
+    if not fid or not db.cmdr_ready():
+        return pts
+    ids = [p["id64"] for p in pts if p.get("id64")]
+    rows = db.with_visits([{"id64": i, "visited": 0, "fss_complete": 0} for i in ids], fid)
+    seen = {r["id64"]: bool(r["visited"]) for r in rows}
+    lost = {d["id64"] for d in db.lost_summary(fid)}
+    for p in pts:
+        p["visited"] = seen.get(p.get("id64"), False)
+        p["lost"] = p.get("id64") in lost         # data lost there in a crash
+    return pts
+
+
 def _sphere_of(db: Database, pos: Optional[Sequence[float]]) -> Optional[Dict[str, Any]]:
     """Where the target lies relative to the active survey sphere."""
     if not pos:
@@ -1494,19 +1586,39 @@ def approach_info(db: Database, live: Dict[str, Any]) -> Optional[Dict[str, Any]
     return out
 
 
-def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def build_briefing(db: Database, live: Optional[Dict[str, Any]],
+                   fid: Optional[str] = None) -> Dict[str, Any]:
     live = live or {}
     tgt = current_target(live)
     out: Dict[str, Any] = {"target": None, "generated": time.time(),
-                           "navroute": _navpoints(db, live)}
+                           "navroute": _navpoints_for(db, live, fid)}
     try:
         out["approach"] = approach_info(db, live)
     except Exception:                     # never cost the briefing
         out["approach"] = None
+    try:
+        fr = fuel_route(live)
+    except Exception:
+        fr = None
+    out["fuel_route"] = fr
+    if fr:
+        late = {m["idx"] for m in fr["latest"]}
+        gap = set()
+        for g in fr["gaps"]:
+            gap.update(range(g["idx"][0], g["idx"][1] + 1))
+        for p in out["navroute"]:
+            if p["n"] in late:
+                p["scoop_latest"] = True
+            if p["n"] in gap:
+                p["fuel_gap"] = True
+            if fr["stranded"] and p["n"] == fr["stranded"]["idx"]:
+                p["fuel_out"] = True
     if not tgt:
         return out
     name, id64 = tgt.get("name"), tgt.get("id64")
     row = (db.system_by_id64(id64) if id64 else None) or (db.system_by_name(name) if name else None)
+    shared = row
+    row = db.system_for(row, fid) if fid else row       # C1: visited = by you
     star = tgt.get("star_class") or (row["star_class"] if row is not None else None)
     tpos = tgt.get("pos") or ([row["x"], row["y"], row["z"]] if row is not None and row["x"] is not None else None)
     cpos = (live.get("system") or {}).get("pos")
@@ -1526,6 +1638,11 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]]) -> Dict[str, An
         "body_count": row["body_count"] if row is not None else None,
         "remaining_jumps": tgt.get("remaining_jumps"),
         "navpoint": [idx, len(route) - 1] if idx is not None and len(route) > 1 else None,
+        "also_by": (db.explorers(shared["id64"], but=fid)
+                    if fid and shared is not None and shared["id64"] else []),
+        # visited, yes - but what you did there went down with the ship
+        "lost": next((d for d in db.lost_summary(fid)
+                      if shared is not None and d["id64"] == shared["id64"]), None) if fid else None,
     }
     out["boxel"] = boxel_info(db, name) if name else None
     out["sphere"] = _sphere_of(db, tpos)
@@ -1598,6 +1715,71 @@ GUI_FOCUS = {0: "NONE", 1: "INTERNAL", 2: "EXTERNAL", 3: "COMMS", 4: "ROLE",
              9: "FSS", 10: "SAA", 11: "CODEX"}
 
 
+# V1: what Status.json says about the vehicle (Flags bits, seen 11.11.2026 in
+# the Nomad, Scarab and Rhino)
+VEHICLE_FLAGS = ((8, "lights"), (31, "high_beam"), (12, "handbrake"), (15, "drive_assist"),
+                 (13, "turret"), (14, "under_ship"), (28, "night_vision"), (27, "analysis"),
+                 (6, "hardpoints"), (9, "cargo_scoop"), (3, "shields"), (22, "danger"),
+                 (19, "low_fuel"))
+
+
+def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Initial great-circle bearing from point 1 to point 2, degrees 0..360."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dl = math.radians(lon2 - lon1)
+    x = math.sin(dl) * math.cos(p2)
+    y = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
+
+
+def _vehicle_view(v: Dict[str, Any], now: float) -> Dict[str, Any]:
+    flags = int(v.get("flags") or 0)
+    on = [n for bit, n in VEHICLE_FLAGS if flags & (1 << bit)]
+    if v.get("nomad"):
+        # the Nomad flies: landed / gear instead of the SRV's handbrake and turret
+        on = [n for n in on if n not in ("handbrake", "drive_assist", "turret", "under_ship")]
+        if flags & 4:
+            on.append("gear")
+    out = {k: v.get(k) for k in ("type", "name", "edition", "nomad", "since", "cargo", "refined",
+                                 "materials", "samples", "landings", "flying", "on_foot",
+                                 "pips", "fire_group", "ended", "how")}
+    out["flags"] = on if not v.get("on_foot") else []
+    out["minutes"] = _r((((v.get("ended") or now) - v["since"]) / 60.0), 1) if v.get("since") else None
+    out["fuel"] = _r(v.get("fuel"), 3)
+    out["fuel_start"] = _r(v.get("fuel_start"), 3)
+    if v.get("fuel") is not None and v.get("fuel_start") is not None:
+        out["fuel_used"] = _r(max(0.0, v["fuel_start"] - v["fuel"]), 3)
+    pos = v.get("pos")
+    out["pos"] = ({"body": pos.get("body"), "lat": _r(pos.get("lat"), 4), "lon": _r(pos.get("lon"), 4),
+                   "alt": _r(pos.get("alt"), 0), "heading": pos.get("heading")} if pos else None)
+    spot = v.get("ship_spot")
+    if pos and spot and spot.get("body") == pos.get("body") and pos.get("lat") is not None:
+        r = pos.get("radius") or spot.get("radius")
+        if r:
+            d = plugin().biopredict.surface_distance_m(pos["lat"], pos["lon"], spot["lat"], spot["lon"], r)
+            out["ship"] = {"dist_m": _r(d, 0), "bearing": _r(_bearing(pos["lat"], pos["lon"],
+                                                                        spot["lat"], spot["lon"]), 0),
+                           "landed": spot.get("landed")}
+    return out
+
+
+def build_vehicle(live: Optional[Dict[str, Any]], now: Optional[float] = None) -> Dict[str, Any]:
+    """
+    V1: the surface vehicle - SRV (Scarab, Rhino) or Nomad - from what the
+    game really writes: type and edition (Launch*), the vehicle's own tank
+    (Status.json FuelReservoir), cargo, position, flags, pips; refined tonnes,
+    samples and landings from the journal; distance and bearing to where the
+    ship was. Hull, ammunition and modules are in no game file.
+    """
+    live = live or {}
+    now = time.time() if now is None else now
+    v, last = live.get("srv"), live.get("srv_last")
+    return {"active": v is not None,
+            "vehicle": _vehicle_view(v, now) if v else None,
+            "last": _vehicle_view(last, now) if last and not v else None,
+            "generated": now}
+
+
 def decode_flags(flags: int) -> List[str]:
     return [n for bit, n in FLAGS.items() if flags & (1 << bit)]
 
@@ -1652,6 +1834,18 @@ def build_survey(db: Database) -> Dict[str, Any]:
     visited = [r for r in rows if r["visited"]]
     regions = db.shell_regions()
     only_us = [r for r in visited if info_level(r, regions)[0] == "checked"]
+    # C1: the survey counts for the main commander; the others are named
+    main = db.view_fid(MAIN)
+    if main:
+        out["commander"] = db.commander_name(main) or main
+        also = []
+        for c in db.commanders():
+            if c["fid"] == main:
+                continue
+            n = sum(1 for r in db.with_visits(rows, c["fid"]) if r["visited"])
+            if n:
+                also.append({"name": c["name"] or c["fid"], "visited": n})
+        out["also_by"] = also
     out["systems"] = {
         "known": len(rows), "visited": len(visited),
         "fss_complete": sum(1 for r in rows if r["fss_complete"]),

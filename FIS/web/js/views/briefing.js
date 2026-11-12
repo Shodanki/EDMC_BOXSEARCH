@@ -61,7 +61,7 @@ export function update(ctx, reason) {
       { cls: "br-main", appear }));
     const ch0 = carriersTile(b && b.carriers_here, appear, "here");
     if (ch0) root.append(ch0);
-    if (b && b.navroute && b.navroute.length) root.append(navList(b.navroute, null, appear));
+    if (b && b.navroute && b.navroute.length) root.append(navList(b.navroute, null, appear, b.fuel_route));
     const sv0 = surveyTile(ctx.store.survey, appear);
     if (sv0) root.append(sv0);
     return;
@@ -88,6 +88,12 @@ export function update(ctx, reason) {
     row("STATUS", statusEl),
   ];
   if (tg.visited) rows.push(row(t("VISITED"), el("span", { class: "c-dim", text: t("You have been there") + (tg.body_count ? " · " + t("{n} bodies", { n: tg.body_count }) : "") })));
+  // C1: another commander on this PC was there - your own exploration is still open
+  // visited, yes - but what was done there went down with the ship
+  if (tg.lost) rows.push(row(t("LOST"), el("span", { class: "c-red", text: t("lost in a crash {d}: {w} - redo", { d: String(tg.lost.ts || "").slice(0, 10),
+    w: [tg.lost.scan ? t("{n} scans", { n: tg.lost.scan }) : null, tg.lost.map ? t("{n} maps", { n: tg.lost.map }) : null,
+      tg.lost.bio && tg.lost.bio.length ? t("bio: {s}", { s: [...new Set(tg.lost.bio)].join(", ") }) : null].filter(Boolean).join(" · ") }) })));
+  if (tg.also_by && tg.also_by.length) rows.push(row(t("ALSO"), el("span", { class: "c-dim", text: t("also explored by {n}", { n: tg.also_by.join(", ") }) })));
   if (b.expectation && b.expectation.length)
     rows.push(row(t("EXPECTED"), el("div", {}, ...b.expectation.map(x => el("div", { text: expectation(x) })))));
   const f = b.fuel;
@@ -139,7 +145,7 @@ export function update(ctx, reason) {
     { kind: unknown ? "disc" : "hot", cls: "br-main", appear }));
   const ch = carriersTile(b.carriers_here, appear, b.carriers_where);
   if (ch) root.append(ch);
-  if (b.navroute && b.navroute.length) root.append(navList(b.navroute, tg.name, appear));
+  if (b.navroute && b.navroute.length) root.append(navList(b.navroute, tg.name, appear, b.fuel_route));
   const sv = surveyTile(ctx.store.survey, appear);
   if (sv) root.append(sv);
   if (appear) countUp(root);
@@ -196,6 +202,9 @@ function surveyTile(s, appear) {
   if (s.boxels && s.boxels.total)
     body.push(hbar("BOXEL ✓", s.boxels.complete, s.boxels.total, s.boxels.complete + "/" + s.boxels.total));
   const extra = [];
+  // C1: the survey counts for the main commander
+  if (s.commander) extra.push(el("span", { class: "c-dim", text: t("for {n}", { n: s.commander }) +
+    (s.also_by && s.also_by.length ? " · " + t("also explored by {n}", { n: s.also_by.map((a) => a.name + " (" + a.visited + ")").join(", ") }) : "") }));
   if (n.only_us) extra.push(el("span", { class: "c-violet", text: t("{n} only known to us", { n: n.only_us }) }));
   if (s.carrier && s.carrier.system) extra.push(el("span", { class: "c-dim", text: "Carrier " + (s.carrier.callsign || s.carrier.name || "") + " · " + s.carrier.system }));
   if (extra.length) body.push(el("div", { class: "sv-extra" }, ...extra));
@@ -210,17 +219,39 @@ function levelTag(level) {
   return chip(t("unknown"), "first");
 }
 
-function navList(hops, target, appear) {
+// F1: where to scoop at the latest along the plotted route - one line
+function fuelLine(fr) {
+  if (!fr) return null;
+  if (fr.stranded) return el("div", { class: "c-red small", text: "⛽ " + t(fr.stranded.hard ? "Fuel runs out at jump {n} – plot via scoopable stars"
+    : "Fuel runs low at jump {n} – plot via scoopable stars", { n: fr.stranded.n }) });
+  if (fr.gaps && fr.gaps.length) {
+    const g = fr.gaps[0];
+    return el("div", { class: "c-red small", text: "⛽ " + t("No scoopable star on jumps {a}–{b}: {need} t needed, tank {cap} t", { a: g.from, b: g.to, need: fmt(g.need, 0), cap: fmt(g.cap, 0) }) });
+  }
+  if (fr.latest && fr.latest.length) {
+    const m = fr.latest[0];
+    const more = fr.latest.length > 1 ? " · " + t("{n} more stops", { n: fr.latest.length - 1 }) : "";
+    return el("div", { class: "c-amber small", text: "⛽ " + (m.n === 0 ? t("Scoop here at the latest")
+      : t("Scoop at the latest at {s} (jump {n} of {m})", { s: m.name || "?", n: m.n, m: fr.jumps })) + more });
+  }
+  return el("div", { class: "c-dim small", text: "⛽ " + t("Fuel lasts all {n} jumps (~{f} t left)", { n: fr.jumps, f: fmt(fr.arrive, 0) }) });
+}
+
+function navList(hops, target, appear, fr) {
   const list = el("ol", { class: "navlist" });
   for (const h of hops) {
     const unknown = !(h.known_sources && h.known_sources.length);
-    list.append(el("li", { class: h.name === target ? "cur" : "" },
+    const fuel = h.fuel_out ? chip(t("fuel out"), "alert") : h.scoop_latest ? chip(t("scoop at the latest"), "warn")
+      : h.fuel_gap ? chip(t("no scoop"), "alert") : null;
+    list.append(el("li", { class: (h.name === target ? "cur" : "") + (h.scoop_latest ? " scoop-latest" : "") },
       el("span", { class: "nl-n", text: String(h.n).padStart(2, "0") }),
       el("span", { class: "nl-name", text: h.name }),
       el("span", { class: "nl-star " + (h.boost ? "c-violet" : h.scoopable === false ? "c-amber" : "c-cyan"),
         text: (h.star_class || "?") + (h.boost ? " ⚡" : ""), title: h.boost ? t("jet cone: FSD boost") : "" }),
       el("span", { class: "nl-ly", text: h.jump_ly ? fmt(h.jump_ly, 1) + " ly" : "" }),
-      unknown ? levelTag(h.level) : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") }))));
+      unknown ? levelTag(h.level) : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") })),
+      h.lost ? chip(t("lost"), "alert") : null,
+      fuel));
   }
-  return frame("NAVPOINTS", t("{n} jumps plotted", { n: hops.length }), el("div", { class: "scroll" }, list), { cls: "br-nav", appear });
+  return frame("NAVPOINTS", t("{n} jumps plotted", { n: hops.length }), [fuelLine(fr), el("div", { class: "scroll" }, list)], { cls: "br-nav", appear });
 }

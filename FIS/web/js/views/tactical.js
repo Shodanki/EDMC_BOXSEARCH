@@ -285,6 +285,15 @@ function renderSide() {
     title: t("The beacon hands over every body: data, but no discovery and no exploration data of your own – mapping and bio still count."),
     text: "◈ " + (sys.nav_beacon.bodies ? t("nav beacon scanned – all {n} bodies known", { n: sys.nav_beacon.bodies })
       : t("nav beacon scanned – all bodies known")) + (sys.nav_beacon.ts ? " · " + String(sys.nav_beacon.ts).slice(0, 10) : "") }));
+  // lost with the ship: what to redo here
+  if (sys.lost) head.push(el("div", { class: "c-red",
+    title: t("Unsold data went down with the ship - these bodies are planned again."),
+    text: "✖ " + t("data lost in the crash: {n} bodies to redo", { n: sys.lost.bodies })
+      + (sys.lost.bio.length ? " · " + t("bio: {s}", { s: sys.lost.bio.join(", ") }) : "") }));
+  // C1: what is shown is your own exploration; the knowledge is shared
+  if (sys.also_by && sys.also_by.length) head.push(el("div", { class: "c-dim",
+    title: t("Scans, maps and samples are kept per commander; what was found here is shared."),
+    text: t("also explored by {n}", { n: sys.also_by.join(", ") }) }));
   // I1: "in no database" only where a source was really asked
   const lvl = sys.info_level;
   const noDb = !sys.known_sources.length && (!lvl || lvl === "checked");
@@ -305,7 +314,7 @@ function renderSide() {
   if (r && r.legs.length) {
     const list = el("ol", { class: "legs" });
     for (const l of r.legs) {
-      const cls = ["leg", l.done ? "done" : "", r.next === l.n ? "next" : "", l.group_start && l.n > 1 ? "gs" : "",
+      const cls = ["leg", l.done ? "done" : "", l.lost ? "lost" : "", r.next === l.n ? "next" : "", l.group_start && l.n > 1 ? "gs" : "",
         ctxRef.store.selected && ctxRef.store.selected.body_id === l.body_id ? "sel" : ""].join(" ");
       list.append(el("li", { class: cls, onclick: () => { ctxRef.select(sys.id64, l.body_id, false); focusGroupOf(l.body_id); },
                               ondblclick: () => ctxRef.select(sys.id64, l.body_id, true) },
@@ -317,7 +326,10 @@ function renderSide() {
     }
     const tag = (r.full_tour ? t("all done · full tour") + " · " : "") + fmt(r.total_ls, 0) + " LS · ~" + fmt(r.total_min, 0) + " min"
       + " · " + (r.calibrated ? t("times: journal") : t("times: default"));
-    side.append(frame(t("FLIGHT PLAN"), tag, el("div", { class: "scroll legs-box" }, list), { appear: false }));
+    const plan = [];
+    if (r.start) plan.push(el("div", { class: "c-cyan small", text: "◇ " + t("starts at your carrier ({b}) – you arrived on board", { b: r.start.short || r.start.name || "?" }) }));
+    plan.push(el("div", { class: "scroll legs-box" }, list));
+    side.append(frame(t("FLIGHT PLAN"), tag, plan, { appear: false }));
   } else if (sys.bodies && sys.bodies.length) {
     // never just gone: say why there is nothing to fly to
     side.append(frame(t("FLIGHT PLAN"), (r && r.filters ? r.filters.join(", ") : ""),

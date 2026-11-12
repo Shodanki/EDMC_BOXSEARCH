@@ -111,6 +111,7 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
       boxel_open (int, open candidates in that boxel), jumps_left (int),
       fuel_warning (str), bodies (int), bodies_new (int),
       level ('known' | 'inhabited' | 'checked' | 'unchecked', shells.info_level),
+      lost ({scan, map, bio} - data lost there in a crash, not redone yet),
       checked_by (list of sources that covered the position)
     """
     name = info.get("name") or "?"
@@ -138,10 +139,26 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
             out.append(("checked: %s" % ", ".join(info["checked_by"]), COL["dim"]))
     if info.get("visited"):
         out.append(("visited before", COL["dim"]))
+    lost = info.get("lost")
+    if lost:
+        # visited, yes - but what you did there went down with the ship
+        bits = [b for b in ("%d scan" % lost["scan"] if lost.get("scan") else "",
+                            "%d map" % lost["map"] if lost.get("map") else "",
+                            "%d bio" % len(lost["bio"]) if lost.get("bio") else "") if b]
+        out.append((("LOST IN CRASH  %s - redo" % ", ".join(bits))[:44], COL["alert"]))
+    if info.get("also_by"):
+        # C1: another commander on this PC has been there - your own
+        # exploration is still open, the knowledge is shared
+        out.append(("also explored by %s" % ", ".join(info["also_by"])[:26], COL["dim"]))
     if info.get("bodies"):
         nb = info.get("bodies_new") or 0
         out.append(("BODIES  %d%s" % (info["bodies"], ("  %d undiscovered" % nb) if nb else ""),
                     COL["new"] if nb else COL["data"]))
+    if info.get("scoop"):
+        # F1: where to scoop at the latest along the plotted route
+        text, lvl = info["scoop"]
+        out.append((text[:44], COL["alert"] if lvl == "alert" else
+                    COL["warn"] if lvl == "warn" else COL["dim"]))
     if info.get("boxel_open"):
         out.append(("BOXEL  %d candidate%s still open" % (
             info["boxel_open"], "" if info["boxel_open"] == 1 else "s"), COL["warn"]))
@@ -391,6 +408,14 @@ def _selftest() -> int:
           and "INHABITED - known to the databases" in texts(known_sources=[], level="inhabited"),
           "I1: inhabited -> known, no request")
     check("KNOWN  EDSM" in texts(known_sources=["EDSM"], level="known"), "I1: known stays known")
+    check("SCOOP at the latest jump 3/9 K" in texts(scoop=("SCOOP at the latest jump 3/9 K", "warn")),
+          "F1: the latest scoop line in the briefing")
+    check("LOST IN CRASH  5 scan, 4 map, 2 bio - redo" in texts(
+        visited=True, lost={"scan": 5, "map": 4, "bio": ["A", "B"]}),
+          "lost in a crash: named in the briefing next to 'visited before'")
+    check("also explored by Xerxes" in texts(also_by=["Xerxes"])
+          and not any(t.startswith("also") for t in texts()),
+          "C1: 'also explored by' only when another commander was there")
     print("failures: %d" % fails)
     return fails
 

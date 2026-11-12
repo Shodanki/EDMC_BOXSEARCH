@@ -160,9 +160,21 @@ function render(ctx) {
   if (b.bio.signals) flags.push(chip("Bio ×" + b.bio.signals, "bio"));
   if (b.bio.geo) flags.push(chip("Geo ×" + b.bio.geo, "geo"));
 
+  // lost with the ship: what to redo here (the marks go once it is redone)
+  let lostLine = null;
+  if (b.lost && b.lost.what && b.lost.what.length) {
+    flags.push(chip(t("lost"), "alert"));
+    const w = b.lost.what;
+    const bio = w.filter((x) => x.startsWith("bio:")).map((x) => x.slice(4));
+    lostLine = el("div", { class: "c-red small", text: "✖ " + t("lost in a crash {d}: {w} - redo", { d: b.lost.ts || "",
+      w: [w.includes("scan") ? t("scan") : null, w.includes("map") ? t("map (DSS)") : null,
+        bio.length ? t("bio: {s}", { s: bio.join(", ") }) : null].filter(Boolean).join(" · ") }) });
+  }
+
   const head = el("div", { class: "pl-head" },
     el("div", {}, el("h1", { class: "pl-name", text: b.short || b.name }),
-      el("div", { class: "c-dim", text: (b.system || "") + " · " + (b.kind === "Star" ? t("Star") + " " + (b.cls || "") : classDe(b.cls)) })),
+      el("div", { class: "c-dim", text: (b.system || "") + " · " + (b.kind === "Star" ? t("Star") + " " + (b.cls || "") : classDe(b.cls)) }),
+      lostLine),
     el("div", { class: "pl-flags" }, ...flags));
 
   const tiles = el("div", { class: "tiles" });

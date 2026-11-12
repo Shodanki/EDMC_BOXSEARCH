@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.7
+# SHBOXSEARCH v4.8
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -14,13 +14,13 @@ tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
 folder of this plugin. See [FIS/README.md](FIS/README.md) - with
 screenshots (demo data).
-**New in 4.7:** now under the Mozilla Public License 2.0. The briefing
-says "in no database" only where a source was really asked (inhabited
-systems count as known, the rest "not checked"). In the FIS: known and
-favourite carriers - in BRIEFING, SYSTEM (with docking access) and GALAXY -,
-learning from your own mining (tonnes per hour per ring and hotspot, best
-hotspots for you, a learning status), themes, combat mode, a cockpit
-configuration and ATLAS SYSTEMS - see "What changed in 4.7".
+**New in 4.8:** several commanders on one PC - each keeps his own
+exploration, what is found is shared, a main commander for the survey. The
+first route after a carrier ride starts at the carrier; on a plotted route
+the briefing says where to scoop at the latest. In the FIS: a VEHICLE tab
+for SRV and Nomad, themes that change shapes as well as colours, unsold
+data with a risk level and the x5 bonus only where it is paid - and data
+lost with the ship is planned again - see "What changed in 4.8".
 
 **What you need**
 
@@ -98,7 +98,9 @@ Since 4.6 the plugin copies the database to `shboxsearch.sqlite.schema<N>-<time>
 before it changes the schema or repairs records (the last three are kept).
 
 SHBOX FIS keeps running when EDMC is closed: after an update close its
-window (or end `python -m fis`) so it starts with the new files.
+window (or end `python -m fis`) so it starts with the new files. Keep
+`FIS/fis.ini`, `FIS/favourites.json` and `FIS/lost_hidden.json` - your
+settings, favourites and hidden losses.
 
 
 ## Files
@@ -1464,6 +1466,7 @@ tag, so the two have to be set together or the notice lies.
 | 4.5.1 | fixes: FIS keeps following a journal the game rewrote, live-link watchdog; mining block only from a prospector in a mining ship |
 | 4.6.0 | local first: online sources in shells when needed, daily cap, offline switch, EDDiscovery first; FIS: Rhino rigs and hold, open bio signals, data at risk, on foot, QR code, OBS mode |
 | 4.7.0 | Mozilla Public License 2.0; honest information levels in the briefing; fuel model per ship; FIS: known and favourite carriers with docking access, learning from your own mining, themes, combat mode, cockpit configuration, ATLAS SYSTEMS |
+| 4.8.0 | exploration per commander with a main commander; first route from the carrier; latest scoop on a plotted route; data lost with the ship planned again; FIS: VEHICLE tab, deeper themes, unsold data with risk level and the first-footfall bonus |
 
 
 ---
@@ -1940,6 +1943,78 @@ the survey allows (details in "External sources", *Fair use*):
 
 After the update the plugin replays your journals once (Rhino rigs from
 earlier outings). Close the FIS window once so it starts with the new files.
+
+
+---
+## What changed in 4.8
+
+### Several commanders on one PC
+
+Two commanders sharing one PC used to share one "visited / scanned / mapped"
+record, so the second commander's route skipped bodies the first had mapped.
+Now each commander (by his Frontier ID) keeps his **own exploration** -
+visited, FSS complete, bodies scanned and mapped, first discoveries as his
+own scan saw them, species analysed - while the **knowledge stays shared**:
+body classes, orbits, signals, rings, hotspots, finds and the bio model.
+
+* **Main commander** - a setting in the plugin and in the FIS settings;
+  *automatic* picks the commander with a fleet carrier of his own, else the
+  one with the most sessions. The survey sphere, its work queue, the
+  statistics and GALAXY count for him.
+* The **in-system route**, the panel line and the briefing show what the
+  commander playing still has to do; *also explored by ...* where another
+  commander of this PC has been.
+* The database gets schema 5. On the first start the plugin makes a backup
+  next to the database and replays the journals once in the background
+  (about 15-20 s) to sort the history by commander.
+
+### First route from the carrier
+
+Riding along on a fleet carrier you start at the carrier, not at the main
+star. Arriving by carrier jump - or loading the game docked at a carrier -
+in a system you have not explored yet, the route of this visit starts at
+the carrier's body (its position on its orbit, the arrival star left out).
+Every other arrival starts at the main star as before. Plugin and FIS.
+
+### Scoop at the latest
+
+On a plotted route of two or more jumps the briefing (overlay and FIS
+NAVPOINTS) says at which star you must scoop **at the latest** - from your
+tank, your own fuel curve for this ship and the scoopable stars (KGBFOAM) on
+the route, with one jump in hand. Stretches without a scoopable star that
+need more than a full tank are named; *fuel runs low / out by jump n* when
+no star on the way is left.
+
+### Data lost with the ship
+
+When the ship is destroyed, every scan, map and analysed species you had not
+sold yet is gone. The plugin now undoes them for that commander - the route
+plans those bodies again, the bio counts as open - and marks them lost
+until you redo them. FIS SYSTEM says *data lost in the crash: n bodies to
+redo*; SHIP lists the systems (with a copy button for the galaxy map); with
+more than ten they move to a **LOST DATA** tab, where you can hide systems,
+single items or everything farther than 100 / 250 / 500 / 1000 ly from the
+list (asked twice; the tasks stay planned).
+
+### SHBOX FIS
+
+* **VEHICLE tab** - the SRV (Scarab, Rhino) or Nomad out now, or the last
+  trip: the edition it was bought in, state (driving, flying, landed, you on
+  foot), its own tank and what it used, cargo and refined tonnes per
+  material, position and heading with an arrow and the distance to where you
+  left the ship, the switches (lights, drive assist, turret ...), bio scans
+  and landings. Hull, ammunition and modules of a vehicle are in no game
+  file. Fix: in the SRV the ship's tank no longer shows 0 t.
+* **Themes** change shapes, not only colours: *Federation console* rounded
+  panels and pill bars, *Belt industrial* notched plates with rivets and
+  hazard stripes, *Station era* phosphor glow, a fine grid and tube-dark
+  edges. Same layout and sizes.
+* **Unsold data** - a risk level: low below 50 M Cr, moderate from 50 M,
+  high from 100 M; systems you discovered first and species on bodies of
+  your first footfall are named apart and make it at least moderate. The
+  first-discovery bonus (x5) is counted only on a body of your first
+  footfall - checked against real sales; "first logged" alone pays the base
+  value.
 
 
 ---

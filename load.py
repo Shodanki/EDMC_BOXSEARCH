@@ -40,17 +40,18 @@ if _PLUGIN_DIR not in sys.path:
 
 from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
 from sysdb import SystemDB, Q_ESTIMATE, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
+from sysdb import CMDR_READY, CURRENT, LOSS_REPLAY, PLAN        # noqa: E402
 from sources import SourceManager                              # noqa: E402
 from netgate import Gateway                                    # noqa: E402
 import netgate                                                 # noqa: E402
 import shells                                                  # noqa: E402
 from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
-                       staging_lines, tritium_systems)
+                       scoop_line, scoop_plan, staging_lines, tritium_systems)
 from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       F_ALL, F_OUTSTANDING, bodies_from_rows,
                       calibrate_from_journal, calibrate_work_from_journal,
                       leg_distance_ls, pace_ratio, spread_points,
-                      plan_route, resolve_positions, shorten)
+                      plan_route, resolve_positions, shorten, start_at_body)
 from boxelplan import bundled_probe_prefix                   # noqa: E402
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
                        K_NEW, K_PROBE, K_SCAN, LABEL, Planner, Target,
@@ -60,7 +61,7 @@ from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E40
 import surfacenav  # noqa: E402
 import miningstat  # noqa: E402
 
-VERSION = "4.7.0"
+VERSION = "4.8.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -117,6 +118,7 @@ CFG = {
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
     "overlay_mining": "%s_overlay_mining" % PLUGIN_NAME,
     "fis_autostart": "%s_fis_autostart" % PLUGIN_NAME,
+    "main_cmdr": "%s_main_cmdr" % PLUGIN_NAME,      # C1: FID, "" = suggestion
 }
 
 # Where releases live. A check is a single call to the GitHub releases API.
@@ -195,6 +197,10 @@ class State:
         self.route_lines: List[str] = []
         self.route_done: set = set()
         self.route_full = False
+        self.route_from: Optional[str] = None    # R3: body of the carrier the route starts at
+        # F1: the plotted route (NavRoute) - (system, star class, StarPos) per hop
+        self.navroute: List[Tuple[str, Optional[str], Optional[Tuple[float, float, float]]]] = []
+        self.route_start_pos: Optional[Tuple[float, float, float]] = None
         self.route_feedback = ""
         self.route_started: Optional[float] = None
         self.route_legs: List[Tuple[float, float]] = []   # R1: (planned s, actual s) per leg
@@ -356,6 +362,7 @@ def plugin_start3(plugin_dir: str) -> str:
     elif any(not ST.db.get_meta(t) for t in REPLAY_TAGS):
         _run_async(_upgrade_replay, label="upgrade")
 
+    _apply_main_cmdr()
     ST.carrier = ST.db.get_carrier()
     if ST.carrier:
         logger.info("fleet carrier remembered at %s", ST.carrier["system"])
@@ -849,6 +856,60 @@ def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, floa
     return None
 
 
+def _lost_here() -> str:
+    """Route window: what of this system went down with the ship and is not
+    redone yet - also when no stop is left (a lost scan is FSS work)."""
+    if not (ST.db and ST.cur_id64):
+        return ""
+    try:
+        with ST.lock:
+            fid = ST.db.view_fid(CURRENT)
+            mine = [d for d in ST.db.lost_summary(fid) if d["id64"] == ST.cur_id64]
+    except Exception:
+        logger.debug("lost summary failed", exc_info=True)
+        return ""
+    if not mine:
+        return ""
+    d = mine[0]
+    bits = []
+    if d["scan"]:
+        bits.append("%d scan%s (FSS / honk again)" % (d["scan"], "" if d["scan"] == 1 else "s"))
+    if d["map"]:
+        bits.append("%d map%s" % (d["map"], "" if d["map"] == 1 else "s"))
+    if d["bio"]:
+        bits.append("bio: " + ", ".join(sorted(set(d["bio"]))))
+    return "LOST in the crash %s: %s - redo" % ((d["ts"] or "")[:10], ", ".join(bits))
+
+
+def _main_cmdr_choices() -> List[Tuple[str, str]]:
+    """(label, FID) for the main-commander setting; '' = the suggestion."""
+    if not ST.db:
+        return []
+    with ST.lock:
+        cmdrs = ST.db.commanders()
+        best = ST.db.suggest_main()
+    name = {c["fid"]: c["name"] or c["fid"] for c in cmdrs}
+    out = [("automatic (%s)" % name.get(best, "-"), "")]
+    for c in sorted(cmdrs, key=lambda c: (c["name"] or c["fid"]).lower()):
+        tag = "carrier" if c["carrier"] else "%d sessions" % c["logins"]
+        out.append(("%s (%s)" % (name[c["fid"]], tag), c["fid"]))
+    return out
+
+
+def _apply_main_cmdr() -> None:
+    """C1: the survey plan and statistics follow the main commander -
+    the one chosen in the settings, else the suggestion (own carrier,
+    then most sessions)."""
+    if not ST.db:
+        return
+    try:
+        with ST.lock:
+            use = ST.db.set_main_commander(cfg_str(CFG["main_cmdr"], "") or None)
+        logger.debug("main commander: %s", use)
+    except Exception:
+        logger.exception("could not set the main commander")
+
+
 def _commander_switched() -> None:
     """
     Another commander logged in on this PC (two accounts share one journal
@@ -1001,7 +1062,7 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
         if row is None and name:
             row = ST.db.system(name)
         if kind == "arrival" and id64:
-            p = ST.db.system_progress(id64)
+            p = ST.db.system_progress(id64, CURRENT)
             if p.get("body_count"):
                 info["bodies"] = p["body_count"]
             info["bodies_new"] = p.get("new_discoveries") or 0
@@ -1021,11 +1082,26 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     except Exception:
         regions = {}
     info["level"], info["checked_by"] = shells.info_level(srcs, pos, regions)
-    if row is not None and row["visited"] and kind == "target":
-        info["visited"] = True
+    if row is not None and kind == "target":
+        with ST.lock:
+            if ST.db.is_visited(row, CURRENT):
+                info["visited"] = True
+            also = ST.db.explorers(row["id64"], but=ST.db.fid) if ST.db.fid else []
+            lost = [d for d in ST.db.lost_summary(ST.db.view_fid(CURRENT))
+                    if d["id64"] == row["id64"]]
+        if also:
+            info["also_by"] = also          # C1: another commander was here
+        if lost:
+            info["lost"] = lost[0]          # data lost there in a crash, to redo
     pn = parse_name(name or "")
     if pn and ST.probe:
         info["boxel_open"] = sum(1 for q in ST.probe if q.boxel_key == pn.boxel_key)
+    try:
+        sl = scoop_line(_scoop_plan())
+        if sl:
+            info["scoop"] = sl          # F1: where to scoop at the latest
+    except Exception:
+        logger.debug("scoop plan failed", exc_info=True)
     w = ST.fuel.warning() if ST.fuel else None
     if w and kind == "target" and info.get("scoopable") and "CRITICAL" not in w:
         w = None                  # a scoopable target: refuel where you arrive
@@ -1034,6 +1110,43 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     elif ST.fuel and ST.fuel.jumps_left is not None:
         info["jumps_left"] = ST.fuel.jumps_left
     return info
+
+
+def _note_navroute(route: Any) -> None:
+    """F1: keep the plotted route (EDMC hands NavRoute with its Route)."""
+    hops = []
+    for h in route or []:
+        pos = h.get("StarPos")
+        hops.append((h.get("StarSystem") or "", h.get("StarClass"),
+                     tuple(pos[:3]) if pos and len(pos) >= 3 else None))
+    ST.navroute = hops
+    if len(hops) > 2:
+        sl = scoop_line(_scoop_plan())
+        if sl:
+            logger.info("fuel | route of %d jumps: %s", len(hops) - 1, sl[0])
+
+
+def _scoop_plan() -> Optional[Dict[str, Any]]:
+    """F1: the rest of the plotted route from where we are, with the fuel
+    curve of this ship - None for a single jump or without a fuel model."""
+    route = ST.navroute
+    if len(route) < 3 or not ST.fuel:
+        return None
+    start = 0
+    for i, h in enumerate(route):
+        if h[0] == ST.cur_system:
+            start = i + 1
+    rest = route[start:]
+    if len(rest) < 2:
+        return None
+    prev = ST.cur_pos or (route[start - 1][2] if start else None)
+    hops = []
+    for nm, cls, pos in rest:
+        d = math.dist(prev, pos) if prev and pos else 0.0
+        hops.append((nm, cls, d))
+        prev = pos
+    here = (ST.cur_system or "", route[start - 1][1] if start else None)
+    return scoop_plan(ST.fuel, hops, here=here)
 
 
 def _overlay_briefing(kind: str, name: Optional[str], id64: Optional[int],
@@ -1088,7 +1201,8 @@ def _rebuild_route() -> None:
         logger.info("route | no current system known yet")
         return
     with ST.lock:
-        rows = ST.db.bodies_of(ST.cur_id64)
+        # C1: what THIS commander still has to do here (knowledge is shared)
+        rows = ST.db.bodies_for(ST.cur_id64, ST.db.view_fid(CURRENT))
     if not rows and ST.cur_id64 not in _replayed_for:
         # Nothing stored for this system - the scans may predate the plugin or
         # have happened while it was not running. Replay the recent journals
@@ -1103,7 +1217,7 @@ def _rebuild_route() -> None:
             res = ST.db.import_journals(d, max_files=6, lock=ST.lock)
             logger.info("route | replayed %s", res)
             with ST.lock:
-                rows = ST.db.bodies_of(ST.cur_id64)
+                rows = ST.db.bodies_for(ST.cur_id64, ST.db.view_fid(CURRENT))
     if not rows:
         logger.info("route | %s has no scanned bodies yet - run a system scan",
                     ST.cur_system)
@@ -1123,19 +1237,40 @@ def _rebuild_route() -> None:
     filters = [F_ALL] if cfg_bool(CFG["route_all"], False) else get_filters()
     # R2: start the run at the arrival star (default) or with the first body
     skip_arrival = not cfg_bool(CFG["route_arrival"], True)
+    # R3: riding along on a carrier into a system you have not explored, you
+    # start at the carrier - this visit's route begins at its body, without
+    # the arrival star. Later visits start at the main star again.
+    start = (0.0, 0.0, 0.0)
+    ST.route_from = None
+    ST.route_start_pos = None
+    with ST.lock:
+        r3 = ST.db.route_start(ST.db.view_fid(CURRENT), ST.cur_id64)
+    if r3:
+        at = start_at_body(bodies, r3[0])
+        if at:
+            start, skip_arrival = at, True
+            ST.route_start_pos = at
+            ST.route_from = shorten(r3[1], ST.cur_system or "") if r3[1] else "#%d" % r3[0]
+            logger.info("route | starting at the carrier (%s), not at the main star",
+                        r3[1] or r3[0])
     route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
-                       filters=filters, skip_arrival=skip_arrival)
+                       filters=filters, skip_arrival=skip_arrival, start=start)
     ST.route_full = False
     if not route.stops and F_ALL not in filters:
         # Nothing outstanding - show the complete tour anyway rather than an
         # empty window. Useful when revisiting a system, and it makes clear
         # that the system really is finished rather than unknown.
         route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
-                           filters=[F_ALL], skip_arrival=skip_arrival)
+                           filters=[F_ALL], skip_arrival=skip_arrival, start=start)
         ST.route_full = True
+    lost_of = {r["body_id"]: r["lost_what"] for r in rows
+               if "lost_what" in r.keys() and r["lost_what"]}
     for s in route.stops:
         if s.body.bio_hint and s.body.wants_bio:
             s.work = (s.work + " | " if s.work else "") + s.body.bio_hint
+        if s.body.body_id in lost_of:
+            # lost with the ship and not redone yet - worth doing again
+            s.work = "LOST: redo | " + (s.work or "")
     ST.route = route
     # Restore the ticks for this system, then drop any that no longer refer to
     # a stop on the current route.
@@ -1655,8 +1790,12 @@ def _route_map_draw() -> None:
                 last_pos = project_stop(st)
                 break
 
-    # route legs
+    # route legs - from the arrival star, or (R3) from the carrier's body
     prev = (cx, cy)
+    if ST.route_from and ST.route_start_pos:
+        prev = project(ST.route_start_pos)
+        _route_map.create_rectangle(prev[0] - 3, prev[1] - 3, prev[0] + 3, prev[1] + 3,
+                                    outline=fg, width=1)
     for i, st in enumerate(route.stops):
         if not st.body.pos:
             continue
@@ -1891,9 +2030,10 @@ def _route_window_refresh() -> None:
     col = _theme_colours()
 
     route = ST.route
+    lost = _lost_here()
     if route is None or not route.stops:
-        _route_head.set("%s\nnothing to fly here - scan the system first"
-                        % (ST.cur_system or "no system"))
+        _route_head.set("%s\nnothing to fly here - scan the system first%s"
+                        % (ST.cur_system or "no system", "\n" + lost if lost else ""))
         _route_map_draw()
         return
 
@@ -1907,6 +2047,10 @@ def _route_window_refresh() -> None:
             % (left_ls, left_s / 60.0,
                "  (model from %d of your own runs)" % ST.cost_model.samples
                if ST.cost_model.samples else "")]
+    if lost:
+        head.append(lost)
+    if ST.route_from:
+        head.append("starts at your carrier (%s) - you arrived on board" % ST.route_from)
     if ST.route_full:
         head.append("nothing outstanding here - showing the full tour")
     if ST.route_done:
@@ -2978,7 +3122,12 @@ def _stats_window_refresh() -> None:
     try:
         with ST.lock:
             lt = ST.db.lifetime()
-        table("All time", [
+        who = []
+        if lt.get("commander"):
+            who.append(("Commander", "%s (main)" % lt["commander"]))
+        for nm, n in lt.get("also") or []:
+            who.append(("Also explored by", "%s: %d systems" % (nm, n)))
+        table("All time", who + [
             ("Systems visited", "%d" % lt["systems_visited"]),
             ("Distance flown", "%.0f ly" % lt["jumps_ly"]),
             ("Bodies scanned", "%d" % lt["bodies"]),
@@ -3028,9 +3177,9 @@ def _prune_queues() -> None:
             row = ST.db.system(t.name)
             done = False
             if t.kind == K_NEW:
-                done = row is not None and bool(row["visited"])
+                done = ST.db.is_visited(row, PLAN)
             elif row is not None and row["id64"]:
-                p = ST.db.system_progress(row["id64"])
+                p = ST.db.system_progress(row["id64"], PLAN)
                 if t.kind == K_SCAN:
                     done = p["fss_complete"] or (
                         p["body_count"] and p["scanned"] >= p["body_count"])
@@ -3062,6 +3211,11 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         if ST.cmdr is not None:
             _commander_switched()
         ST.cmdr = cmdr
+    fid = state.get("FID") if isinstance(state, dict) else None
+    if fid and fid != ST.db.fid:
+        with ST.lock:
+            ST.db.set_commander(fid, cmdr)
+        _apply_main_cmdr()
     try:
         # Before the dispatch chain: any event naming a body updates where we
         # are. Putting this inside the chain meant whichever branch matched
@@ -3080,6 +3234,10 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 logger.debug("mining overlay failed", exc_info=True)
 
         # EDMC enriches NavRoute with the full Route array
+        if ev == "NavRoute" and entry.get("Route"):
+            _note_navroute(entry.get("Route"))
+        elif ev == "NavRouteClear":
+            ST.navroute = []
         if ev == "NavRoute" and not cfg_bool(CFG["harvest_navroute"], True):
             return
 
@@ -3206,6 +3364,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
             if not ST.awaiting_position:
                 _run_async(_recheck_route, "game restart", label="route recheck")
             route = state.get("NavRoute") if state else None
+            if route and route.get("Route"):
+                _note_navroute(route.get("Route"))
             if route and cfg_bool(CFG["harvest_navroute"], True):
                 with ST.lock:
                     ST.db.ingest_journal_event({"event": "NavRoute",
@@ -4018,7 +4178,7 @@ def _refresh() -> None:
             line = ST.cur_system
             if ST.cur_id64 and ST.db:
                 with ST.lock:
-                    pr = ST.db.system_progress(ST.cur_id64)
+                    pr = ST.db.system_progress(ST.cur_id64, CURRENT)
                 bits = []
                 if pr["body_count"]:
                     bits.append("FSS %d/%d" % (pr["scanned"], pr["body_count"]))
@@ -4286,6 +4446,20 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     field(right, "right", "", nb.Checkbutton(
         right, text="show the route line in the panel", variable=_p["show_route"]))
 
+    # C1: more than one commander on this PC
+    choices = _main_cmdr_choices()
+    if len(choices) > 1:
+        head(right, "right", "Commanders")
+        labels = [c[0] for c in choices]
+        cur = cfg_str(CFG["main_cmdr"], "")
+        sel = next((c[0] for c in choices if c[1] == cur), labels[0])
+        _p["main_cmdr"] = tk.StringVar(value=sel)
+        _p["main_cmdr_map"] = {c[0]: c[1] for c in choices}
+        field(right, "right", "Main commander",
+              ttk.OptionMenu(right, _p["main_cmdr"], sel, *labels))
+        note(right, "right", "survey plan and statistics; each commander's own")
+        note(right, "right", "visits and scans are kept apart, finds are shared")
+
     head(right, "right", "Cockpit overlay (needs EDMCModernOverlay)")
     _p["overlay"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay"], True) else 0)
     _p["overlay_brief"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_brief"], True) else 0)
@@ -4423,6 +4597,9 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["show_route"], bool(_p["show_route"].get()))
         cfg_set(CFG["route_all"], bool(_p["route_all"].get()))
         cfg_set(CFG["route_arrival"], bool(_p["route_arrival"].get()))
+        if "main_cmdr" in _p:
+            cfg_set(CFG["main_cmdr"], _p["main_cmdr_map"].get(_p["main_cmdr"].get(), ""))
+            _apply_main_cmdr()
         cfg_set(CFG["route_top"], bool(_p["route_top"].get()))
         cfg_set(CFG["route_map"], bool(_p["route_map"].get()))
         cfg_set(CFG["map_size"], _p["map_size"].get())
@@ -4522,6 +4699,7 @@ def _first_run_migration() -> None:
         for t in REPLAY_TAGS:                 # a fresh import already has it all
             ST.db.set_meta(t, now)
     logger.info("first-run import finished: %s", st)
+    _apply_main_cmdr()
     _rebuild_route()
     _set_status("first-run import done: %d systems, %d bodies"
                 % (st["systems"], st["bodies"]))
@@ -4530,8 +4708,12 @@ def _first_run_migration() -> None:
 # Releases that need one full journal replay to fill what they store new.
 # upgrade_44b: barycentre parents (binary moons placed far from their planet)
 # upgrade_46_rigs: Rhino rig collection points from MiningRefined + the track
+# upgrade_48_cmdr (C1): exploration per commander - visited, FSS, scans,
+# maps, first discoveries and species analysed sorted by FID
+# upgrade_48_lost: what each commander carries unsold, and what a lost ship
+# took with it (marked, planned again)
 REPLAY_TAGS = ("upgrade_41", "upgrade_43", "upgrade_44", "upgrade_44b",
-               "upgrade_46_rigs")
+               "upgrade_46_rigs", CMDR_READY, LOSS_REPLAY)
 
 
 def _upgrade_replay() -> None:
@@ -4563,8 +4745,10 @@ def _upgrade_replay() -> None:
             ST.db.set_meta(t, now)
         n_sig = len(ST.db.signal_kinds())
         n_mat = len(ST.db.material_kinds())
-    logger.info("upgrade finished - atlas: %d signal kinds, %d materials",
-                n_sig, n_mat)
+        n_cmdr = len(ST.db.commanders())
+    logger.info("upgrade finished - atlas: %d signal kinds, %d materials, "
+                "%d commanders", n_sig, n_mat, n_cmdr)
+    _apply_main_cmdr()
     _rebuild_route()
 
 

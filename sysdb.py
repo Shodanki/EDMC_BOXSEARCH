@@ -51,7 +51,8 @@ Q_CONFIRMED = 20
 Q_EXTERNAL = 30
 Q_JOURNAL = 40
 
-SCHEMA_VERSION = 4          # 4: external_calls, fetched_shells (4.6 local-first)
+SCHEMA_VERSION = 5          # 4: external_calls, fetched_shells (4.6 local-first)
+                            # 5: exploration per commander (4.8, C1)
 
 # Body classes that are always worth mapping (DSS)
 VALUABLE_CLASSES = {
@@ -262,7 +263,73 @@ CREATE TABLE IF NOT EXISTS fetched_shells (
     systems    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS fetched_shells_svc ON fetched_shells(service, expires_at);
+
+-- 4.8 (C1): more than one commander on one PC. What is KNOWN about a system
+-- or body (positions, bodies, signals, rings, hotspots, finds) stays shared in
+-- the tables above; what each commander EXPLORED (visited, FSS, scanned,
+-- mapped, first discoveries, species analysed) is kept here per FID. The
+-- shared columns (systems.visited, bodies.scanned ...) still mean "any
+-- commander", so older readers keep working.
+CREATE TABLE IF NOT EXISTS commanders (
+    fid        TEXT PRIMARY KEY,       -- Frontier ID, 'F1234567'
+    name       TEXT,
+    carrier    INTEGER NOT NULL DEFAULT 0,   -- owns a fleet carrier
+    first_seen TEXT,
+    last_seen  TEXT
+);
+CREATE TABLE IF NOT EXISTS cmdr_logins (
+    fid TEXT NOT NULL,
+    ts  TEXT NOT NULL,                 -- LoadGame timestamp: one per session
+    PRIMARY KEY (fid, ts)
+);
+CREATE TABLE IF NOT EXISTS cmdr_systems (
+    fid          TEXT NOT NULL,
+    sys_id64     INTEGER NOT NULL,
+    visited_ts   TEXT,                 -- first arrival (journal time)
+    fss_complete INTEGER NOT NULL DEFAULT 0,
+    arrival_ts   TEXT,                 -- R3: the last arrival decided below
+    start_body   INTEGER,              -- R3: route starts at this body (carrier)
+    start_name   TEXT,                 --     NULL = at the main star
+    lost_ts      TEXT,                 -- data of this system lost with the ship
+    PRIMARY KEY (fid, sys_id64)
+);
+CREATE INDEX IF NOT EXISTS ix_cmdr_sys ON cmdr_systems(sys_id64);
+CREATE TABLE IF NOT EXISTS cmdr_bodies (
+    fid            TEXT NOT NULL,
+    sys_id64       INTEGER NOT NULL,
+    body_id        INTEGER NOT NULL,
+    scanned        INTEGER NOT NULL DEFAULT 0,
+    mapped         INTEGER NOT NULL DEFAULT 0,
+    was_discovered INTEGER,            -- as this commander's own scan saw it
+    was_mapped     INTEGER,
+    was_footfalled INTEGER,
+    organics       INTEGER NOT NULL DEFAULT 0,   -- distinct species analysed
+    bio_species    TEXT,               -- JSON list, this commander's analyses
+    -- data carried, not sold yet - lost when the ship is destroyed (Died)
+    scan_open      INTEGER NOT NULL DEFAULT 0,
+    map_open       INTEGER NOT NULL DEFAULT 0,
+    scan_sold      INTEGER NOT NULL DEFAULT 0,
+    map_sold       INTEGER NOT NULL DEFAULT 0,
+    bio_open       TEXT,               -- JSON list of species analysed, not sold
+    lost_ts        TEXT,               -- when data of this body was lost
+    lost_what      TEXT,               -- JSON: "scan", "map", "bio:<species>" still to redo
+    PRIMARY KEY (fid, sys_id64, body_id)
+);
+CREATE INDEX IF NOT EXISTS ix_cmdr_bod ON cmdr_bodies(sys_id64);
 """
+
+# C1: the full journal replay that fills the per-commander tables; until it
+# has run, readers fall back to the shared columns (any commander).
+CMDR_READY = "upgrade_48_cmdr"
+# events that change what a commander carries unsold (and loses with the ship)
+LOSS_EVENTS = frozenset(("Scan", "SAAScanComplete", "ScanOrganic", "SellExplorationData",
+                         "MultiSellExplorationData", "SellOrganicData", "Died"))
+LOSS_REPLAY = "upgrade_48_lost"     # one replay fills the carried / lost state
+# the columns of a body that are exploration (per commander), not knowledge
+EXPLORE_COLS = ("scanned", "mapped", "was_discovered", "was_mapped",
+                "was_footfalled", "organics", "bio_species")
+PLAN = "plan"            # system_progress(fid=PLAN): the main commander
+CURRENT = "current"      # ... fid=CURRENT: the commander playing now
 
 CALL_LOG_DAYS = 30
 
@@ -284,7 +351,7 @@ def _now() -> str:
 # One-time data repairs; each sets its meta key when done. A database that
 # still misses one of them (or has another schema version) gets a backup
 # before it is touched.
-REPAIRS = ("fix_phantoms", "fix_marks45", "fix_n1zero")
+REPAIRS = ("fix_phantoms", "fix_marks45", "fix_n1zero", "fix_lost_ticks")
 BACKUP_KEEP = 3          # newest backups kept next to the database
 
 
@@ -384,7 +451,18 @@ class SystemDB:
         self._migrate()
         self.cx.execute("INSERT OR REPLACE INTO meta(k,v) VALUES ('schema',?)",
                         (str(SCHEMA_VERSION),))
+        if state is None:
+            # a new database has no history to sort per commander: whatever
+            # it learns from now on (or from the first import) is per FID
+            self.cx.execute("INSERT OR IGNORE INTO meta(k,v) VALUES (?,?)",
+                            (CMDR_READY, _now()))
         self.cx.commit()
+        # C1: the commander whose events arrive now (Commander / LoadGame or
+        # EDMC's state) and the main commander the survey plans for
+        self.fid: Optional[str] = None
+        self.fid_name: Optional[str] = None
+        self.plan_fid: Optional[str] = None
+        self._cmdr_written: Optional[Tuple[str, Optional[str]]] = None
         self.prune_external_calls()
         self.prune_shells()
         self.sectors = SectorRegistry()
@@ -442,6 +520,19 @@ class SystemDB:
                          ("bio_species", "TEXT")):    # JSON list, ScanOrganic
             if col not in bhave:
                 self.cx.execute("ALTER TABLE bodies ADD COLUMN %s %s" % (col, typ))
+        chave = {r[1] for r in self.cx.execute("PRAGMA table_info(cmdr_systems)")}
+        for col, typ in (("arrival_ts", "TEXT"), ("start_body", "INTEGER"),
+                         ("start_name", "TEXT"), ("lost_ts", "TEXT")):
+            if col not in chave:
+                self.cx.execute("ALTER TABLE cmdr_systems ADD COLUMN %s %s" % (col, typ))
+        bchave = {r[1] for r in self.cx.execute("PRAGMA table_info(cmdr_bodies)")}
+        for col, typ in (("scan_open", "INTEGER NOT NULL DEFAULT 0"),
+                         ("map_open", "INTEGER NOT NULL DEFAULT 0"),
+                         ("scan_sold", "INTEGER NOT NULL DEFAULT 0"),
+                         ("map_sold", "INTEGER NOT NULL DEFAULT 0"),
+                         ("bio_open", "TEXT"), ("lost_ts", "TEXT"), ("lost_what", "TEXT")):
+            if col not in bchave:
+                self.cx.execute("ALTER TABLE cmdr_bodies ADD COLUMN %s %s" % (col, typ))
         self.cx.commit()
         if not self.get_meta("fix_phantoms"):
             try:
@@ -455,6 +546,14 @@ class SystemDB:
                 logger.info("database repair (SRV parked / vehicle landings): %s", res)
             except Exception:
                 logger.exception("database repair (surface marks) failed")
+        if not self.get_meta("fix_lost_ticks") and self.get_meta(LOSS_REPLAY):
+            try:
+                n = self.repair_lost_ticks()
+                logger.info("database repair (route ticks of data lost in a crash): %d cleared", n)
+            except Exception:
+                logger.exception("database repair (lost route ticks) failed")
+        elif not self.get_meta("fix_lost_ticks"):
+            self.set_meta("fix_lost_ticks", _now())     # nothing lost recorded yet
         if not self.get_meta("fix_n1zero"):
             try:
                 res = self.repair_n1zero()
@@ -737,6 +836,20 @@ class SystemDB:
         r2 = radius * radius
         out = [r for r in rows if r["x"] is not None
                and (r["x"] - cx0) ** 2 + (r["y"] - cy0) ** 2 + (r["z"] - cz0) ** 2 <= r2]
+        fid = self.view_fid(PLAN)
+        if fid and out:
+            # C1: the survey plans for the main commander - "visited" and
+            # "FSS complete" are his, the systems themselves are shared
+            mine = self.visited_by(fid)
+            own = []
+            for r in out:
+                d = dict(r)
+                m = mine.get(r["id64"]) if r["id64"] else None
+                d["visited"] = 1 if m is not None and m["visited_ts"] else 0
+                d["visited_ts"] = m["visited_ts"] if m is not None else None
+                d["fss_complete"] = m["fss_complete"] if m is not None else 0
+                own.append(d)
+            out = own
         return out
 
     # ------------------------------------------------------------ negative cache
@@ -879,15 +992,23 @@ class SystemDB:
                 self.cx.execute("UPDATE bodies SET parent_id=? WHERE sys_id64=? AND "
                                 "body_id=?", (up, sys_id64, node))
 
-    def system_progress(self, id64: Optional[int]) -> Dict[str, object]:
-        """What is still outstanding in this system?"""
+    def system_progress(self, id64: Optional[int], fid: Optional[str] = PLAN
+                        ) -> Dict[str, object]:
+        """What is still outstanding in this system - for the main commander
+        (default), the current one (CURRENT), a given FID or anyone (None)."""
         empty = {"body_count": None, "scanned": 0, "mapped": 0, "fss_complete": False,
                  "dss_open": [], "bio_open": [], "bio_signals_open": 0,
                  "new_discoveries": 0, "valuable": []}
         if not id64:
             return empty
+        fid = self.view_fid(fid)
         s = self.system_by_id64(id64)
-        rows = self.cx.execute("SELECT * FROM bodies WHERE sys_id64=?", (id64,)).fetchall()
+        rows = self.bodies_for(id64, fid)
+        if fid:
+            own = self.cmdr_system(fid, id64)
+            s = dict(s) if s is not None else None
+            if s is not None:
+                s["fss_complete"] = own["fss_complete"] if own else 0
         scanned = sum(1 for r in rows if r["scanned"])
         mapped = sum(1 for r in rows if r["mapped"])
         dss_open, bio_open, valuable = [], [], []
@@ -920,12 +1041,13 @@ class SystemDB:
 
     def unfinished_systems(self, center: Sequence[float], radius: float
                            ) -> List[Dict[str, object]]:
-        """Visited systems inside the sphere that still have work outstanding."""
+        """Visited systems inside the sphere that still have work outstanding
+        (for the main commander, as the whole survey plan)."""
         out = []
         for r in self.sphere(center, radius):
             if not r["visited"] or not r["id64"]:
                 continue
-            p = self.system_progress(r["id64"])
+            p = self.system_progress(r["id64"], PLAN)
             need_fss = (p["body_count"] is not None
                         and p["scanned"] < p["body_count"] and not p["fss_complete"])
             if need_fss or p["dss_open"] or p["bio_open"]:
@@ -935,6 +1057,408 @@ class SystemDB:
                             "dss": p["dss_open"], "bio": p["bio_open"]})
         out.sort(key=lambda d: d["dist"])
         return out
+
+    # ------------------------------------------------- commanders (C1, 4.8)
+    def cmdr_ready(self) -> bool:
+        """Has the per-commander history been filled (one journal replay)?"""
+        return bool(self.get_meta(CMDR_READY))
+
+    def view_fid(self, fid: Optional[str]) -> Optional[str]:
+        """Resolve PLAN / CURRENT to a FID; None = the shared view (anyone),
+        also while the per-commander history is not filled yet."""
+        if fid == PLAN:
+            fid = self.plan_fid or self.fid
+        elif fid == CURRENT:
+            fid = self.fid
+        if not fid or not self.cmdr_ready():
+            return None
+        return str(fid)
+
+    def set_commander(self, fid: Optional[str], name: Optional[str] = None,
+                      ts: Optional[str] = None) -> bool:
+        """The commander whose events follow. True when it changed."""
+        if not fid:
+            return False
+        fid = str(fid)
+        changed = fid != self.fid
+        self.fid = fid
+        if name:
+            self.fid_name = name
+        elif changed:
+            self.fid_name = None
+        if self._cmdr_written != (fid, name) or ts:
+            stamp = ts or _now()
+            self.cx.execute(
+                "INSERT INTO commanders(fid,name,first_seen,last_seen) VALUES (?,?,?,?) "
+                "ON CONFLICT(fid) DO UPDATE SET name=COALESCE(excluded.name,name), "
+                "first_seen=MIN(first_seen,excluded.first_seen), "
+                "last_seen=MAX(last_seen,excluded.last_seen)",
+                (fid, name, stamp, stamp))
+            self.cx.commit()
+            self._cmdr_written = (fid, name)
+        return changed
+
+    def _cmdr_event(self, ev: str, entry: dict) -> None:
+        """Commander / LoadGame name the FID; carrier events mark an owner."""
+        if ev in ("Commander", "LoadGame") and entry.get("FID"):
+            self.set_commander(entry["FID"], entry.get("Name") or entry.get("Commander"),
+                               entry.get("timestamp"))
+            if ev == "LoadGame" and entry.get("timestamp"):
+                self.cx.execute("INSERT OR IGNORE INTO cmdr_logins(fid,ts) VALUES (?,?)",
+                                (self.fid, entry["timestamp"]))
+        elif self.fid and (ev == "CarrierStats" or ev == "CarrierLocation") and \
+                entry.get("CarrierType", "FleetCarrier") == "FleetCarrier":
+            self.cx.execute("UPDATE commanders SET carrier=1 WHERE fid=? AND carrier=0",
+                            (self.fid,))
+
+    def _cmdr_system(self, a: Optional[int], ts: Optional[str] = None,
+                     fss: bool = False) -> None:
+        if not self.fid or not a:
+            return
+        self.cx.execute("INSERT OR IGNORE INTO cmdr_systems(fid,sys_id64) VALUES (?,?)",
+                        (self.fid, a))
+        if fss:
+            self.cx.execute("UPDATE cmdr_systems SET fss_complete=1 WHERE fid=? AND sys_id64=?",
+                            (self.fid, a))
+        else:
+            self.cx.execute("UPDATE cmdr_systems SET visited_ts=COALESCE(visited_ts,?) "
+                            "WHERE fid=? AND sys_id64=?", (ts or _now(), self.fid, a))
+
+    def _cmdr_body(self, a: Optional[int], bid: Optional[int], **cols) -> None:
+        """This commander's exploration of a body. was_* keep the lowest value
+        seen: once your scan saw 'undiscovered', it stays your discovery."""
+        if not self.fid or a is None or bid is None:
+            return
+        self.cx.execute("INSERT OR IGNORE INTO cmdr_bodies(fid,sys_id64,body_id) "
+                        "VALUES (?,?,?)", (self.fid, a, bid))
+        sets, args = [], []
+        for k, v in cols.items():
+            if v is None:
+                continue
+            if k.startswith("was_"):
+                sets.append("%s=MIN(COALESCE(%s,?),?)" % (k, k))
+                args += [v, v]
+            else:
+                sets.append("%s=?" % k)
+                args.append(v)
+        if sets:
+            self.cx.execute("UPDATE cmdr_bodies SET %s WHERE fid=? AND sys_id64=? AND body_id=?"
+                            % ",".join(sets), args + [self.fid, a, bid])
+
+    def _cmdr_species(self, a: int, bid: int, entry: dict, sp: Optional[str]) -> None:
+        """Bio done per commander: the species this commander analysed."""
+        if not self.fid or not sp:
+            return
+        cur = self.cx.execute("SELECT bio_species FROM cmdr_bodies WHERE fid=? AND "
+                              "sys_id64=? AND body_id=?", (self.fid, a, bid)).fetchone()
+        try:
+            species = json.loads(cur["bio_species"]) if cur and cur["bio_species"] else []
+        except ValueError:
+            species = []
+        if sp not in [s.get("species") for s in species]:
+            species.append({"species": sp,
+                            "genus": entry.get("Genus_Localised") or entry.get("Genus"),
+                            "variant": entry.get("Variant_Localised") or entry.get("Variant"),
+                            "ts": entry.get("timestamp")})
+        self._cmdr_body(a, bid, organics=len(species), bio_species=json.dumps(species))
+        self.cx.commit()
+
+    # ------------------------------------------------- lost with the ship
+    def _lost_list(self, raw: Optional[str]) -> List[str]:
+        try:
+            return list(json.loads(raw)) if raw else []
+        except ValueError:
+            return []
+
+    def _done_again(self, a: int, bid: int, what: str) -> None:
+        """A lost scan / map / species redone - its loss mark goes."""
+        r = self.cx.execute("SELECT lost_what FROM cmdr_bodies WHERE fid=? AND sys_id64=? AND "
+                            "body_id=?", (self.fid, a, bid)).fetchone()
+        if r is None or not r["lost_what"]:
+            return
+        left = [w for w in self._lost_list(r["lost_what"]) if w != what]
+        self.cx.execute("UPDATE cmdr_bodies SET lost_what=?, lost_ts=CASE WHEN ? THEN lost_ts END "
+                        "WHERE fid=? AND sys_id64=? AND body_id=?",
+                        (json.dumps(left) if left else None, 1 if left else 0, self.fid, a, bid))
+
+    def _cmdr_carried(self, ev: str, entry: dict) -> None:
+        """
+        What this commander carries unsold - and what a destroyed ship takes
+        with it. Scans, maps and analysed species are "open" until sold
+        (Sell(Multi)ExplorationData by system, SellOrganicData by species).
+        Died: every open scan / map / species is undone for this commander
+        (the route plans the body again, bio counts as open again) and marked
+        lost (lost_what, lost_ts) until it is redone. Knowledge about the
+        body stays.
+        """
+        a, ts = entry.get("SystemAddress"), entry.get("timestamp")
+        if ev == "Scan" and a and entry.get("BodyID") is not None \
+                and entry.get("ScanType") != "NavBeaconDetail":
+            bid = entry["BodyID"]
+            self._cmdr_body(a, bid)
+            self.cx.execute("UPDATE cmdr_bodies SET scan_open=1 WHERE fid=? AND sys_id64=? AND "
+                            "body_id=? AND scan_sold=0", (self.fid, a, bid))
+            self._done_again(a, bid, "scan")
+        elif ev == "SAAScanComplete" and a and entry.get("BodyID") is not None:
+            bid = entry["BodyID"]
+            self._cmdr_body(a, bid)
+            self.cx.execute("UPDATE cmdr_bodies SET map_open=1 WHERE fid=? AND sys_id64=? AND "
+                            "body_id=? AND map_sold=0", (self.fid, a, bid))
+            self._done_again(a, bid, "map")
+        elif ev == "ScanOrganic" and entry.get("ScanType") == "Analyse" and a \
+                and entry.get("Body") is not None:
+            sp = entry.get("Species_Localised") or entry.get("Species")
+            bid = entry["Body"]
+            if not sp:
+                return
+            self._cmdr_body(a, bid)
+            r = self.cx.execute("SELECT bio_open FROM cmdr_bodies WHERE fid=? AND sys_id64=? AND "
+                                "body_id=?", (self.fid, a, bid)).fetchone()
+            open_ = self._lost_list(r["bio_open"] if r else None)
+            if sp not in open_:
+                open_.append(sp)
+            self.cx.execute("UPDATE cmdr_bodies SET bio_open=? WHERE fid=? AND sys_id64=? AND "
+                            "body_id=?", (json.dumps(open_), self.fid, a, bid))
+            self._done_again(a, bid, "bio:" + sp)
+        elif ev in ("SellExplorationData", "MultiSellExplorationData"):
+            names = [d.get("SystemName") for d in entry.get("Discovered") or []] \
+                or list(entry.get("Systems") or [])
+            for nm in names:
+                row = self.system(nm) if nm else None
+                if row is None or not row["id64"]:
+                    continue
+                self.cx.execute("UPDATE cmdr_bodies SET scan_sold=MAX(scan_sold,scan_open), "
+                                "map_sold=MAX(map_sold,map_open), scan_open=0, map_open=0 "
+                                "WHERE fid=? AND sys_id64=?", (self.fid, row["id64"]))
+        elif ev == "SellOrganicData":
+            for b in entry.get("BioData") or []:
+                sp = b.get("Species_Localised") or b.get("Species")
+                if not sp:
+                    continue
+                r = self.cx.execute("SELECT rowid, bio_open FROM cmdr_bodies WHERE fid=? AND "
+                                    "bio_open LIKE ? ORDER BY rowid LIMIT 1",
+                                    (self.fid, '%' + json.dumps(sp) + '%')).fetchone()
+                if r is not None:
+                    left = [x for x in self._lost_list(r["bio_open"]) if x != sp]
+                    self.cx.execute("UPDATE cmdr_bodies SET bio_open=? WHERE rowid=?",
+                                    (json.dumps(left) if left else None, r["rowid"]))
+        elif ev == "Died":
+            rows = self.cx.execute(
+                "SELECT rowid, * FROM cmdr_bodies WHERE fid=? AND (scan_open=1 OR map_open=1 "
+                "OR bio_open IS NOT NULL)", (self.fid,)).fetchall()
+            systems = set()
+            for r in rows:
+                lost = self._lost_list(r["lost_what"])
+                sets = {"scan_open": 0, "map_open": 0, "bio_open": None, "lost_ts": ts}
+                if r["scan_open"]:
+                    sets["scanned"] = 0
+                    lost.append("scan")
+                if r["map_open"]:
+                    sets["mapped"] = 0
+                    lost.append("map")
+                gone = self._lost_list(r["bio_open"])
+                if gone:
+                    species = [x for x in self._lost_list(r["bio_species"])
+                               if isinstance(x, dict) and x.get("species") not in gone]
+                    sets["bio_species"] = json.dumps(species) if species else None
+                    sets["organics"] = len(species)
+                    lost += ["bio:" + g for g in gone]
+                if not (r["scan_open"] or r["map_open"] or gone):
+                    continue
+                sets["lost_what"] = json.dumps(sorted(set(lost)))
+                self.cx.execute("UPDATE cmdr_bodies SET %s WHERE rowid=?"
+                                % ",".join("%s=?" % k for k in sets),
+                                list(sets.values()) + [r["rowid"]])
+                if r["scan_open"]:
+                    systems.add(r["sys_id64"])
+            for sa in systems:
+                self.cx.execute("UPDATE cmdr_systems SET fss_complete=0, lost_ts=? WHERE fid=? "
+                                "AND sys_id64=?", (ts, self.fid, sa))
+            # the route ticks of that work went down with it
+            self._clear_lost_ticks(ts, " AND c.fid=? AND c.lost_ts=?", (self.fid, ts))
+            if rows:
+                logger.info("ship lost: %d bodies with unsold data reset for %s", len(rows), self.fid)
+        self.cx.commit()
+
+    def _clear_lost_ticks(self, before: Optional[str], where: str = "", args: Sequence[Any] = ()) -> int:
+        """Route ticks set before a crash belong to work that is gone - the
+        stops have to be flown again. Ticks made after it stay."""
+        cur = self.cx.execute(
+            "UPDATE bodies SET route_done=0, route_done_ts=NULL WHERE route_done=1 "
+            "AND (route_done_ts IS NULL OR ? IS NULL OR route_done_ts < ?) AND EXISTS ("
+            "SELECT 1 FROM cmdr_bodies c WHERE c.sys_id64=bodies.sys_id64 "
+            "AND c.body_id=bodies.body_id AND c.lost_what IS NOT NULL%s)" % where,
+            (before, before) + tuple(args))
+        return cur.rowcount or 0
+
+    def repair_lost_ticks(self) -> int:
+        """One-time: ticks older than the loss of their body (4.8 installs
+        whose crash was marked before ticks were cleared with it)."""
+        n = 0
+        for r in self.cx.execute("SELECT DISTINCT fid, lost_ts FROM cmdr_bodies "
+                                 "WHERE lost_what IS NOT NULL").fetchall():
+            n += self._clear_lost_ticks(r["lost_ts"], " AND c.fid=? AND c.lost_ts=?",
+                                        (r["fid"], r["lost_ts"]))
+        self.set_meta("fix_lost_ticks", _now())
+        self.cx.commit()
+        return n
+
+    def lost_summary(self, fid: Optional[str]) -> List[Dict[str, Any]]:
+        """Systems with data lost in a crash and not redone yet, newest first."""
+        if not fid:
+            return []
+        out: Dict[int, Dict[str, Any]] = {}
+        for r in self.cx.execute("SELECT b.sys_id64, b.body_id, b.lost_ts, b.lost_what, s.name "
+                                 "FROM cmdr_bodies b LEFT JOIN systems s ON s.id64=b.sys_id64 "
+                                 "WHERE b.fid=? AND b.lost_what IS NOT NULL", (fid,)):
+            d = out.setdefault(r["sys_id64"], {"id64": r["sys_id64"], "name": r["name"],
+                                               "ts": r["lost_ts"], "scan": 0, "map": 0, "bio": []})
+            for w in self._lost_list(r["lost_what"]):
+                if w == "scan":
+                    d["scan"] += 1
+                elif w == "map":
+                    d["map"] += 1
+                elif w.startswith("bio:"):
+                    d["bio"].append(w[4:])
+        return sorted(out.values(), key=lambda d: d["ts"] or "", reverse=True)
+
+    def is_visited(self, row: Any, fid: Optional[str] = PLAN) -> bool:
+        """Has this commander (default: the main one) been in the system?"""
+        if row is None:
+            return False
+        f = self.view_fid(fid)
+        if not f or not row["id64"]:
+            return bool(row["visited"])
+        m = self.cmdr_system(f, row["id64"])
+        return bool(m is not None and m["visited_ts"])
+
+    def explored(self, fid: str, id64: int) -> bool:
+        """Has this commander explored the system - FSS complete or any body
+        scanned with his own scanner?"""
+        r = self.cmdr_system(fid, id64)
+        if r is not None and r["fss_complete"]:
+            return True
+        return self.cx.execute("SELECT 1 FROM cmdr_bodies WHERE fid=? AND sys_id64=? "
+                               "AND scanned=1 LIMIT 1", (fid, id64)).fetchone() is not None
+
+    def _cmdr_arrival(self, ev: str, entry: dict) -> None:
+        """
+        R3: riding along on a fleet carrier, you start at the carrier, not at
+        the main star. Arriving by CarrierJump, or loading the game docked at
+        a FleetCarrier, in a system THIS commander has not explored: the
+        route of this visit starts at the carrier's body (Body / BodyID of the
+        event). Any other arrival (FSDJump, a carrier jump into an explored
+        system) starts at the main star again. Location away from a carrier
+        changes nothing. Decided once, when the arrival happens - a replay of
+        an older arrival keeps what was decided then.
+        """
+        a, ts = entry.get("SystemAddress"), entry.get("timestamp")
+        if not self.fid or not a or not ts:
+            return
+        carrier = ev == "CarrierJump" or (
+            ev == "Location" and entry.get("Docked")
+            and entry.get("StationType") == "FleetCarrier")
+        if ev == "Location" and not carrier:
+            return
+        cur = self.cmdr_system(self.fid, a)
+        if cur is not None and cur["arrival_ts"] and ts <= cur["arrival_ts"]:
+            return
+        body, name = None, None
+        if carrier and entry.get("BodyID") is not None and not self.explored(self.fid, a):
+            body, name = entry["BodyID"], entry.get("Body")
+        self.cx.execute("INSERT OR IGNORE INTO cmdr_systems(fid,sys_id64) VALUES (?,?)",
+                        (self.fid, a))
+        self.cx.execute("UPDATE cmdr_systems SET arrival_ts=?, start_body=?, start_name=? "
+                        "WHERE fid=? AND sys_id64=?", (ts, body, name, self.fid, a))
+
+    def route_start(self, fid: Optional[str], id64: Optional[int]
+                    ) -> Optional[Tuple[int, Optional[str]]]:
+        """R3: (body id, body name) the route of this visit starts at, or
+        None for the main star."""
+        if not fid or not id64:
+            return None
+        r = self.cmdr_system(fid, id64)
+        if r is None or r["start_body"] is None:
+            return None
+        return int(r["start_body"]), r["start_name"]
+
+    def cmdr_system(self, fid: str, id64: int) -> Optional[sqlite3.Row]:
+        return self.cx.execute("SELECT * FROM cmdr_systems WHERE fid=? AND sys_id64=?",
+                               (fid, id64)).fetchone()
+
+    def bodies_for(self, sys_id64: int, fid: Optional[str]) -> List[Any]:
+        """The bodies of a system as one commander explored them: the shared
+        knowledge (class, orbit, signals ...) with that commander's scanned /
+        mapped / first discovery / species analysed. fid None = anyone."""
+        rows = self.bodies_of(sys_id64)
+        if not fid:
+            return rows
+        own = {r["body_id"]: r for r in self.cx.execute(
+            "SELECT * FROM cmdr_bodies WHERE fid=? AND sys_id64=?", (fid, sys_id64))}
+        out = []
+        for r in rows:
+            d = dict(r)
+            o = own.get(r["body_id"])
+            d["scanned"] = o["scanned"] if o else 0
+            d["mapped"] = o["mapped"] if o else 0
+            d["organics"] = o["organics"] if o else 0
+            d["bio_species"] = o["bio_species"] if o else None
+            for k in ("was_discovered", "was_mapped", "was_footfalled"):
+                if o is not None and o[k] is not None:
+                    d[k] = o[k]
+            d["lost_what"] = o["lost_what"] if o is not None else None
+            out.append(d)
+        return out
+
+    def visited_by(self, fid: str) -> Dict[int, sqlite3.Row]:
+        """id64 -> (visited_ts, fss_complete) of one commander."""
+        return {r["sys_id64"]: r for r in self.cx.execute(
+            "SELECT sys_id64, visited_ts, fss_complete FROM cmdr_systems WHERE fid=?",
+            (fid,))}
+
+    def commanders(self) -> List[Dict[str, Any]]:
+        """Every commander seen, with what the main-commander suggestion uses."""
+        rows = self.cx.execute(
+            "SELECT c.fid, c.name, c.carrier, c.last_seen, "
+            "(SELECT COUNT(*) FROM cmdr_logins l WHERE l.fid=c.fid) logins, "
+            "(SELECT COUNT(*) FROM cmdr_systems s WHERE s.fid=c.fid "
+            " AND s.visited_ts IS NOT NULL) systems "
+            "FROM commanders c").fetchall()
+        return [dict(r) for r in rows]
+
+    def suggest_main(self) -> Optional[str]:
+        """C1: the commander with an own carrier, else the one with the most
+        sessions (journals), else the most systems."""
+        best = sorted(self.commanders(),
+                      key=lambda c: (c["carrier"], c["logins"], c["systems"],
+                                     c["last_seen"] or ""), reverse=True)
+        return best[0]["fid"] if best else None
+
+    def set_main_commander(self, fid: Optional[str]) -> Optional[str]:
+        """Use this FID ('' / None = the suggestion) for the survey plan and
+        statistics; stored in meta for the FIS. Returns the FID in use."""
+        use = str(fid) if fid else self.suggest_main()
+        self.plan_fid = use
+        if (self.get_meta("main_fid") or None) != use:
+            self.set_meta("main_fid", use or "")
+        return use
+
+    def commander_name(self, fid: Optional[str]) -> Optional[str]:
+        if not fid:
+            return None
+        r = self.cx.execute("SELECT name FROM commanders WHERE fid=?", (fid,)).fetchone()
+        return r["name"] if r is not None else None
+
+    def explorers(self, id64: Optional[int], but: Optional[str] = None) -> List[str]:
+        """Names of the commanders who have been in this system (C1 'also
+        explored by'), leaving out `but`."""
+        if not id64:
+            return []
+        rows = self.cx.execute(
+            "SELECT s.fid, c.name FROM cmdr_systems s LEFT JOIN commanders c ON c.fid=s.fid "
+            "WHERE s.sys_id64=? AND s.visited_ts IS NOT NULL ORDER BY s.visited_ts",
+            (id64,)).fetchall()
+        return [r["name"] or r["fid"] for r in rows if r["fid"] != but]
 
     # -------------------------------------------------------------- ingestion
     def _track_location(self, ev: str, entry: dict) -> None:
@@ -1142,6 +1666,10 @@ class SystemDB:
         self._track_location(ev, entry)
         self._note_dock(ev, entry)
         try:
+            self._cmdr_event(ev, entry)
+        except Exception:
+            logger.debug("commander event failed for %s", ev, exc_info=True)
+        try:
             self._surface_event(ev, entry)
         except Exception:
             logger.debug("surface mark failed for %s", ev, exc_info=True)
@@ -1154,6 +1682,8 @@ class SystemDB:
                     self.upsert(entry["StarSystem"], pos[0], pos[1], pos[2],
                                 id64=entry.get("SystemAddress"), quality=Q_JOURNAL,
                                 source="journal", visited=True)
+                    self._cmdr_arrival(ev, entry)
+                    self._cmdr_system(entry.get("SystemAddress"), entry.get("timestamp"))
                     n += 1
                 # CarrierJump is caught here, so the carrier branch below only
                 # ever saw CarrierLocation: riding along on the own carrier
@@ -1203,6 +1733,7 @@ class SystemDB:
                 self.cx.execute(
                     "UPDATE systems SET body_count=?, fss_complete=1, updated=? WHERE id64=?",
                     (entry.get("Count"), _now(), a))
+                self._cmdr_system(a, fss=True)
                 self.cx.commit(); n += 1
 
             elif ev in ("Scan", "ScanBaryCentre"):
@@ -1297,6 +1828,16 @@ class SystemDB:
                         # exploration data) - an own scan stays an own scan
                         scanned=None if entry.get("ScanType") == "NavBeaconDetail" else 1)
                     self._link_parents(a, entry.get("Parents"))
+                    if entry.get("ScanType") != "NavBeaconDetail" and ev == "Scan":
+                        self._cmdr_body(
+                            a, entry.get("BodyID"), scanned=1,
+                            was_discovered=(1 if entry.get("WasDiscovered") else 0)
+                            if "WasDiscovered" in entry else None,
+                            was_mapped=(1 if entry.get("WasMapped") else 0)
+                            if "WasMapped" in entry else None,
+                            was_footfalled=(1 if entry.get("WasFootfalled") else 0)
+                            if "WasFootfalled" in entry else None)
+                        self.cx.commit()
                     n += 1
 
             elif ev == "SAAScanComplete":
@@ -1304,6 +1845,8 @@ class SystemDB:
                 if a:
                     self._body_upsert(a, entry.get("BodyID"),
                                       name=entry.get("BodyName"), mapped=1)
+                    self._cmdr_body(a, entry.get("BodyID"), mapped=1)
+                    self.cx.commit()
                     n += 1
 
             elif ev in ("SAASignalsFound", "FSSBodySignals"):
@@ -1357,6 +1900,7 @@ class SystemDB:
                     self._body_upsert(a, bid, organics=organics,
                                       bio_species=json.dumps(species) if species
                                       else None)
+                    self._cmdr_species(a, bid, entry, sp)
                     n += 1
 
             elif ev == "CarrierLocation" and self._own_carrier_event(ev, entry):
@@ -1429,6 +1973,8 @@ class SystemDB:
             elif ev == "MaterialCollected":
                 if self._store_material(entry):
                     n += 1
+            if self.fid and ev in LOSS_EVENTS:
+                self._cmdr_carried(ev, entry)
         except Exception:
             raise
         return n
@@ -2094,6 +2640,9 @@ class SystemDB:
         right to within the odd out-of-order jump.
         """
         q = lambda s, *a: self.cx.execute(s, a).fetchone()[0]
+        fid = self.view_fid(PLAN)
+        if fid:
+            return self._lifetime_of(fid)
         rows = self.cx.execute(
             "SELECT x, y, z FROM systems WHERE visited=1 AND x IS NOT NULL "
             "ORDER BY visited_ts").fetchall()
@@ -2119,6 +2668,40 @@ class SystemDB:
             "not_there": q("SELECT COUNT(*) FROM absent"),
             "spheres": q("SELECT COUNT(*) FROM spheres"),
             "since": first or "?",
+        }
+
+    def _lifetime_of(self, fid: str) -> Dict[str, object]:
+        """lifetime() for one commander (C1): his visits, scans and finds;
+        boxels, absent names and spheres stay shared survey knowledge."""
+        q = lambda s, *a: self.cx.execute(s, a).fetchone()[0]   # noqa: E731
+        rows = self.cx.execute(
+            "SELECT s.x, s.y, s.z FROM cmdr_systems c JOIN systems s ON s.id64=c.sys_id64 "
+            "WHERE c.fid=? AND c.visited_ts IS NOT NULL AND s.x IS NOT NULL "
+            "ORDER BY c.visited_ts", (fid,)).fetchall()
+        ly = 0.0
+        for a, b in zip(rows, rows[1:]):
+            d = math.dist((a["x"], a["y"], a["z"]), (b["x"], b["y"], b["z"]))
+            if d < 500.0:
+                ly += d
+        others = [c for c in self.commanders() if c["fid"] != fid and c["systems"]]
+        return {
+            "commander": self.commander_name(fid) or fid,
+            "also": [(c["name"] or c["fid"], c["systems"]) for c in others],
+            "systems_visited": q("SELECT COUNT(*) FROM cmdr_systems WHERE fid=? "
+                                 "AND visited_ts IS NOT NULL", fid),
+            "systems_known": q("SELECT COUNT(*) FROM systems"),
+            "jumps_ly": ly,
+            "bodies": q("SELECT COUNT(*) FROM cmdr_bodies WHERE fid=? AND scanned=1", fid),
+            "mapped": q("SELECT COUNT(*) FROM cmdr_bodies WHERE fid=? AND mapped=1", fid),
+            "first_discoveries": q("SELECT COUNT(*) FROM cmdr_bodies WHERE fid=? "
+                                   "AND was_discovered=0", fid),
+            "first_mapped": q("SELECT COUNT(*) FROM cmdr_bodies WHERE fid=? "
+                              "AND was_mapped=0 AND mapped=1", fid),
+            "bio_sampled": q("SELECT COUNT(*) FROM cmdr_bodies WHERE fid=? AND organics>0", fid),
+            "boxels_closed": q("SELECT COUNT(*) FROM boxels WHERE complete=1"),
+            "not_there": q("SELECT COUNT(*) FROM absent"),
+            "spheres": q("SELECT COUNT(*) FROM spheres"),
+            "since": q("SELECT MIN(visited_ts) FROM cmdr_systems WHERE fid=?", fid) or "?",
         }
 
     def stats(self) -> Dict[str, int]:
@@ -2206,6 +2789,7 @@ class SystemDB:
         if max_files:
             files = files[-max_files:]
         res = {"files": len(files), "events": 0, "lines": 0, "errors": 0}
+        ctx: Tuple[Optional[str], Optional[str]] = (None, None)   # replay's commander
         for i, fn in enumerate(files, 1):
             if progress:
                 try:
@@ -2223,6 +2807,12 @@ class SystemDB:
             pos = 0
             while pos < len(lines):
                 with guard:
+                    # C1: the replay follows the commanders in the files; the
+                    # live commander (EDMC) is put back after every chunk, so
+                    # an event arriving in between is never filed under the
+                    # commander of an old journal - nor the other way round
+                    live = (self.fid, self.fid_name)
+                    self.fid, self.fid_name = ctx
                     # at most REPLAY_CHUNK lines and at most REPLAY_SLICE seconds
                     t_end = time.perf_counter() + self.REPLAY_SLICE
                     stop = min(pos + self.REPLAY_CHUNK, len(lines))
@@ -2236,6 +2826,8 @@ class SystemDB:
                         pos += 1
                         if time.perf_counter() > t_end:
                             break
+                    ctx = (self.fid, self.fid_name)
+                    self.fid, self.fid_name = live
                     self.cx.commit()
                 if lock is not None:
                     # Python locks are not fair: without a real pause this
@@ -2365,8 +2957,156 @@ def _selftest() -> int:
               and not b[1]["scanned"] and b[2]["scanned"] == 1,
               "NavBeaconDetail: body data stored, not counted as your scan (an own scan stays)")
         db.close()
+        n_cmdr = _selftest_cmdr(d, check)
+        fails += n_cmdr
     print("failures: %d" % fails)
     return fails
+
+
+def _selftest_cmdr(d: str, check) -> int:
+    """C1: exploration per commander, knowledge shared, main commander,
+    and an upgraded database falls back to the shared view until replayed."""
+    db = SystemDB(os.path.join(d, "cmdr.sqlite"))
+    check(db.cmdr_ready(), "C1: a new database is per-commander from the start")
+    ev = db.ingest_journal_event
+    ev({"event": "Commander", "FID": "F1", "Name": "Main", "timestamp": "2026-01-01T10:00:00Z"})
+    ev({"event": "LoadGame", "FID": "F1", "Commander": "Main", "timestamp": "2026-01-01T10:00:01Z"})
+    ev({"event": "CarrierStats", "CarrierID": 9, "Callsign": "OWN-009", "Name": "C"})
+    ev({"event": "FSDJump", "StarSystem": "Cm Alpha", "SystemAddress": 501,
+        "StarPos": [1.0, 0.0, 0.0], "timestamp": "2026-01-01T10:01:00Z"})
+    scan = {"event": "Scan", "ScanType": "Detailed", "StarSystem": "Cm Alpha",
+            "SystemAddress": 501, "BodyName": "Cm Alpha 1", "BodyID": 1,
+            "PlanetClass": "Water world", "DistanceFromArrivalLS": 10.0,
+            "WasDiscovered": False, "WasMapped": False}
+    ev(scan)
+    ev({"event": "SAAScanComplete", "SystemAddress": 501, "BodyID": 1, "BodyName": "Cm Alpha 1"})
+    ev({"event": "FSSBodySignals", "SystemAddress": 501, "BodyID": 1, "BodyName": "Cm Alpha 1",
+        "Signals": [{"Type": "$SAA_SignalType_Biological;", "Count": 2}]})
+    ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 501, "Body": 1,
+        "Species_Localised": "Bacterium Aurasus", "Genus_Localised": "Bacterium",
+        "timestamp": "2026-01-01T10:20:00Z"})
+    ev({"event": "FSSAllBodiesFound", "SystemName": "Cm Alpha", "SystemAddress": 501, "Count": 1})
+    for i in range(3):
+        ev({"event": "LoadGame", "FID": "F2", "Commander": "Second",
+            "timestamp": "2026-01-0%dT10:00:00Z" % (i + 2)})
+    ev({"event": "Location", "StarSystem": "Cm Alpha", "SystemAddress": 501,
+        "StarPos": [1.0, 0.0, 0.0], "timestamp": "2026-01-05T10:00:00Z"})
+    check(db.fid == "F2" and db.commander_name("F1") == "Main", "C1: FID follows LoadGame")
+    p2 = db.system_progress(501, CURRENT)
+    p1 = db.system_progress(501, "F1")
+    check(p1["mapped"] == 1 and p1["fss_complete"] and p1["bio_signals_open"] == 1
+          and p1["new_discoveries"] == 1, "C1: the first commander's own state")
+    check(p2["scanned"] == 0 and p2["mapped"] == 0 and not p2["fss_complete"]
+          and p2["dss_open"] == ["Cm Alpha 1"] and p2["bio_open"] == ["Cm Alpha 1"]
+          and p2["bio_signals_open"] == 2,
+          "C1: the second commander still has the work (FSS, DSS, both bio signals)")
+    rows = {r["body_id"]: r for r in db.bodies_for(501, "F2")}
+    check(rows[1]["planet_class"] == "Water world" and rows[1]["sig_bio"] == 2,
+          "C1: knowledge (class, signals) is shared")
+    check(len(db.bio_training_rows()) == 1, "C1: the bio model learns from every commander")
+    check(db.suggest_main() == "F1", "C1: suggestion = the commander with a carrier (not most logins)")
+    db.cx.execute("UPDATE commanders SET carrier=0")
+    check(db.suggest_main() == "F2", "C1: without a carrier the one with most sessions")
+    check(db.set_main_commander("F1") == "F1" and db.get_meta("main_fid") == "F1",
+          "C1: the main commander is stored for the FIS")
+    sp = db.sphere((0.0, 0.0, 0.0), 5.0)
+    check(len(sp) == 1 and sp[0]["visited"] == 1 and sp[0]["fss_complete"] == 1,
+          "C1: the survey sphere plans for the main commander")
+    lt = db.lifetime()
+    check(lt["commander"] == "Main" and lt["first_discoveries"] == 1 and lt["bio_sampled"] == 1
+          and lt["also"] == [("Second", 1)], "C1: statistics of the main commander, 'also by'")
+    check(db.explorers(501, but="F1") == ["Second"], "C1: also explored by")
+    jd = os.path.join(d, "journals")
+    os.makedirs(jd)
+    for i, (fid, nm, sa) in enumerate((("F7", "Seven", 701), ("F8", "Eight", 702))):
+        with open(os.path.join(jd, "Journal.2026-01-0%dT100000.01.log" % (i + 1)), "w",
+                  encoding="utf-8") as fh:
+            for e in ({"event": "Fileheader"},
+                      {"event": "Commander", "FID": fid, "Name": nm,
+                       "timestamp": "2026-01-0%dT10:00:00Z" % (i + 1)},
+                      {"event": "FSDJump", "StarSystem": "Cm R%d" % i, "SystemAddress": sa,
+                       "StarPos": [5.0, 5.0, float(i)], "timestamp": "2026-01-0%dT10:05:00Z" % (i + 1)}):
+                fh.write(json.dumps(e) + "\n")
+    db.set_commander("F9", "Live")
+    db.import_journals(jd)
+    check(db.fid == "F9" and db.explorers(701) == ["Seven"] and db.explorers(702) == ["Eight"],
+          "C1: a replay files each journal under its own commander, the live one stays")
+    # R3: Second rides along on a carrier into Cm Beta (never explored)
+    db.set_commander("F2", "Second")
+    ev({"event": "CarrierJump", "Docked": True, "StationType": "FleetCarrier",
+        "StarSystem": "Cm Beta", "SystemAddress": 502, "StarPos": [2.0, 0.0, 0.0],
+        "Body": "Cm Beta 3", "BodyID": 7, "BodyType": "Planet",
+        "timestamp": "2026-01-06T10:00:00Z"})
+    check(db.route_start("F2", 502) == (7, "Cm Beta 3"), "R3: carrier jump into an unexplored system")
+    ev(dict(scan, StarSystem="Cm Beta", SystemAddress=502, BodyName="Cm Beta 3", BodyID=7,
+            timestamp="2026-01-06T10:05:00Z"))
+    ev({"event": "CarrierJump", "Docked": True, "StationType": "FleetCarrier",
+        "StarSystem": "Cm Beta", "SystemAddress": 502, "StarPos": [2.0, 0.0, 0.0],
+        "Body": "Cm Beta 3", "BodyID": 7, "BodyType": "Planet",
+        "timestamp": "2026-01-06T10:00:00Z"})
+    check(db.route_start("F2", 502) == (7, "Cm Beta 3"), "R3: a replay keeps the decision")
+    ev({"event": "Location", "Docked": True, "StationType": "FleetCarrier",
+        "StarSystem": "Cm Beta", "SystemAddress": 502, "StarPos": [2.0, 0.0, 0.0],
+        "Body": "Cm Beta 3", "BodyID": 7, "timestamp": "2026-01-07T10:00:00Z"})
+    check(db.route_start("F2", 502) is None, "R3: explored meanwhile -> later routes at the main star")
+    ev({"event": "Location", "Docked": True, "StationType": "FleetCarrier",
+        "StarSystem": "Cm Gamma", "SystemAddress": 503, "StarPos": [3.0, 0.0, 0.0],
+        "Body": "Cm Gamma 1", "BodyID": 4, "timestamp": "2026-01-08T10:00:00Z"})
+    check(db.route_start("F2", 503) == (4, "Cm Gamma 1"), "R3: loading docked at a carrier, unexplored")
+    ev({"event": "FSDJump", "StarSystem": "Cm Gamma", "SystemAddress": 503,
+        "StarPos": [3.0, 0.0, 0.0], "timestamp": "2026-01-09T10:00:00Z"})
+    check(db.route_start("F2", 503) is None, "R3: arriving by FSD -> main star")
+    check(db.route_start("F1", 502) is None, "R3: per commander")
+    db.cx.execute("DELETE FROM meta WHERE k=?", (CMDR_READY,))
+    check(db.system_progress(501, CURRENT)["mapped"] == 1,
+          "C1: not replayed yet -> shared view (anyone)")
+    # crash: F1 scans Cm Delta 1 (sold), Cm Delta 2 and a species (not sold) - then dies
+    db.set_commander("F1", "Main")
+    ev({"event": "FSDJump", "StarSystem": "Cm Delta", "SystemAddress": 504,
+        "StarPos": [4.0, 0.0, 0.0], "timestamp": "2026-02-01T10:00:00Z"})
+    for bid in (1, 2):
+        ev(dict(scan, StarSystem="Cm Delta", SystemAddress=504, BodyName="Cm Delta %d" % bid,
+                BodyID=bid, timestamp="2026-02-01T10:0%d:00Z" % bid))
+    ev({"event": "MultiSellExplorationData", "Discovered": [{"SystemName": "Cm Delta"}],
+        "timestamp": "2026-02-01T10:05:00Z"})
+    ev({"event": "SAAScanComplete", "SystemAddress": 504, "BodyID": 2, "BodyName": "Cm Delta 2"})
+    ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 504, "Body": 2,
+        "Species_Localised": "Stratum Tectonicas", "timestamp": "2026-02-01T10:20:00Z"})
+    ev({"event": "Scan", "ScanType": "Detailed", "StarSystem": "Cm Delta", "SystemAddress": 504,
+        "BodyName": "Cm Delta 3", "BodyID": 3, "PlanetClass": "Icy body",
+        "timestamp": "2026-02-01T10:21:00Z"})
+    db.set_route_done(504, 2, True)
+    db.cx.execute("UPDATE bodies SET route_done_ts='2026-02-01T10:25:00Z' WHERE sys_id64=504")
+    ev({"event": "Died", "timestamp": "2026-02-01T10:30:00Z"})
+    check(db.route_done_of(504) == set(), "crash: route ticks of the lost work are cleared")
+    b = {r["body_id"]: r for r in db.bodies_for(504, "F1")}
+    check(b[1]["scanned"] == 1 and not b[1]["lost_what"], "crash: sold data stays")
+    check(b[2]["scanned"] == 1 and b[2]["mapped"] == 0 and b[2]["organics"] == 0
+          and json.loads(b[2]["lost_what"]) == ["bio:Stratum Tectonicas", "map"],
+          "crash: unsold map and species undone and marked lost (sold scan stays)")
+    check(b[3]["scanned"] == 0 and json.loads(b[3]["lost_what"]) == ["scan"],
+          "crash: unsold scan undone and marked lost")
+    lost = {d["name"]: d for d in db.lost_summary("F1")}
+    check(lost["Cm Delta"]["bio"] == ["Stratum Tectonicas"] and lost["Cm Delta"]["scan"] == 1
+          and "Cm Alpha" in lost,              # scanned there earlier, never sold
+          "crash: lost summary per system")
+    check(db.bio_training_rows() and any("Tectonicas" in (r["bio_species"] or "")
+                                         for r in db.bio_training_rows()),
+          "crash: the shared knowledge (bio model) keeps what was found")
+    ev({"event": "SAAScanComplete", "SystemAddress": 504, "BodyID": 2, "BodyName": "Cm Delta 2"})
+    ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 504, "Body": 2,
+        "Species_Localised": "Stratum Tectonicas", "timestamp": "2026-02-02T10:20:00Z"})
+    b = {r["body_id"]: r for r in db.bodies_for(504, "F1")}
+    check(not b[2]["lost_what"] and b[2]["mapped"] == 1, "crash: redone -> no longer marked")
+    db.cx.execute("UPDATE meta SET v='4' WHERE k='schema'")
+    db.cx.commit()
+    db.close()
+    db = SystemDB(os.path.join(d, "cmdr.sqlite"))
+    check(db.backup_path is not None and not db.cmdr_ready()
+          and db.cx.execute("SELECT COUNT(*) FROM cmdr_bodies").fetchone()[0] >= 1,
+          "C1: schema 4 -> 5 makes a backup, keeps the data, waits for the replay")
+    db.close()
+    return 0
 
 
 if __name__ == "__main__":

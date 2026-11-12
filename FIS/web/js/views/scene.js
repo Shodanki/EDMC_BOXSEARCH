@@ -120,7 +120,9 @@ export function buildScene(sys, mode = "log") {
   // route polyline: from the arrival star through the stops
   const legs = (sys.route && sys.route.legs) || [];
   const route = [];
-  let prev = [0, 0, 0];
+  // R3: a route that starts at the carrier's body, not at the arrival star
+  const st = sys.route && sys.route.start ? sById.get(sys.route.start.body_id) : null;
+  let prev = st ? st.p : [0, 0, 0];
   for (const l of legs) {
     const tb = sById.get(l.body_id);
     if (!tb) continue;

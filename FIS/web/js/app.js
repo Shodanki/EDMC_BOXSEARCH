@@ -16,13 +16,14 @@ import * as planet from "./views/planet.js";
 import * as surface from "./views/surface.js";
 import * as atlas from "./views/atlas.js";
 import * as ship from "./views/ship.js";
+import * as vehicle from "./views/vehicle.js";
 import * as carrier from "./views/carrier.js";
 import * as galaxy from "./views/galaxy.js";
 import * as statistics from "./views/statistics.js";
 import * as mining from "./views/mining.js";
 import * as settings from "./views/settings.js";
 
-const VIEWS = { briefing, tactical, planet, surface, atlas, ship, carrier, galaxy, statistics, mining, settings };
+const VIEWS = { briefing, tactical, planet, surface, atlas, ship, vehicle, carrier, galaxy, statistics, mining, settings };
 // ?solo=ship: one view alone in its own window (second screen, tablet)
 // ?system=<id64> pins another system (detail window from GALAXY, review)
 const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];
@@ -169,7 +170,7 @@ function show(name) {
 for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => show(b.dataset.view));
 // hand-edited URL hash / bookmarks (#briefing, #tactical, #planet)
 // the names on the tabs work as addresses too (#system, #planetinfo)
-const ALIAS = { system: "tactical", planetinfo: "planet", stats: "statistics" };
+const ALIAS = { system: "tactical", planetinfo: "planet", stats: "statistics", srv: "vehicle", nomad: "vehicle" };
 window.addEventListener("hashchange", () => {
   const name = ALIAS[location.hash.slice(1)] || location.hash.slice(1);
   if (!SOLO && VIEWS[name] && name !== store.view) show(name);
@@ -336,6 +337,8 @@ subscribe({
     later("status", 400, () => refresh("ship"));
     // the ship panel follows Status.json (lamps, pips, fuel) about once a second
     if (mounted.has("ship") && store.view === "ship") later("shipview", 900, () => ship.update(ctx, "data"));
+    // V1: the vehicle sheet follows Status.json (tank, position, switches)
+    if (mounted.has("vehicle") && store.view === "vehicle") later("vehicleview", 900, () => vehicle.update(ctx, "data"));
     if (mounted.has("surface")) later("surface", 1000, () => surface.update(ctx, "data"));
     // mining: cargo changes with every tonne (Status.json Cargo) - the live block follows
     if (mounted.has("mining") && store.view === "mining") later("mininglive", 1200, () => mining.update(ctx, "live"));

@@ -26,14 +26,18 @@ VALUES = {"Bacterium Aurasus": {"value": 1000000, "bonus": 4000000},
 class TestUnsold(unittest.TestCase):
     def test_bio_pending_value_and_partial_sale(self):
         evs = [ev("08:00", "FSDJump", StarSystem="Alpha", SystemAddress=1),
-               analyse("08:10", "Bacterium Aurasus", first=True),
+               # first footfall on body 2: nobody had walked there, then you did
+               ev("08:01", "Scan", StarSystem="Alpha", SystemAddress=1, BodyID=2, BodyName="Alpha 2",
+                  ScanType="Detailed", DistanceFromArrivalLS=50.0, Landable=True, WasFootfalled=False),
+               ev("08:05", "Disembark", OnPlanet=True, SystemAddress=1, Body="Alpha 2", BodyID=2),
+               dict(analyse("08:10", "Bacterium Aurasus", first=True), Body=2),
                analyse("08:20", "Stratum Tectonicas"),
                analyse("08:30", "Osseus Spiralis"),               # never sold: no value
                ev("09:00", "SellOrganicData", BioData=[{"Species_Localised": "Stratum Tectonicas"}])]
         u = unsold.build_unsold(evs, VALUES)
         b = u["bio"]
         self.assertEqual((b["count"], b["priced"], b["unknown"], b["first"]), (2, 1, 1, 1))
-        self.assertEqual(b["value"], 5000000)                   # 1 M + 4x first-logged bonus
+        self.assertEqual(b["value"], 5000000)                   # 1 M + 4x first-footfall bonus
         self.assertEqual(b["items"][0]["system"], "Alpha")
 
     def test_exploration_counted_until_sold(self):
@@ -75,6 +79,38 @@ class TestUnsold(unittest.TestCase):
         evs = [analyse("08:%02d" % i, "Stratum Tectonicas") for i in range(3)]
         self.assertEqual(unsold.build_unsold(evs, VALUES)["advice"], "sell")      # 57 M
         self.assertIsNone(unsold.build_unsold(evs[:1], VALUES)["advice"])        # 19 M
+
+    def test_first_logged_alone_pays_no_bonus(self):
+        # 11.11.: landed where others had walked - "first logged", but base value only
+        evs = [ev("08:00", "FSDJump", StarSystem="Alpha", SystemAddress=1),
+               ev("08:01", "Scan", StarSystem="Alpha", SystemAddress=1, BodyID=2, BodyName="Alpha 2",
+                  ScanType="Detailed", DistanceFromArrivalLS=50.0, Landable=True, WasFootfalled=True),
+               ev("08:05", "Disembark", OnPlanet=True, SystemAddress=1, Body="Alpha 2", BodyID=2),
+               dict(analyse("08:10", "Bacterium Aurasus", first=True), Body=2)]
+        b = unsold.build_unsold(evs, VALUES)["bio"]
+        self.assertEqual((b["value"], b["first"]), (1000000, 0))
+
+    def test_risk_levels(self):
+        st = [analyse("08:%02d" % i, "Stratum Tectonicas") for i in range(6)]
+        self.assertEqual(unsold.build_unsold(st[:1], VALUES)["risk"], "low")        # 19 M
+        self.assertEqual(unsold.build_unsold(st[:3], VALUES)["risk"], "moderate")   # 57 M
+        self.assertEqual(unsold.build_unsold(st, VALUES)["risk"], "high")           # 114 M
+
+    def test_first_discovery_and_first_footfall_are_valuable(self):
+        evs = [ev("08:00", "FSDJump", StarSystem="New", SystemAddress=5),
+               ev("08:01", "Scan", StarSystem="New", SystemAddress=5, BodyID=0, BodyName="New A",
+                  ScanType="AutoScan", DistanceFromArrivalLS=0.0, WasDiscovered=False),
+               ev("08:02", "Scan", StarSystem="New", SystemAddress=5, BodyID=3, BodyName="New 1",
+                  ScanType="Detailed", DistanceFromArrivalLS=300.0, WasDiscovered=False,
+                  Landable=True, WasFootfalled=False),
+               ev("08:10", "Disembark", SRV=False, OnPlanet=True, SystemAddress=5, Body="New 1", BodyID=3),
+               ev("08:20", "ScanOrganic", ScanType="Analyse", Species_Localised="Osseus Spiralis",
+                  SystemAddress=5, Body=3, WasLogged=True)]
+        u = unsold.build_unsold(evs, VALUES)
+        self.assertEqual((u["first_systems"], u["footfall_bio"]), (1, 1))
+        self.assertEqual(u["risk"], "moderate")            # little money, but nothing to get again
+        sold = evs + [ev("09:00", "MultiSellExplorationData", Discovered=[{"SystemName": "New"}])]
+        self.assertEqual(unsold.build_unsold(sold, VALUES)["first_systems"], 0)
 
 
 if __name__ == "__main__":

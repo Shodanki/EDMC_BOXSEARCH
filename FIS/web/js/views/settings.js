@@ -15,7 +15,7 @@ import { cockpitRows } from "./cockpit.js";
 let root = null, data = null, msg = "", qrIndex = 0;
 // E6/P7: display links - one view alone, for OBS, a wall screen or a tablet
 const LINK_VIEWS = [["briefing", "BRIEFING"], ["surface", "PLANET"], ["tactical", "SYSTEM"], ["galaxy", "GALAXY"],
-  ["planet", "PLANET INFO"], ["atlas", "ATLAS"], ["ship", "SHIP"], ["carrier", "CARRIER"], ["mining", "MINING"],
+  ["planet", "PLANET INFO"], ["atlas", "ATLAS"], ["ship", "SHIP"], ["vehicle", "VEHICLE"], ["carrier", "CARRIER"], ["mining", "MINING"],
   ["statistics", "STATISTICS"]];
 const link = { view: "briefing", obs: false, kiosk: false, scale: "1" };
 
@@ -50,9 +50,17 @@ function render() {
   lang.value = data.language;
   const browser = el("input", { type: "checkbox", checked: data.open_browser ? true : null });
   const lan = el("input", { type: "checkbox", checked: data.lan ? true : null });
+  // C1: main commander - survey and statistics; "" = automatic (plugin / suggestion)
+  const cmdrs = data.commanders || [];
+  const main = el("select", { class: "lay-pick" },
+    el("option", { value: "", text: t("automatic ({n})", { n: data.main_auto || "–" }) }),
+    ...cmdrs.map((c) => el("option", { value: c.fid, text: c.name + " (" + (c.carrier ? t("carrier") : t("{n} sessions", { n: c.logins })) + ")" })));
+  main.value = data.main_cmdr || "";
   const save = async () => {
     try {
-      data = await postJSON("/api/settings", { language: lang.value, open_browser: browser.checked, lan: lan.checked });
+      const body = { language: lang.value, open_browser: browser.checked, lan: lan.checked };
+      if (cmdrs.length > 1) body.main_cmdr = main.value;
+      data = await postJSON("/api/settings", body);
       msg = data.restart ? t("Saved. Restart the FIS (or EDMC with autostart) for the home network change.") : t("Saved.");
     } catch (e) { msg = t("Could not save: {e}", { e: e.message }); }
     render();
@@ -63,6 +71,8 @@ function render() {
     el("label", { class: "st-set" }, el("span", { text: t("Open the browser when the FIS starts") }), browser),
     el("label", { class: "st-set" }, el("span", { text: t("Home network (tablet, second PC)") }), lan),
     el("div", { class: "c-dim small", text: t("Other devices need the address below with its token; the FIS then answers the home network too.") }),
+    cmdrs.length > 1 ? el("label", { class: "st-set" }, el("span", { text: t("Main commander") }), main) : null,
+    cmdrs.length > 1 ? el("div", { class: "c-dim small", text: t("Survey and statistics count for the main commander. Each commander's visits, scans and samples are kept apart; finds in rings and on planets are shared.") }) : null,
     el("button", { onclick: save, text: t("Save") }),
     msg ? el("div", { class: "c-green small", text: msg }) : null,
   ];

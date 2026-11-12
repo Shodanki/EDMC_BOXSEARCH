@@ -9,8 +9,14 @@ M4: data you carry and lose when the ship is destroyed - from the journal.
 Exobiology: every ScanOrganic "Analyse" since it was sold. A SellOrganicData
 takes the species it lists off the pending list (you can sell a part); a
 death (Died) loses everything not sold. The value comes from your own
-earlier sales of the same species; the first-logged bonus (4x the value,
-as your sales show it) counts when the scan says WasLogged false. Species
+earlier sales of the same species (one price per species, 42 of 42 stable
+in the user's sales). The first-discovery bonus (4x the value on top, so 5x
+in all) counts only on a body of YOUR FIRST FOOTFALL - user 11.11., checked
+against 153 own sales: every analysis on a first-footfall body paid it;
+WasLogged false (almost always set) says nothing about it. 15 sales paid the
+bonus without a first footfall (first to sell that species from the body,
+which no journal shows) - those stay at the base value: never promise
+money the data cannot prove. Species
 you never sold have no known value - they are counted, not priced.
 
 Exploration data: only counted (its value needs a formula - B6): bodies
@@ -19,6 +25,13 @@ you scanned yourself (Scan, not a nav beacon's NavBeaconDetail) and mapped
 (MultiSellExplorationData / SellExplorationData). A honk alone is no data:
 honking a system whose bodies you sold before leaves nothing to sell
 (11.11.: six such systems were shown as unsold).
+
+Risk (user, 11.11.): what a loss would cost - below 50 M Cr low, from
+50 M moderate, from 100 M high. The data that is really valuable comes
+first: systems you discovered first (the arrival star's scan said
+WasDiscovered false) and species analysed on a body where you made the
+first footfall (Scan WasFootfalled false, then you disembarked there).
+Either of them makes the risk at least moderate.
 """
 
 from __future__ import annotations
@@ -27,9 +40,11 @@ from typing import Any, Dict, List, Optional, Set
 
 from .live import parse_ts
 
-BONUS_FACTOR = 4                 # first logged: 4x the base value on top (own sales)
+BONUS_FACTOR = 4                 # first footfall: 4x the base value on top (own sales)
 WARN_CR = 50_000_000             # from here on the sheet advises to sell
 WARN_SYSTEMS = 100
+RISK_MODERATE_CR = 50_000_000    # user 11.11.: below this a loss is a low risk
+RISK_HIGH_CR = 100_000_000       # ... from here on a real one
 
 
 def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[str, int]]] = None
@@ -43,6 +58,9 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
     names: Dict[Any, str] = {}                    # SystemAddress -> name (jumps, honks)
     last_sale: Dict[str, Optional[float]] = {"bio": None, "exploration": None}
     lost: Optional[Dict[str, Any]] = None
+    first_sys: Set[str] = set()                   # discovered first by you, not sold yet
+    no_foot: Set[Any] = set()                     # (address, body name): nobody walked there
+    first_foot: Set[Any] = set()                  # (address, body id): your first footfall
     for e in events:
         ev = e.get("event")
         ts = parse_ts(e.get("timestamp"))
@@ -51,8 +69,10 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
         elif ev == "ScanOrganic" and e.get("ScanType") == "Analyse":
             sp = e.get("Species_Localised") or e.get("Species") or "?"
             bio.append({"species": sp, "variant": e.get("Variant_Localised") or e.get("Variant"),
-                        "first": e.get("WasLogged") is False, "ts": ts,
-                        "system": names.get(e.get("SystemAddress"))})
+                        "ts": ts, "system": names.get(e.get("SystemAddress")),
+                        "footfall": (e.get("SystemAddress"), e.get("Body")) in first_foot})
+        elif ev == "Disembark" and e.get("OnPlanet") and (e.get("SystemAddress"), e.get("Body")) in no_foot:
+            first_foot.add((e.get("SystemAddress"), e.get("BodyID")))
         elif ev == "SellOrganicData":
             for b in e.get("BioData") or []:
                 sp = b.get("Species_Localised") or b.get("Species")
@@ -70,6 +90,10 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
             body = e.get("BodyID") if e.get("BodyID") is not None else e.get("BodyName")
             if nm and body is not None and body not in sold_scan.get(nm, ()):
                 scanned.setdefault(nm, set()).add(body)
+                if e.get("WasDiscovered") is False and not e.get("DistanceFromArrivalLS"):
+                    first_sys.add(nm)             # the arrival star was undiscovered
+            if e.get("WasFootfalled") is False and e.get("Landable"):
+                no_foot.add((e.get("SystemAddress"), e.get("BodyName")))
         elif ev == "SAAScanComplete":
             nm = names.get(e.get("SystemAddress"))
             body = e.get("BodyID") if e.get("BodyID") is not None else e.get("BodyName")
@@ -80,6 +104,7 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
             for nm in sold:
                 sold_scan.setdefault(nm, set()).update(scanned.pop(nm, ()))
                 sold_map.setdefault(nm, set()).update(mapped.pop(nm, ()))
+                first_sys.discard(nm)
             last_sale["exploration"] = ts
         elif ev == "Died":
             n_sys = len(set(scanned) | set(mapped))
@@ -87,6 +112,7 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
                 lost = {"ts": ts, "bio": len(bio), "systems": n_sys}
             # the data is gone, not sold: those bodies can be scanned again
             bio, scanned, mapped = [], {}, {}
+            first_sys = set()
     priced, unknown = 0, 0
     total = 0
     items = []
@@ -94,7 +120,7 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
         v = values.get(x["species"])
         val = None
         if v and v.get("value"):
-            val = v["value"] * (1 + BONUS_FACTOR if x["first"] else 1)
+            val = v["value"] * (1 + BONUS_FACTOR if x["footfall"] else 1)
             total += val
             priced += 1
         else:
@@ -104,12 +130,19 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
     advice = None
     if total >= WARN_CR or len(systems) >= WARN_SYSTEMS:
         advice = "sell"
+    ff_bio = sum(1 for x in bio if x["footfall"])
+    first_sys &= systems
+    risk = ("high" if total >= RISK_HIGH_CR else
+            "moderate" if total >= RISK_MODERATE_CR or first_sys or ff_bio else "low")
     return {"bio": {"count": len(bio), "value": total, "priced": priced, "unknown": unknown,
-                    "first": sum(1 for x in bio if x["first"]), "items": items[-12:],
+                    "first": sum(1 for x in bio if x["footfall"]), "items": items[-12:],
                     "since": last_sale["bio"]},
             "exploration": {"systems": len(systems),
                             "mapped": sum(len(v) for v in mapped.values()),
                             "bodies": sum(len(v) for v in scanned.values()),
                             "since": last_sale["exploration"]},
             "lost_last": lost, "advice": advice,
-            "warn_cr": WARN_CR, "warn_systems": WARN_SYSTEMS}
+            "warn_cr": WARN_CR, "warn_systems": WARN_SYSTEMS,
+            # what a loss would cost and what is irreplaceable
+            "risk": risk, "first_systems": len(first_sys), "footfall_bio": ff_bio,
+            "risk_cr": {"moderate": RISK_MODERATE_CR, "high": RISK_HIGH_CR}}
