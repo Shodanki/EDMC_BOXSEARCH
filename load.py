@@ -2629,51 +2629,9 @@ def _route_review_worker() -> None:
 
 
 def _actual_visits(sys_id64: int) -> List[Tuple[str, float]]:
-    """
-    (body name, unix time) for every body approached in this system, in order.
-
-    Read straight from the journals rather than kept in memory, so it also
-    works for a system flown before the plugin was running.
-    """
-    import glob
-    import calendar
-    d = _journal_dir()
-    if not d:
-        return []
-    files = sorted(glob.glob(os.path.join(d, "Journal.*.log"))
-                   + glob.glob(os.path.join(d, "Journal_*.log")))[-8:]
-    out: List[Tuple[str, float]] = []
-    seen = set()
-    for fn in files:
-        try:
-            with open(fn, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or '"Body' not in line:
-                        continue
-                    try:
-                        e = json.loads(line)
-                    except ValueError:
-                        continue
-                    if e.get("SystemAddress") != sys_id64:
-                        continue
-                    if e.get("event") not in ("ApproachBody", "SupercruiseExit",
-                                              "SAAScanComplete"):
-                        continue
-                    nm = e.get("Body") or e.get("BodyName")
-                    if not nm or nm in seen:
-                        continue
-                    try:
-                        ts = calendar.timegm(time.strptime(
-                            e["timestamp"], "%Y-%m-%dT%H:%M:%SZ"))
-                    except (KeyError, ValueError):
-                        continue
-                    seen.add(nm)
-                    out.append((nm, float(ts)))
-        except OSError:
-            continue
-    out.sort(key=lambda p: p[1])
-    return out
+    """(body name, unix time) for every body approached in this system, in
+    order, from the newest journals (journalscan.approached_bodies)."""
+    return journalscan.approached_bodies(_journal_dir(), sys_id64, 8)
 
 
 def _count_switches(seq, bodies) -> int:

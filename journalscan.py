@@ -13,6 +13,7 @@ logic is unchanged, it only lives here now so it can be tested on its own:
 * journal_files()    the journal files of a folder, oldest first
 * newest_location()  the last FSDJump / Location / CarrierJump (system, id64, pos)
 * last_body()        the last body we were at (ApproachBody, Touchdown, ...)
+* approached_bodies() the bodies approached in one system, in order (route review)
 * WorkMeter          times DSS mapping and sampling, and collects the
                      body-to-body supercruise legs - the SAME code for the
                      replay at start and for the live events (up to 4.9 the
@@ -32,7 +33,7 @@ import os
 import time
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
-__all__ = ["journal_files", "newest_location", "last_body", "WorkMeter",
+__all__ = ["journal_files", "newest_location", "last_body", "approached_bodies", "WorkMeter",
            "replay_work", "replay_fuel", "read_events"]
 
 LOCATION_EVENTS = ("FSDJump", "Location", "CarrierJump")
@@ -123,6 +124,46 @@ def last_body(folder: Optional[str]) -> Optional[Dict[str, Any]]:
                     "name": e.get("Body") or e.get("BodyName") or "",
                     "sys": e.get("SystemAddress")}
     return None
+
+
+def approached_bodies(folder: Optional[str], sys_id64: Any, last: int = 8
+                      ) -> List[Tuple[str, float]]:
+    """
+    (body name, unix time) for every body approached in this system, in
+    order: the first ApproachBody / SupercruiseExit / SAAScanComplete per
+    body in the newest `last` journals. Read from the files rather than kept
+    in memory, so it also covers a system flown before the plugin ran.
+    """
+    out: List[Tuple[str, float]] = []
+    seen = set()
+    for fn in journal_files(folder, last):
+        try:
+            with open(fn, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or '"Body' not in line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    if e.get("SystemAddress") != sys_id64:
+                        continue
+                    if e.get("event") not in ("ApproachBody", "SupercruiseExit",
+                                              "SAAScanComplete"):
+                        continue
+                    nm = e.get("Body") or e.get("BodyName")
+                    if not nm or nm in seen:
+                        continue
+                    ts = event_time(e)
+                    if ts is None:
+                        continue
+                    seen.add(nm)
+                    out.append((nm, ts))
+        except OSError:
+            continue
+    out.sort(key=lambda p: p[1])
+    return out
 
 
 def event_time(e: Dict[str, Any]) -> Optional[float]:
@@ -307,6 +348,10 @@ def _selftest() -> int:
         fu = replay_fuel(files, Fuel())
         check(fu.ship == ("Tester", 3) and fu.capacity == 32.0 and fu.max_jump == 55.0
               and fu.jumps == [(40.0, 4.0)] and fu.level == 28.0, "fuel replay")
+        check(approached_bodies(d, 11) == [("Js A 1", 1_800_000_100.0),
+                                           ("Js A 2", 1_800_000_360.0),
+                                           ("Js A 3", 1_800_000_600.0)]
+              and approached_bodies(d, 99) == [], "bodies approached in one system, in order")
         check(newest_location(os.path.join(d, "none")) is None and journal_files(None) == [],
               "no folder -> nothing")
     live = WorkMeter()
