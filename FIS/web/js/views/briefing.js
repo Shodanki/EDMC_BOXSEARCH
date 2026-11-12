@@ -89,6 +89,10 @@ export function update(ctx, reason) {
   ];
   if (tg.visited) rows.push(row(t("VISITED"), el("span", { class: "c-dim", text: t("You have been there") + (tg.body_count ? " · " + t("{n} bodies", { n: tg.body_count }) : "") })));
   // C1: another commander on this PC was there - your own exploration is still open
+  // visited, yes - but what was done there went down with the ship
+  if (tg.lost) rows.push(row(t("LOST"), el("span", { class: "c-red", text: t("lost in a crash {d}: {w} - redo", { d: String(tg.lost.ts || "").slice(0, 10),
+    w: [tg.lost.scan ? t("{n} scans", { n: tg.lost.scan }) : null, tg.lost.map ? t("{n} maps", { n: tg.lost.map }) : null,
+      tg.lost.bio && tg.lost.bio.length ? t("bio: {s}", { s: [...new Set(tg.lost.bio)].join(", ") }) : null].filter(Boolean).join(" · ") }) })));
   if (tg.also_by && tg.also_by.length) rows.push(row(t("ALSO"), el("span", { class: "c-dim", text: t("also explored by {n}", { n: tg.also_by.join(", ") }) })));
   if (b.expectation && b.expectation.length)
     rows.push(row(t("EXPECTED"), el("div", {}, ...b.expectation.map(x => el("div", { text: expectation(x) })))));
@@ -246,6 +250,7 @@ function navList(hops, target, appear, fr) {
         text: (h.star_class || "?") + (h.boost ? " ⚡" : ""), title: h.boost ? t("jet cone: FSD boost") : "" }),
       el("span", { class: "nl-ly", text: h.jump_ly ? fmt(h.jump_ly, 1) + " ly" : "" }),
       unknown ? levelTag(h.level) : (h.visited ? chip(t("visited"), "mapped") : el("span", { class: "c-dim", text: h.known_sources.join(" ") })),
+      h.lost ? chip(t("lost"), "alert") : null,
       fuel));
   }
   return frame("NAVPOINTS", t("{n} jumps plotted", { n: hops.length }), [fuelLine(fr), el("div", { class: "scroll" }, list)], { cls: "br-nav", appear });

@@ -138,6 +138,8 @@ const DE = /*DE*/{
   "VISITED": "BESUCHT",
   "You have been there": "Du warst schon dort",
   "ALSO": "AUCH",
+  "LOST": "VERLOREN",
+  "lost in a crash {d}: {w} - redo": "beim Absturz {d} verloren: {w} – neu erfassen",
   "Unsold data went down with the ship - these bodies are planned again.": "Unverkaufte Daten sind mit dem Schiff verloren gegangen – diese Körper werden wieder eingeplant.",
   "data lost in the crash: {n} bodies to redo": "beim Absturz verloren: {n} Körper neu erfassen",
   "bio: {s}": "Bio: {s}",

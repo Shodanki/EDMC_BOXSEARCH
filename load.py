@@ -1087,8 +1087,12 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
             if ST.db.is_visited(row, CURRENT):
                 info["visited"] = True
             also = ST.db.explorers(row["id64"], but=ST.db.fid) if ST.db.fid else []
+            lost = [d for d in ST.db.lost_summary(ST.db.view_fid(CURRENT))
+                    if d["id64"] == row["id64"]]
         if also:
             info["also_by"] = also          # C1: another commander was here
+        if lost:
+            info["lost"] = lost[0]          # data lost there in a crash, to redo
     pn = parse_name(name or "")
     if pn and ST.probe:
         info["boxel_open"] = sum(1 for q in ST.probe if q.boxel_key == pn.boxel_key)

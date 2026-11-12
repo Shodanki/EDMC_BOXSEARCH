@@ -1516,8 +1516,10 @@ def _navpoints_for(db: Database, live: Dict[str, Any], fid: Optional[str]) -> Li
     ids = [p["id64"] for p in pts if p.get("id64")]
     rows = db.with_visits([{"id64": i, "visited": 0, "fss_complete": 0} for i in ids], fid)
     seen = {r["id64"]: bool(r["visited"]) for r in rows}
+    lost = {d["id64"] for d in db.lost_summary(fid)}
     for p in pts:
         p["visited"] = seen.get(p.get("id64"), False)
+        p["lost"] = p.get("id64") in lost         # data lost there in a crash
     return pts
 
 
@@ -1627,6 +1629,9 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]],
         "navpoint": [idx, len(route) - 1] if idx is not None and len(route) > 1 else None,
         "also_by": (db.explorers(shared["id64"], but=fid)
                     if fid and shared is not None and shared["id64"] else []),
+        # visited, yes - but what you did there went down with the ship
+        "lost": next((d for d in db.lost_summary(fid)
+                      if shared is not None and d["id64"] == shared["id64"]), None) if fid else None,
     }
     out["boxel"] = boxel_info(db, name) if name else None
     out["sphere"] = _sphere_of(db, tpos)

@@ -136,6 +136,25 @@ class TestPerCommander(_Base):
         self.assertTrue(any(leg["lost"] for leg in s["route"]["legs"] if leg["body_id"] == 1))
         self.assertEqual((lost[0]["name"], lost[0]["map"], lost[0]["bio"]), (fx.SYS, 1, ["Bacterium Cerbrus"]))
 
+    def test_lost_in_the_briefing(self):
+        cx = sqlite3.connect(self.db_path)
+        cx.execute("UPDATE cmdr_bodies SET lost_what=?, lost_ts='2026-11-11T19:27:41Z' "
+                   "WHERE fid=? AND body_id=1", ('["map"]', MAIN_FID))
+        cx.commit()
+        cx.close()
+        try:
+            live = {"target": {"name": fx.SYS, "id64": fx.SYS_ID, "source": "fsdtarget"}}
+            b = self.model.build_briefing(self.db, live, fid=MAIN_FID)
+            other = self.model.build_briefing(self.db, live, fid=SECOND)
+        finally:
+            cx = sqlite3.connect(self.db_path)
+            cx.execute("UPDATE cmdr_bodies SET lost_what=NULL, lost_ts=NULL")
+            cx.commit()
+            cx.close()
+        self.assertTrue(b["target"]["visited"])
+        self.assertEqual(b["target"]["lost"]["map"], 1)
+        self.assertIsNone(other["target"]["lost"])          # the other commander lost nothing
+
     def test_briefing_visited_and_also(self):
         live = {"target": {"name": fx.SYS, "id64": fx.SYS_ID, "source": "fsdtarget"}}
         b = self.model.build_briefing(self.db, live, fid=SECOND)
