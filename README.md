@@ -127,9 +127,9 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4719 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `load.py` | 4694 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
 | `sysdb.py` | 3127 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
-| `sysroute.py` | 935 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
+| `sysroute.py` | 980 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 952 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
 | `sources.py` | 776 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
 | `netgate.py` | 474 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |

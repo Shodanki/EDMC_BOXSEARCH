@@ -50,7 +50,7 @@ from deepspace import (FuelState, best_staging, is_scoopable,   # noqa: E402
 from sysroute import (ALL_FILTERS, DEFAULT_MODEL, FILTER_LABEL,  # noqa: E402
                       F_ALL, F_OUTSTANDING, bodies_from_rows,
                       calibrate_from_journal, calibrate_work_from_journal,
-                      leg_distance_ls, pace_ratio, spread_points,
+                      leg_distance_ls, map_projection, pace_ratio, spread_points,
                       plan_route, resolve_positions, shorten, start_at_body)
 from boxelplan import bundled_probe_prefix                   # noqa: E402
 from boxelplan import (K_BIO, K_CHECK, K_DSS, K_EMPTY, K_GAP,  # noqa: E402
@@ -1789,33 +1789,8 @@ def _route_map_draw() -> None:
     if not pts:
         return
 
-    # Pick the projection plane from the data instead of assuming one.
-    #
-    # Orbits in a system are close to coplanar, but that plane is not the same
-    # one in every system: measured over real systems, five of six have z
-    # within a few light seconds of zero while x and y span thousands, and one
-    # binary is the other way round. Projecting on a fixed X/Z therefore
-    # collapsed most systems onto a single horizontal line. Dropping whichever
-    # axis varies least keeps the spread in every case.
-    def _spread(idx: int) -> float:
-        vals = [p[idx] for p in pts]
-        m = sum(vals) / len(vals)
-        return math.sqrt(sum((v - m) ** 2 for v in vals) / len(vals))
-
-    spreads = [(_spread(i), i) for i in range(3)]
-    flattest = min(spreads)[1]
-    ax, ay = [i for i in range(3) if i != flattest][:2]
-
-    rmax = max(math.sqrt(p[ax] ** 2 + p[ay] ** 2) for p in pts) or 1.0
-
-    def project(p) -> Tuple[float, float]:
-        u, v = p[ax], p[ay]
-        r = math.sqrt(u * u + v * v)
-        if r < 1e-9:
-            return (cx, cy)
-        # log radial scale so moons and outer giants both stay visible
-        rr = math.log10(1.0 + r) / math.log10(1.0 + rmax)
-        return (cx + (u / r) * rr * span, cy + (v / r) * rr * span)
+    # plane from the data, log radius (sysroute.map_projection)
+    project, rmax = map_projection(pts, cx, cy, span)
 
     col = _theme_colours()
     fg = col.get("fg") or "#ff8000"

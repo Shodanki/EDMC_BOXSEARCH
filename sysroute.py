@@ -564,6 +564,43 @@ def spread_points(points: Dict[int, Tuple[float, float]], min_d: float = 12.0,
     return {k: (round(v[0], 1), round(v[1], 1)) for k, v in pts.items()}
 
 
+def map_projection(pts: Sequence[Sequence[float]], cx: float, cy: float, span: float):
+    """
+    Projection of the in-system route map (load.py draws it): returns
+    (project, rmax), where project(pos) gives the screen point of a body
+    position in light seconds and rmax is the largest radius in the plane.
+
+    The plane is picked from the data instead of assuming one. Orbits in a
+    system are close to coplanar, but that plane is not the same one in
+    every system: measured over real systems, five of six have z within a
+    few light seconds of zero while x and y span thousands, and one binary
+    is the other way round. A fixed X/Z collapsed most systems onto one
+    line; dropping whichever axis varies least keeps the spread in every
+    case. Distances span four orders of magnitude (a moon 2 LS out, a gas
+    giant 4000 LS out), so the radius is on a log scale; angles are exact.
+    """
+    def _spread(idx: int) -> float:
+        vals = [p[idx] for p in pts]
+        m = sum(vals) / len(vals)
+        return math.sqrt(sum((v - m) ** 2 for v in vals) / len(vals))
+
+    spreads = [(_spread(i), i) for i in range(3)]
+    flattest = min(spreads)[1]
+    ax, ay = [i for i in range(3) if i != flattest][:2]
+    rmax = max(math.sqrt(p[ax] ** 2 + p[ay] ** 2) for p in pts) or 1.0
+
+    def project(p) -> Tuple[float, float]:
+        u, v = p[ax], p[ay]
+        rr0 = math.sqrt(u * u + v * v)
+        if rr0 < 1e-9:
+            return (cx, cy)
+        # log radial scale so moons and outer giants both stay visible
+        rr = math.log10(1.0 + rr0) / math.log10(1.0 + rmax)
+        return (cx + (u / rr0) * rr * span, cy + (v / rr0) * rr * span)
+
+    return project, rmax
+
+
 PACE_MIN_LEG_S = 20.0   # legs planned shorter than this say nothing about pace
 
 
@@ -927,6 +964,14 @@ def _selftest() -> int:
     check(r is not None and 1.2 <= r <= 1.5, "median pace ignores the repair leg (%.2f)" % (r or 0))
     check(pace_ratio([(240, 300)]) is None, "one leg is not enough")
     check(pace_ratio([(5, 300), (240, 240), (200, 200)]) == 1.0, "legs under 20 s are left out")
+    # H6: the map projection drops the flattest axis and scales the radius by log
+    proj, rmax = map_projection([(1000.0, 0.0, 0.5), (0.0, 10.0, -0.5), (-3.0, -4.0, 0.0)],
+                                100.0, 100.0, 80.0)
+    check(rmax == 1000.0 and proj((1000.0, 0.0, 0.5)) == (180.0, 100.0)
+          and proj((0.0, 0.0, 7.0)) == (100.0, 100.0), "map: flattest axis (z) dropped, rmax at the edge")
+    x, y = proj((0.0, 10.0, 0.0))
+    check(x == 100.0 and 100.0 + 80.0 * 0.3 < y < 100.0 + 80.0 * 0.4,
+          "map: 10 LS of 1000 LS sits a third out on the log scale")
     print("failures: %d" % fails)
     return fails
 
