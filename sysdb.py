@@ -351,7 +351,7 @@ def _now() -> str:
 # One-time data repairs; each sets its meta key when done. A database that
 # still misses one of them (or has another schema version) gets a backup
 # before it is touched.
-REPAIRS = ("fix_phantoms", "fix_marks45", "fix_n1zero")
+REPAIRS = ("fix_phantoms", "fix_marks45", "fix_n1zero", "fix_lost_ticks")
 BACKUP_KEEP = 3          # newest backups kept next to the database
 
 
@@ -546,6 +546,14 @@ class SystemDB:
                 logger.info("database repair (SRV parked / vehicle landings): %s", res)
             except Exception:
                 logger.exception("database repair (surface marks) failed")
+        if not self.get_meta("fix_lost_ticks") and self.get_meta(LOSS_REPLAY):
+            try:
+                n = self.repair_lost_ticks()
+                logger.info("database repair (route ticks of data lost in a crash): %d cleared", n)
+            except Exception:
+                logger.exception("database repair (lost route ticks) failed")
+        elif not self.get_meta("fix_lost_ticks"):
+            self.set_meta("fix_lost_ticks", _now())     # nothing lost recorded yet
         if not self.get_meta("fix_n1zero"):
             try:
                 res = self.repair_n1zero()
@@ -1266,9 +1274,34 @@ class SystemDB:
             for sa in systems:
                 self.cx.execute("UPDATE cmdr_systems SET fss_complete=0, lost_ts=? WHERE fid=? "
                                 "AND sys_id64=?", (ts, self.fid, sa))
+            # the route ticks of that work went down with it
+            self._clear_lost_ticks(ts, " AND c.fid=? AND c.lost_ts=?", (self.fid, ts))
             if rows:
                 logger.info("ship lost: %d bodies with unsold data reset for %s", len(rows), self.fid)
         self.cx.commit()
+
+    def _clear_lost_ticks(self, before: Optional[str], where: str = "", args: Sequence[Any] = ()) -> int:
+        """Route ticks set before a crash belong to work that is gone - the
+        stops have to be flown again. Ticks made after it stay."""
+        cur = self.cx.execute(
+            "UPDATE bodies SET route_done=0, route_done_ts=NULL WHERE route_done=1 "
+            "AND (route_done_ts IS NULL OR ? IS NULL OR route_done_ts < ?) AND EXISTS ("
+            "SELECT 1 FROM cmdr_bodies c WHERE c.sys_id64=bodies.sys_id64 "
+            "AND c.body_id=bodies.body_id AND c.lost_what IS NOT NULL%s)" % where,
+            (before, before) + tuple(args))
+        return cur.rowcount or 0
+
+    def repair_lost_ticks(self) -> int:
+        """One-time: ticks older than the loss of their body (4.8 installs
+        whose crash was marked before ticks were cleared with it)."""
+        n = 0
+        for r in self.cx.execute("SELECT DISTINCT fid, lost_ts FROM cmdr_bodies "
+                                 "WHERE lost_what IS NOT NULL").fetchall():
+            n += self._clear_lost_ticks(r["lost_ts"], " AND c.fid=? AND c.lost_ts=?",
+                                        (r["fid"], r["lost_ts"]))
+        self.set_meta("fix_lost_ticks", _now())
+        self.cx.commit()
+        return n
 
     def lost_summary(self, fid: Optional[str]) -> List[Dict[str, Any]]:
         """Systems with data lost in a crash and not redone yet, newest first."""
@@ -3042,7 +3075,10 @@ def _selftest_cmdr(d: str, check) -> int:
     ev({"event": "Scan", "ScanType": "Detailed", "StarSystem": "Cm Delta", "SystemAddress": 504,
         "BodyName": "Cm Delta 3", "BodyID": 3, "PlanetClass": "Icy body",
         "timestamp": "2026-02-01T10:21:00Z"})
+    db.set_route_done(504, 2, True)
+    db.cx.execute("UPDATE bodies SET route_done_ts='2026-02-01T10:25:00Z' WHERE sys_id64=504")
     ev({"event": "Died", "timestamp": "2026-02-01T10:30:00Z"})
+    check(db.route_done_of(504) == set(), "crash: route ticks of the lost work are cleared")
     b = {r["body_id"]: r for r in db.bodies_for(504, "F1")}
     check(b[1]["scanned"] == 1 and not b[1]["lost_what"], "crash: sold data stays")
     check(b[2]["scanned"] == 1 and b[2]["mapped"] == 0 and b[2]["organics"] == 0

@@ -856,6 +856,31 @@ def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, floa
     return None
 
 
+def _lost_here() -> str:
+    """Route window: what of this system went down with the ship and is not
+    redone yet - also when no stop is left (a lost scan is FSS work)."""
+    if not (ST.db and ST.cur_id64):
+        return ""
+    try:
+        with ST.lock:
+            fid = ST.db.view_fid(CURRENT)
+            mine = [d for d in ST.db.lost_summary(fid) if d["id64"] == ST.cur_id64]
+    except Exception:
+        logger.debug("lost summary failed", exc_info=True)
+        return ""
+    if not mine:
+        return ""
+    d = mine[0]
+    bits = []
+    if d["scan"]:
+        bits.append("%d scan%s (FSS / honk again)" % (d["scan"], "" if d["scan"] == 1 else "s"))
+    if d["map"]:
+        bits.append("%d map%s" % (d["map"], "" if d["map"] == 1 else "s"))
+    if d["bio"]:
+        bits.append("bio: " + ", ".join(sorted(set(d["bio"]))))
+    return "LOST in the crash %s: %s - redo" % ((d["ts"] or "")[:10], ", ".join(bits))
+
+
 def _main_cmdr_choices() -> List[Tuple[str, str]]:
     """(label, FID) for the main-commander setting; '' = the suggestion."""
     if not ST.db:
@@ -2001,9 +2026,10 @@ def _route_window_refresh() -> None:
     col = _theme_colours()
 
     route = ST.route
+    lost = _lost_here()
     if route is None or not route.stops:
-        _route_head.set("%s\nnothing to fly here - scan the system first"
-                        % (ST.cur_system or "no system"))
+        _route_head.set("%s\nnothing to fly here - scan the system first%s"
+                        % (ST.cur_system or "no system", "\n" + lost if lost else ""))
         _route_map_draw()
         return
 
@@ -2017,6 +2043,8 @@ def _route_window_refresh() -> None:
             % (left_ls, left_s / 60.0,
                "  (model from %d of your own runs)" % ST.cost_model.samples
                if ST.cost_model.samples else "")]
+    if lost:
+        head.append(lost)
     if ST.route_from:
         head.append("starts at your carrier (%s) - you arrived on board" % ST.route_from)
     if ST.route_full:
