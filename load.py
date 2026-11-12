@@ -27,7 +27,7 @@ import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, ttk
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # EDMC API
 import myNotebook as nb
@@ -734,6 +734,7 @@ def _update_route_targets() -> None:
         cands = [{"name": r["name"], "x": r["x"], "y": r["y"], "z": r["z"]}
                  for r in rows if not r["name"].startswith("#")]
         ST.route_targets = corridor_targets(origin, cands, empties, jr)
+        _store_corridor(origin, jr)
         for r in ST.route_targets:
             logger.info("navroute | plot to %s: %.0f ly, ~%d jumps, %d unprobed "
                         "boxels on the way", r["name"], r["dist"], r["jumps"],
@@ -741,6 +742,20 @@ def _update_route_targets() -> None:
         _ui(_probe_window_refresh)
     except Exception:
         logger.exception("route target suggestion failed")
+
+
+def _store_corridor(origin: Sequence[float], jump_range: float) -> None:
+    """H3 #2: the suggestion for SHBOX FIS GALAXY (it opens the database
+    read-only and cannot run the planner) - meta "route_corridor"."""
+    half = min(20.0, max(10.0, max(10.0, float(jump_range or 0.0)) * 0.5))   # as corridor_targets
+    doc = {"ts": time.time(), "half": round(half, 1),
+           "from": [round(float(v), 2) for v in origin[:3]],
+           "targets": [{"name": t["name"], "x": round(t["pos"][0], 2), "y": round(t["pos"][1], 2),
+                        "z": round(t["pos"][2], 2), "ly": round(float(t["dist"]), 1),
+                        "jumps": int(t["jumps"]), "boxels": int(t["boxels"])}
+                       for t in ST.route_targets]}
+    with ST.lock:
+        ST.db.set_meta(CORRIDOR_META, json.dumps(doc))
 
 
 def _copy_route_target() -> None:
@@ -1113,6 +1128,7 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     return info
 
 
+CORRIDOR_META = "route_corridor"   # H3 #2: plot suggestion for the FIS (JSON)
 ROUTE_CHECK_MAX = 40          # I1: names in the one EDSM request of a route check
 ROUTE_CHECK_R = 0.1           # ly: the region a route check leaves - one system
 ROUTE_CHECK_TTL_S = 14 * 86400

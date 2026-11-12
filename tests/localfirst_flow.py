@@ -344,6 +344,20 @@ with tempfile.TemporaryDirectory() as d:
     load._maybe_route_check(hops[:2])
     check(len([x for x in Sess.log[n0:] if x[0] == "edsm-names"]) == 1,
           "route check: a single jump is never checked")
+
+    # 14) H3 #2: the plot suggestion goes to meta for SHBOX FIS GALAXY
+    ST.route_targets = [{"name": "Fake 9", "dist": 61.04, "jumps": 3, "boxels": 14, "score": 20.0,
+                         "pos": (60.0, 1.0, -40.0)}]
+    load._store_corridor((10.0, 0.0, -5.0), 32.0)
+    doc = json.loads(ST.db.get_meta(load.CORRIDOR_META))
+    check(doc["from"] == [10.0, 0.0, -5.0] and doc["half"] == 16.0
+          and doc["targets"] == [{"name": "Fake 9", "x": 60.0, "y": 1.0, "z": -40.0, "ly": 61.0,
+                                  "jumps": 3, "boxels": 14}],
+          "corridor: suggestion stored for the FIS (%r)" % doc)
+    ST.route_targets = []
+    load._store_corridor((10.0, 0.0, -5.0), 32.0)
+    check(json.loads(ST.db.get_meta(load.CORRIDOR_META))["targets"] == [],
+          "corridor: no target -> the FIS shows none")
     ST.db.close()
 
 print("failures: %d" % fails)

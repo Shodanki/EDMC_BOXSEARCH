@@ -139,6 +139,13 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
       const l = lineObj(data.carrier.map(P), COL.amber, 0.75, true, Math.max(2, extent / 150));
       root.add(l); layer.carrier = l;
     }
+    // H3 #2: where to plot - the plugin's suggestion through unprobed boxels
+    if (data.corridor) {
+      const grp = new THREE.Group();
+      data.corridor.targets.forEach((tg, i) => grp.add(lineObj([P(data.corridor.from), P(tg)], COL.violet,
+        i ? 0.45 : 0.9, true, Math.max(1, extent / 250))));
+      root.add(grp); layer.corridor = grp;
+    }
     // plotted route
     if (data.navroute.length > 1) {
       const l = lineObj(data.navroute.map(P), COL.amber, 1, true, Math.max(1, extent / 300));
@@ -176,7 +183,7 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
 
   function applyLayers() {
     if (layer.carriernow) layer.carriernow.visible = on.carrier !== false;
-    for (const k of ["path", "carrier", "systems", "boxels", "spheres", "finds", "navroute"]) {
+    for (const k of ["path", "carrier", "systems", "boxels", "spheres", "finds", "navroute", "corridor"]) {
       if (layer[k]) layer[k].visible = on[k] !== false;
     }
     dirty = true;
@@ -275,6 +282,8 @@ export function createGalaxy3D(host, overlay, hooks = {}) {
     label({ x: 0, y: 0, z: 0 }, "Sol", "#FFF4E8");
     { const [x, y, ok] = project(0, 0, 0); if (ok) { g.fillStyle = "#FFF4E8"; g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill(); } }
     if (on.navroute !== false) data.navroute.forEach((h, i) => { if (i) label(h, String(i), C.amber); });
+    if (on.corridor !== false && data.corridor && hooks.corridorText)
+      data.corridor.targets.forEach((tg) => label(tg, hooks.corridorText(tg), C.violet));
     if (on.carrier !== false && data.carrier_now && hooks.carrierTexts) {
       const cn = data.carrier_now, [main, jump] = hooks.carrierTexts(cn);
       label(cn, main, C.amber);

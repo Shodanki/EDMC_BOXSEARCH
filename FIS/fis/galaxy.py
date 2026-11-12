@@ -28,6 +28,7 @@ Reads the plugin database and the journals only.
 from __future__ import annotations
 
 import math
+import json
 import time
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -203,6 +204,34 @@ def _busiest_mc(db: Database, sp: Dict[str, Any], mcs: Sequence[int]) -> int:
     return max(seen, key=lambda k: seen[k]) if seen else mcs[0]
 
 
+CORRIDOR_MAX_AGE_S = 24 * 3600     # an older suggestion was made from somewhere else
+
+
+def corridor(db: Database, now: float) -> Optional[Dict[str, Any]]:
+    """
+    H3 #2: the plugin's plot suggestion - targets whose straight route runs
+    through the most boxels never probed (boxelplan.corridor_targets), kept by
+    the plugin in meta "route_corridor". Shown as a corridor; plotting the
+    route stays the commander's own action. None when absent or stale.
+    """
+    try:
+        raw = db.meta().get("route_corridor") if db.has_table("meta") else None
+        doc = json.loads(raw) if raw else None
+    except (ValueError, TypeError, Exception):
+        return None
+    if not isinstance(doc, dict) or not doc.get("targets") or not doc.get("from"):
+        return None
+    if now - float(doc.get("ts") or 0) > CORRIDOR_MAX_AGE_S:
+        return None
+    f = doc["from"]
+    return {"from": {"x": _r(f[0]), "y": _r(f[1]), "z": _r(f[2])}, "half": doc.get("half"),
+            "ts": doc.get("ts"),
+            "targets": [{"name": t.get("name"), "x": _r(t.get("x")), "y": _r(t.get("y")),
+                         "z": _r(t.get("z")), "ly": t.get("ly"), "jumps": t.get("jumps"),
+                         "boxels": t.get("boxels")}
+                        for t in doc["targets"][:3] if t.get("x") is not None]}
+
+
 def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
                  mc: Optional[int] = None, days: Optional[float] = None,
                  now: Optional[float] = None) -> Dict[str, Any]:
@@ -227,6 +256,7 @@ def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
         last = (path or flight_path(archive, None))[-1:]
         out["you"] = ({"name": last[0]["name"], "id": last[0]["id64"], "live": False, "t": last[0]["t"],
                        "x": last[0]["x"], "y": last[0]["y"], "z": last[0]["z"]} if last else None)
+    out["corridor"] = corridor(db, now)                 # H3 #2
     out["navroute"] = [{"name": h.get("name"), "x": _r(h["pos"][0]), "y": _r(h["pos"][1]),
                         "z": _r(h["pos"][2])} for h in live.get("navroute") or [] if h.get("pos")]
     # survey spheres
