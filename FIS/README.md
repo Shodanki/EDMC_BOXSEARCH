@@ -142,10 +142,12 @@ stay closed, allow pop-ups for the FIS page and click again.
 ### Themes
 
 The footer picks a theme for this browser (the tablet and the PC can differ):
-*standard*, *Federation console* (warm console colours), *Belt industrial*
-(worn metal, teal and brass), *Station era* (blue consoles) and *Next* with an
-accent colour of your own. A theme repaints the interface only - stars and
-planets keep their real colours. Changing it reloads the page.
+*standard*, *Federation console* (warm console colours, rounded panels and
+pill bars), *Belt industrial* (worn metal, teal and brass, notched plates with
+rivets and hazard stripes), *Station era* (blue consoles, phosphor glow and a
+fine grid) and *Next* with an accent colour of your own. A theme repaints the
+interface only - stars and planets keep their real colours. Changing it
+reloads the page.
 
 ### Display links and OBS
 
@@ -166,7 +168,8 @@ contains the access token - keep it out of the stream picture.
 | 4 | **GALAXY** | your flight path through the galaxy over time, the carrier's path and where it is now (with a pending jump), survey spheres with the status of every boxel, visited systems, notable finds; flat map or 3D with a replay of the flight path; starts on your system, a click moves the focus, a double click opens the system as a detail window; *copy name* copies the focused system for the game's galaxy map (on a tablet over the home network the browser may refuse the clipboard - then the name shows selected, to copy by hand) |
 | 5 | **PLANET INFO** | datasheet of a body: gravity, temperature, atmosphere, volcanism, materials, rings and hotspots, signals, species, genus forecast; opens on the body of your last fix; under each ring what your prospected rocks held there and what rocks of rings like it held at such hotspots, your tonnes per hour there and what to expect at its hotspots; GROUND MINING: what your Rhino rigs yielded here and on bodies of the same class, tonnes per rig and rigs per hour |
 | 6 | **ATLAS** | everything found, by kind - ring hotspots, body signals, materials picked up, finds on the ground, bio signals - nearest first, within a chosen distance; SYSTEMS lists the survey sphere by state (not visited, visited, surveyed, known to no online source, checked and not existing) and exports it as CSV or JSON |
-| 7 | **SHIP** | status panel (warning / caution / advisory lamps), schematic cutaway, power by priority, modules with integrity and ammunition, damage and function report, cargo and fuel |
+| 7 | **SHIP** | status panel (warning / caution / advisory lamps), schematic cutaway, power by priority, modules with integrity and ammunition, damage and function report, cargo and fuel; unsold data with a risk level (low / moderate from 50 M / high from 100 M Cr), first discoveries and first-footfall species named apart; data lost with the ship to redo (with more than ten systems a LOST DATA tab: copy a name, hide systems, items or everything beyond 100-1000 ly from the list) |
+| | **VEHICLE** | the SRV or Nomad out now, or the last trip: edition, state, its own tank and use, cargo and refined tonnes, position and heading with distance and direction to the ship, switches, bio scans and landings |
 | 8 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range (with the tritium in your ship and - from EDMC's Frontier data - in the carrier's hold, what you mined and the trip to your route's end), hold with its goods, finances, services - and the air wing: every ship in the hangar with role ratings (combat, mining, transport, exploration, passengers, search and rescue); docked at someone else's carrier: what its market buys (what you carry first, tritium next) and sells, from the market you opened; **known carriers** - also without a carrier of your own: the carriers you docked at, started a mission or community goal from, rode along with or saw in the FSS, with their last known system, how old that is and how far from you, what you started there and what their market bought when you last opened it. Mark the ones you want to find again with ☆ (and a note); favourites come first, get a ★ in SYSTEM's points of interest and on the GALAXY map. With a carrier of your own the known carriers have a tab of their own; each shows whether you may dock, the services it offered when you docked, its last market to unfold (with its date), the system name to copy - and *open system* when the plugin database knows that system's bodies |
 | 9 | **MINING** | everything about mining, tritium first: the session (yield per hour, limpets, best and last rock), tritium for the carrier (tank, in your ship, mined, delivered), the best hotspots for you (nearby hotspots ranked by your own tonnes per hour), ring hotspots near you, mining ships, goods with what selling them earned against the carrier's upkeep, every session so far |
 | 0 | **STATISTICS** | the game's own record of you (written at every login): ranks with progress, exploration, exobiology, mining, the carrier, wealth and time played - with the growth over 24 h, 7, 30 or 90 days; *learning status*: how many rocks, mining runs, rigs and analysed bodies the FIS has learnt from, and where it is still thin |
@@ -192,8 +195,10 @@ Notes on what the files allow:
   went silent (tablet asleep, Wi-Fi) reconnects within about 40 seconds.
 * The route uses the same filters as the plugin (read from EDMC's settings).
 * If one journal folder holds several commanders, the FIS shows the one who
-  logged in last. What rings and planets yield (prospecting, mining runs,
-  Rhino rigs, the bio model) is learnt from all of them together.
+  logged in last - with his own exploration (visited, scanned, mapped,
+  species); survey and GALAXY count for the main commander (settings). What
+  rings and planets yield (prospecting, mining runs, Rhino rigs, the bio
+  model) is learnt from all of them together.
 * What the FIS learns is counting, averages and ranges from your own data -
   a value resting on few rocks, runs or rigs is marked as thin.
 * Known carriers come from your own journals - a carrier's position is
@@ -203,6 +208,9 @@ Notes on what the files allow:
   in `favourites.json` next to `fis.ini` (personal - keep it out of anything
   you share). Starring works from the tablet too (with the home-network
   token); the settings stay on the game PC.
+* Entries you hide from the list of data lost with the ship are kept per
+  commander in `lost_hidden.json` next to `fis.ini` - like `favourites.json`
+  keep it when you update.
 
 ## Files
 
