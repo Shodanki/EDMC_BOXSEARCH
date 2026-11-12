@@ -1303,6 +1303,15 @@ class SystemDB:
         self.cx.commit()
         return n
 
+    def lost_of_body(self, fid: Optional[str], sys_id64: int, body_id: Optional[int]) -> List[str]:
+        """What of one body this commander lost in a crash and has not redone
+        ("scan", "map", "bio:<species>"); [] without a commander or loss."""
+        if not fid or body_id is None:
+            return []
+        r = self.cx.execute("SELECT lost_what FROM cmdr_bodies WHERE fid=? AND sys_id64=? "
+                            "AND body_id=?", (fid, sys_id64, body_id)).fetchone()
+        return self._lost_list(r["lost_what"]) if r is not None else []
+
     def lost_summary(self, fid: Optional[str]) -> List[Dict[str, Any]]:
         """Systems with data lost in a crash and not redone yet, newest first."""
         if not fid:
@@ -3090,6 +3099,10 @@ def _selftest_cmdr(d: str, check) -> int:
     check(lost["Cm Delta"]["bio"] == ["Stratum Tectonicas"] and lost["Cm Delta"]["scan"] == 1
           and "Cm Alpha" in lost,              # scanned there earlier, never sold
           "crash: lost summary per system")
+    check(db.lost_of_body("F1", 504, 2) == ["bio:Stratum Tectonicas", "map"]
+          and db.lost_of_body("F1", 504, 1) == [] and db.lost_of_body(None, 504, 2) == []
+          and db.lost_of_body("F2", 504, 2) == [],
+          "crash: lost marks of one body, for that commander only")
     check(db.bio_training_rows() and any("Tectonicas" in (r["bio_species"] or "")
                                          for r in db.bio_training_rows()),
           "crash: the shared knowledge (bio model) keeps what was found")

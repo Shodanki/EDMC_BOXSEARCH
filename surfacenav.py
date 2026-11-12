@@ -14,8 +14,10 @@ vehicle parked, exobiology samples, codex finds, screenshots ...):
                    ship, species logged but not analysed (with the number of
                    samples taken), and points worth coming back to
   bearing_deg()    initial great-circle bearing from one fix to another
-  compass_lines()  the cockpit-overlay block: direction relative to your
-                   heading and distance for each of those points
+  compass_lines()  the cockpit-overlay block: distance, absolute course
+                   ("brg 255", to compare with the game's compass) and the
+                   turn relative to your heading for each of those points;
+                   species lost in a crash say "lost - redo", not "done"
 
 Display only. Positions come from the game's own Status.json, which reports
 latitude/longitude on the surface and in orbital cruise alike - so the same
@@ -81,6 +83,15 @@ def direction_text(bearing: float, heading: Optional[float]) -> str:
     if rel < 0:
         return ("<< " if a > 90 else "< ") + n
     return n + (" >>" if a > 90 else " >")
+
+
+def course_text(bearing: float, heading: Optional[float]) -> str:
+    """Absolute course to the point ("brg 255", 0 = north, as the game's
+    compass counts it) and, with a heading, the turn to it: "brg 255 < 30"."""
+    brg = "brg %03d" % (round(bearing) % 360)
+    if heading is None:
+        return brg
+    return "%s %s" % (brg, direction_text(bearing, heading))
 
 
 def fmt_dist(m: float) -> str:
@@ -220,11 +231,17 @@ def bio_summary(state: Dict[str, Any], sig_bio: Optional[int],
 def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
                   sig_bio: Optional[int] = None, genera: Sequence[str] = (),
                   colours: Optional[Dict[str, str]] = None, limit: int = 6,
-                  orbit: bool = False) -> List[Line]:
+                  orbit: bool = False, lost: Sequence[str] = ()) -> List[Line]:
     """
     The NAV block: one line per point, nearest first within its group -
-    parked SRV, parked ship, unfinished species, sites. Empty when the body
-    holds nothing to point at.
+    parked SRV, parked ship, unfinished species, species lost in a crash,
+    sites. Each with the distance, the absolute course and the turn to it.
+    Empty when the body holds nothing to point at.
+
+    lost  what of this body went down with the ship and is not redone yet
+          (cmdr_bodies.lost_what: "scan", "map", "bio:<species>"). A lost
+          species is not "done" - it counts as "lost - redo" and points to
+          where it was sampled, until a new analysis clears the mark.
     """
     col = colours or {}
     c_head, c_data = col.get("head", "#3EF2E0"), col.get("data", "#7CFF6B")
@@ -239,7 +256,8 @@ def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
     def entry(label: str, plat: float, plon: float, colour: str) -> Tuple[float, Line]:
         d = surface_distance_m(lat, lon, plat, plon, radius)
         b = bearing_deg(lat, lon, plat, plon)
-        return d, ("%-24s %8s  %s" % (label[:24], fmt_dist(d), direction_text(b, hdg)), colour)
+        # 19 + 1 + 7 + 1 + 16 = 44 characters, like the other overlay blocks
+        return d, ("%-19s %7s %s" % (label[:19], fmt_dist(d), course_text(b, hdg)), colour)
 
     rows: List[Line] = []
     if st["parked"] is not None:
@@ -255,29 +273,39 @@ def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
     for s in summ["in_progress"]:
         if s["points"]:
             plat, plon = s["points"][-1]
-            bio.append(entry("%s %d/3" % (s["species"][:19], s["samples"]), plat, plon, c_new))
+            bio.append(entry("%s %d/3" % (s["species"][:15], s["samples"]), plat, plon, c_new))
     rows += [l for _d, l in sorted(bio, key=lambda t: t[0])]
+    # lost in a crash and not started again: back to where it was sampled
+    busy = {s["species"] for s in summ["in_progress"]}
+    lost_sp = {w[4:] for w in lost if isinstance(w, str) and w.startswith("bio:")} - busy
+    gone = []
+    for s in st["species"]:
+        if s["species"] in lost_sp and s["points"]:
+            plat, plon = s["points"][-1]
+            gone.append(entry("%s LOST" % s["species"][:14], plat, plon, c_warn))
+    rows += [l for _d, l in sorted(gone, key=lambda t: t[0])]
     # a codex entry of a species still being sampled is the same point as
     # its sample line; one of an analysed species stays (Brain Trees are
     # worth coming back to for their materials) but steps back in colour
-    busy = {s["species"] for s in summ["in_progress"]}
-    done = {s["species"] for s in st["species"] if s["analysed"]}
+    done = {s["species"] for s in st["species"] if s["analysed"]} - lost_sp
     sites = [entry(s["label"], s["lat"], s["lon"],
                    c_dim if s["kind"] == "screenshot" or s["label"] in done else c_data)
              for s in _merge_sites(st["sites"], radius) if s["label"] not in busy]
     rows += [l for _d, l in sorted(sites, key=lambda t: t[0])]
 
     bio_txt = ""
-    if summ["analysed"] or summ["in_progress"] or sig_bio:
+    if summ["analysed"] or summ["in_progress"] or sig_bio or lost_sp:
         # species, not signals: one Brain Trees signal holds several species
-        bio_txt = "bio %d done" % summ["analysed"]
+        bio_txt = "bio %d done" % len(done)
         if summ["in_progress"]:
             bio_txt += ", %d open" % len(summ["in_progress"])
+        if lost_sp:
+            bio_txt += ", %d lost - redo" % len(lost_sp)
         if summ["open_genera"]:
             bio_txt += " | not found: " + ", ".join(summ["open_genera"])[:40]
         elif sig_bio and not genera:
             bio_txt += " | %d signal%s" % (sig_bio, "" if sig_bio == 1 else "s")
-    if not rows and not summ["open_genera"]:
+    if not rows and not summ["open_genera"] and not lost_sp:
         return []
     head = "%s  %s" % ("KNOWN POINTS" if orbit else "NAV", bio_txt)
     out: List[Line] = [(head.rstrip(), c_head)]
@@ -294,6 +322,10 @@ def _selftest() -> None:
     assert direction_text(60, 90) == "< 30"
     assert direction_text(200, 90) == "110 >>"
     assert direction_text(275, 90) == "v behind"
+    assert course_text(255.4, None) == "brg 255"
+    assert course_text(255.0, 285.0) == "brg 255 < 30", course_text(255.0, 285.0)
+    assert course_text(359.7, 0.0) == "brg 000 ^ ahead", course_text(359.7, 0.0)
+    assert course_text(7.0, 0.0) == "brg 007 ^ ahead"
     marks = [
         {"ts": "1", "kind": "touchdown", "label": "b", "detail": "srv", "lat": 0.0, "lon": 0.0},
         {"ts": "2", "kind": "srv_parked", "label": "SRV", "detail": "Nomad", "lat": 0.0, "lon": 0.0},
@@ -313,6 +345,45 @@ def _selftest() -> None:
     assert "not found: Bacterium" in lines[0][0], lines
     assert not any(l[0].startswith("Roseum Brain Tree ") and "/3" not in l[0]
                    for l in lines), lines
+    # every point names its absolute course next to the turn
+    assert all(" brg " in l[0] for l in lines[1:]), lines
+    assert all(len(l[0]) <= 44 for l in lines[1:]), lines   # the points; the head may run on
+    assert len(compass_lines({"lat": 0.0, "lon": 0.0, "heading": 0.0}, [
+        {"ts": "1", "kind": "codex", "label": "Very long find name of a site", "detail": None,
+         "lat": 0.0, "lon": -1.0}], 400000.0)[1][0]) <= 44
+    nomad = lines[1][0]
+    assert nomad.endswith("brg 270 < 90"), nomad
+    # lost in a crash (screenshot 12.11.: "bio 2 done" for two lost species)
+    lm = [
+        {"ts": "1", "kind": "bio_log", "label": "Stratum Tectonicas", "detail": "Stratum",
+         "lat": 0.0, "lon": 0.01},
+        {"ts": "2", "kind": "bio_analyse", "label": "Stratum Tectonicas", "detail": "Stratum",
+         "lat": 0.0, "lon": 0.01},
+        {"ts": "3", "kind": "bio_log", "label": "Bacterium Cerbrus", "detail": "Bacterium",
+         "lat": 0.01, "lon": 0.0},
+        {"ts": "4", "kind": "bio_analyse", "label": "Bacterium Cerbrus", "detail": "Bacterium",
+         "lat": 0.01, "lon": 0.0},
+        {"ts": "5", "kind": "codex", "label": "Crystalline Shards", "detail": "Shards",
+         "lat": -0.01, "lon": 0.0},
+    ]
+    here = {"lat": 0.0, "lon": 0.0, "heading": 90}
+    ok = compass_lines(here, lm, 400000.0, sig_bio=2, orbit=True)
+    assert ok[0][0].startswith("KNOWN POINTS  bio 2 done"), ok
+    lost = ["map", "bio:Stratum Tectonicas", "bio:Bacterium Cerbrus"]
+    bad = compass_lines(here, lm, 400000.0, sig_bio=2, orbit=True, lost=lost)
+    assert bad[0][0].startswith("KNOWN POINTS  bio 0 done, 2 lost - redo"), bad
+    st_row = [l for l in bad if l[0].startswith("Stratum Tecton LOST")]
+    assert st_row and "brg 090 ^ ahead" in st_row[0][0], bad
+    assert st_row[0][1] == "#FFB23E", st_row
+    # one redo started: that species is open again (n/3), the other still lost
+    lm.append({"ts": "6", "kind": "bio_log", "label": "Stratum Tectonicas",
+               "detail": "Stratum", "lat": 0.0, "lon": 0.02})
+    redo = compass_lines(here, lm, 400000.0, sig_bio=2, orbit=True, lost=lost)
+    assert redo[0][0].startswith("KNOWN POINTS  bio 0 done, 1 open, 1 lost - redo"), redo
+    assert any(l[0].startswith("Stratum Tectoni 1/3") for l in redo), redo
+    # a lost species without any position still shows in the head
+    assert compass_lines(here, [], 400000.0, lost=["bio:Aleoida Gravis"])[0][0] \
+        == "NAV  bio 0 done, 1 lost - redo"
     marks.append({"ts": "5", "kind": "embark", "label": "SRV", "detail": None,
                   "lat": 0.0, "lon": 0.0})
     assert body_state(marks)["parked"] is None

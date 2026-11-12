@@ -263,6 +263,49 @@ with tempfile.TemporaryDirectory() as d:
                         "StarPos": [1.0, 2.0, 3.0], "timestamp": "2026-11-11T07:00:05Z"}, {})
     check(ST.cur_id64 == 815 and not ST.awaiting_position,
           "the new commander's Location sets the system")
+
+    # 12) overlay KNOWN POINTS / NAV (4.9): a species lost in a crash is not
+    #     "done" - "lost - redo"; picked up within NAV_LOST_S without a new mark
+    ev = ST.db.ingest_journal_event
+    ST.db.set_meta(load.CMDR_READY, "2026-11-12T00:00:00Z")
+    ev({"event": "Commander", "FID": "F9", "Name": "Gamma", "timestamp": "2026-11-12T10:00:00Z"})
+    ev({"event": "FSDJump", "StarSystem": "Nav Alpha", "SystemAddress": 601,
+        "StarPos": [5.0, 0.0, 0.0], "timestamp": "2026-11-12T10:01:00Z"})
+    ev({"event": "Scan", "ScanType": "Detailed", "StarSystem": "Nav Alpha", "SystemAddress": 601,
+        "BodyName": "Nav Alpha 1", "BodyID": 1, "PlanetClass": "Rocky body",
+        "DistanceFromArrivalLS": 10.0, "Radius": 400000.0, "timestamp": "2026-11-12T10:02:00Z"})
+    ev({"event": "FSSBodySignals", "SystemAddress": 601, "BodyID": 1, "BodyName": "Nav Alpha 1",
+        "Signals": [{"Type": "$SAA_SignalType_Biological;", "Count": 1}]})
+    ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 601, "Body": 1,
+        "Species_Localised": "Stratum Tectonicas", "Genus_Localised": "Stratum",
+        "timestamp": "2026-11-12T10:20:00Z"})
+    ev({"event": "Died", "timestamp": "2026-11-12T10:30:00Z"})
+    shown = []
+
+    class FakeOverlay:
+        enabled = True
+
+        def show_nav(self, lines, seconds=4):
+            shown.append(list(lines))
+            return True
+
+    ST.overlay, ST.cur_id64, ST._nav_cache, ST._nav_shown = FakeOverlay(), 601, None, 0.0
+    pos = {"body": "Nav Alpha 1", "lat": 0.0, "lon": 0.0, "heading": 0.0}
+    t0 = 1800000000.0
+    with mock.patch.object(load, "cfg_bool", lambda k, d: True):
+        load._nav_overlay(pos, 400000.0, t0, False)      # in orbital cruise
+        head = shown[-1][0][0] if shown else None
+        check(head == "KNOWN POINTS  bio 0 done, 1 lost - redo | 1 signal",
+              "overlay KNOWN POINTS: species lost in the crash -> 'lost - redo' (%r)" % head)
+        ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 601, "Body": 1,
+            "Species_Localised": "Stratum Tectonicas", "Genus_Localised": "Stratum",
+            "timestamp": "2026-11-12T11:20:00Z"})
+        n = len(shown)
+        load._nav_overlay(pos, 400000.0, t0 + load.NAV_LOST_S + 1, True)
+        check(ST._nav_cache is not None and ST._nav_cache[4] == ["scan"]
+              and not any("lost" in blk[0][0] for blk in shown[n:]),
+              "overlay NAV: redone -> no longer lost (%r)" % (ST._nav_cache or [None] * 5)[4])
+    ST.overlay = None
     ST.db.close()
 
 print("failures: %d" % fails)

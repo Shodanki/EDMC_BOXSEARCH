@@ -186,7 +186,7 @@ class State:
         self.mine = miningstat.MiningTracker()          # overlay mining block
         self._mine_shown = 0.0
         self._mine_drawn = False
-        self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera)
+        self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera, lost)
         self.last_dest_id64: Optional[int] = None
 
         self.sphere_id: Optional[int] = None
@@ -3451,6 +3451,16 @@ def _surface_status(entry: Dict[str, Any]) -> None:
 
 
 NAV_EVERY_S = 1.0         # compass refresh while a position is reported
+NAV_LOST_S = 30.0         # how often the compass looks at the loss marks again
+
+
+def _nav_lost(sys_id64: int, body_id: Optional[int]) -> List[str]:
+    """Loss marks of this body for the commander playing (caller holds ST.lock)."""
+    try:
+        return ST.db.lost_of_body(ST.db.view_fid(CURRENT), sys_id64, body_id)
+    except Exception:
+        logger.debug("nav: lost marks failed", exc_info=True)
+        return []
 
 
 def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> None:
@@ -3465,19 +3475,21 @@ def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> N
             or not cfg_bool(CFG["overlay_nav"], True) or now - ST._nav_shown < NAV_EVERY_S):
         return
     ST._nav_shown = now
-    key = (ST.cur_id64, pos["body"], ST.db.marks_rev)
+    # a crash writes no surface mark: look at the loss marks twice a minute
+    key = (ST.cur_id64, pos["body"], ST.db.marks_rev, int(now // NAV_LOST_S))
     c = ST._nav_cache
     if c is None or c[0] != key:
         with ST.lock:
             marks = [dict(m) for m in ST.db.marks_of(ST.cur_id64, pos["body"])]
-            r = ST.db.cx.execute("SELECT sig_bio, genuses FROM bodies WHERE sys_id64=? "
-                                 "AND name=?", (ST.cur_id64, pos["body"])).fetchone()
+            r = ST.db.cx.execute("SELECT body_id, sig_bio, genuses FROM bodies WHERE "
+                                 "sys_id64=? AND name=?", (ST.cur_id64, pos["body"])).fetchone()
+            lost = _nav_lost(ST.cur_id64, r["body_id"] if r else None)
         genera = [g for g in ((r["genuses"] if r else None) or "").split(",") if g]
-        c = ST._nav_cache = (key, marks, r["sig_bio"] if r else None, genera)
+        c = ST._nav_cache = (key, marks, r["sig_bio"] if r else None, genera, lost)
         _bio_resume(pos["body"], marks)
     from overlay import COL
     lines = surfacenav.compass_lines(pos, c[1], radius, sig_bio=c[2], genera=c[3],
-                                     colours=COL, orbit=not low)
+                                     colours=COL, orbit=not low, lost=c[4])
     if lines:
         ov.show_nav(lines, seconds=4)
 
