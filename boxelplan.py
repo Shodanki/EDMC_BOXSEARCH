@@ -36,11 +36,18 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from procgen import (MASSCODES, boxel_center, boxel_index_of_coords,
-                     boxel_key_of, boxel_labels,
-                     boxel_size, boxel_prefix, boxels_in_sphere,
-                     ha_regions_near, id64_of_slot, make_name, parse_name)
-from sysdb import SystemDB
+if __package__:     # inside the plugin package (EDMC)
+    from .procgen import (MASSCODES, boxel_center, boxel_index_of_coords,
+                          boxel_key_of, boxel_labels,
+                          boxel_size, boxel_prefix, boxels_in_sphere,
+                          ha_regions_near, id64_of_slot, make_name, parse_name)
+    from .sysdb import SystemDB
+else:               # on its own: the self test, the FIS
+    from procgen import (MASSCODES, boxel_center, boxel_index_of_coords,
+                         boxel_key_of, boxel_labels,
+                         boxel_size, boxel_prefix, boxels_in_sphere,
+                         ha_regions_near, id64_of_slot, make_name, parse_name)
+    from sysdb import SystemDB
 
 K_NEW = "new"
 K_GAP = "gap"

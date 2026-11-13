@@ -92,7 +92,8 @@ def _ammo_full(archive: fl.Archive) -> Dict[tuple, int]:
 
 
 def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str, db: Any = None,
-                     now: Optional[float] = None, lost_hidden: Any = None) -> Dict[str, Any]:
+                     now: Optional[float] = None, lost_hidden: Any = None,
+                     unsold_limits: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
     now = time.time() if now is None else now
     st = live.get("status") or {}
     flags, flags2 = int(st.get("flags") or 0), int(st.get("flags2") or 0)
@@ -243,7 +244,7 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
         "balance": st.get("balance"),
     }
     out["target"] = build_target(live, db)
-    out["unsold"] = _unsold(archive)
+    out["unsold"] = _unsold(archive, unsold_limits)
     if out["unsold"] is not None and db is not None and hasattr(db, "lost_summary"):
         try:
             # where data went down with the ship and is not redone yet - all
@@ -263,16 +264,16 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
 _UNSOLD_CACHE: Dict[str, Any] = {"key": None, "val": None}
 
 
-def _unsold(archive: Any) -> Optional[Dict[str, Any]]:
-    """M4, worked out again only when the journals changed (the SHIP sheet
-    asks about once a second)."""
+def _unsold(archive: Any, limits: Optional[Dict[str, int]] = None) -> Optional[Dict[str, Any]]:
+    """M4, worked out again only when the journals or the commander's limits
+    changed (the SHIP sheet asks about once a second)."""
     from . import unsold
     try:
         archive.refresh()
-        key = (id(archive), getattr(archive, "rev", None))
+        key = (id(archive), getattr(archive, "rev", None), tuple(sorted((limits or {}).items())))
         if key[1] is not None and _UNSOLD_CACHE["key"] == key:
             return _UNSOLD_CACHE["val"]
-        val = unsold.build_unsold(archive.events(), archive.organic_values())
+        val = unsold.build_unsold(archive.events(), archive.organic_values(), limits)
         _UNSOLD_CACHE.update(key=key, val=val)
         return val
     except Exception:            # a broken journal line must not cost the sheet

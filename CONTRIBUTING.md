@@ -41,13 +41,15 @@ The rules were checked against EDMC 6.1.2 on 13.11.2026. When EDMC releases a ne
   * `plugin_stop` cleans up: it clears the overlay, closes the windows, stops the gateway and closes the database;
   * every hook catches its own errors and logs them, so nothing escapes to EDMC.
 * **Only documented imports** from EDMC: `config` (for the plugin's own `shboxsearch_*` settings), `theme`, `myNotebook`, `l10n`, `monitor`, `companion`, `plug.show_error`, `timeout_session` and `ttkHyperlinkLabel`. Read `config` with `get_str` / `get_int` / `get_bool` and a `default=`.
-* **Tk only on the main thread.** A background thread never touches a widget, a Tk variable or `after()`. It hands its update to `load._ui()`, which queues it and sends the one allowed call: `event_generate()` to the top-level window. While EDMC shuts down (`config.shutting_down`, a property) nothing is sent. `tests/ui_threads.py` checks this statically for every function a worker can reach. Keep it green.
-* **Never block the main thread.** Anything that may take more than a moment goes through `_run_async`. That includes network requests, journal replays, reading EDDiscovery and scanning files. Hold the database lock only in short slices.
+* **Tk only on the main thread.** A background thread never touches a widget, a Tk variable or `after()`. It hands its update to `uithread._ui()`, which queues it and sends the one allowed call: `event_generate()` to the top-level window. While EDMC shuts down (`config.shutting_down`, a property) nothing is sent. `tests/ui_threads.py` checks this statically for every function a worker can reach, across all modules. Keep it green.
+* **Never block the main thread.** Anything that may take more than a moment goes through `uithread._run_async`. That includes network requests, journal replays, reading EDDiscovery and scanning files. Hold the database lock only in short slices.
 * **Logging:**
   * use the plugin's EDMC logger (`EDMarketConnector.<folder name>`), never `print()` in plugin code;
-  * helper modules use `logging.getLogger(__name__)`, and `load.py` routes them to the plugin logger;
+  * helper modules use `logging.getLogger(__name__)`, and `state.py` routes them to the plugin logger;
   * log messages are in English.
 * The folder name stays importable (`SHBOXSEARCH`, no hyphen or dot), and every setting key starts with `shboxsearch_`.
+* **Module names are shared by all plugins** (PLUGINS.md, "Common resources"). The plugin never puts its folder on `sys.path`; its modules import each other relatively, as members of the plugin's package (`from . import netgate`). The helpers keep a plain import only for running on their own (`if __package__: ... else: ...`). `tests/package_import.py` checks both of EDMC's ways to load a plugin.
+* **Where code lives:** `load.py` is only the layer EDMC talks to. The shared state and settings are in `state.py`; each part of the plugin has its own module (journal hooks, planning, survey, cockpit, panel, windows, settings page). A new feature gets a new module. A name from another module is used as `module.name`, so tests can replace it and import cycles stay harmless.
 
 ## 3. Least privilege
 
@@ -74,20 +76,21 @@ The rules were checked against EDMC 6.1.2 on 13.11.2026. When EDMC releases a ne
 ## 5. Code standards
 
 * **PEP 8** as EDMC checks it: `python -m flake8` with the project's `.flake8` (120 characters, third-party files excluded). CI runs it. New code adds no finding.
-* **Complexity:** EDMC's limit is 15 (`--max-complexity 15 --select C901`). It is not enforced yet, because 49 functions are above it. A function that is touched must not get more complex. New functions stay below the limit.
-* **Readable for a reviewer:** a docstring for every hook, every module and every public function you add or change. Comments explain *why*, not what. Keep files and functions small; new features go into their own module instead of `load.py`.
+* **Complexity:** EDMC's limit is 15 (`--max-complexity 15 --select C901`). Every new function keeps it; the older functions above it (helper modules and the FIS, listed in `tests/complexity.py`) may not get more complex, and leave the list once they are split. CI enforces both.
+* **Readable for a reviewer:** a docstring for every hook, every module and every public function you add or change. Comments explain *why*, not what. Keep files and functions small; new features go into their own module.
+* **Splitting code without changing it:** a refactoring that only moves code is checked against the code before it - same tests, and where a window draws, the same widget calls with Tk replaced by a recorder.
 * **Tests:** every fix comes with a test that fails without it, and every CI step stays green:
   * the module self tests;
   * `tests/*.py`;
   * `python -m unittest discover` in `FIS/`;
-  * flake8.
+  * flake8 and `tests/complexity.py`.
 
   A change the browser shows is also checked in a browser.
 * Python 3.13 is the interpreter EDMC ships (32-bit). Do not use language features newer than that.
 
 ## 6. Versions and releases
 
-* **SemVer, strict:** `VERSION` in `load.py` and `__version__` in `FIS/fis/__init__.py` are the same `Major.Minor.Patch`. Fixes raise the patch version, features the minor version, and only fundamental changes the major version. Tags carry a leading `v` (`v4.10.1`); the registry's `pluginVer` does not.
+* **SemVer, strict:** `VERSION` in `state.py` (re-exported by `load.py`) and `__version__` in `FIS/fis/__init__.py` are the same `Major.Minor.Patch` (`tests/package_import.py` checks it). Fixes raise the patch version, features the minor version, and only fundamental changes the major version. Tags carry a leading `v` (`v4.10.1`); the registry's `pluginVer` does not.
 * **One commit per fix or feature.** The message says what and why. The version bump and the README section *What changed* come last, in a release commit of their own.
 * A release is merged to `main` first. Then it is tagged and published with the ZIP from `git archive` of the merge, with its SHA-256 and a VirusTotal check.
 * **AI disclosure:** AI-assisted commits end with the `Co-Authored-By` trailer. Release notes end with the footer from [AI_TRANSPARENCY.md](AI_TRANSPARENCY.md). `AI_TRANSPARENCY.md` and `ai-disclosure.json` are updated before any AI feature runs inside the plugin (none does today).

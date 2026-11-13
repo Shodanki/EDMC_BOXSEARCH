@@ -10,4 +10,17 @@ NavRoute.json and the other state files the game writes. No input to the game,
 no AI at runtime, Python standard library only.
 """
 
-__version__ = "4.10.1"      # released together with the plugin
+__version__ = "4.11.0"      # released together with the plugin
+
+# The FIS reads EDMC's config.toml with tomllib: Python 3.11 or newer
+MIN_PYTHON = (3, 11)
+
+
+def python_problem(version=None) -> str:
+    """Why this Python cannot run the FIS, or "" when it can."""
+    import sys
+    v = tuple((version or sys.version_info)[:2])
+    if v >= MIN_PYTHON:
+        return ""
+    return ("SHBOX FIS needs Python %d.%d or newer (python.org) - this is Python %d.%d."
+            % (MIN_PYTHON + v))

@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import glob
 import json
+import math
 import os
 import queue
 import threading
@@ -23,6 +24,21 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from . import combat
+
+
+def star_pos(v: Any) -> Optional[List[float]]:
+    """A StarPos the FIS can use: three finite numbers, else None - the
+    same rule as the plugin's procgen.star_pos (4.9.1). The game always
+    writes three numbers; a damaged journal line must not break a view."""
+    if not isinstance(v, (list, tuple)) or len(v) != 3:
+        return None
+    try:
+        out = [float(c) for c in v]
+    except (TypeError, ValueError):
+        return None
+    if any(isinstance(c, bool) for c in v) or not all(math.isfinite(c) for c in out):
+        return None
+    return out
 
 
 def parse_ts(stamp: Optional[str]) -> Optional[float]:
@@ -232,7 +248,7 @@ class LiveTracker:
                 new_id = e.get("SystemAddress")
                 changed = new_id != s["system"].get("id64")
                 s["system"] = {"name": e.get("StarSystem"), "id64": new_id,
-                               "pos": e.get("StarPos"), "ts": ts}
+                               "pos": star_pos(e.get("StarPos")), "ts": ts}
                 if ev == "FSDJump":
                     if e.get("FuelLevel") is not None:
                         s["fuel"]["main"] = e.get("FuelLevel")
@@ -444,7 +460,7 @@ class LiveTracker:
     @staticmethod
     def _hops(route: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return [{"name": h.get("StarSystem"), "id64": h.get("SystemAddress"),
-                 "pos": h.get("StarPos"), "star_class": h.get("StarClass")}
+                 "pos": star_pos(h.get("StarPos")), "star_class": h.get("StarClass")}
                 for h in route]
 
     # ------------------------------------------------------------ status

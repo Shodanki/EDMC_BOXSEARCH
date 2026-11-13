@@ -33,7 +33,10 @@ import os
 import time
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
-from procgen import star_pos
+if __package__:     # inside the plugin package (EDMC)
+    from .procgen import star_pos
+else:               # on its own: the self test, the FIS
+    from procgen import star_pos
 
 __all__ = ["journal_files", "newest_location", "last_body", "approached_bodies", "WorkMeter",
            "replay_work", "replay_fuel", "read_events"]

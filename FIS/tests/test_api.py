@@ -606,6 +606,46 @@ class TestSettings(_Base):
         self.assertIn("language = de", ini)
         self.assertIn("open_browser = false", ini)
 
+    def test_internal_error_tells_no_details(self):
+        """N10: a failure answers 500 without the exception's text (paths,
+        names) - that stays in the FIS console."""
+        from unittest import mock
+        from fis import server
+        boom = RuntimeError(r"C:\Users\Someone\secret.sqlite is locked")
+        with mock.patch.object(server.Handler, "_api", side_effect=boom), \
+                mock.patch("traceback.print_exc"):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                urllib.request.urlopen(self.base + "/api/health", timeout=5)
+        body = e.exception.read().decode("utf-8", "replace")
+        e.exception.close()
+        self.assertEqual(e.exception.code, 500)
+        self.assertIn("internal error", body)
+        self.assertNotIn("secret", body)
+        self.assertNotIn("RuntimeError", body)
+
+    def test_unsold_limits(self):
+        """4.11: the UNSOLD DATA limits are read, saved, clamped; a bad value
+        changes nothing at all, not even the other fields of the request."""
+        hdr = {"X-FIS-Settings": "1", "Origin": self.base}
+        with urllib.request.urlopen(self.base + "/api/settings", timeout=5) as r:
+            d = json.loads(r.read())
+        self.assertEqual(d["unsold_defaults"], {"sell_mcr": 50, "sell_systems": 100,
+                                                "moderate_mcr": 50, "high_mcr": 100})
+        with self._post({"unsold": {"moderate_mcr": "200", "high_mcr": 150, "sell_mcr": 300,
+                                    "sell_systems": 0}}, hdr) as r:
+            d = json.loads(r.read())
+        # high never below moderate, at least 1 system
+        self.assertEqual(d["unsold"], {"sell_mcr": 300, "sell_systems": 1, "moderate_mcr": 200, "high_mcr": 200})
+        with open(self.cfg.ini_path, encoding="utf-8") as fh:
+            ini = fh.read()
+        self.assertIn("unsold_moderate_mcr = 200", ini)
+        lang = self.cfg.language
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            self._post({"language": "en" if lang == "de" else "de", "unsold": {"high_mcr": "lots"}}, hdr)
+        self.assertEqual(e.exception.code, 400)
+        e.exception.close()
+        self.assertEqual((self.cfg.unsold["high_mcr"], self.cfg.language), (200, lang))
+
 
 class TestLanToken(_Base):
     @classmethod

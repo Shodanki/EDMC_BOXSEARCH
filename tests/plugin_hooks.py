@@ -22,6 +22,7 @@ changing behaviour:
 import os
 import sys
 import tempfile
+import time
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,23 +35,24 @@ except ImportError:
     for m in ("tkinter", "tkinter.filedialog", "tkinter.ttk"):
         sys.modules[m] = mock.MagicMock()
 
-import load  # noqa: E402
-from sysdb import SystemDB  # noqa: E402
-from boxelplan import Planner  # noqa: E402
+import plugin_pkg  # noqa: E402
+load = plugin_pkg.import_plugin()
+from SHBOXSEARCH import boxelplan, cockpit, panel, planning, routewin, state, survey, uithread, updater  # noqa: E402
+from SHBOXSEARCH.sysdb import SystemDB  # noqa: E402
+from SHBOXSEARCH.boxelplan import Planner  # noqa: E402
 
 cfg = {}
-load.cfg_bool = lambda k, d=False: cfg.get(k, d)
-load.cfg_int = lambda k, d=0: d
-load.cfg_str = lambda k, d="": cfg.get(k, d)
-load._set_status = lambda m: None
-load._ui = lambda f, *a, **k: None
+plugin_pkg.use_settings(cfg)
+panel._set_status = lambda m: None
+uithread._ui = lambda f, *a, **k: None
 calls = []
-for name in ("_request_route", "_maybe_extend", "_update_route_targets",
-             "_maybe_route_check", "_recheck_route", "_route_auto_tick"):
-    setattr(load, name, (lambda n: lambda *a, **k: calls.append(n))(name))
-load._overlay_briefing = lambda kind, *a, **k: calls.append("briefing " + kind)
-load._run_async = lambda fn, *a, label="", **kw: calls.append("async " + label)
-ST = load.ST
+for mod, name in ((planning, "_request_route"), (planning, "_maybe_extend"),
+                  (planning, "_update_route_targets"), (cockpit, "_maybe_route_check"),
+                  (survey, "_recheck_route"), (routewin, "_route_auto_tick")):
+    setattr(mod, name, (lambda n: lambda *a, **k: calls.append(n))(name))
+cockpit._overlay_briefing = lambda kind, *a, **k: calls.append("briefing " + kind)
+uithread._run_async = lambda fn, *a, label="", **kw: calls.append("async " + label)
+ST = state.ST
 ST.overlay = None
 
 fails = 0
@@ -63,7 +65,7 @@ def check(ok, what):
 
 
 NOW = [1_800_000_000.0]
-load.time.time = lambda: NOW[0]          # load.py and sysdb share the time module
+time.time = lambda: NOW[0]               # the plugin and sysdb share the time module
 
 
 def je(entry, cmdr="Tester", state=None):
@@ -152,6 +154,25 @@ try:
         check(ST.cur_system == "Hook D", "CarrierJump moves us")
         check(ST.carrier and ST.carrier["system"] == "Hook D",
               "CarrierJump aboard the own carrier moves the carrier (was stale up to 4.9)")
+        # 5b) the dispatch table (4.11) holds exactly the events of the old
+        #     if/elif chain; Docked counts only at a fleet carrier
+        from SHBOXSEARCH import journal
+        chain_410 = {"FSDJump", "Location", "CarrierJump", "CarrierLocation", "CarrierStats",
+                     "Docked", "ApproachBody", "Touchdown", "Loadout", "StartUp", "Liftoff",
+                     "Scan", "SAAScanComplete", "SAASignalsFound", "FSSBodySignals",
+                     "FSSDiscoveryScan", "FSSAllBodiesFound", "ScanOrganic", "FSDTarget"}
+        check(set(journal._HANDLERS) == chain_410,
+              "dispatch table = the events of the 4.10 chain (%s)"
+              % sorted(set(journal._HANDLERS) ^ chain_410))
+        seen_status = []
+        panel._set_status = seen_status.append
+        je({"event": "Docked", "StationType": "Coriolis", "StationName": "Hook Port",
+            "StarSystem": "Hook D", "SystemAddress": 1004})
+        je({"event": "Docked", "StationType": "FleetCarrier", "StationName": "K7Q-1HT",
+            "StarSystem": "Hook D", "SystemAddress": 1004})
+        check(seen_status == ["carrier: Hook D"],
+              "Docked: a station changes nothing, the own carrier is refreshed (%r)" % seen_status)
+        panel._set_status = lambda m: None
 
         # 6) a broken event never escapes the hook
         try:
@@ -170,11 +191,11 @@ try:
         calls.clear()
         je({"event": "FSDTarget", "Name": "Hook B", "SystemAddress": 1002, "StarClass": "K"})
         check("briefing target" in calls, "FSDTarget asks for a target briefing")
-        bi = load._briefing_info("target", "Hook B", 1002, "K")
+        bi = cockpit._briefing_info("target", "Hook B", 1002, "K")
         check(bi.get("visited") and bi.get("scoopable") and bi["level"] == "unchecked"
               and bi["known_sources"] == [],
               "briefing: Hook B visited, scoopable, in no data frame (no source asked)")
-        bi = load._briefing_info("target", "Nowhere Q", None, "Y")
+        bi = cockpit._briefing_info("target", "Nowhere Q", None, "Y")
         check(not bi.get("visited") and bi.get("scoopable") is False and bi["level"] == "unchecked",
               "briefing: unknown brown dwarf - not scoopable, not visited")
 
@@ -196,19 +217,19 @@ try:
 
         # 6d) survey start / queue pruning / sphere end (offline: no request)
         status = []
-        load._set_status = status.append
+        panel._set_status = status.append
         ST.planner = Planner(ST.db)
         ST.net.offline = True
-        load._radius_var = mock.Mock(get=lambda: "40")
-        load._carrier_var = mock.Mock(get=lambda: 1)
+        panel._radius_var = mock.Mock(get=lambda: "40")
+        panel._carrier_var = mock.Mock(get=lambda: 1)
         ST.carrier = None
         calls.clear()
-        load._start_survey()
+        survey._start_survey()
         check(not ST.active and status[-1:] == ["no carrier position known - dock at it once"]
               and "async starting survey" not in calls,
               "carrier start without a carrier position: refused, nothing started")
-        load._carrier_var = mock.Mock(get=lambda: 0)
-        load._start_survey()
+        panel._carrier_var = mock.Mock(get=lambda: 0)
+        survey._start_survey()
         check(ST.active and ST.center == ST.cur_pos and ST.radius == 40.0
               and ST.start_system == ST.cur_system and "async starting survey" in calls,
               "free start: sphere around the current system, worker started")
@@ -218,18 +239,18 @@ try:
         sv = ST.db.load_survey()
         check(sv["active"] == 1 and sv["radius"] == 40.0, "free start: survey saved as active")
         first_id = ST.sphere_id
-        load._start_survey()
+        survey._start_survey()
         check(ST.sphere_id == first_id and len(ST.db.list_spheres()) == 1,
               "the same sphere started again is not recorded twice")
         status.clear()
-        load._start_worker()
+        survey._start_worker()
         check(ST.horizon == ST.radius and ST.plan_info,
               "offline worker: horizon = sphere, a plan from local data")
         # pruning: a new system flown to is dropped, a probe that now exists too
         here = ST.cur_pos
-        ST.flight = [load.Target("Hook P", load.K_NEW, 5.0, pos=(here[0] + 5, here[1], here[2])),
-                     load.Target("Hook Q", load.K_NEW, 9.0, pos=(here[0] + 9, here[1], here[2]))]
-        ST.probe = [load.Target("Hook Probe AB-C d1", load.K_PROBE, 7.0, mc=3)]
+        ST.flight = [boxelplan.Target("Hook P", boxelplan.K_NEW, 5.0, pos=(here[0] + 5, here[1], here[2])),
+                     boxelplan.Target("Hook Q", boxelplan.K_NEW, 9.0, pos=(here[0] + 9, here[1], here[2]))]
+        ST.probe = [boxelplan.Target("Hook Probe AB-C d1", boxelplan.K_PROBE, 7.0, mc=3)]
         je({"event": "FSDJump", "StarSystem": "Hook P", "SystemAddress": 1016,
             "StarPos": [here[0] + 5, here[1], here[2]], "StarClass": "G", "JumpDist": 5.0},
            cmdr="Tester")
@@ -242,25 +263,25 @@ try:
         check(ST.probe == [], "probe confirmed by the target selection: dropped")
         # sphere end: closed only when the plan says finished
         ST.stats = {}
-        load._stop_survey()
+        survey._stop_survey()
         check(not ST.active and ST.db.list_spheres()[0]["closed"] is None
               and ST.flight == [] and ST.probe == [],
               "stop with work left: sphere stays open, queues empty")
         check(ST.db.load_survey()["active"] == 0, "stop: survey saved as inactive")
-        load._start_survey()
+        survey._start_survey()
         ST.stats = {"finished": True}
-        load._stop_survey()
+        survey._stop_survey()
         closed = {r["id"]: r["closed"] for r in ST.db.list_spheres()}
         check(len(closed) == 2 and closed[ST.sphere_id] is not None and closed[first_id] is None,
               "stop of a finished sphere: that one closed in the history, the first still open")
         status.clear()
-        load._carrier_var = mock.Mock(get=lambda: 0)
-        load._start_survey()
+        panel._carrier_var = mock.Mock(get=lambda: 0)
+        survey._start_survey()
         check(any(s.startswith("overlap 100%") for s in status),
               "start on an earlier sphere: the overlap is reported (%r)" % status[:1])
-        load._stop_survey()
+        survey._stop_survey()
         ST.net.offline = False
-        load._set_status = lambda m: None
+        panel._set_status = lambda m: None
 
         # 6f) supercruise timing body A -> body B, Touchdown tick, resets
         je({"event": "FSDJump", "StarSystem": "Hook S", "SystemAddress": 1019,
@@ -291,11 +312,11 @@ try:
             "Body": "Hook S", "BodyID": 0, "BodyType": "Star"})
         check(len(ST.sc_segments) == 1, "a Shutdown in between: no leg counted")
         calls.clear()
-        real_tick = load._route_auto_tick
-        load._route_auto_tick = lambda b, why: calls.append(("tick", b, why))
+        real_tick = routewin._route_auto_tick
+        routewin._route_auto_tick = lambda b, why: calls.append(("tick", b, why))
         je({"event": "Touchdown", "StarSystem": "Hook S", "SystemAddress": 1019,
             "Body": "Hook S 1", "BodyID": 1, "Latitude": 1.0, "Longitude": 2.0})
-        load._route_auto_tick = real_tick
+        routewin._route_auto_tick = real_tick
         check(("tick", "Hook S 1", "landed") in calls, "Touchdown ticks the body off as landed")
         check(ST.last_body_name == "Hook S 1" and ST.last_body_sys == 1019,
               "any event naming a body moves the position marker")
@@ -319,51 +340,50 @@ try:
                 Net.asked += 1
                 return Net.answer
 
-        real_net, real_set, real_flush = ST.net, load.cfg_set, load._flush_net_log
-        ST.net, load._flush_net_log = Net(), lambda: None
-        load.cfg_set = lambda k, v: cfg.__setitem__(k, v)
+        real_net, real_flush = ST.net, planning._flush_net_log
+        ST.net, planning._flush_net_log = Net(), lambda: None
         status = []
-        load._set_status = status.append
+        panel._set_status = status.append
         ST.update_version = None
-        cfg[load.CFG["check_updates"]] = False
-        load._check_for_update()
+        cfg[state.CFG["check_updates"]] = False
+        updater._check_for_update()
         check(Net.asked == 0, "update check switched off: GitHub not asked")
-        cfg[load.CFG["check_updates"]] = True
-        cfg[load.CFG["update_checked"]] = str(int(NOW[0] - 3600))
-        load._check_for_update()
+        cfg[state.CFG["check_updates"]] = True
+        cfg[state.CFG["update_checked"]] = str(int(NOW[0] - 3600))
+        updater._check_for_update()
         check(Net.asked == 0, "update check: checked an hour ago -> not again")
-        cfg[load.CFG["update_checked"]] = str(int(NOW[0] - 90000))
-        load._check_for_update()
-        check(Net.asked == 1 and cfg[load.CFG["update_checked"]] == str(int(NOW[0] - 90000)),
+        cfg[state.CFG["update_checked"]] = str(int(NOW[0] - 90000))
+        updater._check_for_update()
+        check(Net.asked == 1 and cfg[state.CFG["update_checked"]] == str(int(NOW[0] - 90000)),
               "no answer (offline): asked once, the day is not used up")
         for code, what in ((403, "rate limited"), (404, "no release yet")):
             Net.answer = R(code)
-            cfg[load.CFG["update_checked"]] = ""
-            load._check_for_update()
-            check(cfg[load.CFG["update_checked"]] == str(int(NOW[0])) and ST.update_version is None,
+            cfg[state.CFG["update_checked"]] = ""
+            updater._check_for_update()
+            check(cfg[state.CFG["update_checked"]] == str(int(NOW[0])) and ST.update_version is None,
                   "update check %d (%s): remembered for the day, nothing offered" % (code, what))
-        Net.answer = R(200, {"tag_name": "v" + load.VERSION, "body": "x"})
-        load._check_for_update(force=True)
-        check(ST.update_version is None and status[-1:] == ["up to date (%s)" % load.VERSION],
+        Net.answer = R(200, {"tag_name": "v" + state.VERSION, "body": "x"})
+        updater._check_for_update(force=True)
+        check(ST.update_version is None and status[-1:] == ["up to date (%s)" % state.VERSION],
               "same version, asked by hand: 'up to date'")
         Net.answer = R(200, {"tag_name": "v99.0.0", "body": "line 1\nline 2"})
         n = Net.asked
-        load._check_for_update()
+        updater._check_for_update()
         check(Net.asked == n, "a check today already: the daily timer holds without force")
-        load._check_for_update(force=True)
+        updater._check_for_update(force=True)
         check(ST.update_version == "v99.0.0" and ST.update_notes == "line 1\nline 2"
               and status[-1] == "update v99.0.0 available - click here",
               "newer release: offered with its notes, no file touched")
         Net.answer = R(500)
         ST.update_version = None
-        load._check_for_update(force=True)
+        updater._check_for_update(force=True)
         check(ST.update_version is None, "a server error is swallowed")
-        check(load._version_tuple("v4.10.0") > load._version_tuple("4.9.1")
-              and load._version_tuple("5.0.0-beta1") == (5, 0, 0)
-              and load._version_tuple("garbage") == (0,),
-              "version compare: numeric, not text (%r)" % (load._version_tuple("5.0.0-beta1"),))
-        ST.net, load.cfg_set, load._flush_net_log = real_net, real_set, real_flush
-        load._set_status = lambda m: None
+        check(updater._version_tuple("v4.10.0") > updater._version_tuple("4.9.1")
+              and updater._version_tuple("5.0.0-beta1") == (5, 0, 0)
+              and updater._version_tuple("garbage") == (0,),
+              "version compare: numeric, not text (%r)" % (updater._version_tuple("5.0.0-beta1"),))
+        ST.net, planning._flush_net_log = real_net, real_flush
+        panel._set_status = lambda m: None
 
         # 7) a second commander: nothing of the first one's position is kept
         je({"event": "LoadGame", "Commander": "Other"}, cmdr="Other", state={"FID": "F2"})
@@ -374,6 +394,23 @@ try:
             "StarPos": [0.0, 0.0, 9.0]}, cmdr="Other", state={"FID": "F2"})
         check(ST.cur_system == "Hook Z" and not ST.awaiting_position,
               "the new commander's Location sets the system again")
+
+        # 8) N2 (4.11): settings only through EDMC's 5.x API (get_str/int/bool
+        #    with default=); the old config.get of EDMC 4 is never called, and
+        #    a failing EDMC call gives the default
+        from config import config as edmc_config
+        from SHBOXSEARCH import maintenance
+        edmc_config.get.side_effect = AssertionError("config.get called")
+        edmc_config.get.reset_mock()
+        cfg[state.CFG["route_top"]] = 7
+        vals = (state.cfg_bool(state.CFG["debug"], True), state.cfg_int(state.CFG["route_top"], 3),
+                state.cfg_str(state.CFG["filters"], "todo"))
+        maintenance._journal_dir()
+        check(vals == (True, 7, "todo") and not edmc_config.get.called,
+              "settings read through get_bool/get_int/get_str only (%r)" % (vals,))
+        edmc_config.get_bool.side_effect = RuntimeError("broken")
+        check(state.cfg_bool(state.CFG["debug"], True) is True, "a failing EDMC call gives the default")
+        plugin_pkg.use_settings(cfg)
         ST.db.cx.close()
         ST.db = None
 except Exception:

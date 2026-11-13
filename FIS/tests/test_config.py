@@ -88,6 +88,24 @@ class TestConfig(unittest.TestCase):
         c = Config().load(ini)
         self.assertTrue(c.db_path.startswith(os.environ.get("LOCALAPPDATA", "%LOCALAPPDATA%")))
 
+    def test_unsold_limits_in_ini(self):
+        """4.11: the commander's own UNSOLD DATA limits, defaults 50 / 100 M Cr,
+        sell advice from 50 M Cr or 100 systems; kept across save and load."""
+        d = tempfile.mkdtemp()
+        ini = os.path.join(d, "fis.ini")
+        c = Config().load(ini)
+        self.assertEqual(c.unsold, {"sell_mcr": 50, "sell_systems": 100, "moderate_mcr": 50, "high_mcr": 100})
+        with open(ini, "w", encoding="utf-8") as fh:
+            fh.write("[fis]\nunsold_moderate_mcr = 20\nunsold_high_mcr = 10\nunsold_sell_systems = x\n"
+                     "unsold_sell_mcr = 999999999\n")
+        c = Config().load(ini)
+        # high never below moderate; not a number keeps the default; clamped
+        self.assertEqual(c.unsold, {"sell_mcr": 100_000, "sell_systems": 100, "moderate_mcr": 20, "high_mcr": 20})
+        self.assertFalse(c.set_unsold_limits({"high_mcr": "many"}))
+        self.assertTrue(c.set_unsold_limits({"high_mcr": "75", "moderate_mcr": ""}))
+        c.save()
+        self.assertEqual(Config().load(ini).unsold["high_mcr"], 75)
+
     def test_token_created_once(self):
         d = tempfile.mkdtemp()
         ini = os.path.join(d, "fis.ini")

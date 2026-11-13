@@ -42,9 +42,9 @@ jobs:
         run: python boxelplan.py
       - name: local-first shells self test
         run: python shells.py
-      - name: local-first flow (load.py against a fake galaxy, no network)
+      - name: local-first flow (the plugin against a fake galaxy, no network)
         run: python tests/localfirst_flow.py
-      - name: plugin journal hooks (load.py against a scripted session, no network)
+      - name: plugin journal hooks (the plugin against a scripted session, no network)
         run: python tests/plugin_hooks.py
       - name: dispatch lint (no dead branch in a journal event chain)
         run: python tests/dispatch_lint.py
@@ -54,10 +54,14 @@ jobs:
         run: python tests/galaxy_list.py
       - name: UI hand-over (worker threads reach Tk only through one event)
         run: python tests/ui_threads.py
+      - name: package import (relative imports, both of EDMC's ways to load a plugin)
+        run: python tests/package_import.py
       - name: code style (flake8 with EDMC's line length, see .flake8)
         run: |
           python -m pip install --quiet flake8==7.5.0   # pinned, as tested
           python -m flake8
+      - name: complexity (EDMC's limit 15; listed older functions may not grow)
+        run: python tests/complexity.py
       - name: plain-python modules import without EDMC
         run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan, edts_pgnames, regionmap; assert procgen._edts is not None; assert regionmap.find_region(0, 0, 0)[1] == 'Inner Orion Spur'; print('imports ok')"
       - name: FIS tests (flight information system)

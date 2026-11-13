@@ -31,6 +31,8 @@ import math
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .live import star_pos
+
 # "SOME NAME K7Q-12Z" - the FSS signal of a fleet carrier
 _SIGNAL = re.compile(r"^(.*?)\s*\b([A-Z0-9]{3}-[A-Z0-9]{3})$")
 _CALLSIGN = re.compile(r"^[A-Z0-9]{3}-[A-Z0-9]{3}$")
@@ -108,15 +110,16 @@ def known_carriers(evs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
             return
         c["ts"], c["how"], c["id64"] = ts, how, a
         c["system"] = e.get("StarSystem") or (s or {}).get("name")
-        c["pos"] = e.get("StarPos") or (s or {}).get("pos")
+        c["pos"] = star_pos(e.get("StarPos")) or (s or {}).get("pos")
 
     for e in evs:
         ev = e.get("event")
         if e.get("SystemAddress") is not None and e.get("StarSystem"):
             s = systems.setdefault(e["SystemAddress"], {})
             s["name"] = e["StarSystem"]
-            if e.get("StarPos"):
-                s["pos"] = e["StarPos"]
+            p = star_pos(e.get("StarPos"))
+            if p:
+                s["pos"] = p
         before = dock.carrier()
         dock.feed(e)
         here = dock.carrier()

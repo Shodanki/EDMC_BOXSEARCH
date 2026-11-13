@@ -10,15 +10,17 @@ rem the answers in fis.ini. Change them later with fis_settings.bat.
 setlocal
 cd /d "%~dp0"
 chcp 65001 >nul
-set "PY=%LOCALAPPDATA%\Programs\Python\Python314\python.exe"
-if not exist "%PY%" (
-  where py >nul 2>nul && (set "PY=py -3") || (set "PY=python")
-)
+rem Python: the py launcher (python.org installs it) picks the newest 3.x;
+rem else a python.org install for this user; else python on the PATH.
+set "PY="
+where py >nul 2>nul && set "PY=py -3"
+if not defined PY for /d %%D in ("%LOCALAPPDATA%\Programs\Python\Python3*") do set "PY=%%D\python.exe"
+if not defined PY set "PY=python"
 title SHBOX FIS
 %PY% -m fis %*
 if errorlevel 1 (
   echo.
-  echo SHBOX FIS stopped with an error. Needs Python 3.10+ ^(standard library only^).
+  echo SHBOX FIS stopped with an error. Needs Python 3.11+ ^(python.org, standard library only^).
   pause
 )
 endlocal

@@ -8,7 +8,7 @@ UI hand-over test (4.10.1): worker threads never call Tk directly.
 
 EDMC's rule (PLUGINS.md, "All tkinter calls in main thread"): the only Tk
 call a sub-thread may make is event_generate(), and none at all while EDMC
-shuts down. load._ui() is the one door from a worker to the window; this
+shuts down. uithread._ui() is the one door from a worker to the window; this
 test pins down that
 
   * a worker queues the update and only calls event_generate (no after()),
@@ -39,7 +39,9 @@ except ImportError:
     for m in ("tkinter", "tkinter.filedialog", "tkinter.ttk"):
         sys.modules[m] = mock.MagicMock()
 
-import load  # noqa: E402
+import plugin_pkg  # noqa: E402
+load = plugin_pkg.import_plugin()
+from SHBOXSEARCH import panel, state, uithread  # noqa: E402
 
 fails = 0
 
@@ -75,10 +77,10 @@ class FakeFrame:
 
 
 frame = FakeFrame()
-load._frame = frame
-load._ui_target = frame.winfo_toplevel()
-load.config.shutting_down = False
-frame.bind(load._UI_EVENT, load._ui_drain)
+panel._frame = frame
+uithread._ui_target = frame.winfo_toplevel()
+uithread.config.shutting_down = False
+frame.bind(uithread._UI_EVENT, uithread._ui_drain)
 
 ran = []
 
@@ -88,66 +90,90 @@ def update(tag):
 
 
 # 1. from a worker: queue + event_generate only
-w = threading.Thread(target=lambda: load._ui(lambda: update("worker")))
+w = threading.Thread(target=lambda: uithread._ui(lambda: update("worker")))
 w.start()
 w.join()
-check(frame.calls == [("event_generate %s tail" % load._UI_EVENT, False)],
+check(frame.calls == [("event_generate %s tail" % uithread._UI_EVENT, False)],
       "worker: one event_generate(when='tail'), no after() - %s" % frame.calls)
 check(ran == [], "worker: nothing ran on the worker thread")
-check(load._ui_queue.qsize() == 1, "worker: update waits in the queue")
+check(uithread._ui_queue.qsize() == 1, "worker: update waits in the queue")
 
 # 2. the event handler (main thread) runs it
-frame.bound[load._UI_EVENT](None)
+frame.bound[uithread._UI_EVENT](None)
 check(ran == [("worker", True)], "main thread ran the queued update - %s" % ran)
-check(load._ui_queue.empty(), "queue empty afterwards")
+check(uithread._ui_queue.empty(), "queue empty afterwards")
 
 # 3. main thread: after(0) as before
 frame.calls.clear()
 ran.clear()
-load._ui(lambda: update("main"))
+uithread._ui(lambda: update("main"))
 check(frame.calls == [("after", True), ("after", True)] and ran == [("main", True)],
       "main thread: scheduled with after(0), plus a drain of waiting updates")
 
 # 4. a failing update is logged, the next one still runs
 ran.clear()
-with mock.patch.object(load.logger, "exception") as logged:
-    t = threading.Thread(target=lambda: (load._ui(lambda: 1 / 0), load._ui(lambda: update("next"))))
+with mock.patch.object(state.logger, "exception") as logged:
+    t = threading.Thread(target=lambda: (uithread._ui(lambda: 1 / 0), uithread._ui(lambda: update("next"))))
     t.start()
     t.join()
-    load._ui_drain()
+    uithread._ui_drain()
 check(logged.called and ran == [("next", True)], "failing update logged, next one ran")
 
 # 5. shutdown: nothing sent, queued updates dropped
 frame.calls.clear()
 ran.clear()
-t = threading.Thread(target=lambda: load._ui(lambda: update("queued")))
+t = threading.Thread(target=lambda: uithread._ui(lambda: update("queued")))
 t.start()
 t.join()
-load.config.shutting_down = True
-t = threading.Thread(target=lambda: load._ui(lambda: update("late")))
+uithread.config.shutting_down = True
+t = threading.Thread(target=lambda: uithread._ui(lambda: update("late")))
 t.start()
 t.join()
-load._ui(lambda: update("late main"))
+uithread._ui(lambda: update("late main"))
 check(len(frame.calls) == 1, "shutting down: no further Tk call - %s" % frame.calls)
-load._ui_drain()
-check(ran == [] and load._ui_queue.empty(), "shutting down: queued update dropped, nothing drawn")
-load.config.shutting_down = False
+uithread._ui_drain()
+check(ran == [] and uithread._ui_queue.empty(), "shutting down: queued update dropped, nothing drawn")
+uithread.config.shutting_down = False
 
 # 6. no frame yet (before plugin_app): silently nothing
-load._frame = None
-load._ui(lambda: update("early"))
-check(ran == [] and load._ui_queue.empty(), "before plugin_app: nothing queued")
-load._frame = frame
+panel._frame = None
+uithread._ui(lambda: update("early"))
+check(ran == [] and uithread._ui_queue.empty(), "before plugin_app: nothing queued")
+panel._frame = frame
 
-# 7. static check: worker entry points reach no Tk object except through _ui
-src = open(os.path.join(ROOT, "load.py"), encoding="utf-8").read()
-tree = ast.parse(src)
-funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
-TK_PREFIX = ("_v_", "_btn_", "_lbl_", "_route_win", "_stats_win", "_probe_win", "_mining_win")
+# 7. static check over every plugin module: worker entry points reach no Tk
+#    object except through _ui. A function is (module, name); a call is a
+#    bare name in the same module or "module.name" across modules.
+MODULES = sorted(f[:-3] for f in os.listdir(ROOT) if f.endswith(".py"))
+funcs = {}
+for m in MODULES:
+    with open(os.path.join(ROOT, m + ".py"), encoding="utf-8") as fh:
+        for n in ast.parse(fh.read()).body:
+            if isinstance(n, ast.FunctionDef):
+                funcs[(m, n.name)] = n
+TK_PREFIX = ("_v_", "_btn_", "_lbl_", "_route_win", "_stats_win", "_probe_win", "_mine_win")
 TK_NAMES = {"_frame", "_radius_var", "_carrier_var"}
+UI_CALLS = {("uithread", "_ui"), ("uithread", "_ui_drain")}
 
 
-def direct(fn):
+def target(mod, node):
+    """(module, name) a Name or "module.name" expression refers to, or None."""
+    if isinstance(node, ast.Name) and (mod, node.id) in funcs:
+        return (mod, node.id)
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) \
+            and (node.value.id, node.attr) in funcs:
+        return (node.value.id, node.attr)
+    return None
+
+
+def tk_name(node):
+    nm = node.id if isinstance(node, ast.Name) else \
+        node.attr if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) \
+        and node.value.id in MODULES else None
+    return nm if nm and (nm in TK_NAMES or nm.startswith(TK_PREFIX)) else None
+
+
+def direct(mod, fn):
     """Calls and Tk globals used by fn - not counting what is handed to _ui."""
     calls, tk = set(), set()
     local = {a.arg for a in fn.args.args}
@@ -159,46 +185,66 @@ def direct(fn):
                         local.add(x.id)
     skip = set()
     for n in ast.walk(fn):
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_ui":
+        if isinstance(n, ast.Call) and target(mod, n.func) == ("uithread", "_ui"):
             skip.update(id(x) for a in n.args for x in ast.walk(a))
     for n in ast.walk(fn):
         if id(n) in skip:
             continue
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name):
-            calls.add(n.func.id)
-        if isinstance(n, ast.Call) and not (isinstance(n.func, ast.Name) and n.func.id == "_ui"):
-            calls.update(a.id for a in n.args if isinstance(a, ast.Name) and a.id in funcs)
-        if isinstance(n, ast.Name) and n.id not in local and \
-                (n.id in TK_NAMES or n.id.startswith(TK_PREFIX)):
+        if isinstance(n, ast.Call):
+            t = target(mod, n.func)
+            if t:
+                calls.add(t)
+            if t != ("uithread", "_ui"):            # functions handed on as arguments
+                calls.update(x for x in (target(mod, a) for a in n.args) if x)
+        nm = tk_name(n)
+        if nm and not (isinstance(n, ast.Name) and n.id in local):
             # a bare truth test ("if _v_status:") is no Tk call
-            tk.add(n.id)
+            tk.add(nm)
     return calls, tk
 
 
 roots = set()
-for n in ast.walk(tree):                       # _run_async(fn, ...) and Thread(target=fn)
-    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_run_async" \
-            and n.args and isinstance(n.args[0], ast.Name) and n.args[0].id in funcs:
-        roots.add(n.args[0].id)
-    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "Thread":
-        for kw in n.keywords:
-            if kw.arg == "target" and isinstance(kw.value, ast.Name) and kw.value.id in funcs:
-                roots.add(kw.value.id)
+for (mod, _name), fn in funcs.items():          # _run_async(fn, ...) and Thread(target=fn)
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Call) and target(mod, n.func) == ("uithread", "_run_async") and n.args:
+            t = target(mod, n.args[0])
+            if t:
+                roots.add(t)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "Thread":
+            for kw in n.keywords:
+                t = target(mod, kw.value) if kw.arg == "target" else None
+                if t:
+                    roots.add(t)
 seen, stack, bad = set(), sorted(roots), []
-ALLOWED = {"_set_status": {"_v_status"}}       # truth test only; the set() goes through _ui
+ALLOWED = {("panel", "_set_status"): {"_v_status"}}   # truth test only; the set() goes through _ui
 while stack:
     f = stack.pop()
-    if f in seen or f not in funcs or f in ("_ui", "_ui_drain"):
+    if f in seen or f in UI_CALLS:
         continue
     seen.add(f)
-    calls, tk = direct(funcs[f])
+    calls, tk = direct(f[0], funcs[f])
     tk -= ALLOWED.get(f, set())
     if tk:
-        bad.append("%s: %s" % (f, ",".join(sorted(tk))))
+        bad.append("%s.%s: %s" % (f[0], f[1], ",".join(sorted(tk))))
     stack.extend(c for c in calls if c not in seen)
 check(len(roots) >= 15, "found %d worker entry points" % len(roots))
 check(not bad, "no direct Tk access from %d worker-reachable functions%s"
       % (len(seen), (" - " + "; ".join(bad)) if bad else ""))
+
+# 7b. N8 (4.11): plugin_stop waits for the plugin's workers, but only briefly
+import time  # noqa: E402
+quick = threading.Thread(target=time.sleep, args=(0.3,), name="SHBOX-quick", daemon=True)
+slow_stop = threading.Event()
+slow = threading.Thread(target=slow_stop.wait, args=(10,), name="shbox-fis-autostart", daemon=True)
+other = threading.Thread(target=slow_stop.wait, args=(10,), name="not-ours", daemon=True)
+for t in (quick, slow, other):
+    t.start()
+t0 = time.monotonic()
+left = uithread._join_workers(0.8)
+took = time.monotonic() - t0
+check(not quick.is_alive() and left == ["shbox-fis-autostart"] and 0.7 <= took < 2.0,
+      "stop waits for running work, at most the time given (%.2f s, left %r)" % (took, left))
+slow_stop.set()
 
 # 8. real Tk, when a display is there (not on CI): a hidden top level and an
 #    unmapped frame - Tk drops virtual events for unmapped widgets, so the
@@ -210,14 +256,14 @@ except Exception as e:                 # no display / no Tk
     print("  [skip] real Tk not available (%s)" % type(e).__name__)
 else:
     root.withdraw()
-    load._frame = real_tk.Frame(root)  # never packed, like before EDMC maps it
-    load._ui_target = load._frame.winfo_toplevel()
-    load._ui_target.bind(load._UI_EVENT, load._ui_drain, add="+")
+    panel._frame = real_tk.Frame(root)  # never packed, like before EDMC maps it
+    uithread._ui_target = panel._frame.winfo_toplevel()
+    uithread._ui_target.bind(uithread._UI_EVENT, uithread._ui_drain, add="+")
     hits = []
 
     def burst():
         for i in range(200):
-            load._ui(lambda: hits.append(threading.current_thread() is threading.main_thread()))
+            uithread._ui(lambda: hits.append(threading.current_thread() is threading.main_thread()))
 
     workers = [threading.Thread(target=burst) for _ in range(4)]
     root.after(50, lambda: [x.start() for x in workers])

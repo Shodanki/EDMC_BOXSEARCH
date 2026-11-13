@@ -43,3 +43,11 @@ route_source = plugin
 ; bodies in the course line when route_source = ini:
 ; todo, all, new, unmapped, signals, landable, valuable, rings - comma separated
 route_filters = todo
+
+; UNSOLD DATA on the SHIP sheet - your own limits (settings page, game PC).
+; Risk moderate / high from this many million credits (high never below
+; moderate); advise selling from this value or this many systems unsold.
+unsold_moderate_mcr = 50
+unsold_high_mcr = 100
+unsold_sell_mcr = 50
+unsold_sell_systems = 100
