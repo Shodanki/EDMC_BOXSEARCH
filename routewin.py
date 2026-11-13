@@ -360,23 +360,7 @@ def _route_map_draw() -> None:
     if route is None or not route.stops:
         return
 
-    # Tk reports a width of 1 for a widget it has not laid out yet, and
-    # `int(1) or _MAP_W` is 1, not _MAP_W - which silently produced a negative
-    # span and a blank map. Anything implausibly small falls back to the
-    # configured size, and the draw is retried once the window is mapped.
-    w = h = 0
-    try:
-        w = int(_route_map.winfo_width())
-        h = int(_route_map.winfo_height())
-    except Exception:
-        pass
-    if w < 40 or h < 40:
-        w, h = _MAP_W, _MAP_H
-        if _route_win is not None:
-            try:
-                _route_win.after(150, _route_map_draw)
-            except Exception:
-                pass
+    w, h = _map_size()
     cx, cy = w / 2.0, h / 2.0
     span = min(cx, cy) - 14.0
     if span <= 10:
@@ -401,7 +385,40 @@ def _route_map_draw() -> None:
     def project_stop(st) -> Tuple[float, float]:
         return screen.get(st.body.body_id) or project(st.body.pos)
 
-    # range rings
+    _map_rings(cx, cy, span, rmax, fg)
+    # the arrival star
+    _route_map.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, fill=fg, outline=fg)
+    last_pos = _map_last_pos(route, project_stop)
+    _map_legs(route, project, project_stop, (cx, cy), fg)
+    _map_bodies(route, project_stop, fg)
+    _map_labels(route, project_stop, fg)
+    if last_pos is not None:
+        _map_last_marker(last_pos)
+
+
+def _map_size() -> Tuple[int, int]:
+    """The canvas size. Tk reports a width of 1 for a widget it has not laid
+    out yet, and `int(1) or _MAP_W` is 1, not _MAP_W - which silently produced
+    a negative span and a blank map. Anything implausibly small falls back to
+    the configured size, and the draw is retried once the window is mapped."""
+    w = h = 0
+    try:
+        w = int(_route_map.winfo_width())
+        h = int(_route_map.winfo_height())
+    except Exception:
+        pass
+    if w < 40 or h < 40:
+        w, h = _MAP_W, _MAP_H
+        if _route_win is not None:
+            try:
+                _route_win.after(150, _route_map_draw)
+            except Exception:
+                pass
+    return w, h
+
+
+def _map_rings(cx: float, cy: float, span: float, rmax: float, fg: str) -> None:
+    """Range rings: the outermost body's distance, and half of it."""
     for frac, lbl in ((1.0, "%.0f LS" % rmax), (0.5, "")):
         rr = math.log10(1.0 + rmax * frac) / math.log10(1.0 + rmax) * span
         _route_map.create_oval(cx - rr, cy - rr, cx + rr, cy + rr,
@@ -410,26 +427,28 @@ def _route_map_draw() -> None:
             _route_map.create_text(cx, cy - rr - 7, text=lbl, fill=fg,
                                    font=skin._FONT_SMALL)
 
-    # the arrival star
-    _route_map.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, fill=fg, outline=fg)
 
-    # where we were last, if known. The live position is not in any journal
-    # event, so the last body approached is the closest thing to a "you are
-    # here" - drawn in blue so it never blends into the route.
-    # BodyID is only unique within a system, so the marker is drawn only when
-    # the recorded body belongs to the system on screen. Without that check it
-    # silently pointed at whatever body happened to share the number here.
-    last_pos = None
+def _map_last_pos(route, project_stop) -> Optional[Tuple[float, float]]:
+    """
+    Where we were last, if known. The live position is not in any journal
+    event, so the last body approached is the closest thing to a "you are
+    here" - drawn in blue so it never blends into the route.
+    BodyID is only unique within a system, so the marker is drawn only when
+    the recorded body belongs to the system on screen. Without that check it
+    silently pointed at whatever body happened to share the number here.
+    """
     if (ST.last_body_id is not None
             and ST.last_body_sys is not None
             and ST.last_body_sys == ST.cur_id64):
         for st in route.stops:
             if st.body.body_id == ST.last_body_id and st.body.pos:
-                last_pos = project_stop(st)
-                break
+                return project_stop(st)
+    return None
 
-    # route legs - from the arrival star, or (R3) from the carrier's body
-    prev = (cx, cy)
+
+def _map_legs(route, project, project_stop, centre: Tuple[float, float], fg: str) -> None:
+    """Route legs - from the arrival star, or (R3) from the carrier's body."""
+    prev = centre
     if ST.route_from and ST.route_start_pos:
         prev = project(ST.route_start_pos)
         _route_map.create_rectangle(prev[0] - 3, prev[1] - 3, prev[0] + 3, prev[1] + 3,
@@ -444,10 +463,26 @@ def _route_map_draw() -> None:
                                arrow="last" if st.group_start and i else None)
         prev = p
 
-    # bodies
-    # Bodies, then labels. Labels are placed last and nudged apart, because a
-    # tight inner system otherwise draws six names on top of each other and
-    # none of them can be read.
+
+def _map_bodies(route, project_stop, fg: str) -> None:
+    """The bodies: filled while open, hollow when done; moons smaller."""
+    for st in route.stops:
+        if not st.body.pos:
+            continue
+        x, y = project_stop(st)
+        done = st.body.body_id in ST.route_done
+        r = 2.0 if st.is_moon else 4.0
+        if done:
+            _route_map.create_oval(x - r, y - r, x + r, y + r, outline=fg)
+        else:
+            _route_map.create_oval(x - r, y - r, x + r, y + r, fill=fg,
+                                   outline=fg)
+
+
+def _map_labels(route, project_stop, fg: str) -> None:
+    """Labels are placed last and nudged apart, because a tight inner
+    system otherwise draws six names on top of each other and none of them
+    can be read."""
     placed: List[Tuple[float, float]] = []
 
     def free_spot(x: float, y: float, r: float) -> Tuple[float, float, str]:
@@ -463,18 +498,6 @@ def _route_map_draw() -> None:
         return x + r + 4, y, tk.W
 
     for st in route.stops:
-        if not st.body.pos:
-            continue
-        x, y = project_stop(st)
-        done = st.body.body_id in ST.route_done
-        r = 2.0 if st.is_moon else 4.0
-        if done:
-            _route_map.create_oval(x - r, y - r, x + r, y + r, outline=fg)
-        else:
-            _route_map.create_oval(x - r, y - r, x + r, y + r, fill=fg,
-                                   outline=fg)
-
-    for st in route.stops:
         # Only planets get a name. Moons sit within a few light seconds of
         # their planet and would just pile more text into the same spot.
         if not st.body.pos or st.is_moon:
@@ -484,14 +507,16 @@ def _route_map_draw() -> None:
         _route_map.create_text(px, py, text=st.body.short[:10], fill=fg,
                                anchor=anchor, font=skin._FONT_SMALL)
 
-    if last_pos is not None:
-        lx, ly = last_pos
-        _route_map.create_oval(lx - 7, ly - 7, lx + 7, ly + 7,
-                               outline=_MAP_LAST, width=2)
-        _route_map.create_oval(lx - 3, ly - 3, lx + 3, ly + 3,
-                               fill=_MAP_LAST, outline=_MAP_LAST)
-        _route_map.create_text(lx, ly + 12, text="last here", fill=_MAP_LAST,
-                               font=skin._FONT_SMALL)
+
+def _map_last_marker(last_pos: Tuple[float, float]) -> None:
+    """The blue "last here" marker."""
+    lx, ly = last_pos
+    _route_map.create_oval(lx - 7, ly - 7, lx + 7, ly + 7,
+                           outline=_MAP_LAST, width=2)
+    _route_map.create_oval(lx - 3, ly - 3, lx + 3, ly + 3,
+                           fill=_MAP_LAST, outline=_MAP_LAST)
+    _route_map.create_text(lx, ly + 12, text="last here", fill=_MAP_LAST,
+                           font=skin._FONT_SMALL)
 
 
 def _toggle_map() -> None:
