@@ -14,14 +14,14 @@ tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
 folder of this plugin. See [FIS/README.md](FIS/README.md) - with
 screenshots (demo data).
-**New in 4.9:** this README in a new order - operation first, then the
-third-party parts, how it works, the history. The overlay names the
-absolute course to every point and says "lost - redo" for species lost in a
-crash; a plotted route through space nobody was asked about is checked once.
-In the FIS: synthesis per tier in the VEHICLE tab with how often each can
-still be made, the vehicle's tank size, stations beside their body in the
-SYSTEM map and the plot suggestion as a corridor in GALAXY - see
-[What changed in 4.9](#what-changed-in-49).
+**New in 4.10:** fewer galaxy map searches for every system no database
+knows. Sector names are computed, so boxels in sectors nobody visited are
+planned too, and hand-authored sectors (NGC 2232, Col 70 ...) under their
+own names. Catalogue stars fill their number in a boxel, *list ends at*
+takes the end of the galaxy map's list, and candidates EDDiscovery already
+knows leave the queue - in the developer's sphere 1 902 probes became 856.
+The briefing and the FIS name the codex region - see
+[What changed in 4.10](#what-changed-in-410).
 
 **Licence:** [Mozilla Public License 2.0](LICENSE) since 4.7 - use, change and
 share it freely; whoever passes on a changed file of this project keeps that
@@ -1389,6 +1389,7 @@ what changed in each release from 4.1 on.
 | 4.8.0 | exploration per commander with a main commander; first route from the carrier; latest scoop on a plotted route; data lost with the ship planned again; FIS: VEHICLE tab, deeper themes, unsold data with risk level and the first-footfall bonus |
 | 4.9.0 | README in a new order; overlay: absolute course, "lost - redo"; route check of a plotted route (one EDSM request); prospecting learnt from your probes; FIS: synthesis per tier and tank size in VEHICLE, docked stations in the SYSTEM map, plot corridor in GALAXY |
 | 4.9.1 | fixes: live DSS timing, own carrier after a jump aboard, damaged StarPos, pre-release tags in the update check; journal reading in its own module `journalscan.py` |
+| 4.10.0 | sector names computed (EDTS) and hand-authored sectors planned under their own names; codex region in the briefing and the FIS (region map); galaxy map list: catalogue stars fill their number, *list ends at* replaces *boxel done*; probe candidates looked up in EDDiscovery by id64 |
 
 ## Fixed since v3.0.8
 
@@ -2296,6 +2297,72 @@ and keep `FIS/vehicle_tanks.json` like `favourites.json`.
   own. **Copy `journalscan.py` together with `load.py`** when you update
   by hand - without it the plugin does not start. Nothing new is stored;
   no replay is needed.
+
+## What changed in 4.10
+
+4.10 is about one thing: fewer galaxy map searches for every system no
+database knows. Measured in the developer's sphere (r = 50 ly): the probe
+queue went from 1 902 to 856 candidates, and the "certain" gaps from 959 to
+5 - the other 954 were systems EDDiscovery knew all along.
+
+### Sector names computed, named sectors planned under their names
+
+* The name of a sector comes from its place in the grid, computed with
+  EDTS's algorithm (Andy Martin, BSD 3-Clause, in `edts_pgnames/`). Boxels
+  in a sector where no system is known yet are planned too. Checked against
+  EDDiscovery: 399 013 procedural systems all correct.
+* About 470 hand-authored sectors (*NGC 2232*, *Col 70*, *Col 285* ...) lie
+  over the grid. Inside them the planner probes under the sector's own
+  name; before, a test sphere in NGC 2232 Sector gave 540 probes the galaxy
+  map can never find and not one gap. A boxel cut by a sphere's surface
+  carries both labels; its numbers are counted across them, and the probe
+  window says `edge  also named: ...`. See
+  [Named sectors over the grid](#named-sectors-over-the-grid).
+
+### Codex region
+
+Ben Peddell's region map (MIT, in `regionmap/`) names the codex region of a
+position: a `REGION` line in the cockpit briefing, a REGION row in FIS
+BRIEFING (with *new region - you leave ...* when the jump leaves yours) and
+the region in the GALAXY focus. Local, no network; 41 of 41 codex entries
+from the developer's journals match.
+
+### The galaxy map list
+
+* **Catalogue stars hold a number.** `Synuefe RH-U c19-` lists 1 to 21 and
+  no `-0`: slot 0 is HIP 33254. The plugin counts a boxel's numbers by id64
+  as well as by name, so a missing number below the highest one is neither
+  a gap nor the end. See
+  [Catalogue stars hold a number too](#catalogue-stars-hold-a-number-too-since-410).
+* **list ends at [n]** replaces **boxel done**: type the highest number the
+  list shows (the field starts with the highest one known) and press
+  **list end** or Enter. Probes above it go; numbers above what was known
+  become certain gaps; a smaller number than a known one is refused.
+* **not there** below the highest known number only rules out that name.
+  Before, it closed the boxel there and dropped every candidate.
+* A name known meanwhile - a target picked in the list, a plotted route -
+  leaves the probe queue wherever it stands.
+
+### Candidates looked up in EDDiscovery by id64
+
+A boxel reaches beyond the sphere, and EDDiscovery was read only to its
+radius. Every plan now looks its candidates up in EDDiscovery's file by
+id64 - local, read only, by primary key, no network - and walks each boxel
+upwards until EDDiscovery has no number. A row counts only where its
+position lies in the boxel its number names. See
+[Candidates looked up in EDDiscovery by id64](#candidates-looked-up-in-eddiscovery-by-id64-since-410).
+
+### Updating to 4.10
+
+* Copy the two **new folders** `edts_pgnames` and `regionmap` with the
+  `.py` files - without `edts_pgnames` sector names fall back to what the
+  plugin has seen.
+* The first start makes a backup of the database and runs one repair: a
+  boxel closed at or below a system that exists in it is opened again (in
+  the developer's database: none). A running sphere then reads
+  EDDiscovery's file once more (the rows read before carry no id64).
+* No new column, no journal replay. Close the FIS window once so it starts
+  with the new files.
 
 ---
 

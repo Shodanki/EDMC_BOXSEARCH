@@ -67,7 +67,7 @@ try:                # 4.10: codex regions (klightspeed's map, MIT) - optional
 except Exception:   # pragma: no cover - folder missing
     regionmap = None
 
-VERSION = "4.9.1"
+VERSION = "4.10.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
