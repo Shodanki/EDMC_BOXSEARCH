@@ -154,6 +154,25 @@ try:
         check(ST.cur_system == "Hook D", "CarrierJump moves us")
         check(ST.carrier and ST.carrier["system"] == "Hook D",
               "CarrierJump aboard the own carrier moves the carrier (was stale up to 4.9)")
+        # 5b) the dispatch table (4.11) holds exactly the events of the old
+        #     if/elif chain; Docked counts only at a fleet carrier
+        from SHBOXSEARCH import journal
+        chain_410 = {"FSDJump", "Location", "CarrierJump", "CarrierLocation", "CarrierStats",
+                     "Docked", "ApproachBody", "Touchdown", "Loadout", "StartUp", "Liftoff",
+                     "Scan", "SAAScanComplete", "SAASignalsFound", "FSSBodySignals",
+                     "FSSDiscoveryScan", "FSSAllBodiesFound", "ScanOrganic", "FSDTarget"}
+        check(set(journal._HANDLERS) == chain_410,
+              "dispatch table = the events of the 4.10 chain (%s)"
+              % sorted(set(journal._HANDLERS) ^ chain_410))
+        seen_status = []
+        panel._set_status = seen_status.append
+        je({"event": "Docked", "StationType": "Coriolis", "StationName": "Hook Port",
+            "StarSystem": "Hook D", "SystemAddress": 1004})
+        je({"event": "Docked", "StationType": "FleetCarrier", "StationName": "K7Q-1HT",
+            "StarSystem": "Hook D", "SystemAddress": 1004})
+        check(seen_status == ["carrier: Hook D"],
+              "Docked: a station changes nothing, the own carrier is refreshed (%r)" % seen_status)
+        panel._set_status = lambda m: None
 
         # 6) a broken event never escapes the hook
         try:
