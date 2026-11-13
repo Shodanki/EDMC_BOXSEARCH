@@ -28,7 +28,7 @@ import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, ttk
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 # EDMC API
 import myNotebook as nb
@@ -62,8 +62,12 @@ from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E40
 import surfacenav  # noqa: E402
 import miningstat  # noqa: E402
 import journalscan  # noqa: E402
+try:                # 4.10: codex regions (klightspeed's map, MIT) - optional
+    import regionmap  # noqa: E402
+except Exception:   # pragma: no cover - folder missing
+    regionmap = None
 
-VERSION = "4.9.1"
+VERSION = "4.10.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
@@ -161,6 +165,8 @@ class State:
         # EDDiscovery's file was busy (EDD running) - read it again later
         self.edd_pending = False
         self.edd_next_try = 0.0
+        # 4.10: probe candidates already looked up in EDD's file by id64
+        self.edd_asked: Set[int] = set()
         self.planner: Optional[Planner] = None
 
         self.active = False
@@ -524,6 +530,8 @@ def _fetch_local(r_min: float = 0.0, r_max: float = 0.0) -> bool:
             with ST.lock:
                 ST.db.record_shell("edd", ST.center, r_min, r_max or ST.radius,
                                    _cnt.get("edd", 0), shells.ttl_seconds())
+                # 4.10: this reading carried the id64s (catalogue slots)
+                ST.db.set_meta(EDD_ID64_META, str(int(time.time())))
         except Exception:
             logger.debug("EDD shell not recorded", exc_info=True)
         return True
@@ -695,10 +703,30 @@ def _extend_worker() -> None:
 
 def _resume_worker() -> None:
     """EDMC start with a running survey: no request on the way in - only
-    shells still valid count; the plan asks for more when it needs it."""
+    shells still valid count; the plan asks for more when it needs it.
+
+    EDDiscovery's file is local: it is read again for the sphere when its
+    last reading has expired, or once after the update to 4.10 (the rows
+    read before carry no id64, and the slots of catalogue stars count only
+    with one). So a restored sphere plans on the same data as a new one."""
     ST.horizon = 0.0
+    ST.edd_asked = set()
+    _edd_refresh()
     _advance_horizon(allow_fetch=False)
     _rebuild_plan()
+
+
+def _edd_refresh() -> None:
+    if not (ST.center and cfg_bool(CFG["src_edd"], True)):
+        return
+    with ST.lock:
+        regions = ST.db.valid_shells("edd")
+        done = ST.db.get_meta(EDD_ID64_META)
+    if done and shells.is_fresh(ST.center, 0.0, ST.radius, regions):
+        return
+    logger.info("EDDiscovery read again for the sphere (%s) - local, no network",
+                "expired" if done else "once for 4.10: id64s and catalogue stars")
+    _fetch_local()
 
 
 def _reload_online() -> None:
@@ -769,6 +797,89 @@ def _copy_route_target() -> None:
         _set_status("no route target yet - start a survey first")
 
 
+EDD_ID64_META = "edd_id64_410"     # EDD read again with id64s (4.10)
+EDD_FILL_ROUNDS = 3
+EDD_WALK_MAX = 64          # numbers walked upwards per boxel in one lookup
+
+
+def _plan_build() -> Dict[str, Any]:
+    with ST.lock:
+        return ST.planner.build(
+            ST.center, _plan_radius(),
+            masscodes=get_masscodes(),
+            probe_depth=max(0, cfg_int(CFG["probe_depth"], 2)),
+            include_empty=cfg_bool(CFG["include_empty"], True),
+            include_tasks=cfg_bool(CFG["include_tasks"], True),
+            origin=ST.cur_pos)
+
+
+def _edd_fill(probe: Sequence[Target]) -> int:
+    """
+    4.10: look the probe candidates up in EDDiscovery's file by id64 - local,
+    read only, no network. A boxel reaches beyond the sphere and so do its
+    gaps; EDD is read only to the sphere's radius, so up to 4.10 most
+    "gaps - in no database" were systems EDD knew (945 of 950 in the
+    developer's sphere). What EDD has is stored with its position and the
+    candidate is gone; a catalogue star found there fills its slot.
+
+    Where EDD has a probe above a boxel's maximum (or the first number of an
+    "empty" boxel), it is asked for the next number of that boxel too, and
+    so on until it has none - one plan rebuild instead of one per number
+    (4.10 fix: with three rebuilds, 12 probes EDD knew were still left).
+    Returns the number of systems found.
+    """
+    if not cfg_bool(CFG["src_edd"], True) or ST.edd_pending or ST.sources is None:
+        return 0
+    ids = [t.id64 for t in probe if t.id64 and t.id64 not in ST.edd_asked]
+    if not ids:
+        return 0
+    edd = ST.sources.sources.get("edd")
+    look = getattr(edd, "lookup_id64", None)
+    if look is None:
+        return 0
+    try:
+        if not edd.available()[0]:
+            return 0
+        rows = look(ids)
+    except Exception:                           # never let it stop the plan
+        logger.exception("EDD lookup by id64 failed")
+        return 0
+    if rows is None:
+        return 0                                # busy: asked again next time
+    ST.edd_asked.update(ids)
+    if not rows:
+        return 0
+    asked = len(ids)
+    upward = {t.id64 for t in probe if t.id64 and t.kind in (K_PROBE, K_EMPTY)}
+    found = list(rows)
+    frontier = [r["id64"] for r in rows if r["id64"] in upward]
+    for _step in range(EDD_WALK_MAX):
+        nxt = [i + (1 << (44 - 3 * (i & 7))) for i in frontier]
+        nxt = [i for i in nxt if i not in ST.edd_asked]
+        if not nxt:
+            break
+        try:
+            more = look(nxt)
+        except Exception:
+            logger.exception("EDD lookup by id64 failed")
+            more = None
+        if not more:                            # none there, or busy: stop here
+            if more is not None:
+                ST.edd_asked.update(nxt)
+            break
+        ST.edd_asked.update(nxt)
+        asked += len(nxt)
+        found += more
+        frontier = [r["id64"] for r in more]
+    for r in found:
+        r["source"] = edd.name
+    _store_rows(found)
+    logger.info("EDD by id64: %d of %d probe candidates are in EDDiscovery's file "
+                "(beyond the radius it was read to; %d more above them) - stored, "
+                "plan rebuilt", len(rows), len(ids), len(found) - len(rows))
+    return len(found)
+
+
 def _rebuild_plan() -> None:
     if not (ST.center and ST.planner):
         return
@@ -784,14 +895,14 @@ def _rebuild_plan() -> None:
         _ui(_stats_window_refresh)
         _maybe_extend()
         return
+    plan = _plan_build()
+    # filling gaps raises a boxel's maximum, which brings new probes above
+    # it - those are looked up too, a few rounds at most
+    for _round in range(EDD_FILL_ROUNDS):
+        if not _edd_fill(plan["probe"]):
+            break
+        plan = _plan_build()
     with ST.lock:
-        plan = ST.planner.build(
-            ST.center, _plan_radius(),
-            masscodes=get_masscodes(),
-            probe_depth=max(0, cfg_int(CFG["probe_depth"], 2)),
-            include_empty=cfg_bool(CFG["include_empty"], True),
-            include_tasks=cfg_bool(CFG["include_tasks"], True),
-            origin=ST.cur_pos)
         ST.stats = ST.planner.statistics(plan)
     ST.flight = plan["flight"]
     ST.probe = plan["probe"]
@@ -1065,6 +1176,18 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     except Exception:
         regions = {}
     info["level"], info["checked_by"] = shells.info_level(srcs, pos, regions)
+    # 4.10: the codex region - from the position, else from the id64 boxel
+    if regionmap is not None:
+        try:
+            reg = None
+            if row is not None and row["x"] is not None:
+                reg = regionmap.find_region(row["x"], row["y"], row["z"])
+            elif id64:
+                reg = regionmap.find_region_for_id64(int(id64))
+            if reg:
+                info["region"] = reg[1]
+        except Exception:
+            logger.debug("region lookup failed", exc_info=True)
     if row is not None and kind == "target":
         with ST.lock:
             if ST.db.is_visited(row, CURRENT):
@@ -2676,6 +2799,7 @@ def _start_survey() -> None:
 
 def _start_worker() -> None:
     ST.horizon = 0.0
+    ST.edd_asked = set()
     _fetch_local()
     _advance_horizon(allow_fetch=True)
     _rebuild_plan()
@@ -2717,7 +2841,18 @@ def _probe_absent() -> None:
     if not t:
         return
     with ST.lock:
-        ST.db.mark_absent(t.name)
+        closes = ST.db.mark_absent(t.name)
+    if not closes:
+        # 4.10: below the highest known number the slot exists - under
+        # another name (a catalogue star: "Synuefe RH-U c19-0" is HIP 33254)
+        ST.probe = [q for q in ST.probe if q.name != t.name]
+        logger.info("%s not in the galaxy map - slot %s exists under another name "
+                    "(catalogue star), boxel %s stays open", t.name, t.n2, t.boxel_key)
+        _set_status("%s: no system of this name - slot %s has another name "
+                    "(catalogue star); the boxel stays open" % (t.name, t.n2))
+        _refresh()
+        _copy_probe()
+        return
     dropped = 0
     if t.boxel_key is not None and t.n2 is not None:
         keep = []
@@ -2737,26 +2872,64 @@ def _probe_absent() -> None:
     _copy_probe()
 
 
-def _boxel_done() -> None:
+def _list_end() -> None:
     """
-    The galaxy map list for this boxel is fully accounted for. Close it in one
-    go - every remaining candidate of that boxel leaves the queue. This is the
-    cheap path: one prefix search plus one click retires a whole boxel.
+    "list ends at [n]" (4.10, replaces "boxel done"): the highest number the
+    galaxy map lists under this prefix. The boxel ends there; every probe
+    above it leaves the queue. Every slot up to it exists - a number missing
+    from the list is a catalogue star -, so the numbers nobody knows yet stay
+    as certain gaps: pick one in the map's list and it is confirmed and the
+    next one comes up. The field starts with the highest number the plugin
+    knows; a smaller number is refused (the list was cut off).
     """
     t = current_probe()
     if not t or not t.boxel_key:
         return
-    with ST.lock:
-        end = ST.db.close_boxel(t.boxel_key)
     key = t.boxel_key
+    _prune_known_probes()          # names known meanwhile are no gaps any more
+    raw = (_list_end_var.get() if _list_end_var is not None else "").strip()
+    raw = raw.rsplit("-", 1)[-1].strip()       # "Synuefe RH-U c19-21" works too
+    try:
+        last = int(raw)
+    except ValueError:
+        _set_status("type the highest number the galaxy map lists for %s"
+                    % boxel_prefix(key))
+        return
+    with ST.lock:
+        top = ST.db.boxel_known_max(key)
+        end = ST.db.close_boxel(key, last)
+    if end is None:
+        _set_status("%s%d is known - the list goes at least that far; scroll the "
+                    "galaxy map list to its end" % (boxel_prefix(key), top))
+        return
     before = len(ST.probe)
-    ST.probe = [q for q in ST.probe if q.boxel_key != key]
+    ST.probe = [q for q in ST.probe
+                if not (q.boxel_key == key and q.n2 is not None and q.n2 > last)]
     dropped = before - len(ST.probe)
-    logger.info("boxel %s closed at n2=%d by hand, %d candidates dropped",
-                key, end, dropped)
-    _set_status("boxel %s done (%d candidates dropped)" % (key, dropped))
+    left = sum(1 for q in ST.probe if q.boxel_key == key)
+    logger.info("boxel %s: galaxy map list ends at %d (known to %s) - closed, %d "
+                "candidates above dropped, %d gaps left", key, last,
+                "-" if top is None else top, dropped, left)
+    _set_status("%s ends at %d - %d dropped%s" % (
+        boxel_prefix(key), last, dropped,
+        (", %d in the list nobody knows: pick them in the map" % left) if left else ""))
+    if top is None or last > top:
+        # numbers above what was known exist: the plan gets them as gaps
+        _run_async(_rebuild_plan, label="replanning")
     _refresh()
     _copy_probe()
+
+
+def _prune_known_probes() -> None:
+    """Drop every probe candidate that is known now - not only the head of
+    the queue: picking any name of the galaxy map's list confirms it."""
+    if not ST.db or not ST.probe:
+        return
+    with ST.lock:
+        keep = [q for q in ST.probe if ST.db.system(q.name) is None]
+    if len(keep) != len(ST.probe):
+        ST.probe = keep
+        _ui(_refresh)
 
 
 def _copy_prefix() -> None:
@@ -3051,8 +3224,12 @@ def _prune_queues() -> None:
                 break
             ST.flight.pop(0)
             changed = True
-        while ST.probe and ST.db.system(ST.probe[0].name) is not None:
-            ST.probe.pop(0)
+        # every known name, not only the head: a plotted route or a pick
+        # in the galaxy map's list can confirm any of them (4.10 fix - a
+        # stale entry kept "1 gaps left" after "list end")
+        keep = [q for q in ST.probe if ST.db.system(q.name) is None]
+        if len(keep) != len(ST.probe):
+            ST.probe = keep
             changed = True
     if changed:
         _refresh()
@@ -3107,6 +3284,9 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
 
         with ST.lock:
             ST.db.ingest_journal_event(entry)
+        if ev == "NavRoute" and ST.active:
+            # every hop of a plotted route is a confirmed system now
+            _prune_queues()
         _measure_work(ev, entry)
 
         # Supercruise timing, measured on the legs the route actually plans:
@@ -3274,6 +3454,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 _set_status("confirmed: %s" % nm)
                 if ST.active:
                     _prune_queues()
+            if ST.active:
+                _prune_known_probes()
             _ui(_refresh)
 
     except Exception:
@@ -3486,6 +3668,7 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
             _set_status("confirmed: %s" % new)
             if ST.active:
                 _prune_queues()
+                _prune_known_probes()
         _ui(_refresh)
     except Exception:
         logger.exception("dashboard_entry failed")
@@ -3619,6 +3802,10 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
 
 _probe_win: Optional[tk.Toplevel] = None
 _probe_head: Optional[tk.StringVar] = None
+# "list ends at [n]" (4.10): the field, and the boxel it was filled for
+_list_end_var: Optional[tk.StringVar] = None
+_list_end_key: Optional[str] = None
+_known_max_cache: Tuple[Any, Optional[int]] = (None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -3949,7 +4136,14 @@ def _probe_window_open() -> None:
     _btn_bundle.pack(side=tk.LEFT, padx=(4, 0))
     _btn_absent = tk.Button(bar, text="not there", command=_probe_absent)
     _btn_absent.pack(side=tk.LEFT, padx=(4, 0))
-    _btn_boxel = tk.Button(bar, text="boxel done", command=_boxel_done)
+    global _list_end_var, _list_end_key
+    _list_end_var = tk.StringVar(value="")
+    _list_end_key = None
+    tk.Label(bar, text="list ends at").pack(side=tk.LEFT, padx=(8, 0))
+    ent = tk.Entry(bar, textvariable=_list_end_var, width=5)
+    ent.pack(side=tk.LEFT, padx=(4, 0))
+    ent.bind("<Return>", lambda e: _list_end())
+    _btn_boxel = tk.Button(bar, text="list end", command=_list_end)
     _btn_boxel.pack(side=tk.LEFT, padx=(4, 0))
     _btn_skip = tk.Button(bar, text="later", command=_probe_skip)
     _btn_skip.pack(side=tk.LEFT, padx=(4, 0))
@@ -3975,9 +4169,23 @@ def _probe_window_open() -> None:
 
 
 def _probe_window_refresh() -> None:
+    global _list_end_key, _known_max_cache
     if _probe_win is None or _probe_head is None:
         return
     p = current_probe()
+    top = None
+    if p and p.boxel_key and ST.db is not None:
+        # asked again only when the boxel or the queue changed - a refresh
+        # runs on the UI thread and comes often
+        tag = (p.boxel_key, len(ST.probe))
+        if _known_max_cache[0] != tag:
+            with ST.lock:
+                _known_max_cache = (tag, ST.db.boxel_known_max(p.boxel_key))
+        top = _known_max_cache[1]
+        if p.boxel_key != _list_end_key and _list_end_var is not None:
+            # a new boxel: the field starts with the highest number known
+            _list_end_key = p.boxel_key
+            _list_end_var.set("" if top is None else str(top))
     if not p:
         _probe_head.set("no candidates to check\n"
                         "press Start to begin a sphere survey")
@@ -3991,16 +4199,20 @@ def _probe_window_refresh() -> None:
             "    %s\n"
             "prefix       %s%s\n"
             "distance     %.1f ly   uncertainty +-%.0f ly\n"
-            "this boxel   %d candidate%s   odds %s\n"
-            "queue        %d probes (gap %d, probe %d, empty %d)%s"
+            "this boxel   %d candidate%s   odds %s   known to %s\n"
+            "queue        %d probes (gap %d, probe %d, empty %d)%s%s"
             % (p.name,
                boxel_prefix(p.boxel_key) if p.boxel_key else "?",
                # n1 = 0 boxels: the prefix also lists the d1-.., d2-.. boxels
                "   (count only names without '-')"
                if p.boxel_key and p.boxel_key[-1:].isalpha() else "",
                p.dist_origin, p.uncertainty,
-               same, "" if same == 1 else "s", odds, len(ST.probe),
+               same, "" if same == 1 else "s", odds,
+               "-" if top is None else "-%d" % top, len(ST.probe),
                c.get(K_GAP, 0), c.get(K_PROBE, 0), c.get(K_EMPTY, 0),
+               # 4.10: a named sector's surface cuts this boxel - its
+               # systems can carry either name (same number n2)
+               ("\nedge         %s" % p.detail) if p.detail else "",
                ("\nplot route   %s  %.0f ly, %d unprobed boxels on the way"
                 "\n             (economical route = more hops = more systems)"
                 % (ST.route_targets[0]["name"], ST.route_targets[0]["dist"],

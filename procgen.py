@@ -37,7 +37,15 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+
+try:
+    # Sector names computed with EDTS's algorithm (BSD 3-Clause, Andy
+    # Martin) - see edts_pgnames/SOURCE.md. Without the folder the plugin
+    # falls back to the names it learnt, as before 4.10.
+    import edts_pgnames as _edts
+except Exception:  # pragma: no cover - folder missing or broken
+    _edts = None
 
 __all__ = [
     "GALAXY_ORIGIN", "SECTOR_SIZE", "MASSCODES",
@@ -47,6 +55,8 @@ __all__ = [
     "boxel_corner", "boxel_center", "boxel_intersects_sphere",
     "boxels_in_sphere", "SectorRegistry", "parse_boxel_only",
     "boxel_prefix", "name_in_boxel", "parse_boxel_key",
+    "computed_sector_name", "computed_sector_index", "is_ha_sector",
+    "ha_regions_near", "boxel_labels", "boxel_key_of",
 ]
 
 # Lower corner of sector (0,0,0) in galactic coordinates
@@ -218,6 +228,37 @@ def decode_id64(id64: int) -> Dict[str, object]:
     }
 
 
+def id64_slot(id64: int) -> Tuple[int, Tuple[int, int, int], int]:
+    """(mass code, global boxel index, n2) of an id64 - the physical slot.
+
+    The slot is there whatever name the system carries: a catalogue star
+    ("HIP 33254") fills n2 = 0 of "Synuefe RH-U c19" as much as a procedural
+    name would; the galaxy map then lists no "-0" under that prefix."""
+    d = decode_id64(id64)
+    per = 128 >> d["mc"]
+    g = tuple(s * per + b for s, b in zip(d["sector_idx"], d["boxel"]))
+    return d["mc"], g, d["n2"]  # type: ignore[return-value]
+
+
+def id64_of_slot(mc: int, gidx: Sequence[int], n2: int) -> int:
+    """The id64 of slot n2 in a physical boxel (global index)."""
+    per = 128 >> mc
+    sector = tuple(int(g) // per for g in gidx)
+    boxel = tuple(int(g) % per for g in gidx)
+    return id64_from_parts(sector, mc, boxel, n2)
+
+
+def id64_matches_position(id64: int, pos: Sequence[float], tol: float = 0.2) -> bool:
+    """Does a position lie inside the boxel the id64 names? A check that a
+    number some database calls an id64 really is one."""
+    try:
+        d = decode_id64(int(id64))
+    except (TypeError, ValueError):
+        return False
+    c, s = d["corner"], d["size"]
+    return all(c[i] - tol <= float(pos[i]) <= c[i] + s + tol for i in range(3))
+
+
 def id64_from_name(name: str, sector_idx: Sequence[int]) -> Optional[int]:
     """id64 from a name plus a known sector index."""
     p = parse_name(name)
@@ -304,6 +345,129 @@ def boxels_in_sphere(mc: int, center: Sequence[float], radius: float
 
 
 # ---------------------------------------------------------------------------
+# Computed sector names and hand-authored sectors (edts_pgnames)
+# ---------------------------------------------------------------------------
+#
+# Every sector of the 128 x 128 x 128 grid has a procedural name the game
+# computes from its index. On top of that lie some 470 hand-authored (HA)
+# sectors - "Col 285 Sector", "NGC 2232 Sector" ... - spheres whose systems
+# are named after the sphere instead, with boxel letters counted from the
+# sphere's own grid origin. The physical boxel and the system number n2 stay
+# the same (checked: 665 such systems of a real survey, id64 against name),
+# only the label changes. A boxel that a sphere's surface cuts can hold
+# systems of both labels: which one a star gets depends on where it lies.
+
+def computed_sector_name(idx: Sequence[int]) -> Optional[str]:
+    """Procedural name of the sector at an absolute index, or None."""
+    if _edts is None:
+        return None
+    try:
+        return _edts.sector_name(idx)
+    except Exception:
+        return None
+
+
+def computed_sector_index(name: str) -> Optional[Tuple[int, int, int]]:
+    """Absolute index of a procedural sector name, or None (unknown, a
+    hand-authored name, or edts_pgnames missing)."""
+    if _edts is None or not name:
+        return None
+    try:
+        return _edts.sector_index(name)
+    except Exception:
+        return None
+
+
+def is_ha_sector(name: str) -> bool:
+    """True for a hand-authored sector name the table knows."""
+    return _edts is not None and _edts.ha_region(name) is not None
+
+
+def ha_regions_near(center: Sequence[float], radius: float) -> list:
+    """Hand-authored sectors whose spheres meet this sphere (smallest first)."""
+    if _edts is None:
+        return []
+    return _edts.ha_regions_near(center, radius)
+
+
+def _corners(gidx: Sequence[int], mc: int) -> List[Tuple[float, float, float]]:
+    s = boxel_size(mc)
+    c = boxel_corner(gidx, mc)
+    return [(c[0] + i * s, c[1] + j * s, c[2] + k * s)
+            for i in (0, 1) for j in (0, 1) for k in (0, 1)]
+
+
+def _ha_label(region, gidx: Sequence[int], mc: int
+              ) -> Optional[Tuple[str, Tuple[int, int, int]]]:
+    """(region name, boxel index in the region's grid) - or None if that
+    index falls outside 0..127 (it never does for real regions)."""
+    cw = boxel_size(mc)
+    o = region.get_origin(cw)
+    rel = tuple(int(gidx[k]) - int(round((o[k] - GALAXY_ORIGIN[k]) / cw)) for k in range(3))
+    if not all(0 <= v < 128 for v in rel):
+        return None
+    return (region.name, rel)  # type: ignore[return-value]
+
+
+def boxel_labels(gidx: Sequence[int], mc: int,
+                 sector_of: Optional[Callable[[Tuple[int, int, int]], Optional[str]]] = None,
+                 regions: Optional[list] = None
+                 ) -> List[Tuple[str, Tuple[int, int, int]]]:
+    """
+    Every (sector name, boxel index within that sector) a system of this
+    physical boxel can be named with, the most likely first: the label of
+    the boxel's centre. One label for most boxels; two or more where the
+    surface of a hand-authored sphere cuts the boxel.
+
+    sector_of(index) gives the procedural sector name (learnt names first);
+    by default the computed name. regions limits the hand-authored sectors
+    looked at (ha_regions_near of the sphere being planned) - by default
+    the ones near this boxel. Empty list: no name known at all.
+    """
+    gidx = (int(gidx[0]), int(gidx[1]), int(gidx[2]))
+    s = boxel_size(mc)
+    centre = boxel_center(gidx, mc)
+    if regions is None:
+        regions = ha_regions_near(centre, s * 0.8661)
+    labels: List[Tuple[str, Tuple[int, int, int]]] = []
+    centre_label: Optional[Tuple[str, Tuple[int, int, int]]] = None
+    fully_inside = False
+    if regions:
+        corners = _corners(gidx, mc)
+        for r in regions:                               # smallest first
+            if not any(boxel_intersects_sphere(gidx, mc, sp.centre, sp.radius)
+                       for sp in r.spheres):
+                continue
+            lab = _ha_label(r, gidx, mc)
+            if lab is not None:
+                labels.append(lab)
+                if centre_label is None and r.contains(centre):
+                    centre_label = lab
+            if any(all(sp.contains(c) for c in corners) for sp in r.spheres):
+                fully_inside = True                     # nothing larger names it
+                break
+    if not fully_inside:
+        per = 128 >> mc
+        sidx = (gidx[0] // per, gidx[1] // per, gidx[2] // per)
+        name = sector_of(sidx) if sector_of is not None else computed_sector_name(sidx)
+        if name:
+            pg_label = (name, (gidx[0] % per, gidx[1] % per, gidx[2] % per))
+            labels.append(pg_label)
+            if centre_label is None:
+                centre_label = pg_label
+    if centre_label is not None and labels and labels[0] != centre_label:
+        labels.remove(centre_label)
+        labels.insert(0, centre_label)
+    return labels
+
+
+def boxel_key_of(sector: str, mc: int, boxel: Sequence[int]) -> str:
+    """Boxel key ("Synuefe XV-C d") of a sector name and boxel index."""
+    p = parse_name(make_name(sector, mc, boxel, 0))
+    return p.boxel_key if p else ""
+
+
+# ---------------------------------------------------------------------------
 # Sector registry
 # ---------------------------------------------------------------------------
 
@@ -347,6 +511,14 @@ class SectorRegistry:
         return self._add(p.sector, si)
 
     def _add(self, sector: str, idx: Tuple[int, int, int]) -> bool:
+        idx = (int(idx[0]), int(idx[1]), int(idx[2]))
+        if _edts is not None and computed_sector_index(sector) != idx:
+            # The registry holds procedural sectors only. A hand-authored
+            # name, or a pair that disagrees with the computed name (bad
+            # external coordinates), would put the wrong name on a whole
+            # sector - it is refused and kept as a conflict.
+            self.conflicts.append((sector, computed_sector_index(sector), idx))
+            return False
         old = self.by_name.get(sector)
         if old is not None and old != idx:
             self.conflicts.append((sector, old, idx))
@@ -360,6 +532,10 @@ class SectorRegistry:
 
     def name_of(self, idx: Sequence[int]) -> Optional[str]:
         return self.by_index.get(tuple(idx))  # type: ignore[arg-type]
+
+    def resolve(self, idx: Sequence[int]) -> Optional[str]:
+        """Procedural sector name: learnt if known, else computed."""
+        return self.name_of(idx) or computed_sector_name(idx)
 
     def name_for_coords(self, x: float, y: float, z: float) -> Optional[str]:
         return self.name_of(sector_index_of_coords(x, y, z))
@@ -461,6 +637,47 @@ def _selftest() -> int:
     check("star_pos nan", star_pos([1.0, float("nan"), 2.0]), None)
     check("star_pos bool", star_pos([True, 0.0, 0.0]), None)
     check("star_pos missing", star_pos(None), None)
+
+    # 4.10: sector names computed (edts_pgnames), hand-authored sectors
+    if _edts is not None:
+        for idx, nm in (((39, 31, 18), "Synuefe"), ((39, 32, 18), "Wregoe"),
+                        ((39, 31, 17), "Oochorrs"), ((38, 31, 18), "Synuefai"),
+                        ((31, 31, 34), "Eol Prou"), ((40, 31, 15), "Pyurks")):
+            check("computed name %s" % nm, computed_sector_name(idx), nm)
+            check("computed index %s" % nm, computed_sector_index(nm), idx)
+        check("HA name has no procedural index", computed_sector_index("Col 285 Sector"), None)
+        check("nonsense has no index", computed_sector_index("Qqqq Xx"), None)
+        check("Col 285 Sector is hand-authored", is_ha_sector("Col 285 Sector"), True)
+
+        def labels_of(id64):
+            d = decode_id64(id64)
+            per = 128 >> d["mc"]
+            g = tuple(s * per + b for s, b in zip(d["sector_idx"], d["boxel"]))
+            return [boxel_key_of(n, d["mc"], b) for n, b in boxel_labels(g, d["mc"])]
+
+        # real systems (game id64): a boxel deep inside a hand-authored
+        # sphere has its name only; one its surface cuts has both
+        check("inside NGC 2232 Sector", labels_of(2877225116705), ["NGC 2232 Sector KO-P b6"])
+        check("inside NGC 2244 Sector (X1 case)", labels_of(87677669314),
+              ["NGC 2244 Sector LO-W c16"])
+        check("edge of NGC 2244 Sector: both labels",
+              labels_of(10997434331), ["Pyurks FH-J d10", "NGC 2244 Sector GW-M d7"])
+        check("procedural boxel: one label", labels_of(2690637597019)[:1], ["Synuefe WG-J d10"])
+        reg = SectorRegistry()
+        check("registry refuses a hand-authored name",
+              reg.learn_from_id64("NGC 2232 Sector KO-P b6-1", 2877225116705), False)
+        check("registry resolves an unknown sector by computing it",
+              reg.resolve((40, 31, 15)), "Pyurks")
+    # 4.10: physical slots - "Synuefe RH-U c19-1" (game id64), and its slot 0
+    # which is a catalogue star (HIP) in the game
+    mc, g, n2 = id64_slot(359669830314)
+    check("slot of an id64: mass code and n2", (mc, n2), (2, 1))
+    check("slot -> id64 round trip", id64_of_slot(mc, g, 1), 359669830314)
+    check("slot 0 of the same boxel", id64_of_slot(mc, g, 0), 84791923370)
+    check("id64 matches its position", id64_matches_position(
+        359669830314, (553.625, -166.34375, -217.0)), True)
+    check("id64 refuses a position elsewhere", id64_matches_position(
+        359669830314, (0.0, 0.0, 0.0)), False)
     print("failures:", fails)
     return fails
 

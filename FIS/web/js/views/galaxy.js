@@ -534,6 +534,9 @@ function focusFrame() {
   const facts = [t("y {y} ly", { y: fmt(f.y, 0) }), t("{d} ly from Sol", { d: fmt(Math.hypot(f.x, f.y, f.z), 0) })];
   if (!focusMe && you) facts.push(t("{d} ly from you", { d: fmt(Math.hypot(f.x - you.x, f.y - you.y, f.z - you.z), 1) }));
   if (known) facts.push(known.u ? t("only known to us") : known.v ? t("visited") : "");
+  // 4.10: codex region of the focused system (region map by klightspeed)
+  const rid = (known && known.r) || (focusMe && you && f.id === you.id ? you.r : null);
+  if (rid && data.region_names && data.region_names[rid]) facts.push(t("region {r}", { r: data.region_names[rid] }));
   if (f.kinds) facts.push(f.kinds.map(k => t(FIND_NAME[k] || k)).join(", "));
   if (f.carrier) facts.push(t("carrier") + " " + [f.carrier.name, f.carrier.callsign].filter(Boolean).join(" ") + " · " + carrierTexts(f.carrier)[2]);
   if (f.kind === "stop") facts.push(t("carrier stop") + (f.t ? " " + new Date(f.t * 1000).toLocaleDateString() : ""));

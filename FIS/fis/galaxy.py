@@ -289,6 +289,22 @@ def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
                        "v": 1 if r["visited"] else 0, "f": 1 if r["fss_complete"] else 0,
                        "u": 1 if (r["visited"] and _info_level(r, regions)[0] == "checked") else 0}
                       for r in rows]
+    # 4.10: codex region per system ("r" = index into region_names)
+    rm = getattr(_plugin(), "regionmap", None)
+    if rm is not None:
+        out["region_names"] = rm.region_names()
+        for s in out["systems"]:
+            try:
+                reg = rm.find_region(s["x"], s["y"], s["z"])
+            except Exception:
+                reg = None
+            if reg:
+                s["r"] = reg[0]
+        y = out.get("you")
+        if y and y.get("x") is not None:
+            reg = rm.find_region(y["x"], y["y"], y["z"])
+            if reg:
+                y["r"] = reg[0]
     # finds worth a symbol
     finds: Dict[Any, Dict[str, Any]] = {}
     if db.has_table("signals"):

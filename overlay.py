@@ -112,7 +112,8 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
       fuel_warning (str), bodies (int), bodies_new (int),
       level ('known' | 'inhabited' | 'checked' | 'unchecked', shells.info_level),
       lost ({scan, map, bio} - data lost there in a crash, not redone yet),
-      checked_by (list of sources that covered the position)
+      checked_by (list of sources that covered the position),
+      region (codex region name)
     """
     name = info.get("name") or "?"
     kind = info.get("kind") or "target"
@@ -124,6 +125,9 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
         out.append(("STAR  %s%s" % (sc, "  scoopable" if scoop else
                                     ("  NOT scoopable" if scoop is False else "")),
                     COL["data"] if scoop or scoop is None else COL["warn"]))
+    if info.get("region"):
+        # 4.10: codex region (klightspeed's region map)
+        out.append((("REGION  %s" % info["region"])[:44], COL["dim"]))
     src = info.get("known_sources")
     level = info.get("level")
     if src:
@@ -416,6 +420,9 @@ def _selftest() -> int:
     check("also explored by Xerxes" in texts(also_by=["Xerxes"])
           and not any(t.startswith("also") for t in texts()),
           "C1: 'also explored by' only when another commander was there")
+    check("REGION  Inner Orion Spur" in texts(region="Inner Orion Spur")
+          and not any(t.startswith("REGION") for t in texts()),
+          "4.10: the codex region when known, nothing otherwise")
     print("failures: %d" % fails)
     return fails
 

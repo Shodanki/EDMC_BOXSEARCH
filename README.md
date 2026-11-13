@@ -14,22 +14,24 @@ tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
 folder of this plugin. See [FIS/README.md](FIS/README.md) - with
 screenshots (demo data).
-**New in 4.9:** this README in a new order - operation first, then the
-third-party parts, how it works, the history. The overlay names the
-absolute course to every point and says "lost - redo" for species lost in a
-crash; a plotted route through space nobody was asked about is checked once.
-In the FIS: synthesis per tier in the VEHICLE tab with how often each can
-still be made, the vehicle's tank size, stations beside their body in the
-SYSTEM map and the plot suggestion as a corridor in GALAXY - see
-[What changed in 4.9](#what-changed-in-49).
+**New in 4.10:** fewer galaxy map searches for every system no database
+knows. Sector names are computed, so boxels in sectors nobody visited are
+planned too, and hand-authored sectors (NGC 2232, Col 70 ...) under their
+own names. Catalogue stars fill their number in a boxel, *list ends at*
+takes the end of the galaxy map's list, and candidates EDDiscovery already
+knows leave the queue - in the developer's sphere 1 902 probes became 856.
+The briefing and the FIS name the codex region - see
+[What changed in 4.10](#what-changed-in-410).
 
 **Licence:** [Mozilla Public License 2.0](LICENSE) since 4.7 - use, change and
 share it freely; whoever passes on a changed file of this project keeps that
 file open under the same licence (files of your own next to it are yours).
 4.6 and earlier were released under MIT and stay MIT. Third-party parts keep
-their own licence: Three.js 0.170.0 (MIT, `FIS/web/vendor/three`) and
-Project Nayuki's QR Code generator (MIT, `FIS/fis/vendor`) - origin and
-licence text in the `SOURCE.md` / `LICENSE` files there; all of them in
+their own licence: Three.js 0.170.0 (MIT, `FIS/web/vendor/three`),
+Project Nayuki's QR Code generator (MIT, `FIS/fis/vendor`), EDTS's sector
+name algorithm by Andy Martin (BSD 3-Clause, `edts_pgnames`) and Ben
+Peddell's region map (MIT, `regionmap`) - origin and licence text in the
+`SOURCE.md` / `LICENSE` files there; all of them in
 [Third-party parts](#third-party-parts).
 
 Repository: <https://github.com/Shodanki/EDMC_BOXSEARCH>
@@ -103,7 +105,8 @@ update v4.1.0 available - click to open GitHub
 Clicking opens the release page. Then:
 
 1. Close EDMC.
-2. Replace the `.py` files with the new ones. **Leave `shboxsearch.sqlite`
+2. Replace the `.py` files and the folders (`edts_pgnames`, `regionmap`,
+   `FIS`) with the new ones. **Leave `shboxsearch.sqlite`
    alone** - that is your survey data.
 3. Start EDMC.
 
@@ -127,22 +130,24 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4694 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
-| `sysdb.py` | 3127 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `load.py` | 4715 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `sysdb.py` | 3133 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 980 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
-| `boxelplan.py` | 952 | Sphere planner: gaps, probes, prospecting score, statistics | `procgen`, `sysdb` |
+| `boxelplan.py` | 999 | Sphere planner: gaps, probes, prospecting score, statistics, labels of named sectors | `procgen`, `sysdb` |
 | `sources.py` | 776 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
 | `netgate.py` | 474 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
 | `shells.py` | 321 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
-| `procgen.py` | 445 | Name ↔ id64 ↔ boxel maths, sector registry, self test | — |
+| `procgen.py` | 645 | Name ↔ id64 ↔ boxel maths, sector registry, computed sector names, named sectors over a boxel, self test | `edts_pgnames` |
 | `deepspace.py` | 441 | Fuel model, tritium rings, carrier staging | — |
 | `migrate.py` | 77 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
-| `overlay.py` | 424 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `overlay.py` | 431 | Cockpit overlay through EDMCModernOverlay (optional) | — |
 | `biopredict.py` | 204 | Genus prediction learned from your own samples | — |
 | `diagnostics.py` | 289 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
 | `surfacenav.py` | 493 | Surface compass: parked SRV, open samples, known points | — |
 | `miningstat.py` | 337 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
 | `journalscan.py` | 367 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay, self test | — |
+| `edts_pgnames/` | | Sector names computed with EDTS's algorithm, hand-authored sector table (third-party, BSD 3-Clause, see its `SOURCE.md`) | — |
+| `regionmap/` | | Codex regions of the galaxy (third-party, MIT, see its `SOURCE.md`) | — |
 | `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
 
 Only `load.py` touches tkinter or the EDMC API; everything else is plain
@@ -276,8 +281,23 @@ plugin you need nothing of it beyond EDMC and the game.
 | Three.js 0.170.0 (three.js authors) | MIT | `FIS/web/vendor/three` - `three.module.js`, `addons/controls/OrbitControls.js` | the 3D views, also offline |
 | QR Code generator by Project Nayuki | MIT | `FIS/fis/vendor/qrcodegen.py` | the QR code on the FIS settings page |
 
+**Shipped with the plugin, under their own licence** (since 4.10):
+
+| Part | Licence | Where | Used for |
+|---|---|---|---|
+| Sector name algorithm and hand-authored sector table from **EDTS** by Andy Martin (with research by CMDR Jackie Silver; CMDR furrycat) | BSD 3-Clause | `edts_pgnames/` - derived and modified (ported to the plugin's sector indices); the tables unchanged | sector names where no system is known yet; boxels inside and at the edge of named sectors ([Named sectors over the grid](#named-sectors-over-the-grid)) |
+| **EliteDangerousRegionMap** by Ben Peddell (klightspeed) | MIT | `regionmap/` - `RegionMapData.py` unchanged, `__init__.py` derived (without the original's EDSM lookup) | the codex region in the briefing and in the FIS |
+
 Origin, version and checksum are in the `SOURCE.md` next to each; the licence
-texts stay with the files (`LICENSE` there, the header of `qrcodegen.py`).
+texts stay with the files (`LICENSE` / `LICENSE.txt` there, the header of
+`qrcodegen.py`). The names, the name fragments, the region map and the
+region names are Frontier's game data (see *Frontier's data* below).
+
+**Ideas, not code:** the [systematic-boxel-survey](https://github.com/Oberonmeister/systematic-boxel-survey)
+project by Oberonmeister documented that named sectors overlap procedural
+boxels and that one physical boxel can carry two labels. The plugin's own
+handling of that is described in *How it works*. The project has no
+licence, so none of its code or text is used.
 
 **Used, not included** - no code of these is part of this project:
 
@@ -357,12 +377,96 @@ against every procgen system in the supplied journals and JSON files —
 **no mismatches**.
 
 Consequence: any name yields a position accurate to the boxel size, and any
-id64 yields the full name back.
+id64 yields the full name back - where the boxel has only one name (see
+below).
+
+### Sector names, computed (since 4.10)
+
+Up to 4.9 the plugin learnt the name of a sector from the first system it
+saw there, so boxels in a sector without any known system could not be
+planned. Since 4.10 the name is computed from the sector's place in the
+128 x 128 x 128 grid with **EDTS's algorithm** (Andy Martin, BSD 3-Clause,
+in `edts_pgnames/` - see [Third-party parts](#third-party-parts)). A name
+the plugin saw itself still comes first. Checked against EDDiscovery's
+database: 399 013 procedural systems from all over the galaxy, all correct.
+
+### Named sectors over the grid
+
+About 470 **hand-authored sectors** - *Col 285 Sector*, *NGC 2232 Sector*,
+*Col 70 Sector* ... - are spheres laid over the grid. A star inside one is
+named after the sphere, with boxel letters counted from the sphere's own
+corner. The physical boxel and the number `n2` stay the same; only the
+label changes:
+
+```
+Pyurks FH-J d10-0  and  NGC 2244 Sector GW-M d7-0  ->  same boxel, n2 = 0
+```
+
+Where the surface of such a sphere cuts a boxel, its systems carry either
+label, depending on where each star lies. The planner therefore:
+
+* names a boxel that lies inside a sphere only after the sphere. Before
+  4.10 such boxels got procedural names the galaxy map never finds - in a
+  test sphere inside NGC 2232 Sector that meant 540 useless probes and no
+  gap found;
+* counts `n2` across all labels of a cut boxel, so a gap is a gap whatever
+  the name of its neighbours;
+* tries the label of the boxel's centre first, or a label it has already
+  seen there; *not there* under one label brings up the other, and only
+  when both are ruled out is the number gone. The probe window says
+  `edge  also named: ...`;
+* closes a cut boxel only when every label's list was seen to its end.
+
+An id64 alone gives a name only where the boxel has one label; at a
+sphere's edge the plugin no longer guesses. The idea of keeping the
+physical boxel apart from its labels comes from the
+[systematic-boxel-survey](https://github.com/Oberonmeister/systematic-boxel-survey)
+project (Oberonmeister), which documented the *Pyurks / NGC 2244* case. No
+code or text of it is used - it has no licence.
+
+### Catalogue stars hold a number too (since 4.10)
+
+Every system has an **id64** that names its boxel and its number `n2`,
+whatever the system is called. Real stars from catalogues keep their
+catalogue name but still fill a number of their boxel:
+
+```
+Synuefe RH-U c19-   galaxy map lists 1, 2, 3 ... 21 - no "-0"
+HIP 33254           id64 84791923370 = slot 0 of Synuefe RH-U c19
+```
+
+So a missing `-0` (or any missing number below the highest one) is not a
+gap and not the end of the boxel. Since 4.10 the plugin counts the numbers
+of a boxel by **id64** as well as by name, so a catalogue star fills its
+slot. EDDiscovery's file holds the id64 of every system (its `edsmid`
+column, in the files EDDiscovery builds from Spansh's data); the plugin
+takes it only where the position lies inside the boxel that number names.
+
+### Candidates looked up in EDDiscovery by id64 (since 4.10)
+
+A boxel of mass code c is 40 ly wide; one that meets the edge of a 50 ly
+sphere reaches up to 70 ly from its centre. EDDiscovery is read only to the
+radius, so up to 4.10 most "gaps" were systems EDDiscovery knew - just
+outside it. In the developer's sphere 945 of 950 gaps were such systems.
+
+Since 4.10 every plan looks its candidates up in EDDiscovery's file by
+id64 - local, read only, by primary key, no network. What is there is stored
+with its position and the candidate is gone; a boxel whose maximum rises
+that way gets its next probes looked up too (three rounds at most). The
+same sphere then held 939 candidates instead of 1 859, and 5 gaps instead of
+942: the 5 are systems really in no database.
+
+A sphere restored at EDMC start reads EDDiscovery's file again once after
+the update to 4.10 (the rows read before carry no id64), and afterwards
+whenever its last reading has expired - so an old sphere plans on the same
+data as a new one.
 
 ## 3. The gap logic
 
 Within a boxel, `n2` runs **contiguously from 0** (true for mass codes a–g;
-mass code h has culling gaps, which is why h is off by default).
+mass code h has culling gaps, which is why h is off by default). A number
+can carry a catalogue name instead of the procedural one - see
+[Catalogue stars hold a number too](#catalogue-stars-hold-a-number-too-since-410).
 
 Three kinds of candidate follow from that:
 
@@ -412,13 +516,21 @@ That is what the probe bar is built around:
 | Button | What it does |
 |---|---|
 | **prefix** | copies `Synuefe SH-N a6-` — one paste lists the whole boxel |
-| **boxel done** | you have seen the full list → closes the boxel, drops **all** its remaining candidates at once |
-| **not there** | a single name is missing → closes the boxel from that number up, because n2 is contiguous |
+| **list ends at [n]** + **list end** | type the highest number the list shows (the field starts with the highest one the plugin knows) → the boxel ends there, every probe above it goes at once (since 4.10; was **boxel done**) |
+| **not there** | a single name is missing → above the highest known number it closes the boxel from there up; below it, only that name goes (a catalogue star holds the number) |
 | **later** | move this boxel to the back |
+
+**list ends at** also works when the list is longer than what the plugin
+knows: type `21` where it knew `19`, and `-20` and `-21` become certain
+gaps - they exist, and no database has them. A number smaller than one the
+plugin knows is refused: the list was cut off, scroll it to its end.
 
 Any system you click in that result list sets it as target, which fires
 `FSDTarget` and writes `Destination` — the plugin picks both up on its own, so
-new finds land in the database without you typing anything.
+new finds land in the database without you typing anything. Since 4.10 that
+takes the name out of the queue wherever it stands, not only at the head:
+work the list from top to bottom, the window shows the next open one.
+Plotting a route there also writes its exact position (`NavRoute`).
 
 The probe queue is grouped **per boxel**, not by raw distance, so you work one
 search at a time instead of hopping between boxels:
@@ -431,11 +543,11 @@ Synuefe OB-P a5-3   Synuefe OB-P a5    5.9 ly
 ```
 
 The probe line shows how many candidates the current boxel still has, so you
-know what a single **boxel done** is worth.
+know what a single **list end** is worth.
 
 **What this changes in practice.** At r=50 ly a sphere holds roughly 800 open
 candidates spread over about 600 boxels. Candidate by candidate that is 800
-searches. Prefix plus **boxel done** turns it into about 600 — and every boxel
+searches. Prefix plus **list end** turns it into about 600 — and every boxel
 that turns out empty is retired by one click instead of two or three.
 
 ### Prospecting: which boxel first
@@ -954,10 +1066,10 @@ check this name in the galaxy map:
     Synuefe DZ-S a42-0
 prefix       Synuefe DZ-S a42-
 distance     4.2 ly   uncertainty +-9 ly
-this boxel   1 candidate   odds void
+this boxel   1 candidate   odds void   known to -
 queue        973 probes (gap 0, probe 2, empty 971)
 
-[copy prefix] [copy bundle] [not there] [boxel done] [later]
+[copy prefix] [copy bundle] [not there]  list ends at [  ] [list end] [later]
 [replan] [copy FC] [carrier spot] [x] carrier start
 ```
 
@@ -1277,6 +1389,7 @@ what changed in each release from 4.1 on.
 | 4.8.0 | exploration per commander with a main commander; first route from the carrier; latest scoop on a plotted route; data lost with the ship planned again; FIS: VEHICLE tab, deeper themes, unsold data with risk level and the first-footfall bonus |
 | 4.9.0 | README in a new order; overlay: absolute course, "lost - redo"; route check of a plotted route (one EDSM request); prospecting learnt from your probes; FIS: synthesis per tier and tank size in VEHICLE, docked stations in the SYSTEM map, plot corridor in GALAXY |
 | 4.9.1 | fixes: live DSS timing, own carrier after a jump aboard, damaged StarPos, pre-release tags in the update check; journal reading in its own module `journalscan.py` |
+| 4.10.0 | sector names computed (EDTS) and hand-authored sectors planned under their own names; codex region in the briefing and the FIS (region map); galaxy map list: catalogue stars fill their number, *list ends at* replaces *boxel done*; probe candidates looked up in EDDiscovery by id64 |
 
 ## Fixed since v3.0.8
 
@@ -2184,6 +2297,72 @@ and keep `FIS/vehicle_tanks.json` like `favourites.json`.
   own. **Copy `journalscan.py` together with `load.py`** when you update
   by hand - without it the plugin does not start. Nothing new is stored;
   no replay is needed.
+
+## What changed in 4.10
+
+4.10 is about one thing: fewer galaxy map searches for every system no
+database knows. Measured in the developer's sphere (r = 50 ly): the probe
+queue went from 1 902 to 856 candidates, and the "certain" gaps from 959 to
+5 - the other 954 were systems EDDiscovery knew all along.
+
+### Sector names computed, named sectors planned under their names
+
+* The name of a sector comes from its place in the grid, computed with
+  EDTS's algorithm (Andy Martin, BSD 3-Clause, in `edts_pgnames/`). Boxels
+  in a sector where no system is known yet are planned too. Checked against
+  EDDiscovery: 399 013 procedural systems all correct.
+* About 470 hand-authored sectors (*NGC 2232*, *Col 70*, *Col 285* ...) lie
+  over the grid. Inside them the planner probes under the sector's own
+  name; before, a test sphere in NGC 2232 Sector gave 540 probes the galaxy
+  map can never find and not one gap. A boxel cut by a sphere's surface
+  carries both labels; its numbers are counted across them, and the probe
+  window says `edge  also named: ...`. See
+  [Named sectors over the grid](#named-sectors-over-the-grid).
+
+### Codex region
+
+Ben Peddell's region map (MIT, in `regionmap/`) names the codex region of a
+position: a `REGION` line in the cockpit briefing, a REGION row in FIS
+BRIEFING (with *new region - you leave ...* when the jump leaves yours) and
+the region in the GALAXY focus. Local, no network; 41 of 41 codex entries
+from the developer's journals match.
+
+### The galaxy map list
+
+* **Catalogue stars hold a number.** `Synuefe RH-U c19-` lists 1 to 21 and
+  no `-0`: slot 0 is HIP 33254. The plugin counts a boxel's numbers by id64
+  as well as by name, so a missing number below the highest one is neither
+  a gap nor the end. See
+  [Catalogue stars hold a number too](#catalogue-stars-hold-a-number-too-since-410).
+* **list ends at [n]** replaces **boxel done**: type the highest number the
+  list shows (the field starts with the highest one known) and press
+  **list end** or Enter. Probes above it go; numbers above what was known
+  become certain gaps; a smaller number than a known one is refused.
+* **not there** below the highest known number only rules out that name.
+  Before, it closed the boxel there and dropped every candidate.
+* A name known meanwhile - a target picked in the list, a plotted route -
+  leaves the probe queue wherever it stands.
+
+### Candidates looked up in EDDiscovery by id64
+
+A boxel reaches beyond the sphere, and EDDiscovery was read only to its
+radius. Every plan now looks its candidates up in EDDiscovery's file by
+id64 - local, read only, by primary key, no network - and walks each boxel
+upwards until EDDiscovery has no number. A row counts only where its
+position lies in the boxel its number names. See
+[Candidates looked up in EDDiscovery by id64](#candidates-looked-up-in-eddiscovery-by-id64-since-410).
+
+### Updating to 4.10
+
+* Copy the two **new folders** `edts_pgnames` and `regionmap` with the
+  `.py` files - without `edts_pgnames` sector names fall back to what the
+  plugin has seen.
+* The first start makes a backup of the database and runs one repair: a
+  boxel closed at or below a system that exists in it is opened again (in
+  the developer's database: none). A running sphere then reads
+  EDDiscovery's file once more (the rows read before carry no id64).
+* No new column, no journal replay. Close the FIS window once so it starts
+  with the new files.
 
 ---
 

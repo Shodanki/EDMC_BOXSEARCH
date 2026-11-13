@@ -87,6 +87,9 @@ export function update(ctx, reason) {
     row(t("STAR"), ...star),
     row("STATUS", statusEl),
   ];
+  // 4.10: codex region (region map by klightspeed); the region names are Frontier's
+  if (tg.region) rows.push(row(t("REGION"), el("span", { class: "c-cyan", text: tg.region }),
+    tg.region_from ? el("span", { class: "c-amber", text: " · " + t("new region – you leave {r}", { r: tg.region_from }) }) : null));
   if (tg.visited) rows.push(row(t("VISITED"), el("span", { class: "c-dim", text: t("You have been there") + (tg.body_count ? " · " + t("{n} bodies", { n: tg.body_count }) : "") })));
   // C1: another commander on this PC was there - your own exploration is still open
   // visited, yes - but what was done there went down with the ship
