@@ -50,6 +50,8 @@ jobs:
         run: python tests/dispatch_lint.py
       - name: named sectors (planner and id64 names over hand-authored sectors)
         run: python tests/named_sectors.py
+      - name: galaxy map list (catalogue slots, list end, EDD by id64)
+        run: python tests/galaxy_list.py
       - name: plain-python modules import without EDMC
         run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan, edts_pgnames, regionmap; assert procgen._edts is not None; assert regionmap.find_region(0, 0, 0)[1] == 'Inner Orion Spur'; print('imports ok')"
       - name: FIS tests (flight information system)

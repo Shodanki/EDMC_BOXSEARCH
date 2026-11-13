@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from netgate import Gateway
+from procgen import id64_matches_position
 from shells import edsm_queries, in_shell
 
 logger = logging.getLogger(__name__)
@@ -284,8 +285,13 @@ class EDDiscoverySource(Source):
     #       EDDiscovery's EliteNameClassifier.cs
     #   otherwise               id into Names; the sector ("TYC", "2MASS") is
     #       the prefix unless it is "NoSectorName" (Sol, "15 Sagittarii")
-    # edsmid is NOT a SystemAddress; the old generic path mistook it for one,
-    # which is why this source returned nothing usable before 4.1.
+    # edsmid: in the files EDDiscovery builds from Spansh's data (checked
+    # 13.11.2026: 40 878 of 40 878 sampled rows) it is the SystemAddress
+    # (id64). Older files held EDSM's own numbers there, which is why the
+    # generic path, taking it for an id64 blindly, returned nothing usable
+    # before 4.1. Since 4.10 a row's edsmid counts as its id64 only when the
+    # row's position lies inside the boxel that number names
+    # (procgen.id64_matches_position).
     STD_MARKER = 1 << 61
     NUM_MARKER = 1 << 60
     NUM_MASK = (1 << 38) - 1
@@ -341,7 +347,8 @@ class EDDiscoverySource(Source):
                 self.mode = "edd2"
                 self.cols = {"x": names["x"], "y": names["y"], "z": names["z"],
                              "id": "", "nameid": names["nameid"],
-                             "sectorid": names["sectorid"]}
+                             "sectorid": names["sectorid"],
+                             "key": names.get("edsmid", "")}
                 self.has_names = "names" in tables
                 return True
         for (tbl,) in cx.execute(
@@ -560,15 +567,10 @@ class EDDiscoverySource(Source):
             return "%s %s%d-%d" % (sector, core, n1, n2)
         return "%s %s%d" % (sector, core, n2)
 
-    def _fetch_edd2(self, cx: sqlite3.Connection, center, radius) -> List[Dict]:
-        c = self.cols
-        lo = [int((center[i] - radius) * self.scale + self.offset) for i in range(3)]
-        hi = [int((center[i] + radius) * self.scale + self.offset) for i in range(3)]
-        q = ("SELECT %s,%s,%s,%s,%s FROM %s WHERE %s BETWEEN ? AND ? "
-             "AND %s BETWEEN ? AND ? AND %s BETWEEN ? AND ?"
-             % (c["x"], c["y"], c["z"], c["sectorid"], c["nameid"], self.table,
-                c["x"], c["z"], c["y"]))
-        rows = cx.execute(q, (lo[0], hi[0], lo[2], hi[2], lo[1], hi[1])).fetchall()
+    def _edd2_rows(self, cx: sqlite3.Connection, rows, center=None,
+                   radius: float = 0.0) -> List[Dict]:
+        """Rows (x, y, z, sectorid, nameid[, key]) -> system dicts with the
+        name decoded and, where the row's key is provably its id64, the id64."""
         sector_ids = {r[3] for r in rows}
         sectors: Dict[int, str] = {}
         for sid in sector_ids:
@@ -581,7 +583,7 @@ class EDDiscoverySource(Source):
             x = (r[0] - self.offset) / self.scale
             y = (r[1] - self.offset) / self.scale
             z = (r[2] - self.offset) / self.scale
-            if _dist((x, y, z), center) > radius:
+            if center is not None and _dist((x, y, z), center) > radius:
                 continue
             nameid = r[4]
             name = self.decode_nameid(nameid, sectors.get(r[3]))
@@ -593,10 +595,59 @@ class EDDiscoverySource(Source):
             if not name:
                 skipped += 1
                 continue
-            out.append({"name": name, "x": x, "y": y, "z": z, "id64": None})
+            key = r[5] if len(r) > 5 else None
+            id64 = int(key) if key and id64_matches_position(key, (x, y, z)) else None
+            out.append({"name": name, "x": x, "y": y, "z": z, "id64": id64})
         if skipped:
             logger.info("EDD: %d systems without a decodable name skipped", skipped)
         return out
+
+    def lookup_id64(self, ids: Sequence[int]) -> Optional[List[Dict]]:
+        """
+        The systems of these id64s that EDDiscovery's file holds - local,
+        read only, by primary key (4.10). The planner asks this for its
+        probe candidates: a boxel reaches beyond the sphere, and so do its
+        "gaps" - most of them EDD knows, just outside the radius it was read
+        to. A row counts only when its position lies in the id64's boxel.
+        None when the file cannot be asked now (missing, busy, another
+        layout) - then the same ids are asked again later.
+        """
+        ids = [int(i) for i in ids if i]
+        if not ids:
+            return []
+        if not self.calibrated or self.mode != "edd2" or not self.cols.get("key"):
+            return None
+        cx = self._connect()
+        if cx is None:
+            return None
+        c = self.cols
+        out: List[Dict] = []
+        try:
+            for i in range(0, len(ids), 500):
+                part = ids[i:i + 500]
+                q = ("SELECT %s,%s,%s,%s,%s,%s FROM %s WHERE %s IN (%s)"
+                     % (c["x"], c["y"], c["z"], c["sectorid"], c["nameid"], c["key"],
+                        self.table, c["key"], ",".join("?" * len(part))))
+                rows = cx.execute(q, part).fetchall()
+                out += [r for r in self._edd2_rows(cx, rows) if r["id64"]]
+        except sqlite3.Error as e:
+            logger.info("EDD lookup by id64 not possible now: %s", e)
+            return None
+        finally:
+            cx.close()
+        return out
+
+    def _fetch_edd2(self, cx: sqlite3.Connection, center, radius) -> List[Dict]:
+        c = self.cols
+        lo = [int((center[i] - radius) * self.scale + self.offset) for i in range(3)]
+        hi = [int((center[i] + radius) * self.scale + self.offset) for i in range(3)]
+        key = (",%s" % c["key"]) if c.get("key") else ""
+        q = ("SELECT %s,%s,%s,%s,%s%s FROM %s WHERE %s BETWEEN ? AND ? "
+             "AND %s BETWEEN ? AND ? AND %s BETWEEN ? AND ?"
+             % (c["x"], c["y"], c["z"], c["sectorid"], c["nameid"], key, self.table,
+                c["x"], c["z"], c["y"]))
+        rows = cx.execute(q, (lo[0], hi[0], lo[2], hi[2], lo[1], hi[1])).fetchall()
+        return self._edd2_rows(cx, rows, center, radius)
 
     def fetch(self, center, radius, progress: ProgressCB = None,
               r_min: float = 0.0) -> List[Dict]:

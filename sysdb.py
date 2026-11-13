@@ -39,8 +39,10 @@ import sqlite3
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from procgen import (MASSCODES, SectorRegistry, boxel_labels, decode_id64,
-                     make_name, parse_boxel_key, parse_name, star_pos)
+from procgen import (MASSCODES, SectorRegistry, boxel_index_of_coords,
+                     boxel_labels, computed_sector_index, decode_id64,
+                     id64_of_slot, id64_slot, make_name, parse_boxel_key,
+                     parse_name, star_pos)
 from shells import INHABITED, inhabited_event
 
 logger = logging.getLogger(__name__)
@@ -351,7 +353,8 @@ def _now() -> str:
 # One-time data repairs; each sets its meta key when done. A database that
 # still misses one of them (or has another schema version) gets a backup
 # before it is touched.
-REPAIRS = ("fix_phantoms", "fix_marks45", "fix_n1zero", "fix_lost_ticks")
+REPAIRS = ("fix_phantoms", "fix_marks45", "fix_n1zero", "fix_lost_ticks",
+           "fix_boxel_end410")
 BACKUP_KEEP = 3          # newest backups kept next to the database
 
 
@@ -560,6 +563,37 @@ class SystemDB:
                 logger.info("database repair (n1=0 naming rule): %s", res)
             except Exception:
                 logger.exception("database repair (n1=0 naming rule) failed")
+        if not self.get_meta("fix_boxel_end410"):
+            try:
+                res = self.repair_boxel_ends()
+                logger.info("database repair (boxel ends below a known system): %s", res)
+            except Exception:
+                logger.exception("database repair (boxel ends) failed")
+
+    def repair_boxel_ends(self) -> Dict[str, int]:
+        """
+        One-time repair (4.10): a boxel must not end at or below a system
+        that exists in it.
+
+        Up to 4.10 "not there" closed the boxel at that number, also when a
+        higher number was known - the slot below can be a catalogue star
+        ("HIP 33254" is n2 = 0 of "Synuefe RH-U c19"), so its procedural name
+        is missing from the galaxy map while the boxel runs on to 21. Such an
+        end is dropped; the boxel is open again and the planner decides anew.
+        The absent name itself stays recorded - that name really is not there.
+        """
+        rows = self.cx.execute(
+            "SELECT key, n2_max, n2_end FROM boxels WHERE n2_end IS NOT NULL").fetchall()
+        reopened = 0
+        for r in rows:
+            top = self.boxel_known_max(r["key"])
+            if top is not None and top >= r["n2_end"]:
+                self.cx.execute("UPDATE boxels SET n2_end=NULL, complete=0, n2_max=?, "
+                                "updated=? WHERE key=?", (top, _now(), r["key"]))
+                reopened += 1
+        self.set_meta("fix_boxel_end410", _now())
+        self.cx.commit()
+        return {"boxels_with_end": len(rows), "reopened": reopened}
 
     def repair_n1zero(self) -> Dict[str, int]:
         """
@@ -860,15 +894,26 @@ class SystemDB:
         return out
 
     # ------------------------------------------------------------ negative cache
-    def mark_absent(self, name: str) -> None:
+    def mark_absent(self, name: str) -> bool:
+        """The galaxy map does not know this name. True when that closes
+        the boxel there (n2 runs on from 0, so nothing above it exists).
+
+        Below the highest system known in the boxel it closes nothing: that
+        slot exists under another name (a catalogue star such as "HIP 33254"
+        fills "Synuefe RH-U c19-0"), only this one name is ruled out."""
         name = name.strip()
         p = parse_name(name)
         self.cx.execute(
             "INSERT OR REPLACE INTO absent(name,boxel,n2,ts) VALUES (?,?,?,?)",
             (name, p.boxel_key if p else None, p.n2 if p else None, _now()))
+        closes = False
         if p:
-            self._touch_boxel(name, n2_end=p.n2)
+            top = self.boxel_known_max(p.boxel_key)
+            closes = top is None or p.n2 > top
+            if closes:
+                self._touch_boxel(name, n2_end=p.n2)
         self.cx.commit()
+        return closes
 
     def unmark_absent(self, name: str) -> None:
         self.cx.execute("DELETE FROM absent WHERE name=?", (name.strip(),))
@@ -897,8 +942,58 @@ class SystemDB:
             " VALUES (?,?,?,?,?,?,?)",
             (p.boxel_key, p.sector, p.mc, n2_max, end, complete, _now()))
 
+    def boxel_gidx(self, boxel_key: str) -> Optional[Tuple[int, Tuple[int, int, int]]]:
+        """(mass code, global index) of the physical boxel behind a label -
+        from a system of it with an id64 or a position, else computed for a
+        procedural sector. None when nothing tells."""
+        pk = parse_boxel_key(boxel_key)
+        if pk is None:
+            return None
+        for r in self.cx.execute("SELECT name, id64, x, y, z FROM systems WHERE name LIKE ?",
+                                 (boxel_key + "%",)):
+            p = parse_name(r["name"])
+            if p is None or p.boxel_key != boxel_key:
+                continue
+            if r["id64"]:
+                mc, g, _n2 = id64_slot(int(r["id64"]))
+                if mc == pk.mc:
+                    return mc, g
+            if r["x"] is not None:
+                return pk.mc, boxel_index_of_coords(r["x"], r["y"], r["z"], pk.mc)
+        si = computed_sector_index(pk.sector)
+        if si is None:
+            return None
+        per = 128 >> pk.mc
+        return pk.mc, tuple(s * per + b for s, b in zip(si, pk.boxel))  # type: ignore[return-value]
+
+    def slot_n2(self, mc: int, gidx: Sequence[int]) -> Set[int]:
+        """Every n2 some system with an id64 fills in one physical boxel -
+        whatever its name (catalogue stars included)."""
+        low = id64_of_slot(mc, gidx, 0)
+        shift = 44 - 3 * mc
+        mask = (1 << shift) - 1
+        out: Set[int] = set()
+        for (i,) in self.cx.execute(
+                "SELECT id64 FROM systems WHERE id64 IS NOT NULL AND (id64 & ?) = ?",
+                (mask, low)):
+            out.add((int(i) >> shift) & ((1 << (11 + 3 * mc)) - 1))
+        return out
+
+    def slot_map(self) -> Dict[Tuple[int, Tuple[int, int, int]], Set[int]]:
+        """(mass code, global boxel index) -> filled n2, from every id64.
+        Called once per plan run."""
+        out: Dict[Tuple[int, Tuple[int, int, int]], Set[int]] = {}
+        for (i,) in self.cx.execute("SELECT id64 FROM systems WHERE id64 IS NOT NULL"):
+            try:
+                mc, g, n2 = id64_slot(int(i))
+            except (TypeError, ValueError):
+                continue
+            out.setdefault((mc, g), set()).add(n2)
+        return out
+
     def known_n2(self, boxel_key: str) -> Set[int]:
-        """Every n2 known for one boxel."""
+        """Every n2 known for one boxel: by name, and (4.10) every slot a
+        system with an id64 fills there under any name."""
         out: Set[int] = set()
         # "XV-C d" (n1 = 0) holds "XV-C d0", "XV-C d1" ...; "VA-I b2" holds
         # "VA-I b2-0" ... - one LIKE covers both, the parse below filters.
@@ -907,16 +1002,35 @@ class SystemDB:
             p = parse_name(nm)
             if p and p.boxel_key == boxel_key:
                 out.add(p.n2)
+        where = self.boxel_gidx(boxel_key)
+        if where is not None:
+            out |= self.slot_n2(*where)
         return out
 
-    def close_boxel(self, boxel_key: str) -> int:
+    def boxel_known_max(self, boxel_key: str) -> Optional[int]:
+        """The highest n2 known to exist in a boxel, or None."""
+        known = self.known_n2(boxel_key)
+        return max(known) if known else None
+
+    def close_boxel(self, boxel_key: str, last: Optional[int] = None) -> Optional[int]:
         """
         Declare a boxel finished after seeing its full list in the galaxy map.
-        The end is set just above the highest known n2, so every remaining
-        candidate for that boxel disappears at once. Returns that end value.
+
+        last is the highest number the galaxy map listed (4.10: "list ends
+        at"). Every slot up to it exists - a number missing from the list is
+        a catalogue star - so the end is last + 1 and the numbers up to it
+        nobody knows yet become certain gaps. A last below a known system is
+        refused (None): the list was cut off or it is the wrong boxel.
+        Without last, the end is just above the highest known n2. Returns
+        the end.
         """
         known = self.known_n2(boxel_key)
-        end = (max(known) + 1) if known else 0
+        top = max(known) if known else -1
+        if last is not None:
+            if last < top:
+                return None
+            top = last
+        end = top + 1
         row = self.cx.execute("SELECT sector, mc FROM boxels WHERE key=?",
                               (boxel_key,)).fetchone()
         sector = row["sector"] if row else None
@@ -928,7 +1042,7 @@ class SystemDB:
         self.cx.execute(
             "INSERT OR REPLACE INTO boxels(key,sector,mc,n2_max,n2_end,complete,"
             "updated) VALUES (?,?,?,?,?,1,?)",
-            (boxel_key, sector, mc, max(known) if known else -1, end, _now()))
+            (boxel_key, sector, mc, top, end, _now()))
         self.cx.commit()
         return end
 

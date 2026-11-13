@@ -228,6 +228,37 @@ def decode_id64(id64: int) -> Dict[str, object]:
     }
 
 
+def id64_slot(id64: int) -> Tuple[int, Tuple[int, int, int], int]:
+    """(mass code, global boxel index, n2) of an id64 - the physical slot.
+
+    The slot is there whatever name the system carries: a catalogue star
+    ("HIP 33254") fills n2 = 0 of "Synuefe RH-U c19" as much as a procedural
+    name would; the galaxy map then lists no "-0" under that prefix."""
+    d = decode_id64(id64)
+    per = 128 >> d["mc"]
+    g = tuple(s * per + b for s, b in zip(d["sector_idx"], d["boxel"]))
+    return d["mc"], g, d["n2"]  # type: ignore[return-value]
+
+
+def id64_of_slot(mc: int, gidx: Sequence[int], n2: int) -> int:
+    """The id64 of slot n2 in a physical boxel (global index)."""
+    per = 128 >> mc
+    sector = tuple(int(g) // per for g in gidx)
+    boxel = tuple(int(g) % per for g in gidx)
+    return id64_from_parts(sector, mc, boxel, n2)
+
+
+def id64_matches_position(id64: int, pos: Sequence[float], tol: float = 0.2) -> bool:
+    """Does a position lie inside the boxel the id64 names? A check that a
+    number some database calls an id64 really is one."""
+    try:
+        d = decode_id64(int(id64))
+    except (TypeError, ValueError):
+        return False
+    c, s = d["corner"], d["size"]
+    return all(c[i] - tol <= float(pos[i]) <= c[i] + s + tol for i in range(3))
+
+
 def id64_from_name(name: str, sector_idx: Sequence[int]) -> Optional[int]:
     """id64 from a name plus a known sector index."""
     p = parse_name(name)
@@ -637,6 +668,16 @@ def _selftest() -> int:
               reg.learn_from_id64("NGC 2232 Sector KO-P b6-1", 2877225116705), False)
         check("registry resolves an unknown sector by computing it",
               reg.resolve((40, 31, 15)), "Pyurks")
+    # 4.10: physical slots - "Synuefe RH-U c19-1" (game id64), and its slot 0
+    # which is a catalogue star (HIP) in the game
+    mc, g, n2 = id64_slot(359669830314)
+    check("slot of an id64: mass code and n2", (mc, n2), (2, 1))
+    check("slot -> id64 round trip", id64_of_slot(mc, g, 1), 359669830314)
+    check("slot 0 of the same boxel", id64_of_slot(mc, g, 0), 84791923370)
+    check("id64 matches its position", id64_matches_position(
+        359669830314, (553.625, -166.34375, -217.0)), True)
+    check("id64 refuses a position elsewhere", id64_matches_position(
+        359669830314, (0.0, 0.0, 0.0)), False)
     print("failures:", fails)
     return fails
 

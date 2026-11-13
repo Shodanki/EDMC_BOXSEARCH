@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from procgen import (MASSCODES, boxel_center, boxel_index_of_coords,
                      boxel_intersects_sphere, boxel_key_of, boxel_labels,
                      boxel_size, boxel_prefix, boxels_in_sphere,
-                     ha_regions_near, make_name, parse_name)
+                     ha_regions_near, id64_of_slot, make_name, parse_name)
 from sysdb import SystemDB
 
 K_NEW = "new"
@@ -298,6 +298,9 @@ class Planner:
         known_names = {r["name"] for r in known_rows}
         visited = {r["name"] for r in known_rows if r["visited"]}
         boxel_n2 = self.db.boxel_n2_map()
+        # 4.10: slots filled under any name (a catalogue star is n2 = 0 of
+        # its boxel just the same), by physical boxel, from every id64
+        slots = self.db.slot_map()
         # neighbourhood reaches one boxel beyond the sphere
         margin = radius + boxel_size(max(masscodes) if masscodes else 0) * 2
         near_rows = self.db.sphere(center, margin)
@@ -383,7 +386,7 @@ class Planner:
                 bdist = math.dist(bcenter, center)
                 key = keys[0]
                 # the system number n2 is shared by all labels of a boxel
-                known: Set[int] = set()
+                known: Set[int] = set(slots.get((mc, tuple(gidx)), set()))
                 for k in keys:
                     known |= boxel_n2.get(k, set())
                 also = ("also named: " + ", ".join(boxel_prefix(k) for k in keys[1:])
@@ -412,8 +415,16 @@ class Planner:
                 elif not known and probe0 is None:
                     calib.add(mc, raw, False)
 
-                # closed only when every label's list was seen to its end
-                closed = all(self.db.boxel_end(k) is not None for k in keys)
+                # closed only when every label's list was seen to its end -
+                # and an end at or below a system that exists is no end (an
+                # old "not there" on a catalogue star's slot, 4.10)
+                ends = [self.db.boxel_end(k) for k in keys]
+                top_known = max(known) if known else -1
+                closed = all(e is not None and e > top_known for e in ends)
+                # the galaxy map's list end ("list ends at"): every slot below
+                # it exists - the ones nobody knows yet are certain gaps
+                list_end = max([e for e in ends if e is not None and e > top_known],
+                               default=None)
                 if closed:
                     boxel_closed += 1
                     probed.setdefault(mc, []).append(len(known))
@@ -422,22 +433,25 @@ class Planner:
                 else:
                     boxel_untested += 1
 
-                if not known:
+                if not known and not list_end:          # None, or empty (end 0)
                     boxel_unknown += 1
                     if include_empty and probe0 is not None:
                         targets.append(Target(probe0, K_EMPTY, bdist, mc, key0, 0, bcenter,
-                                              detail=also))
+                                              detail=also,
+                                              id64=id64_of_slot(mc, gidx, 0)))
                         counts[K_EMPTY] += 1
                     continue
 
-                top = max(known)
-                for n2 in range(0, top):
+                top = max(known) if known else -1
+                upper = max(top, list_end - 1) if list_end is not None else top
+                for n2 in range(0, upper + 1):
                     if n2 in known:
                         continue
                     nm, k, _ = variant(n2)
                     if nm is None:
                         continue
-                    targets.append(Target(nm, K_GAP, bdist, mc, k, n2, bcenter, detail=also))
+                    targets.append(Target(nm, K_GAP, bdist, mc, k, n2, bcenter, detail=also,
+                                          id64=id64_of_slot(mc, gidx, n2)))
                     counts[K_GAP] += 1
 
                 if not closed:
@@ -446,7 +460,8 @@ class Planner:
                         if nm is None:
                             continue
                         targets.append(Target(nm, K_PROBE, bdist, mc, k, top + d, bcenter,
-                                              detail=also))
+                                              detail=also,
+                                              id64=id64_of_slot(mc, gidx, top + d)))
                         counts[K_PROBE] += 1
 
         # --- 5. outstanding work in systems already visited -----------------

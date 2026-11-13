@@ -424,10 +424,49 @@ physical boxel apart from its labels comes from the
 project (Oberonmeister), which documented the *Pyurks / NGC 2244* case. No
 code or text of it is used - it has no licence.
 
+### Catalogue stars hold a number too (since 4.10)
+
+Every system has an **id64** that names its boxel and its number `n2`,
+whatever the system is called. Real stars from catalogues keep their
+catalogue name but still fill a number of their boxel:
+
+```
+Synuefe RH-U c19-   galaxy map lists 1, 2, 3 ... 21 - no "-0"
+HIP 33254           id64 84791923370 = slot 0 of Synuefe RH-U c19
+```
+
+So a missing `-0` (or any missing number below the highest one) is not a
+gap and not the end of the boxel. Since 4.10 the plugin counts the numbers
+of a boxel by **id64** as well as by name, so a catalogue star fills its
+slot. EDDiscovery's file holds the id64 of every system (its `edsmid`
+column, in the files EDDiscovery builds from Spansh's data); the plugin
+takes it only where the position lies inside the boxel that number names.
+
+### Candidates looked up in EDDiscovery by id64 (since 4.10)
+
+A boxel of mass code c is 40 ly wide; one that meets the edge of a 50 ly
+sphere reaches up to 70 ly from its centre. EDDiscovery is read only to the
+radius, so up to 4.10 most "gaps" were systems EDDiscovery knew - just
+outside it. In the developer's sphere 945 of 950 gaps were such systems.
+
+Since 4.10 every plan looks its candidates up in EDDiscovery's file by
+id64 - local, read only, by primary key, no network. What is there is stored
+with its position and the candidate is gone; a boxel whose maximum rises
+that way gets its next probes looked up too (three rounds at most). The
+same sphere then held 939 candidates instead of 1 859, and 5 gaps instead of
+942: the 5 are systems really in no database.
+
+A sphere restored at EDMC start reads EDDiscovery's file again once after
+the update to 4.10 (the rows read before carry no id64), and afterwards
+whenever its last reading has expired - so an old sphere plans on the same
+data as a new one.
+
 ## 3. The gap logic
 
 Within a boxel, `n2` runs **contiguously from 0** (true for mass codes a–g;
-mass code h has culling gaps, which is why h is off by default).
+mass code h has culling gaps, which is why h is off by default). A number
+can carry a catalogue name instead of the procedural one - see
+[Catalogue stars hold a number too](#catalogue-stars-hold-a-number-too-since-410).
 
 Three kinds of candidate follow from that:
 
@@ -477,13 +516,21 @@ That is what the probe bar is built around:
 | Button | What it does |
 |---|---|
 | **prefix** | copies `Synuefe SH-N a6-` — one paste lists the whole boxel |
-| **boxel done** | you have seen the full list → closes the boxel, drops **all** its remaining candidates at once |
-| **not there** | a single name is missing → closes the boxel from that number up, because n2 is contiguous |
+| **list ends at [n]** + **list end** | type the highest number the list shows (the field starts with the highest one the plugin knows) → the boxel ends there, every probe above it goes at once (since 4.10; was **boxel done**) |
+| **not there** | a single name is missing → above the highest known number it closes the boxel from there up; below it, only that name goes (a catalogue star holds the number) |
 | **later** | move this boxel to the back |
+
+**list ends at** also works when the list is longer than what the plugin
+knows: type `21` where it knew `19`, and `-20` and `-21` become certain
+gaps - they exist, and no database has them. A number smaller than one the
+plugin knows is refused: the list was cut off, scroll it to its end.
 
 Any system you click in that result list sets it as target, which fires
 `FSDTarget` and writes `Destination` — the plugin picks both up on its own, so
-new finds land in the database without you typing anything.
+new finds land in the database without you typing anything. Since 4.10 that
+takes the name out of the queue wherever it stands, not only at the head:
+work the list from top to bottom, the window shows the next open one.
+Plotting a route there also writes its exact position (`NavRoute`).
 
 The probe queue is grouped **per boxel**, not by raw distance, so you work one
 search at a time instead of hopping between boxels:
@@ -496,11 +543,11 @@ Synuefe OB-P a5-3   Synuefe OB-P a5    5.9 ly
 ```
 
 The probe line shows how many candidates the current boxel still has, so you
-know what a single **boxel done** is worth.
+know what a single **list end** is worth.
 
 **What this changes in practice.** At r=50 ly a sphere holds roughly 800 open
 candidates spread over about 600 boxels. Candidate by candidate that is 800
-searches. Prefix plus **boxel done** turns it into about 600 — and every boxel
+searches. Prefix plus **list end** turns it into about 600 — and every boxel
 that turns out empty is retired by one click instead of two or three.
 
 ### Prospecting: which boxel first
@@ -1019,10 +1066,10 @@ check this name in the galaxy map:
     Synuefe DZ-S a42-0
 prefix       Synuefe DZ-S a42-
 distance     4.2 ly   uncertainty +-9 ly
-this boxel   1 candidate   odds void
+this boxel   1 candidate   odds void   known to -
 queue        973 probes (gap 0, probe 2, empty 971)
 
-[copy prefix] [copy bundle] [not there] [boxel done] [later]
+[copy prefix] [copy bundle] [not there]  list ends at [  ] [list end] [later]
 [replan] [copy FC] [carrier spot] [x] carrier start
 ```
 
