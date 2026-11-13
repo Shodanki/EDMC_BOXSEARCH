@@ -186,64 +186,90 @@ def _advance_horizon(allow_fetch: bool = True, force_to: float = 0.0) -> bool:
     if not ST.fetch_lock.acquire(blocking=False):
         return False
     try:
-        center = ST.center
-        moved = False
-        services = _online_services()
-        edd_spansh = "spansh" in services and _edd_holds("spansh")
-        if edd_spansh:
-            services = [k for k in services if k != "spansh"]
-            logger.info("horizon: Spansh not asked - EDDiscovery is current and "
-                        "holds Spansh's data")
-        if not services:
-            logger.info("horizon: no online source to ask - planning on local "
-                        "data to %.0f ly", ST.radius)
-        for a, b in shells.shells_for(ST.radius):
-            if b <= ST.horizon + 1e-6:
-                continue
-            forced = b <= force_to + 1e-6
-            if edd_spansh:
-                # Spansh's systems come from EDD's file for this shell - local
-                with ST.lock:
-                    sp = ST.db.valid_shells("spansh")
-                if forced or not shells.is_fresh(center, a, b, sp):
-                    _fetch_local(a, b)
-            if not services:
-                ST.horizon = b
-                moved = True
-                continue
-            with ST.lock:
-                regions = {k: ST.db.valid_shells(k) for k in services}
-            todo = [k for k in services
-                    if forced or not shells.is_fresh(center, a, b, regions[k])]
-            if not todo:
-                ST.horizon = b
-                moved = True
-                logger.info("horizon: shell %.0f-%.0f ly fetched before and "
-                            "still valid - no request", a, b)
-                continue
-            if not allow_fetch:
-                break
-            n, ok, cnt = _fetch_into_db(todo, a, b)
-            if ST.center != center:            # a new survey started meanwhile
-                return moved
-            with ST.lock:
-                for k in todo:
-                    if ok.get(k):
-                        ST.db.record_shell(k, center, a, b, cnt.get(k, 0),
-                                           shells.ttl_seconds())
-            missing = [k for k in todo if not ok.get(k)]
-            if missing:
-                logger.info("horizon: %s did not deliver %.0f-%.0f ly completely"
-                            " - asked again when needed", ", ".join(missing), a, b)
-            ST.horizon = b
-            moved = True
-            panel._set_status("online data to %.0f of %.0f ly | %d new systems"
-                              % (b, ST.radius, n))
-            if not forced or b >= force_to - 1e-6:
-                break
-        return moved
+        return _advance_shells(allow_fetch, force_to)
     finally:
         ST.fetch_lock.release()
+
+
+def _advance_shells(allow_fetch: bool, force_to: float) -> bool:
+    """The shell loop of _advance_horizon (holding ST.fetch_lock)."""
+    center = ST.center
+    moved = False
+    services, edd_spansh = _horizon_services()
+    for a, b in shells.shells_for(ST.radius):
+        if b <= ST.horizon + 1e-6:
+            continue
+        forced = b <= force_to + 1e-6
+        if edd_spansh:
+            _spansh_from_edd(center, a, b, forced)
+        if not services:
+            ST.horizon = b
+            moved = True
+            continue
+        with ST.lock:
+            regions = {k: ST.db.valid_shells(k) for k in services}
+        todo = [k for k in services
+                if forced or not shells.is_fresh(center, a, b, regions[k])]
+        if not todo:
+            ST.horizon = b
+            moved = True
+            logger.info("horizon: shell %.0f-%.0f ly fetched before and "
+                        "still valid - no request", a, b)
+            continue
+        if not allow_fetch:
+            break
+        n = _fetch_shell(todo, center, a, b)
+        if n is None:                          # a new survey started meanwhile
+            return moved
+        ST.horizon = b
+        moved = True
+        panel._set_status("online data to %.0f of %.0f ly | %d new systems"
+                          % (b, ST.radius, n))
+        if not forced or b >= force_to - 1e-6:
+            break
+    return moved
+
+
+def _horizon_services() -> Tuple[List[str], bool]:
+    """The online sources to ask, and whether Spansh's systems come from
+    EDDiscovery's file instead (current and holding Spansh's data)."""
+    services = _online_services()
+    edd_spansh = "spansh" in services and _edd_holds("spansh")
+    if edd_spansh:
+        services = [k for k in services if k != "spansh"]
+        logger.info("horizon: Spansh not asked - EDDiscovery is current and "
+                    "holds Spansh's data")
+    if not services:
+        logger.info("horizon: no online source to ask - planning on local "
+                    "data to %.0f ly", ST.radius)
+    return services, edd_spansh
+
+
+def _spansh_from_edd(center, a: float, b: float, forced: bool) -> None:
+    """Spansh's systems come from EDD's file for this shell - local."""
+    with ST.lock:
+        sp = ST.db.valid_shells("spansh")
+    if forced or not shells.is_fresh(center, a, b, sp):
+        _fetch_local(a, b)
+
+
+def _fetch_shell(todo: List[str], center, a: float, b: float) -> Optional[int]:
+    """Ask the sources in ``todo`` for the shell a..b and remember what each
+    delivered. The number of new systems, or None when a new survey started
+    meanwhile (nothing is recorded then)."""
+    n, ok, cnt = _fetch_into_db(todo, a, b)
+    if ST.center != center:
+        return None
+    with ST.lock:
+        for k in todo:
+            if ok.get(k):
+                ST.db.record_shell(k, center, a, b, cnt.get(k, 0),
+                                   shells.ttl_seconds())
+    missing = [k for k in todo if not ok.get(k)]
+    if missing:
+        logger.info("horizon: %s did not deliver %.0f-%.0f ly completely"
+                    " - asked again when needed", ", ".join(missing), a, b)
+    return n
 
 
 def _external_today_line() -> str:
@@ -437,10 +463,21 @@ def _edd_fill(probe: Sequence[Target]) -> int:
     ST.edd_asked.update(ids)
     if not rows:
         return 0
-    asked = len(ids)
     upward = {t.id64 for t in probe if t.id64 and t.kind in (K_PROBE, K_EMPTY)}
-    found = list(rows)
-    frontier = [r["id64"] for r in rows if r["id64"] in upward]
+    found = list(rows) + _edd_walk_up(look, [r["id64"] for r in rows if r["id64"] in upward])
+    for r in found:
+        r["source"] = edd.name
+    _store_rows(found)
+    logger.info("EDD by id64: %d of %d probe candidates are in EDDiscovery's file "
+                "(beyond the radius it was read to; %d more above them) - stored, "
+                "plan rebuilt", len(rows), len(ids), len(found) - len(rows))
+    return len(found)
+
+
+def _edd_walk_up(look, frontier: List[int]) -> List[Dict[str, Any]]:
+    """Ask EDD for the next number of each boxel in ``frontier``, and on
+    until it has none (at most EDD_WALK_MAX steps). Returns what it found."""
+    found: List[Dict[str, Any]] = []
     for _step in range(EDD_WALK_MAX):
         nxt = [i + (1 << (44 - 3 * (i & 7))) for i in frontier]
         nxt = [i for i in nxt if i not in ST.edd_asked]
@@ -456,16 +493,9 @@ def _edd_fill(probe: Sequence[Target]) -> int:
                 ST.edd_asked.update(nxt)
             break
         ST.edd_asked.update(nxt)
-        asked += len(nxt)
         found += more
         frontier = [r["id64"] for r in more]
-    for r in found:
-        r["source"] = edd.name
-    _store_rows(found)
-    logger.info("EDD by id64: %d of %d probe candidates are in EDDiscovery's file "
-                "(beyond the radius it was read to; %d more above them) - stored, "
-                "plan rebuilt", len(rows), len(ids), len(found) - len(rows))
-    return len(found)
+    return found
 
 
 def _rebuild_plan() -> None:

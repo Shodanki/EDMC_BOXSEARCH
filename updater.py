@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .state import CFG, RELEASES_API, RELEASES_URL, REPO_URL, ST, VERSION, cfg_bool, cfg_set, cfg_str, logger
 from . import panel
@@ -48,44 +48,11 @@ def _check_for_update(force: bool = False) -> None:
     hour per address, and every failure is swallowed - an update check must
     never be the reason something does not work.
     """
-    # Every way out says why, at INFO: in 4.0 the check left no trace at all
-    # in the log, so nobody could tell whether it ran, failed or was off.
-    if not force and not cfg_bool(CFG["check_updates"], True):
-        logger.info("update check: switched off in the preferences")
+    if not _update_due(force):
         return
-    if not force:
-        last = cfg_str(CFG["update_checked"], "")
-        try:
-            if last and time.time() - float(last) < 86400:
-                logger.info("update check: last run %.1f h ago, next after 24 h",
-                            (time.time() - float(last)) / 3600.0)
-                return
-        except ValueError:
-            pass
-    if not ST.net.usable:
-        logger.info("update check: 'requests' not available in this EDMC build")
+    data = _latest_release()
+    if data is None:
         return
-    try:
-        r = ST.net.request("github", "GET", RELEASES_API, "releases/latest",
-                           timeout=10,
-                           headers={"Accept": "application/vnd.github+json"})
-        planning._flush_net_log()
-        if r is None:
-            logger.info("update check: no answer (offline, resting or no network)")
-            return
-        cfg_set(CFG["update_checked"], str(int(time.time())))
-        if r.status_code == 403:
-            logger.info("update check: rate limited by GitHub, trying again tomorrow")
-            return
-        if r.status_code == 404:
-            logger.info("update check: no release published yet")
-            return
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        logger.info("update check failed (ignored): %s", e)
-        return
-
     tag = (data.get("tag_name") or "").strip()
     if not tag:
         return
@@ -103,6 +70,55 @@ def _check_for_update(force: bool = False) -> None:
         logger.info("update | %s", line)
     panel._set_status("update %s available - click here" % tag)
     uithread._ui(panel._refresh)
+
+
+def _update_due(force: bool) -> bool:
+    """Whether to ask now: switched on, and the last check 24 h ago (both
+    skipped with force), and requests usable. Every way out says why, at
+    INFO: in 4.0 the check left no trace at all in the log, so nobody could
+    tell whether it ran, failed or was off."""
+    if not force and not cfg_bool(CFG["check_updates"], True):
+        logger.info("update check: switched off in the preferences")
+        return False
+    if not force:
+        last = cfg_str(CFG["update_checked"], "")
+        try:
+            if last and time.time() - float(last) < 86400:
+                logger.info("update check: last run %.1f h ago, next after 24 h",
+                            (time.time() - float(last)) / 3600.0)
+                return False
+        except ValueError:
+            pass
+    if not ST.net.usable:
+        logger.info("update check: 'requests' not available in this EDMC build")
+        return False
+    return True
+
+
+def _latest_release() -> Optional[Dict[str, Any]]:
+    """The latest release from the GitHub API, through the gateway; None
+    when there is no usable answer (offline, resting, rate limited, none
+    published, an error - all logged and swallowed)."""
+    try:
+        r = ST.net.request("github", "GET", RELEASES_API, "releases/latest",
+                           timeout=10,
+                           headers={"Accept": "application/vnd.github+json"})
+        planning._flush_net_log()
+        if r is None:
+            logger.info("update check: no answer (offline, resting or no network)")
+            return None
+        cfg_set(CFG["update_checked"], str(int(time.time())))
+        if r.status_code == 403:
+            logger.info("update check: rate limited by GitHub, trying again tomorrow")
+            return None
+        if r.status_code == 404:
+            logger.info("update check: no release published yet")
+            return None
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        logger.info("update check failed (ignored): %s", e)
+        return None
 
 
 def _open_release_page() -> None:
