@@ -22,6 +22,7 @@ import json
 import logging
 import math
 import os
+import queue
 import re
 import sys
 import threading
@@ -3678,12 +3679,52 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
 # User interface
 # ============================================================================
 
+# Worker threads never touch Tk themselves (EDMC PLUGINS.md, "All tkinter
+# calls in main thread"): they queue the update and send one virtual event,
+# the only Tk call a sub-thread may make. The main thread runs the queue.
+# The event goes to EDMC's top-level window: Tk drops virtual events for a
+# widget that is not mapped yet, the top level receives them even hidden.
+_UI_EVENT = "<<SHBOXSEARCHUpdate>>"
+_ui_queue: "queue.Queue[Any]" = queue.Queue()
+_ui_target: Any = None
+
+
+def _shutting_down() -> bool:
+    """EDMC is closing: no more events (config.shutting_down is a property)."""
+    return bool(getattr(config, "shutting_down", False))
+
+
 def _ui(fn) -> None:
-    if _frame:
+    """Run fn on Tk's main thread, from any thread."""
+    if not _frame or _ui_target is None or _shutting_down():
+        return
+    if threading.current_thread() is threading.main_thread():
         try:
-            _frame.after(0, fn)
+            _frame.after(0, fn)          # after the current handler, as before
+            _frame.after(0, _ui_drain)   # and whatever workers left waiting
         except Exception:
             pass
+        return
+    _ui_queue.put(fn)
+    try:
+        _ui_target.event_generate(_UI_EVENT, when="tail")
+    except Exception:
+        pass                             # window gone - nothing left to update
+
+
+def _ui_drain(_event: Any = None) -> None:
+    """Main thread: run every queued UI update."""
+    while True:
+        try:
+            fn = _ui_queue.get_nowait()
+        except queue.Empty:
+            return
+        if _shutting_down():
+            continue                     # empty the queue, draw nothing
+        try:
+            fn()
+        except Exception:
+            logger.exception("UI update failed")
 
 
 def _set_status(txt: str) -> None:
@@ -3701,7 +3742,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     and where you are. Counters, fuel, statistics and the route list all live
     in their own windows, reachable from one row of buttons.
     """
-    global _frame, _v_status, _v_target, _v_kind, _v_sys, _v_queue, _v_probe
+    global _frame, _ui_target, _v_status, _v_target, _v_kind, _v_sys, _v_queue, _v_probe
     global _btn_start, _btn_absent, _btn_skip, _radius_var
     global _btn_fc, _btn_stats, _lbl_stats, _v_stats, _carrier_var
     global _btn_boxel, _btn_prefix, _btn_next, _v_route, _lbl_route, _btn_route
@@ -3709,6 +3750,8 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
 
     _frame = tk.Frame(parent)
     _frame.columnconfigure(1, weight=1)
+    _ui_target = _frame.winfo_toplevel()  # updates sent by worker threads
+    _ui_target.bind(_UI_EVENT, _ui_drain, add="+")
 
     _v_status = tk.StringVar(value="ready")
     _v_target = tk.StringVar(value="-")
