@@ -43,7 +43,10 @@ try:
     # Sector names computed with EDTS's algorithm (BSD 3-Clause, Andy
     # Martin) - see edts_pgnames/SOURCE.md. Without the folder the plugin
     # falls back to the names it learnt, as before 4.10.
-    import edts_pgnames as _edts
+    if __package__:
+        from . import edts_pgnames as _edts
+    else:
+        import edts_pgnames as _edts
 except Exception:  # pragma: no cover - folder missing or broken
     _edts = None
 

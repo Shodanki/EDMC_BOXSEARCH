@@ -37,9 +37,14 @@ import time
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from netgate import Gateway
-from procgen import id64_matches_position
-from shells import edsm_queries, in_shell
+if __package__:     # inside the plugin package (EDMC)
+    from .netgate import Gateway
+    from .procgen import id64_matches_position
+    from .shells import edsm_queries, in_shell
+else:               # on its own: the self test, the FIS
+    from netgate import Gateway
+    from procgen import id64_matches_position
+    from shells import edsm_queries, in_shell
 
 logger = logging.getLogger(__name__)
 

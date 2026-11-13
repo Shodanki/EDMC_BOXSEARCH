@@ -39,11 +39,18 @@ import sqlite3
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from procgen import (SectorRegistry, boxel_index_of_coords,
-                     boxel_labels, computed_sector_index, decode_id64,
-                     id64_of_slot, id64_slot, make_name, parse_boxel_key,
-                     parse_name, star_pos)
-from shells import INHABITED, inhabited_event
+if __package__:     # inside the plugin package (EDMC)
+    from .procgen import (SectorRegistry, boxel_index_of_coords,
+                          boxel_labels, computed_sector_index, decode_id64,
+                          id64_of_slot, id64_slot, make_name, parse_boxel_key,
+                          parse_name, star_pos)
+    from .shells import INHABITED, inhabited_event
+else:               # on its own: the self test, the FIS
+    from procgen import (SectorRegistry, boxel_index_of_coords,
+                         boxel_labels, computed_sector_index, decode_id64,
+                         id64_of_slot, id64_slot, make_name, parse_boxel_key,
+                         parse_name, star_pos)
+    from shells import INHABITED, inhabited_event
 
 logger = logging.getLogger(__name__)
 

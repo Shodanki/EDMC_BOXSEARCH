@@ -43,10 +43,12 @@ except ImportError:
     for m in ("tkinter", "tkinter.filedialog", "tkinter.ttk"):
         sys.modules[m] = mock.MagicMock()
 
-import load  # noqa: E402
-from boxelplan import K_GAP, K_PROBE, Planner, Target  # noqa: E402
-from sources import EDDiscoverySource, SourceManager  # noqa: E402
-from sysdb import SystemDB  # noqa: E402
+import plugin_pkg  # noqa: E402
+load = plugin_pkg.import_plugin()
+from SHBOXSEARCH import panel, planning, probewin, state, survey, uithread  # noqa: E402
+from SHBOXSEARCH.boxelplan import K_GAP, K_PROBE, Planner, Target  # noqa: E402
+from SHBOXSEARCH.sources import EDDiscoverySource, SourceManager  # noqa: E402
+from SHBOXSEARCH.sysdb import SystemDB  # noqa: E402
 
 FAILS = 0
 KEY = "Synuefe RH-U c19"
@@ -165,17 +167,16 @@ def part_edd(tmp):
 
 def part_flow(tmp, edd_path):
     print("plugin flow")
-    cfg = {load.CFG["src_edd"]: True}
-    load.cfg_bool = lambda k, d=False: cfg.get(k, d)
-    load.cfg_int = lambda k, d=0: d
-    load.get_masscodes = lambda: [2]
-    load._set_status = lambda m: None
-    load._ui = lambda f, *a, **k: None
-    load._update_route_targets = lambda: None
-    load._maybe_extend = lambda: None
-    load._copy = lambda t: None
-    load._run_async = lambda fn, *a, label="", **kw: fn(*a, **kw)
-    ST = load.ST
+    cfg = {state.CFG["src_edd"]: True}
+    plugin_pkg.use_settings(cfg)
+    state.get_masscodes = lambda: [2]
+    panel._set_status = lambda m: None
+    uithread._ui = lambda f, *a, **k: None
+    planning._update_route_targets = lambda: None
+    planning._maybe_extend = lambda: None
+    survey._copy = lambda t: None
+    uithread._run_async = lambda fn, *a, label="", **kw: fn(*a, **kw)
+    ST = state.ST
     ST.net.offline = True
     ST.db = SystemDB(os.path.join(tmp, "f.sqlite"))
     ST.planner = Planner(ST.db)
@@ -184,8 +185,8 @@ def part_flow(tmp, edd_path):
     ST.active, ST.start_system = True, "test"
     fill(ST.db)
     # a restored sphere: EDD is read again once for 4.10
-    load._resume_worker()
-    check(bool(ST.db.get_meta(load.EDD_ID64_META)), "restored sphere: EDD read again once")
+    planning._resume_worker()
+    check(bool(ST.db.get_meta(planning.EDD_ID64_META)), "restored sphere: EDD read again once")
     hip = ST.db.system("HIP 33254")
     check(hip is not None and hip["id64"] == ID0, "the sphere read brought HIP 33254 with its id64")
     gaps = sorted(t.n2 for t in ST.probe if t.boxel_key == KEY and t.kind == K_GAP)
@@ -196,35 +197,35 @@ def part_flow(tmp, edd_path):
     # "not there" below the maximum: only that name goes
     ST.probe.insert(0, Target(KEY + "-0", K_GAP, 0.0, mc=2, boxel_key=KEY, n2=0))
     n_box = sum(1 for q in ST.probe if q.boxel_key == KEY)
-    load._probe_absent()
+    survey._probe_absent()
     check(ST.db.boxel_end(KEY) is None
           and sum(1 for q in ST.probe if q.boxel_key == KEY) == n_box - 1,
           "'not there' on -0 drops that name only, boxel open")
     # list ends at 21
     ST.probe.sort(key=lambda q: q.boxel_key != KEY)
-    load._list_end_var = mock.MagicMock()
-    load._list_end_var.get.return_value = "21"
-    load._list_end()
+    probewin._list_end_var = mock.MagicMock()
+    probewin._list_end_var.get.return_value = "21"
+    survey._list_end()
     left = sorted(q.n2 for q in ST.probe if q.boxel_key == KEY)
     check(ST.db.boxel_end(KEY) == 22 and left == [6, 13, 14, 15, 16, 18],
           "list end 21: probes above gone, gaps stay %s" % left)
-    load._list_end_var.get.return_value = "12"
-    load._list_end()
+    probewin._list_end_var.get.return_value = "12"
+    survey._list_end()
     check(ST.db.boxel_end(KEY) == 22, "list end 12 refused")
     # picking a name further down the list confirms it
     ST.db.upsert(KEY + "-15", id64=ID0 + 15 * STEP, quality=20, source="destination")
-    load._prune_known_probes()
+    survey._prune_known_probes()
     left = sorted(q.n2 for q in ST.probe if q.boxel_key == KEY)
     check(15 not in left and 6 in left, "a confirmed name leaves the queue, not only the head")
     # a plotted route made a gap known: the next jump/route/scan prunes it
     ST.db.upsert(KEY + "-13", id64=ID0 + 13 * STEP, source="navroute")
-    load._prune_queues()
+    survey._prune_queues()
     left = sorted(q.n2 for q in ST.probe if q.boxel_key == KEY)
     check(13 not in left, "a name known from a route leaves the queue (%s)" % left)
     # ... and "list end" drops a name known meanwhile before it counts
     ST.db.upsert(KEY + "-14", id64=ID0 + 14 * STEP, source="navroute")
-    load._list_end_var.get.return_value = "21"
-    load._list_end()
+    probewin._list_end_var.get.return_value = "21"
+    survey._list_end()
     left = sorted(q.n2 for q in ST.probe if q.boxel_key == KEY)
     check(left == [6, 16, 18], "'list end' counts no stale entry: gaps left %s" % left)
     ST.db.close()
@@ -235,7 +236,7 @@ def part_chain(tmp, edd_path):
     walks them up until EDD has none (4.10 fix - three rebuilds left 12
     known probes in the developer's sphere).'''
     print("EDDiscovery walked upwards")
-    ST = load.ST
+    ST = state.ST
     ST.db = SystemDB(os.path.join(tmp, "c.sqlite"))
     ST.planner = Planner(ST.db)
     ST.sources = SourceManager(edd_path, gateway=ST.net)
@@ -243,12 +244,12 @@ def part_chain(tmp, edd_path):
     ST.active, ST.edd_asked = True, set()
     for n2 in (1, 2, 4, 5):
         ST.db.upsert("%s-%d" % (KEY, n2), *KNOWN[n2], id64=ID0 + n2 * STEP, source="navroute")
-    rounds = load.EDD_FILL_ROUNDS
-    load.EDD_FILL_ROUNDS = 1           # one rebuild only: the walk must do it
+    rounds = planning.EDD_FILL_ROUNDS
+    planning.EDD_FILL_ROUNDS = 1           # one rebuild only: the walk must do it
     try:
-        load._rebuild_plan()
+        planning._rebuild_plan()
     finally:
-        load.EDD_FILL_ROUNDS = rounds
+        planning.EDD_FILL_ROUNDS = rounds
     stored = sorted(n for n in range(0, 23) if ST.db.system("%s-%d" % (KEY, n)))
     check(stored == [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12],
           "walked up from 7 to 12, where EDD has no 13 (stored %s)" % stored)

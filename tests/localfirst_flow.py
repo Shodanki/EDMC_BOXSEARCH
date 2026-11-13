@@ -30,12 +30,13 @@ except ImportError:
     for m in ("tkinter", "tkinter.filedialog", "tkinter.ttk"):
         sys.modules[m] = mock.MagicMock()
 
-import netgate  # noqa: E402
+import plugin_pkg  # noqa: E402
+load = plugin_pkg.import_plugin()
+from SHBOXSEARCH import cockpit, journal, panel, planning, state, survey, sysdb, uithread  # noqa: E402
+from SHBOXSEARCH import netgate, shells  # noqa: E402
 netgate.MIN_INTERVAL = {"edsm": 0.0, "spansh": 0.0, "github": 0.0}
-import load  # noqa: E402
-import shells  # noqa: E402
-from sysdb import SystemDB  # noqa: E402
-from boxelplan import Planner  # noqa: E402
+from SHBOXSEARCH.sysdb import SystemDB  # noqa: E402
+from SHBOXSEARCH.boxelplan import Planner  # noqa: E402
 
 random.seed(4)
 GAL = []
@@ -91,15 +92,14 @@ class Sess:
         return Resp({"results": out[:500]})
 
 
-cfg = {load.CFG["src_edd"]: False}
-load.cfg_bool = lambda k, d=False: cfg.get(k, d)
-load.cfg_int = lambda k, d=0: d
-load._set_status = lambda m: None
-load._ui = lambda f, *a, **k: None
-load._update_route_targets = lambda: None
+cfg = {state.CFG["src_edd"]: False}
+plugin_pkg.use_settings(cfg)
+panel._set_status = lambda m: None
+uithread._ui = lambda f, *a, **k: None
+planning._update_route_targets = lambda: None
 ran = []
-load._run_async = lambda fn, *a, label="", **kw: ran.append(label) or fn(*a, **kw)
-ST = load.ST
+uithread._run_async = lambda fn, *a, label="", **kw: ran.append(label) or fn(*a, **kw)
+ST = state.ST
 ST.net._factory = Sess
 
 fails = 0
@@ -119,13 +119,13 @@ with tempfile.TemporaryDirectory() as d:
 
     # 1) start: shell 0-25 from both; plan finds nothing left (fake names)
     #    -> extends once more to 25-50, then stops at the radius
-    load._start_worker()
+    survey._start_worker()
     check(Sess.log[:2] == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)],
           "start: first shell 0-25 ly from Spansh and EDSM")
     check(ST.horizon == 25.0 and len(Sess.log) == 2 and ST.flight,
           "targets left inside 25 ly: the next shell waits")
     ST.cur_pos = (16.0, 0.0, 0.0)
-    load._maybe_extend()
+    planning._maybe_extend()
     check(ST.horizon == 50.0 and ("spansh", 25.0, 50.0) in Sess.log
           and ("edsm", 25.0, 50.0) in Sess.log and len(Sess.log) == 4,
           "10 ly from the edge -> next shell 25-50, then stop at 50 ly")
@@ -140,7 +140,7 @@ with tempfile.TemporaryDirectory() as d:
 
     # 2) EDMC restart with the survey running: valid shells, no request
     Sess.log.clear()
-    load._resume_worker()
+    planning._resume_worker()
     check(Sess.log == [] and ST.horizon == 50.0, "restart: shells still valid - no request")
 
     # 3) shells expire -> restart plans nothing until asked, then asks shell 1
@@ -151,7 +151,7 @@ with tempfile.TemporaryDirectory() as d:
     seen = []
     real_build = ST.planner.build
     ST.planner.build = lambda c, r, **kw: seen.append(r) or real_build(c, r, **kw)
-    load._resume_worker()
+    planning._resume_worker()
     ST.planner.build = real_build
     check(Sess.log == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)]
           and ST.horizon == 25.0 and ST.flight,
@@ -161,32 +161,32 @@ with tempfile.TemporaryDirectory() as d:
 
     # 4) reload button: the shells up to the horizon again - and no further (F3)
     Sess.log.clear()
-    load._reload_online()
+    planning._reload_online()
     check(Sess.log == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)],
           "reload: shells up to the horizon asked again, not beyond")
 
     # 5) offline: nothing sent, the plan uses local data to the radius
     Sess.log.clear()
     ST.net.offline = True
-    load._start_worker()
+    survey._start_worker()
     check(Sess.log == [] and ST.horizon == 50.0, "offline: no request, horizon = sphere")
     ST.net.offline = False
 
     # 6) a new survey 3 ly away: its shells count as fetched (>= 90 %)
     Sess.log.clear()
     ST.center = (3.0, 0.0, 0.0)
-    load._start_worker()
+    survey._start_worker()
     check(not any(lo == 0.0 for _, lo, _ in Sess.log) and ST.horizon >= 25.0,
           "survey 3 ly away: the valid 0-25 shell is not asked again")
 
     # 7) EDSM switched off: only Spansh asked
     Sess.log.clear()
-    cfg[load.CFG["src_edsm"]] = False
+    cfg[state.CFG["src_edsm"]] = False
     ST.center = (200.0, 0.0, 0.0)
-    load._start_worker()
+    survey._start_worker()
     check(Sess.log and all(s == "spansh" for s, _, _ in Sess.log),
           "EDSM off: only Spansh asked")
-    cfg[load.CFG["src_edsm"]] = True
+    cfg[state.CFG["src_edsm"]] = True
 
     # 8) EDDiscovery current (its source is Spansh): Spansh is not asked,
     #    its systems come from EDD's file; EDSM is still asked (L4e)
@@ -213,15 +213,15 @@ with tempfile.TemporaryDirectory() as d:
 
     edd = FakeEDD()
     ST.sources.sources["edd"] = edd
-    cfg[load.CFG["src_edd"]] = True
+    cfg[state.CFG["src_edd"]] = True
     Sess.log.clear()
     ST.center = (400.0, 0.0, 0.0)
-    load._start_worker()
+    survey._start_worker()
     check(Sess.log and all(svc == "edsm" for svc, _, _ in Sess.log),
           "EDD current: only EDSM asked, Spansh's data from EDD")
     check(any(r == (0.0, 25.0) for r in edd.reads),
           "EDD read locally for the shell instead")
-    check("Spansh covered by EDDiscovery" in load._external_today_line(),
+    check("Spansh covered by EDDiscovery" in planning._external_today_line(),
           "statistics say so")
 
     # 9) EDDiscovery busy (EDD running): noted, read again later - no
@@ -229,16 +229,16 @@ with tempfile.TemporaryDirectory() as d:
     edd.busy, edd.reads = True, []
     Sess.log.clear()
     ST.center = (800.0, 0.0, 0.0)
-    load._start_worker()
+    survey._start_worker()
     check(ST.edd_pending and ("spansh", 0.0, 25.0) in Sess.log,
           "EDD busy: noted; not current any more, so Spansh is asked")
     edd.busy = False
     ST.edd_next_try = 0.0
     ST.edd_retrying = False
-    load._maybe_extend()
+    planning._maybe_extend()
     check(not ST.edd_pending and edd.reads[-1] == (0.0, ST.radius),
           "EDD free again: read on the next plan, locally")
-    cfg[load.CFG["src_edd"]] = False
+    cfg[state.CFG["src_edd"]] = False
 
     # 10) daily cap reached: nothing is sent, the plan uses local data
     Sess.log.clear()
@@ -248,10 +248,10 @@ with tempfile.TemporaryDirectory() as d:
     # the commander flies at the sphere's edge (far outside, nothing would be
     # fetched at all - see shells.needs_next)
     ST.cur_pos = (1245.0, 0.0, 0.0)
-    load._start_worker()
+    survey._start_worker()
     check(Sess.log == [] and ST.horizon == ST.radius,
           "daily cap %d reached: no request, local plan" % netgate.DAILY_CAP["edsm"])
-    check("50 of 50" in load._external_today_line(), "statistics show the count")
+    check("50 of 50" in planning._external_today_line(), "statistics show the count")
 
     # 11) a second commander on this PC: nothing of the first one's place stays
     ST.cmdr, ST.cur_system, ST.cur_id64 = "Alpha", "Old System", 4711
@@ -262,7 +262,7 @@ with tempfile.TemporaryDirectory() as d:
     check(ST.cur_id64 is None and ST.awaiting_position and not ST.route_done
           and "route recheck" not in ran[-1:],
           "commander switch: old system and ticks dropped, no route for it")
-    load._resolve_current_system()
+    planning._resolve_current_system()
     check(ST.cur_id64 is None, "and nothing guessed from the other commander's journals")
     load.journal_entry("Beta", False, None, None,
                        {"event": "Location", "StarSystem": "New System", "SystemAddress": 815,
@@ -273,7 +273,7 @@ with tempfile.TemporaryDirectory() as d:
     # 12) overlay KNOWN POINTS / NAV (4.9): a species lost in a crash is not
     #     "done" - "lost - redo"; picked up within NAV_LOST_S without a new mark
     ev = ST.db.ingest_journal_event
-    ST.db.set_meta(load.CMDR_READY, "2026-11-12T00:00:00Z")
+    ST.db.set_meta(sysdb.CMDR_READY, "2026-11-12T00:00:00Z")
     ev({"event": "Commander", "FID": "F9", "Name": "Gamma", "timestamp": "2026-11-12T10:00:00Z"})
     ev({"event": "FSDJump", "StarSystem": "Nav Alpha", "SystemAddress": 601,
         "StarPos": [5.0, 0.0, 0.0], "timestamp": "2026-11-12T10:01:00Z"})
@@ -299,7 +299,7 @@ with tempfile.TemporaryDirectory() as d:
     pos = {"body": "Nav Alpha 1", "lat": 0.0, "lon": 0.0, "heading": 0.0}
     t0 = 1800000000.0
     with mock.patch.object(load, "cfg_bool", lambda k, d: True):
-        load._nav_overlay(pos, 400000.0, t0, False)      # in orbital cruise
+        journal._nav_overlay(pos, 400000.0, t0, False)      # in orbital cruise
         head = shown[-1][0][0] if shown else None
         check(head == "KNOWN POINTS  bio 0 done, 1 lost - redo",          # 44 chars max
               "overlay KNOWN POINTS: species lost in the crash -> 'lost - redo' (%r)" % head)
@@ -307,7 +307,7 @@ with tempfile.TemporaryDirectory() as d:
             "Species_Localised": "Stratum Tectonicas", "Genus_Localised": "Stratum",
             "timestamp": "2026-11-12T11:20:00Z"})
         n = len(shown)
-        load._nav_overlay(pos, 400000.0, t0 + load.NAV_LOST_S + 1, True)
+        journal._nav_overlay(pos, 400000.0, t0 + journal.NAV_LOST_S + 1, True)
         check(ST._nav_cache is not None and ST._nav_cache[4] == ["scan"]
               and not any("lost" in blk[0][0] for blk in shown[n:]),
               "overlay NAV: redone -> no longer lost (%r)" % (ST._nav_cache or [None] * 5)[4])
@@ -315,15 +315,15 @@ with tempfile.TemporaryDirectory() as d:
 
     # 13) I1 route check: a plotted route through space we have no data for
     #     is checked once - one bundled EDSM request, remembered 14 days
-    from netgate import Gateway
-    from sources import SourceManager
-    ST.net = Gateway(load.VERSION, session_factory=Sess)       # a fresh day, no cap reached
+    from SHBOXSEARCH.netgate import Gateway
+    from SHBOXSEARCH.sources import SourceManager
+    ST.net = Gateway(state.VERSION, session_factory=Sess)       # a fresh day, no cap reached
     ST.sources = SourceManager(None, gateway=ST.net)
     hops = [("Here", "K", (0.0, 0.0, 0.0)), ("Far Hop", "M", (600.0, 0.0, 0.0)),
             ("Nobody Knows AB-C d1", "M", (610.0, 0.0, 0.0)), ("No Pos", "M", None)]
     n0 = len(Sess.log)
     ran.clear()
-    load._maybe_route_check(hops)
+    cockpit._maybe_route_check(hops)
     calls = [x for x in Sess.log[n0:] if x[0] == "edsm-names"]
     check(ran == ["route check"] and calls == [("edsm-names", 2)],
           "route check: one EDSM request for the two unchecked hops (%r)" % calls)
@@ -336,27 +336,27 @@ with tempfile.TemporaryDirectory() as d:
     check(lv_known == "known", "route check: EDSM knows it -> known (%s)" % lv_known)
     check(lv_none == ("checked", ["EDSM"]),
           "route check: EDSM does not -> in no database, checked: EDSM (%r)" % (lv_none,))
-    load._maybe_route_check(hops)
+    cockpit._maybe_route_check(hops)
     ST._route_checked = None
-    load._maybe_route_check(hops)                    # plotted again later: nothing left to ask
+    cockpit._maybe_route_check(hops)                    # plotted again later: nothing left to ask
     check(len([x for x in Sess.log[n0:] if x[0] == "edsm-names"]) == 1,
           "route check: the same route asks nothing again")
-    load._maybe_route_check(hops[:2])
+    cockpit._maybe_route_check(hops[:2])
     check(len([x for x in Sess.log[n0:] if x[0] == "edsm-names"]) == 1,
           "route check: a single jump is never checked")
 
     # 14) H3 #2: the plot suggestion goes to meta for SHBOX FIS GALAXY
     ST.route_targets = [{"name": "Fake 9", "dist": 61.04, "jumps": 3, "boxels": 14, "score": 20.0,
                          "pos": (60.0, 1.0, -40.0)}]
-    load._store_corridor((10.0, 0.0, -5.0), 32.0)
-    doc = json.loads(ST.db.get_meta(load.CORRIDOR_META))
+    planning._store_corridor((10.0, 0.0, -5.0), 32.0)
+    doc = json.loads(ST.db.get_meta(cockpit.CORRIDOR_META))
     check(doc["from"] == [10.0, 0.0, -5.0] and doc["half"] == 16.0
           and doc["targets"] == [{"name": "Fake 9", "x": 60.0, "y": 1.0, "z": -40.0, "ly": 61.0,
                                   "jumps": 3, "boxels": 14}],
           "corridor: suggestion stored for the FIS (%r)" % doc)
     ST.route_targets = []
-    load._store_corridor((10.0, 0.0, -5.0), 32.0)
-    check(json.loads(ST.db.get_meta(load.CORRIDOR_META))["targets"] == [],
+    planning._store_corridor((10.0, 0.0, -5.0), 32.0)
+    check(json.loads(ST.db.get_meta(cockpit.CORRIDOR_META))["targets"] == [],
           "corridor: no target -> the FIS shows none")
     ST.db.close()
 
