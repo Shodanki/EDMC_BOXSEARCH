@@ -147,6 +147,14 @@ KIND_SHORT = {K_SCAN: "FSS", K_DSS: "DSS", K_BIO: "BIO", K_NEW: "NEW",
               K_CHECK: "CHECK"}
 
 
+def _edmc_user_agent() -> str:
+    """EDMC's own User-Agent (config.user_agent), which PLUGINS.md asks
+    plugins to send, with ours appended by netgate. Empty on EDMC builds
+    without it."""
+    ua = getattr(config, "user_agent", "")
+    return ua if isinstance(ua, str) else ""
+
+
 # ============================================================================
 # State
 # ============================================================================
@@ -157,7 +165,7 @@ class State:
         self.lock = threading.RLock()
         # the plugin's one door to the internet - created once, so pacing
         # and rests survive a rebuilt SourceManager
-        self.net = Gateway(VERSION)
+        self.net = Gateway(VERSION, base_ua=_edmc_user_agent())
         self.sources = SourceManager(gateway=self.net)
         # local-first (shells.py): how far out the online sources have been
         # asked for the running survey; the planner plans only inside it
