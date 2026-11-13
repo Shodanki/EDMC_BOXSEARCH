@@ -13,7 +13,8 @@ changing behaviour:
   DSS and sampling timings, the own carrier after a carrier jump, a second
   commander, the target briefing, Status.json (fuel, selected destination),
   survey start (free / carrier), queue pruning after a jump or a target
-  selection, sphere end and overlap,
+  selection, sphere end and overlap, supercruise leg timing, Touchdown,
+  the update check,
   and that a broken event never escapes the hook.
 
     python tests/plugin_hooks.py      (from the plugin folder)
@@ -260,6 +261,44 @@ try:
         load._stop_survey()
         ST.net.offline = False
         load._set_status = lambda m: None
+
+        # 6f) supercruise timing body A -> body B, Touchdown tick, resets
+        je({"event": "FSDJump", "StarSystem": "Hook S", "SystemAddress": 1019,
+            "StarPos": [300.0, 0.0, 0.0], "StarClass": "G", "JumpDist": 50.0})
+        je({"event": "Scan", "ScanType": "Detailed", "StarSystem": "Hook S", "SystemAddress": 1019,
+            "BodyName": "Hook S", "BodyID": 0, "StarType": "G", "DistanceFromArrivalLS": 0.0,
+            "Radius": 7.0e8})
+        je({"event": "Scan", "ScanType": "Detailed", "StarSystem": "Hook S", "SystemAddress": 1019,
+            "BodyName": "Hook S 1", "BodyID": 1, "PlanetClass": "Icy body",
+            "Parents": [{"Star": 0}], "DistanceFromArrivalLS": 500.0,
+            "SemiMajorAxis": 500.0 * 299792458.0, "Eccentricity": 0.0, "OrbitalInclination": 0.0,
+            "Periapsis": 0.0, "OrbitalPeriod": 3.0e8, "MeanAnomaly": 0.0,
+            "AscendingNode": 0.0, "Radius": 2.0e6})
+        ST.sc_segments.clear()
+        je({"event": "ApproachBody", "StarSystem": "Hook S", "SystemAddress": 1019,
+            "Body": "Hook S", "BodyID": 0})
+        je({"event": "SupercruiseEntry", "StarSystem": "Hook S", "SystemAddress": 1019})
+        NOW[0] += 80
+        je({"event": "SupercruiseExit", "StarSystem": "Hook S", "SystemAddress": 1019,
+            "Body": "Hook S 1", "BodyID": 1, "BodyType": "Planet"})
+        seg = ST.sc_segments[-1:] or [(None, None)]
+        check(len(ST.sc_segments) == 1 and seg[0][1] == 80.0 and 499.0 < seg[0][0] < 501.0,
+              "supercruise leg timed: star -> planet 500 LS in 80 s (%r)" % (seg,))
+        je({"event": "SupercruiseEntry", "StarSystem": "Hook S", "SystemAddress": 1019})
+        je({"event": "Shutdown"})
+        NOW[0] += 60
+        je({"event": "SupercruiseExit", "StarSystem": "Hook S", "SystemAddress": 1019,
+            "Body": "Hook S", "BodyID": 0, "BodyType": "Star"})
+        check(len(ST.sc_segments) == 1, "a Shutdown in between: no leg counted")
+        calls.clear()
+        real_tick = load._route_auto_tick
+        load._route_auto_tick = lambda b, why: calls.append(("tick", b, why))
+        je({"event": "Touchdown", "StarSystem": "Hook S", "SystemAddress": 1019,
+            "Body": "Hook S 1", "BodyID": 1, "Latitude": 1.0, "Longitude": 2.0})
+        load._route_auto_tick = real_tick
+        check(("tick", "Hook S 1", "landed") in calls, "Touchdown ticks the body off as landed")
+        check(ST.last_body_name == "Hook S 1" and ST.last_body_sys == 1019,
+              "any event naming a body moves the position marker")
 
         # 6e) update check against a fake gateway: notify only, once a day
         class R:
