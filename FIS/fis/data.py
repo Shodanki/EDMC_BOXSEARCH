@@ -174,13 +174,25 @@ class Database:
 
     # M1: bodies with biological signals (the plugin imported all journals)
     def atlas_bio(self, kind: Optional[str] = None) -> List[sqlite3.Row]:
-        """All bodies with bio signals; open/done is decided by the model
-        (codex-only genera such as Brain Trees never count as analysed)."""
+        """All bodies with bio signals; open/done is decided by the model.
+        `codex`: the organics the codex named on the body ("|"-joined; Brain
+        Trees, which report one signal for several species)."""
         if not self.has_table("bodies"):
             return []
+        codex = ("(SELECT group_concat(g.label, '|') FROM signals g WHERE g.sys_id64=b.sys_id64 "
+                 "AND g.body_id=b.body_id AND g.kind LIKE 'codex:%') codex"
+                 if self.has_table("signals") else "NULL codex")
         return self.query("SELECT b.sys_id64, b.body_id, b.name body_name, b.sig_bio, b.organics, "
-                          "b.genuses, b.bio_species, 1 count, s.name sys_name, s.x, s.y, s.z "
-                          "FROM bodies b " + self._BEST_SYS + "b.sys_id64 WHERE b.sig_bio > 0")
+                          "b.genuses, b.bio_species, 1 count, s.name sys_name, s.x, s.y, s.z, " + codex +
+                          " FROM bodies b " + self._BEST_SYS + "b.sys_id64 WHERE b.sig_bio > 0")
+
+    def codex_species(self, id64: int, body_id: Optional[int] = None) -> Dict[int, List[str]]:
+        """body id -> the organics the codex named there (Brain Trees)."""
+        out: Dict[int, List[str]] = {}
+        for g in self.signals_of(id64, body_id):
+            if str(g["kind"] or "").startswith("codex:") and (g["body_id"] or 0) >= 0:
+                out.setdefault(g["body_id"], []).append(g["label"])
+        return out
 
     def atlas_kinds(self, view: str) -> List[sqlite3.Row]:
         """What the second picker offers per atlas view, with counts."""

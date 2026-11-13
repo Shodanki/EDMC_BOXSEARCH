@@ -49,6 +49,10 @@ def plugin():
             except ImportError:
                 shells = None
             try:
+                import biosig  # type: ignore   # plugin 4.11.1+: one signal, several species
+            except ImportError:
+                biosig = None
+            try:
                 import regionmap  # type: ignore   # plugin 4.10+: codex regions
                 regionmap.region_names()           # load the map now, no bytecode
             except Exception:
@@ -64,6 +68,7 @@ def plugin():
         p.surfacenav = surfacenav
         p.shells = shells
         p.regionmap = regionmap
+        p.biosig = biosig
         _plugin = p
     return _plugin
 
@@ -569,6 +574,7 @@ def bio_list(db: Database, id64: int, rows, bodies: List[Dict[str, Any]]
     p = plugin()
     short = {b["body_id"]: b for b in bodies}
     out: List[Dict[str, Any]] = []
+    codex = db.codex_species(id64) if hasattr(db, "codex_species") else {}
 
     def col(r, k):
         try:
@@ -599,6 +605,13 @@ def bio_list(db: Database, id64: int, rows, bodies: List[Dict[str, Any]]
                 if not s["analysed"] and s["species"] not in done:
                     species.append({"species": s["species"], "genus": s["genus"],
                                     "state": "open", "samples": s["samples"]})
+        # 4.11.1: species the codex saw here (Brain Trees: one signal, several
+        # species) and nobody has sampled yet are open, too
+        bs = p.biosig
+        res = bs.open_bio(sig, genera, analysed, codex.get(r["body_id"], ())) if bs else None
+        for sp in (res or {}).get("open_species", []):
+            if sp not in {s["species"] for s in species}:
+                species.append({"species": sp, "genus": bs.genus_of(sp), "state": "open", "samples": 0})
         started = {s["genus"] for s in species if s["genus"]}
         b = short.get(r["body_id"]) or {}
         out.append({
@@ -606,6 +619,7 @@ def bio_list(db: Database, id64: int, rows, bodies: List[Dict[str, Any]]
             "arrival_ls": _r(col(r, "arrival_ls"), 0), "signals": sig,
             "species": species,
             "missing": [g for g in genera if g not in started],
+            "multi": (res or {}).get("multi", []),
             "hint": None if genera else b.get("bio_hint"),
         })
     return out
@@ -824,10 +838,12 @@ def survey_export(db: Database, fmt: str) -> Any:
     return buf.getvalue()
 
 
-# M1: Horizons-era organics are logged with the composition scanner (codex)
-# only - the genetic sampler never analyses them, so a body whose only open
-# signals are these counts as done. Assumption, to confirm in game.
-CODEX_ONLY_GENERA = {"Brain Trees", "Anemone", "Bark Mounds", "Crystalline Shards",
+# M1: Horizons-era organics the genetic sampler is assumed not to analyse -
+# a body whose only open signals are these counts as done. Not confirmed in
+# game. Brain Trees were on this list up to 4.11.0, wrongly: the journals
+# show them sampled (ScanOrganic) and sold to Vista Genomics (1 593 700 Cr
+# each), and one Brain Trees signal can be several species (biosig).
+CODEX_ONLY_GENERA = {"Anemone", "Bark Mounds", "Crystalline Shards",
                      "Sinuous Tubers", "Amphora Plant"}
 
 
@@ -839,11 +855,20 @@ def _bio_item(r) -> Dict[str, Any]:
     genera = [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()]
     missing = [g for g in genera if g not in got]
     codex_only = [g for g in missing if g in CODEX_ONLY_GENERA]
-    open_n = max(0, sig - done_n - len(codex_only))
+    keys = r.keys() if hasattr(r, "keys") else ()
+    seen = [x for x in ((r["codex"] if "codex" in keys else None) or "").split("|") if x]
+    bs = plugin().biosig
+    if bs is not None:
+        res = bs.open_bio(sig, [g for g in genera if g not in CODEX_ONLY_GENERA], analysed, seen)
+        open_n, open_species, multi = res["open"], res["open_species"], res["multi"]
+        if not genera:
+            open_n = max(0, open_n - len(codex_only))
+    else:
+        open_n, open_species, multi = max(0, sig - done_n - len(codex_only)), [], []
     return {"key": "open" if open_n else "done", "signals": sig,
-            "analysed": min(done_n, sig), "open": open_n,
+            "analysed": len(analysed) if multi else min(done_n, sig), "open": open_n,
             "missing": [g for g in missing if g not in CODEX_ONLY_GENERA],
-            "codex_only": codex_only,
+            "codex_only": codex_only, "open_species": open_species, "multi": multi,
             "species": sorted({a.get("species") for a in analysed if a.get("species")})}
 
 
@@ -1085,6 +1110,17 @@ def _ground_mining(db: Database, body_name: str, planet_class: Optional[str]) ->
     return out or None
 
 
+def _bio_seen(db: Database, p: Any, id64: int, body_id: int, r: Any,
+              species: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """PLANET INFO: codex species of the body, the open ones, multi genera."""
+    seen = (db.codex_species(id64, body_id).get(body_id, []) if hasattr(db, "codex_species") else [])
+    if p.biosig is None:
+        return {"seen": seen, "open_species": [], "multi": []}
+    genera = [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()]
+    res = p.biosig.open_bio(int(r["sig_bio"] or 0), genera, species, seen)
+    return {"seen": seen, "open_species": res["open_species"], "multi": res["multi"]}
+
+
 def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
                fid: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """PLANET INFO. fid: the commander playing - scanned, mapped and species
@@ -1163,6 +1199,9 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
             "species": [{"species": s.get("species"), "variant": s.get("variant"),
                          "genus": s.get("genus"), "date": (s.get("ts") or "")[:10]} for s in species],
             "prediction": [],
+            # 4.11.1: what the codex saw here, what of it is not sampled, and
+            # the genera that report one signal for several species
+            **_bio_seen(db, p, id64, body_id, r, species),
         },
         "hotspots": hotspots,
         # lost with the ship, not redone yet: "scan", "map", "bio:<species>"

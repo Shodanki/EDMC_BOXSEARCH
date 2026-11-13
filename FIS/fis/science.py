@@ -45,6 +45,29 @@ def _f(section: str, key: str, level: str = "info", **v: Any) -> Dict[str, Any]:
     return {"section": section, "id": key, "level": level, "v": v}
 
 
+def _biology(bio: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """PLANET INFO, biology: signals, what is still to sample, the forecast.
+    4.11.1: a genus that reports one signal for several species (Brain
+    Trees) is named, with the species the codex saw on the body."""
+    out: List[Dict[str, Any]] = []
+    sig, done = int(bio.get("signals") or 0), len(bio.get("species") or [])
+    if not sig:
+        return out
+    out.append(_f("biology", "bio_signals", n=sig, a=done))
+    open_genera = [gn for gn in bio.get("genera") or []
+                   if gn not in {s.get("genus") for s in bio.get("species") or []}]
+    open_genera += list(bio.get("open_species") or [])     # seen in the codex, not sampled
+    for gn in bio.get("multi") or []:
+        out.append(_f("biology", "bio_multi", level="warn" if bio.get("open_species") else "info",
+                      g=gn, s=", ".join(bio.get("seen") or []) or "-"))
+    if open_genera:
+        out.append(_f("biology", "bio_open", level="warn", g=", ".join(open_genera)))
+    elif not bio.get("genera") and bio.get("prediction"):
+        top = bio["prediction"][0]
+        out.append(_f("biology", "bio_forecast", g=top.get("genus"), p=round(100 * (top.get("score") or 0))))
+    return out
+
+
 def body_report(b: Dict[str, Any]) -> List[Dict[str, Any]]:
     """`b` is the PLANET INFO record (fis.model.build_body)."""
     out: List[Dict[str, Any]] = []
@@ -102,15 +125,7 @@ def body_report(b: Dict[str, Any]) -> List[Dict[str, Any]]:
             out.append(_f("geology", "geo_signals", n=bio["geo"]))
     # ---- biology
     sig, done = int(bio.get("signals") or 0), len(bio.get("species") or [])
-    if sig:
-        out.append(_f("biology", "bio_signals", n=sig, a=done))
-        open_genera = [gn for gn in bio.get("genera") or []
-                       if gn not in {s.get("genus") for s in bio.get("species") or []}]
-        if open_genera:
-            out.append(_f("biology", "bio_open", level="warn", g=", ".join(open_genera)))
-        elif not bio.get("genera") and bio.get("prediction"):
-            top = bio["prediction"][0]
-            out.append(_f("biology", "bio_forecast", g=top.get("genus"), p=round(100 * (top.get("score") or 0))))
+    out.extend(_biology(bio))
     # ---- resources
     mats = {k.lower(): v for k, v in (b.get("materials") or [])}
     rare = [m for m in RARE_RAW if m in mats]
@@ -158,9 +173,12 @@ def body_report(b: Dict[str, Any]) -> List[Dict[str, Any]]:
                           why="bio" if sig and not valuable else "value"))
         if b.get("landable"):
             out.append(_f("advice", "landing", g=g, level="warn" if g and g >= HIGH_G else "info"))
-        if sig and done < sig:
-            out.append(_f("advice", "sample", n=sig - done, level="warn"))
-        if sig and done >= sig:
+        # 4.11.1: a species the codex saw and nobody sampled is open, even when
+        # as many species as signals are done (Brain Trees: one signal, several)
+        left = max(0, sig - done) + len(bio.get("open_species") or [])
+        if sig and left:
+            out.append(_f("advice", "sample", n=left, level="warn"))
+        if sig and not left:
             out.append(_f("advice", "bio_complete", level="good"))
     return out
 

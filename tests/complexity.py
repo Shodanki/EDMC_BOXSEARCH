@@ -44,7 +44,7 @@ LEGACY = {
     ("FIS/fis/model.py", "build_briefing"): 24,
     ("FIS/fis/model.py", "build_system"): 33,
     ("FIS/fis/model.py", "system_poi"): 23,
-    ("FIS/fis/science.py", "body_report"): 42,
+    ("FIS/fis/science.py", "body_report"): 39,
     ("FIS/fis/science.py", "system_report"): 34,
     ("FIS/fis/server.py", "Handler._api"): 51,
     ("FIS/fis/server.py", "Handler._post_lost_hidden"): 16,
