@@ -82,21 +82,7 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     info: Dict[str, Any] = {"kind": kind, "name": name, "star_class": star_class}
     if star_class:
         info["scoopable"] = is_scoopable(star_class)
-    row = None
-    with ST.lock:
-        if id64:
-            row = ST.db.system_by_id64(id64)
-        if row is None and name:
-            row = ST.db.system(name)
-        if kind == "arrival" and id64:
-            p = ST.db.system_progress(id64, CURRENT)
-            if p.get("body_count"):
-                info["bodies"] = p["body_count"]
-            info["bodies_new"] = p.get("new_discoveries") or 0
-    if not star_class and row is not None and row["star_class"]:
-        # FSDJump carries no star class; StartJump/FSDTarget stored it earlier
-        info["star_class"] = row["star_class"]
-        info["scoopable"] = is_scoopable(row["star_class"])
+    row = _briefing_row(info, kind, name, id64)
     srcs = set((row["sources"] or "").split(",")) if row is not None else set()
     info["known_sources"] = [s for s in _EXTERNAL_DBS if s in srcs]
     # I1: say "in no database" only where a source was really asked
@@ -109,32 +95,70 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     except Exception:
         regions = {}
     info["level"], info["checked_by"] = shells.info_level(srcs, pos, regions)
-    # 4.10: the codex region - from the position, else from the id64 boxel
-    if regionmap is not None:
-        try:
-            reg = None
-            if row is not None and row["x"] is not None:
-                reg = regionmap.find_region(row["x"], row["y"], row["z"])
-            elif id64:
-                reg = regionmap.find_region_for_id64(int(id64))
-            if reg:
-                info["region"] = reg[1]
-        except Exception:
-            logger.debug("region lookup failed", exc_info=True)
+    _briefing_region(info, row, id64)
     if row is not None and kind == "target":
-        with ST.lock:
-            if ST.db.is_visited(row, CURRENT):
-                info["visited"] = True
-            also = ST.db.explorers(row["id64"], but=ST.db.fid) if ST.db.fid else []
-            lost = [d for d in ST.db.lost_summary(ST.db.view_fid(CURRENT))
-                    if d["id64"] == row["id64"]]
-        if also:
-            info["also_by"] = also          # C1: another commander was here
-        if lost:
-            info["lost"] = lost[0]          # data lost there in a crash, to redo
+        _briefing_visits(info, row)
     pn = parse_name(name or "")
     if pn and ST.probe:
         info["boxel_open"] = sum(1 for q in ST.probe if q.boxel_key == pn.boxel_key)
+    _briefing_fuel(info, kind)
+    return info
+
+
+def _briefing_row(info: Dict[str, Any], kind: str, name: Optional[str],
+                  id64: Optional[int]):
+    """The system's row (by id64, else by name); on arrival also its bodies.
+    Fills the star class from the row when the event had none."""
+    row = None
+    with ST.lock:
+        if id64:
+            row = ST.db.system_by_id64(id64)
+        if row is None and name:
+            row = ST.db.system(name)
+        if kind == "arrival" and id64:
+            p = ST.db.system_progress(id64, CURRENT)
+            if p.get("body_count"):
+                info["bodies"] = p["body_count"]
+            info["bodies_new"] = p.get("new_discoveries") or 0
+    if not info["star_class"] and row is not None and row["star_class"]:
+        # FSDJump carries no star class; StartJump/FSDTarget stored it earlier
+        info["star_class"] = row["star_class"]
+        info["scoopable"] = is_scoopable(row["star_class"])
+    return row
+
+
+def _briefing_region(info: Dict[str, Any], row, id64: Optional[int]) -> None:
+    """4.10: the codex region - from the position, else from the id64 boxel."""
+    if regionmap is None:
+        return
+    try:
+        reg = None
+        if row is not None and row["x"] is not None:
+            reg = regionmap.find_region(row["x"], row["y"], row["z"])
+        elif id64:
+            reg = regionmap.find_region_for_id64(int(id64))
+        if reg:
+            info["region"] = reg[1]
+    except Exception:
+        logger.debug("region lookup failed", exc_info=True)
+
+
+def _briefing_visits(info: Dict[str, Any], row) -> None:
+    """A target: visited before, by another commander, or lost in a crash."""
+    with ST.lock:
+        if ST.db.is_visited(row, CURRENT):
+            info["visited"] = True
+        also = ST.db.explorers(row["id64"], but=ST.db.fid) if ST.db.fid else []
+        lost = [d for d in ST.db.lost_summary(ST.db.view_fid(CURRENT))
+                if d["id64"] == row["id64"]]
+    if also:
+        info["also_by"] = also          # C1: another commander was here
+    if lost:
+        info["lost"] = lost[0]          # data lost there in a crash, to redo
+
+
+def _briefing_fuel(info: Dict[str, Any], kind: str) -> None:
+    """Where to scoop at the latest, and the fuel warning or jumps left."""
     try:
         sl = scoop_line(_scoop_plan())
         if sl:
@@ -148,7 +172,6 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
         info["fuel_warning"] = w
     elif ST.fuel and ST.fuel.jumps_left is not None:
         info["jumps_left"] = ST.fuel.jumps_left
-    return info
 
 
 CORRIDOR_META = "route_corridor"   # H3 #2: plot suggestion for the FIS (JSON)
@@ -169,6 +192,22 @@ def _route_check(hops: List[Tuple[str, Any, Any]]) -> None:
     (checked: EDSM)" and the same route plotted again asks nothing.
     Runs in the background.
     """
+    todo = _route_check_todo(hops)[:ROUTE_CHECK_MAX]
+    if not todo:
+        return
+    ttl = shells.ttl_seconds()
+    known: List[Dict] = []
+    rest = _route_check_edd(list(todo), ttl, known)
+    asked_edsm = _route_check_edsm(rest, ttl, known)
+    if known:
+        planning._store_rows(known)
+    logger.info("route check | %d systems not checked before: %d known, %d asked EDSM in one "
+                "request, %d in no database", len(todo), len(known), asked_edsm,
+                len(todo) - len(known) if asked_edsm or len(rest) == 0 else 0)
+
+
+def _route_check_todo(hops: List[Tuple[str, Any, Any]]) -> List[Tuple[str, Tuple[float, float, float]]]:
+    """The hops after the first that no source has covered yet."""
     with ST.lock:
         regions = {k: ST.db.valid_shells(k) for k in ("edd", "spansh", "edsm")}
         todo: List[Tuple[str, Tuple[float, float, float]]] = []
@@ -179,50 +218,52 @@ def _route_check(hops: List[Tuple[str, Any, Any]]) -> None:
             srcs = set((row["sources"] or "").split(",")) if row is not None else set()
             if shells.info_level(srcs, pos, regions)[0] == "unchecked":
                 todo.append((name, tuple(pos)))
-    todo = todo[:ROUTE_CHECK_MAX]
-    if not todo:
-        return
-    ttl = shells.ttl_seconds()
-    known: List[Dict] = []
-    rest = list(todo)
+    return todo
+
+
+def _route_check_edd(rest: List[Tuple[str, Any]], ttl: float, known: List[Dict]) -> List[Tuple[str, Any]]:
+    """Look the hops up in EDDiscovery's file (local). Appends what it knows
+    to ``known``; returns the hops still unknown."""
     edd = ST.sources.sources.get("edd") if ST.sources else None
-    if edd is not None and cfg_bool(CFG["src_edd"], True) and edd.available()[0]:
-        left = []
-        for name, pos in rest:
-            try:
-                rows = edd.fetch(pos, ROUTE_CHECK_EDD_R)
-            except Exception:
-                rows = None
-            if rows is None:
-                left.append((name, pos))
-                continue
-            with ST.lock:
-                ST.db.record_shell("edd", pos, 0.0, ROUTE_CHECK_R, len(rows), ttl)
-            if rows:
-                known.append({"name": name, "x": pos[0], "y": pos[1], "z": pos[2],
-                              "source": edd.name})
-            else:
-                left.append((name, pos))
-        rest = left
-    asked_edsm = 0
+    if not (edd is not None and cfg_bool(CFG["src_edd"], True) and edd.available()[0]):
+        return rest
+    left = []
+    for name, pos in rest:
+        try:
+            rows = edd.fetch(pos, ROUTE_CHECK_EDD_R)
+        except Exception:
+            rows = None
+        if rows is None:
+            left.append((name, pos))
+            continue
+        with ST.lock:
+            ST.db.record_shell("edd", pos, 0.0, ROUTE_CHECK_R, len(rows), ttl)
+        if rows:
+            known.append({"name": name, "x": pos[0], "y": pos[1], "z": pos[2],
+                          "source": edd.name})
+        else:
+            left.append((name, pos))
+    return left
+
+
+def _route_check_edsm(rest: List[Tuple[str, Any]], ttl: float, known: List[Dict]) -> int:
+    """Ask EDSM about the rest in ONE request (through the gateway). Appends
+    what it knows to ``known``; returns how many names were asked."""
     edsm = ST.sources.sources.get("edsm") if ST.sources else None
-    if rest and edsm is not None and cfg_bool(CFG["src_edsm"], True):
-        res = edsm.lookup([n for n, _p in rest])
-        planning._log_net(planning._flush_net_log())
-        if res is not None:
-            asked_edsm = len(rest)
-            for name, pos in rest:
-                hit = res.get(name.lower())
-                with ST.lock:
-                    ST.db.record_shell("edsm", pos, 0.0, ROUTE_CHECK_R, 1 if hit else 0, ttl)
-                if hit:
-                    known.append(dict(hit, name=name, x=hit.get("x", pos[0]),
-                                      y=hit.get("y", pos[1]), z=hit.get("z", pos[2])))
-    if known:
-        planning._store_rows(known)
-    logger.info("route check | %d systems not checked before: %d known, %d asked EDSM in one "
-                "request, %d in no database", len(todo), len(known), asked_edsm,
-                len(todo) - len(known) if asked_edsm or len(rest) == 0 else 0)
+    if not (rest and edsm is not None and cfg_bool(CFG["src_edsm"], True)):
+        return 0
+    res = edsm.lookup([n for n, _p in rest])
+    planning._log_net(planning._flush_net_log())
+    if res is None:
+        return 0
+    for name, pos in rest:
+        hit = res.get(name.lower())
+        with ST.lock:
+            ST.db.record_shell("edsm", pos, 0.0, ROUTE_CHECK_R, 1 if hit else 0, ttl)
+        if hit:
+            known.append(dict(hit, name=name, x=hit.get("x", pos[0]),
+                              y=hit.get("y", pos[1]), z=hit.get("z", pos[2])))
+    return len(rest)
 
 
 def _maybe_route_check(hops: List[Tuple[str, Any, Any]]) -> None:
