@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from typing import Any
 
 # EDMC API
@@ -25,6 +26,26 @@ from config import config
 
 from .state import ST, logger
 from . import panel
+
+
+WORKER_PREFIX = "shbox-"       # every thread of the plugin is named SHBOX-<what>
+
+
+def _join_workers(timeout: float = 2.0) -> list:
+    """N8: wait for the plugin's worker threads, at most ``timeout`` seconds
+    in all (EDMC is closing - it must not hang). The names of those still
+    running afterwards are returned; they are daemon threads and end with
+    EDMC."""
+    deadline = time.monotonic() + timeout
+    me = threading.current_thread()
+    for t in threading.enumerate():
+        if t is me or not t.name.lower().startswith(WORKER_PREFIX):
+            continue
+        left = deadline - time.monotonic()
+        if left > 0:
+            t.join(left)
+    return sorted(t.name for t in threading.enumerate()
+                  if t is not me and t.is_alive() and t.name.lower().startswith(WORKER_PREFIX))
 
 
 def _run_async(fn, *args, label: str = "working", **kw) -> None:

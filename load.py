@@ -155,7 +155,8 @@ def capi_fleetcarrier(data: Any) -> Optional[str]:
 def plugin_stop() -> None:
     """
     EDMC hook: EDMC is closing. Clears the overlay, closes the windows, stops
-    the gateway (no more requests), stores the call log, closes the database.
+    the gateway (no more requests), waits up to 2 s for running work, stores
+    the call log, closes the database.
     """
     ov = getattr(ST, "overlay", None)
     if ov is not None:
@@ -165,6 +166,10 @@ def plugin_stop() -> None:
     probewin._probe_window_close()
     miningwin._mining_window_close()
     ST.net.stop()             # wake a waiting request; nothing more is sent
+    # N8: let running work finish before the database closes - briefly
+    busy = uithread._join_workers(2.0)
+    if busy:
+        logger.info("stop: still running after 2 s, left to end with EDMC: %s", ", ".join(busy))
     planning._flush_net_log()
     with ST.lock:
         if ST.db:

@@ -231,6 +231,21 @@ check(len(roots) >= 15, "found %d worker entry points" % len(roots))
 check(not bad, "no direct Tk access from %d worker-reachable functions%s"
       % (len(seen), (" - " + "; ".join(bad)) if bad else ""))
 
+# 7b. N8 (4.11): plugin_stop waits for the plugin's workers, but only briefly
+import time  # noqa: E402
+quick = threading.Thread(target=time.sleep, args=(0.3,), name="SHBOX-quick", daemon=True)
+slow_stop = threading.Event()
+slow = threading.Thread(target=slow_stop.wait, args=(10,), name="shbox-fis-autostart", daemon=True)
+other = threading.Thread(target=slow_stop.wait, args=(10,), name="not-ours", daemon=True)
+for t in (quick, slow, other):
+    t.start()
+t0 = time.monotonic()
+left = uithread._join_workers(0.8)
+took = time.monotonic() - t0
+check(not quick.is_alive() and left == ["shbox-fis-autostart"] and 0.7 <= took < 2.0,
+      "stop waits for running work, at most the time given (%.2f s, left %r)" % (took, left))
+slow_stop.set()
+
 # 8. real Tk, when a display is there (not on CI): a hidden top level and an
 #    unmapped frame - Tk drops virtual events for unmapped widgets, so the
 #    event must go to the top level
