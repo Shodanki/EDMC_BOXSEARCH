@@ -45,12 +45,14 @@ if __package__:     # inside the plugin package (EDMC)
                           id64_of_slot, id64_slot, make_name, parse_boxel_key,
                           parse_name, star_pos)
     from .shells import INHABITED, inhabited_event
+    from .biosig import open_bio
 else:               # on its own: the self test, the FIS
     from procgen import (SectorRegistry, boxel_index_of_coords,
                          boxel_labels, computed_sector_index, decode_id64,
                          id64_of_slot, id64_slot, make_name, parse_boxel_key,
                          parse_name, star_pos)
     from shells import INHABITED, inhabited_event
+    from biosig import open_bio
 
 logger = logging.getLogger(__name__)
 
@@ -1148,15 +1150,17 @@ class SystemDB:
         mapped = sum(1 for r in rows if r["mapped"])
         dss_open, bio_open, valuable = [], [], []
         bio_signals_open = 0
+        seen = self.codex_species(id64)
         for r in rows:
             worth = (r["sig_bio"] or 0) > 0 or (r["planet_class"] in VALUABLE_CLASSES) \
                 or (r["terraform"] or "") == "Terraformable"
             if r["kind"] == "Planet" and worth and not r["mapped"]:
                 dss_open.append(r["name"] or "Body %d" % r["body_id"])
             # M1: open = signals minus species analysed - a body with three
-            # signals and one species done is still open (it used to count
-            # as done as soon as one species was analysed)
-            left = (r["sig_bio"] or 0) - (r["organics"] or 0)
+            # signals and one species done is still open. 4.11.1 (biosig):
+            # Brain Trees report one signal for several species; each one
+            # the codex saw and that is not analysed counts as open
+            left = self._bio_left(r, seen.get(r["body_id"], ()))
             if left > 0:
                 bio_open.append(r["name"] or "Body %d" % r["body_id"])
                 bio_signals_open += left
@@ -1529,6 +1533,28 @@ class SystemDB:
     def cmdr_system(self, fid: str, id64: int) -> Optional[sqlite3.Row]:
         return self.cx.execute("SELECT * FROM cmdr_systems WHERE fid=? AND sys_id64=?",
                                (fid, id64)).fetchone()
+
+    def codex_species(self, sys_id64: int) -> Dict[int, List[str]]:
+        """body id -> the organics its codex entries named (Brain Trees are
+        kept per body as signals "codex:<species>")."""
+        out: Dict[int, List[str]] = {}
+        for r in self.cx.execute("SELECT body_id, label FROM signals WHERE sys_id64=? "
+                                 "AND kind LIKE 'codex:%' AND body_id >= 0", (sys_id64,)):
+            out.setdefault(r["body_id"], []).append(r["label"])
+        return out
+
+    @staticmethod
+    def _bio_left(r: Any, seen: Iterable[str]) -> int:
+        """Biological signals still to sample on one body (biosig.open_bio)."""
+        try:
+            analysed = json.loads(r["bio_species"]) if r["bio_species"] else []
+        except (ValueError, TypeError, KeyError, IndexError):
+            analysed = []
+        if not analysed and r["organics"]:
+            # an old row without the species list: the count as before
+            return max(0, (r["sig_bio"] or 0) - (r["organics"] or 0))
+        genera = [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()]
+        return open_bio(r["sig_bio"] or 0, genera, analysed, seen)["open"]
 
     def bodies_for(self, sys_id64: int, fid: Optional[str]) -> List[Any]:
         """The bodies of a system as one commander explored them: the shared

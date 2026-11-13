@@ -158,6 +158,7 @@ on first run and is **your data** - never overwrite it on an update.
 | `biopredict.py` | 204 | Genus prediction learned from your own samples | — |
 | `surfacenav.py` | 493 | Surface compass: parked SRV, open samples, known points | — |
 | `miningstat.py` | 337 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
+| `biosig.py` | 95 | Open biological signals: one signal per genus, but Brain Trees can be several species on one body | — |
 | `journalscan.py` | 367 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay, self test | — |
 | `edts_pgnames/` | | Sector names computed with EDTS's algorithm, hand-authored sector table (third-party, BSD 3-Clause, see its `SOURCE.md`) | — |
 | `regionmap/` | | Codex regions of the galaxy (third-party, MIT, see its `SOURCE.md`) | — |
