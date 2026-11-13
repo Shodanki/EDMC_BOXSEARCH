@@ -750,10 +750,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._static(path, qs)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return None
-        except Exception as exc:
+        except Exception:
+            # N10: the details (paths, names, values) stay in the FIS console;
+            # the browser - possibly a tablet in the home network - learns
+            # only that something went wrong
             traceback.print_exc()
             try:
-                return self._error(500, "%s: %s" % (type(exc).__name__, exc))
+                return self._error(500, "internal error - see the FIS console")
             except OSError:
                 return None
 

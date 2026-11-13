@@ -606,6 +606,23 @@ class TestSettings(_Base):
         self.assertIn("language = de", ini)
         self.assertIn("open_browser = false", ini)
 
+    def test_internal_error_tells_no_details(self):
+        """N10: a failure answers 500 without the exception's text (paths,
+        names) - that stays in the FIS console."""
+        from unittest import mock
+        from fis import server
+        boom = RuntimeError(r"C:\Users\Someone\secret.sqlite is locked")
+        with mock.patch.object(server.Handler, "_api", side_effect=boom), \
+                mock.patch("traceback.print_exc"):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                urllib.request.urlopen(self.base + "/api/health", timeout=5)
+        body = e.exception.read().decode("utf-8", "replace")
+        e.exception.close()
+        self.assertEqual(e.exception.code, 500)
+        self.assertIn("internal error", body)
+        self.assertNotIn("secret", body)
+        self.assertNotIn("RuntimeError", body)
+
     def test_unsold_limits(self):
         """4.11: the UNSOLD DATA limits are read, saved, clamped; a bad value
         changes nothing at all, not even the other fields of the request."""
