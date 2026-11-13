@@ -134,6 +134,7 @@ on first run and is **your data** - never overwrite it on an update.
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
 | `load.py` | 172 | EDMC entry point: start, stop, carrier data; hands the other hooks to the modules below | the plugin layer |
+| `__init__.py` | 12 | Makes the folder a Python package (runs nothing) | — |
 | `state.py` | 282 | Version, settings keys, the shared state of the survey | the helpers below |
 | `uithread.py` | 93 | Worker threads, and their one way to the window (EDMC's threading rule) | `state`, `panel` |
 | `journal.py` | 571 | EDMC's journal and Status.json hooks: one handler per event | the plugin layer |

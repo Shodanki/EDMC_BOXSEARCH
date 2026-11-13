@@ -40,13 +40,18 @@ sys.path.remove(HERE)
 '''
 
 NORMAL = COMMON + r'''
-# EDMC: the plugins folder is on sys.path, the folder is the package.
-import importlib.machinery
-spec = importlib.machinery.ModuleSpec("SHBOXSEARCH", None, is_package=True)
-spec.submodule_search_locations = [ROOT]
-sys.modules["SHBOXSEARCH"] = importlib.util.module_from_spec(spec)
+# EDMC (plug.py 6.1.2): sys.path.append(<plugins folder>), then
+# importlib.import_module(".load", "<folder>"). The checkout may have any
+# name, so the plugin's runtime files are copied to a folder SHBOXSEARCH.
+import os, shutil, tempfile
+plugins = tempfile.mkdtemp()
+PLUGDIR = os.path.join(plugins, "SHBOXSEARCH")
+shutil.copytree(ROOT, PLUGDIR, ignore=shutil.ignore_patterns(
+    ".git", "tests", "FIS", "__pycache__", "*.sqlite*", "LOGS", "3rd_party"))
+sys.path.append(plugins)
 mod = importlib.import_module(".load", "SHBOXSEARCH")
 pkg = "SHBOXSEARCH"
+assert sys.modules[pkg].__file__ and sys.modules[pkg].__file__.endswith("__init__.py"), "a regular package"
 '''
 
 FALLBACK = COMMON + r'''
@@ -62,7 +67,8 @@ CHECK = r'''
 missing = [h for h in HOOKS if not callable(getattr(mod, h, None))]
 generic = sorted(m for m in PLUGIN_MODULES if m in sys.modules)
 members = sorted(m for m in PLUGIN_MODULES if pkg + "." + m in sys.modules)
-on_path = [p for p in sys.path if p and __import__("os").path.abspath(p) == ROOT]
+plugin_dirs = {ROOT, globals().get("PLUGDIR", ROOT)}
+on_path = [p for p in sys.path if p and __import__("os").path.abspath(p) in plugin_dirs]
 print("missing hooks:", missing)
 print("generic top-level modules:", generic)
 print("package members:", len(members))
