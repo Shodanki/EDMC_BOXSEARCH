@@ -1409,6 +1409,7 @@ what changed in each release from 4.1 on.
 | 4.9.1 | fixes: live DSS timing, own carrier after a jump aboard, damaged StarPos, pre-release tags in the update check; journal reading in its own module `journalscan.py` |
 | 4.10.0 | sector names computed (EDTS) and hand-authored sectors planned under their own names; codex region in the briefing and the FIS (region map); galaxy map list: catalogue stars fill their number, *list ends at* replaces *boxel done*; probe candidates looked up in EDDiscovery by id64 |
 | 4.10.1 | fixes: worker threads reach the window only through EDMC's one allowed call; FIS: BRIEFING comes to the front only for a jump target, reads only for this PC's own address, only the plugin's keys from EDMC's settings; EDMC's User-Agent; flake8 by EDMC's rules; the 4.0 helper scripts removed |
+| 4.11.0 | load.py split into modules, relative imports, EDMC's complexity limit kept (journal handling 69 -> 7); FIS: your own limits for unsold data; EDMC closes after the plugin's work; settings through EDMC 5's API; FIS: Python found by itself, no error details to the browser, damaged positions skipped |
 
 ## Fixed since v3.0.8
 
@@ -2425,6 +2426,50 @@ to learn, everything works as before - only steadier and tidier.
 `miningstat.py`, `surfacenav.py` and the `FIS` folder (keep your
 `FIS/fis.ini`, `favourites.json`, `lost_hidden.json`, `vehicle_tanks.json`).
 You may delete `diagnostics.py` and `migrate.py`. No database change, no
+replay. Close the FIS window once so it starts with the new files.
+
+## What changed in 4.11
+
+The plugin inside was taken apart and put together again, cleanly - for
+the EDMC plugin browser and for everything that comes next. On the outside
+everything works as before; one new setting in the FIS.
+
+* **Your own limits for unsold data (FIS).** SHIP calls losing unsold data
+  a moderate risk from 50 M Cr, a high one from 100 M, and advises selling
+  from 50 M Cr or 100 systems. Those were the developer's taste for risk;
+  now the settings page (game PC) has **UNSOLD DATA** with the four values
+  and a *Defaults* button. Stored in `FIS/fis.ini`.
+* **`load.py` split up.** It had grown to almost 5 000 lines; now it is the
+  thin layer EDMC talks to (170 lines), and the code lives in modules of
+  its own - journal hooks, planning, survey, cockpit, panel, the windows,
+  the settings page. The code was moved by a tool and checked against the
+  old one statement by statement; every function that was split up gave
+  the same results, calls and log lines as before in several thousand
+  simulated cases.
+* **No module name can clash with another plugin's.** The plugin folder is
+  a package now and its modules import each other within it; it no longer
+  puts its folder on Python's search path.
+* **Every function of the plugin keeps EDMC's complexity limit** (15). The
+  biggest, the journal handling, went from 69 to 7: one small handler per
+  event. Older functions of the helpers and the FIS may not grow; a test in
+  CI sees to that.
+* **Closing EDMC** waits up to 2 seconds for work still running before the
+  database closes.
+* **Settings** are read only through EDMC's current interface (5.0 and
+  newer).
+* **FIS:**
+  * the start scripts find Python by itself (py launcher, your python.org
+    install, the PATH) and the FIS says plainly when it needs 3.11;
+  * an unexpected error tells the browser no details (paths, names) - they
+    stay in the FIS window;
+  * a damaged position in a journal line is skipped instead of breaking
+    GALAXY.
+
+**Updating to 4.11.0:** the plugin has many new files. Close EDMC, then
+copy **all `.py` files and `__init__.py`** and the `FIS` folder (keep
+`shboxsearch.sqlite`, `FIS/fis.ini`, `FIS/favourites.json`,
+`FIS/lost_hidden.json`, `FIS/vehicle_tanks.json`). Simplest: unpack the ZIP
+over the old folder - it carries none of your files. No database change, no
 replay. Close the FIS window once so it starts with the new files.
 
 ---
