@@ -27,13 +27,12 @@ from . import routewin
 
 def _journal_dir() -> Optional[str]:
     """Journal folder: EDMC's own setting first, then the default paths."""
-    for getter in ("get_str", "get"):
-        try:
-            v = getattr(config, getter)("journaldir")
-            if v and os.path.isdir(v):
-                return v
-        except Exception:
-            pass
+    try:
+        v = config.get_str("journaldir")
+        if v and os.path.isdir(v):
+            return v
+    except Exception:
+        pass
     for attr in ("default_journal_dir", "default_journal_dir_path"):
         try:
             v = getattr(config, attr, None)

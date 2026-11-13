@@ -394,6 +394,23 @@ try:
             "StarPos": [0.0, 0.0, 9.0]}, cmdr="Other", state={"FID": "F2"})
         check(ST.cur_system == "Hook Z" and not ST.awaiting_position,
               "the new commander's Location sets the system again")
+
+        # 8) N2 (4.11): settings only through EDMC's 5.x API (get_str/int/bool
+        #    with default=); the old config.get of EDMC 4 is never called, and
+        #    a failing EDMC call gives the default
+        from config import config as edmc_config
+        from SHBOXSEARCH import maintenance
+        edmc_config.get.side_effect = AssertionError("config.get called")
+        edmc_config.get.reset_mock()
+        cfg[state.CFG["route_top"]] = 7
+        vals = (state.cfg_bool(state.CFG["debug"], True), state.cfg_int(state.CFG["route_top"], 3),
+                state.cfg_str(state.CFG["filters"], "todo"))
+        maintenance._journal_dir()
+        check(vals == (True, 7, "todo") and not edmc_config.get.called,
+              "settings read through get_bool/get_int/get_str only (%r)" % (vals,))
+        edmc_config.get_bool.side_effect = RuntimeError("broken")
+        check(state.cfg_bool(state.CFG["debug"], True) is True, "a failing EDMC call gives the default")
+        plugin_pkg.use_settings(cfg)
         ST.db.cx.close()
         ST.db = None
 except Exception:

@@ -213,10 +213,11 @@ ST = State()
 
 
 # ============================================================================
-# Config helpers (robust across EDMC versions)
+# Config helpers (EDMC's config API, 5.0 and newer)
 # ============================================================================
 
 def cfg_bool(key: str, default: bool) -> bool:
+    """A plugin setting through EDMC's config API (5.0+), with its default."""
     # The default has to go to EDMC itself: since EDMC 6 (config.toml) a key
     # that was never saved reads as False, not None, so a "True" default
     # applied afterwards never took effect. Up to 4.2.0 that silently
@@ -224,37 +225,26 @@ def cfg_bool(key: str, default: bool) -> bool:
     # opened and saved the preferences since those options existed.
     try:
         v = config.get_bool(key, default=default)
-        return default if v is None else bool(v)
-    except TypeError:
-        pass                                   # very old EDMC: no default=
     except Exception:
-        pass
-    try:
-        v = config.get(key)
-    except Exception:
-        v = None
-    return default if v is None else str(v) not in ("0", "False", "false", "")
+        return default
+    return default if v is None else bool(v)
 
 
 def cfg_int(key: str, default: int) -> int:
+    """A whole-number setting; a stored 0 counts as unset when there is a default."""
     try:
-        v = config.get_int(key)
-        return default if v in (None, 0) and default else (default if v is None else int(v))
+        v = config.get_int(key, default=default)
     except Exception:
-        try:
-            return int(config.get(key))
-        except Exception:
-            return default
+        return default
+    return default if v in (None, 0) and default else (default if v is None else int(v))
 
 
 def cfg_str(key: str, default: str = "") -> str:
+    """A text setting; empty counts as unset."""
     try:
         v = config.get_str(key, default=default)
     except Exception:
-        try:
-            v = config.get(key)
-        except Exception:
-            v = None
+        return default
     return default if v in (None, "") else str(v)
 
 
