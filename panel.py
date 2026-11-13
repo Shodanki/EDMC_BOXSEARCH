@@ -197,141 +197,169 @@ def _on_start() -> None:
 
 
 def _refresh() -> None:
+    """Redraw the panel from ST (main thread only). Never raises."""
     if not _frame:
         return
     try:
-        t = survey.current_flight()
-        if t:
-            _v_target.set("%s   %.1f ly" % (t.name, t.dist_origin))
-            _v_kind.set("%s %s" % (KIND_SHORT.get(t.kind, t.kind),
-                                   t.detail or LABEL.get(t.kind, "")))
-        else:
-            _v_target.set("-")
-            _v_kind.set("no flight targets left" if ST.active else "survey inactive")
-
-        probewin._probe_window_refresh()
-
-        p = survey.current_probe()
-        if p:
-            same = sum(1 for q in ST.probe if q.boxel_key == p.boxel_key)
-            hint = "  odds %s" % ("high" if p.score >= 3.0
-                                  else "fair" if p.score >= 1.5
-                                  else "low" if p.score > 0 else "void")
-            _v_probe.set("%s   %.1f ly  +-%.0f   [%d in boxel]%s"
-                         % (p.name, p.dist_origin, p.uncertainty, same, hint))
-        else:
-            _v_probe.set("-")
-
-        if ST.cur_system:
-            line = ST.cur_system
-            if ST.cur_id64 and ST.db:
-                with ST.lock:
-                    pr = ST.db.system_progress(ST.cur_id64, CURRENT)
-                bits = []
-                if pr["body_count"]:
-                    bits.append("FSS %d/%d" % (pr["scanned"], pr["body_count"]))
-                if pr["dss_open"]:
-                    bits.append("DSS %d" % len(pr["dss_open"]))
-                if pr["bio_open"]:
-                    # M1: open signals and where - finished bodies drop out
-                    short = [shorten(n, ST.cur_system) for n in pr["bio_open"]]
-                    bits.append("Bio %d open (%s%s)" % (
-                        pr.get("bio_signals_open") or len(short), ", ".join(short[:3]),
-                        ", ..." if len(short) > 3 else ""))
-                if pr["new_discoveries"]:
-                    bits.append("first %d" % pr["new_discoveries"])
-                if bits:
-                    line += "   " + " | ".join(bits)
-            _v_sys.set(line)
-        else:
-            _v_sys.set("-")
-
-        if ST.active:
-            c = ST.plan_counts
-            _v_queue.set("r=%.0f ly | fly %d (new %d, tasks %d) | probes %d "
-                         "(gap %d, probe %d, empty %d)"
-                         % (ST.radius, len(ST.flight), c.get(K_NEW, 0),
-                            c.get(K_SCAN, 0) + c.get(K_DSS, 0) + c.get(K_BIO, 0),
-                            len(ST.probe), c.get(K_GAP, 0), c.get(K_PROBE, 0),
-                            c.get(K_EMPTY, 0)))
-        else:
-            if _carrier_var and _carrier_var.get() and ST.carrier:
-                _v_queue.set("Start centres the sphere on the carrier at %s"
-                             % ST.carrier["system"])
-            else:
-                _v_queue.set("Start sets the sphere centre to your current position")
-
-        # Fuel: the warning always shows, the full line only if switched on.
-        warn = ST.fuel.warning()
-        if _v_fuel is not None:
-            if warn:
-                _v_fuel.set(warn)
-            elif cfg_bool(CFG["panel_fuel"], False):
-                _v_fuel.set(ST.fuel.summary())
-            else:
-                _v_fuel.set("")
-        if _lbl_fuel is not None:
-            (_lbl_fuel.grid() if (warn or cfg_bool(CFG["panel_fuel"], False))
-             else _lbl_fuel.grid_remove())
-
-        # one compact line here; the full list lives in the route window
-        if cfg_bool(CFG["show_route"], True) and ST.route and ST.route.stops:
-            open_stops = [x for x in ST.route.stops
-                          if x.body.body_id not in ST.route_done]
-            nxt = open_stops[0].body.short if open_stops else "-"
-            _v_route.set("in-system%s: %d/%d left, %.0f min | next %s"
-                         % (" (all done)" if ST.route_full else "",
-                            len(open_stops), len(ST.route.stops),
-                            sum(x.leg_s for x in open_stops) / 60.0, nxt))
-            if _lbl_route:
-                _lbl_route.grid()
-        elif cfg_bool(CFG["show_route"], True) and ST.cur_id64:
-            _v_route.set("in-system: nothing to fly here")
-            if _lbl_route:
-                _lbl_route.grid()
-        else:
-            _v_route.set("")
-            if _lbl_route:
-                _lbl_route.grid_remove()
-
-        if _v_update is not None and _lbl_update is not None:
-            if ST.update_version:
-                _v_update.set("update %s available - click to open GitHub"
-                              % ST.update_version)
-                _lbl_update.grid()
-            else:
-                _v_update.set("")
-                _lbl_update.grid_remove()
-
-        if _lbl_queue is not None:
-            (_lbl_queue.grid() if cfg_bool(CFG["panel_queue"], False)
-             else _lbl_queue.grid_remove())
-
-        # The statistics block is gone from the panel - it is 12 lines in a
-        # window shared with every other plugin. The info window holds it all.
-        if _v_stats is not None:
-            _v_stats.set("")
-        if _lbl_stats is not None:
-            _lbl_stats.grid_remove()
-
-        if _btn_start:
-            _btn_start.config(text="Stop" if ST.active else "Start")
-        if _btn_fc:
-            _btn_fc.config(state=tk.NORMAL if ST.carrier else tk.DISABLED)
-        # These live in the probe window and vanish when it closes.
-        state = tk.NORMAL if (ST.active and ST.probe) else tk.DISABLED
-        for b in (_btn_absent, _btn_skip, _btn_boxel, _btn_prefix, _btn_bundle):
-            if b is None:
-                continue
-            try:
-                b.config(state=state)
-            except tk.TclError:
-                pass
-        if _btn_next:
-            _btn_next.config(state=tk.NORMAL if ST.flight else tk.DISABLED)
-        if _btn_route:
-            _btn_route.config(text="route x" if routewin._route_win is not None else "route")
-        if _btn_stats:
-            _btn_stats.config(text="info x" if statswin._stats_win is not None else "info")
+        _refresh_targets()
+        _v_sys.set(_system_line())
+        _refresh_queue()
+        _refresh_fuel()
+        _refresh_route_line()
+        _refresh_optional_lines()
+        _refresh_buttons()
     except Exception:
         logger.exception("UI refresh failed")
+
+
+def _refresh_targets() -> None:
+    """The next flight target and the next probe."""
+    t = survey.current_flight()
+    if t:
+        _v_target.set("%s   %.1f ly" % (t.name, t.dist_origin))
+        _v_kind.set("%s %s" % (KIND_SHORT.get(t.kind, t.kind),
+                               t.detail or LABEL.get(t.kind, "")))
+    else:
+        _v_target.set("-")
+        _v_kind.set("no flight targets left" if ST.active else "survey inactive")
+
+    probewin._probe_window_refresh()
+
+    p = survey.current_probe()
+    if p:
+        same = sum(1 for q in ST.probe if q.boxel_key == p.boxel_key)
+        hint = "  odds %s" % ("high" if p.score >= 3.0
+                              else "fair" if p.score >= 1.5
+                              else "low" if p.score > 0 else "void")
+        _v_probe.set("%s   %.1f ly  +-%.0f   [%d in boxel]%s"
+                     % (p.name, p.dist_origin, p.uncertainty, same, hint))
+    else:
+        _v_probe.set("-")
+
+
+def _system_line() -> str:
+    """The current system and what is left to do in it."""
+    if not ST.cur_system:
+        return "-"
+    line = ST.cur_system
+    if ST.cur_id64 and ST.db:
+        with ST.lock:
+            pr = ST.db.system_progress(ST.cur_id64, CURRENT)
+        bits = []
+        if pr["body_count"]:
+            bits.append("FSS %d/%d" % (pr["scanned"], pr["body_count"]))
+        if pr["dss_open"]:
+            bits.append("DSS %d" % len(pr["dss_open"]))
+        if pr["bio_open"]:
+            # M1: open signals and where - finished bodies drop out
+            short = [shorten(n, ST.cur_system) for n in pr["bio_open"]]
+            bits.append("Bio %d open (%s%s)" % (
+                pr.get("bio_signals_open") or len(short), ", ".join(short[:3]),
+                ", ..." if len(short) > 3 else ""))
+        if pr["new_discoveries"]:
+            bits.append("first %d" % pr["new_discoveries"])
+        if bits:
+            line += "   " + " | ".join(bits)
+    return line
+
+
+def _refresh_queue() -> None:
+    """The queue line: counts while a survey runs, else what Start does."""
+    if ST.active:
+        c = ST.plan_counts
+        _v_queue.set("r=%.0f ly | fly %d (new %d, tasks %d) | probes %d "
+                     "(gap %d, probe %d, empty %d)"
+                     % (ST.radius, len(ST.flight), c.get(K_NEW, 0),
+                        c.get(K_SCAN, 0) + c.get(K_DSS, 0) + c.get(K_BIO, 0),
+                        len(ST.probe), c.get(K_GAP, 0), c.get(K_PROBE, 0),
+                        c.get(K_EMPTY, 0)))
+    else:
+        if _carrier_var and _carrier_var.get() and ST.carrier:
+            _v_queue.set("Start centres the sphere on the carrier at %s"
+                         % ST.carrier["system"])
+        else:
+            _v_queue.set("Start sets the sphere centre to your current position")
+
+
+def _refresh_fuel() -> None:
+    """Fuel: the warning always shows, the full line only if switched on."""
+    warn = ST.fuel.warning()
+    if _v_fuel is not None:
+        if warn:
+            _v_fuel.set(warn)
+        elif cfg_bool(CFG["panel_fuel"], False):
+            _v_fuel.set(ST.fuel.summary())
+        else:
+            _v_fuel.set("")
+    if _lbl_fuel is not None:
+        (_lbl_fuel.grid() if (warn or cfg_bool(CFG["panel_fuel"], False))
+         else _lbl_fuel.grid_remove())
+
+
+def _refresh_route_line() -> None:
+    """One compact line of the in-system route; the full list lives in the
+    route window."""
+    if cfg_bool(CFG["show_route"], True) and ST.route and ST.route.stops:
+        open_stops = [x for x in ST.route.stops
+                      if x.body.body_id not in ST.route_done]
+        nxt = open_stops[0].body.short if open_stops else "-"
+        _v_route.set("in-system%s: %d/%d left, %.0f min | next %s"
+                     % (" (all done)" if ST.route_full else "",
+                        len(open_stops), len(ST.route.stops),
+                        sum(x.leg_s for x in open_stops) / 60.0, nxt))
+        if _lbl_route:
+            _lbl_route.grid()
+    elif cfg_bool(CFG["show_route"], True) and ST.cur_id64:
+        _v_route.set("in-system: nothing to fly here")
+        if _lbl_route:
+            _lbl_route.grid()
+    else:
+        _v_route.set("")
+        if _lbl_route:
+            _lbl_route.grid_remove()
+
+
+def _refresh_optional_lines() -> None:
+    """The update notice, the queue line (if switched on), and the old
+    statistics block, which is gone from the panel - it was 12 lines in a
+    window shared with every other plugin. The info window holds it all."""
+    if _v_update is not None and _lbl_update is not None:
+        if ST.update_version:
+            _v_update.set("update %s available - click to open GitHub"
+                          % ST.update_version)
+            _lbl_update.grid()
+        else:
+            _v_update.set("")
+            _lbl_update.grid_remove()
+
+    if _lbl_queue is not None:
+        (_lbl_queue.grid() if cfg_bool(CFG["panel_queue"], False)
+         else _lbl_queue.grid_remove())
+
+    if _v_stats is not None:
+        _v_stats.set("")
+    if _lbl_stats is not None:
+        _lbl_stats.grid_remove()
+
+
+def _refresh_buttons() -> None:
+    """Button labels and states."""
+    if _btn_start:
+        _btn_start.config(text="Stop" if ST.active else "Start")
+    if _btn_fc:
+        _btn_fc.config(state=tk.NORMAL if ST.carrier else tk.DISABLED)
+    # These live in the probe window and vanish when it closes.
+    state = tk.NORMAL if (ST.active and ST.probe) else tk.DISABLED
+    for b in (_btn_absent, _btn_skip, _btn_boxel, _btn_prefix, _btn_bundle):
+        if b is None:
+            continue
+        try:
+            b.config(state=state)
+        except tk.TclError:
+            pass
+    if _btn_next:
+        _btn_next.config(state=tk.NORMAL if ST.flight else tk.DISABLED)
+    if _btn_route:
+        _btn_route.config(text="route x" if routewin._route_win is not None else "route")
+    if _btn_stats:
+        _btn_stats.config(text="info x" if statswin._stats_win is not None else "info")
