@@ -12,6 +12,8 @@ changing behaviour:
   position after FSDJump / Location, fuel per jump, Loadout, plotted route,
   DSS and sampling timings, the own carrier after a carrier jump, a second
   commander, the target briefing, Status.json (fuel, selected destination),
+  survey start (free / carrier), queue pruning after a jump or a target
+  selection, sphere end and overlap,
   and that a broken event never escapes the hook.
 
     python tests/plugin_hooks.py      (from the plugin folder)
@@ -33,10 +35,12 @@ except ImportError:
 
 import load  # noqa: E402
 from sysdb import SystemDB  # noqa: E402
+from boxelplan import Planner  # noqa: E402
 
 cfg = {}
 load.cfg_bool = lambda k, d=False: cfg.get(k, d)
 load.cfg_int = lambda k, d=0: d
+load.cfg_str = lambda k, d="": cfg.get(k, d)
 load._set_status = lambda m: None
 load._ui = lambda f, *a, **k: None
 calls = []
@@ -184,6 +188,76 @@ try:
         load.dashboard_entry("Tester", False, dest)
         ST.db.ingest_status_destination = real
         check(seen == [], "the same destination again is not looked at twice")
+
+        # 6d) survey start / queue pruning / sphere end (offline: no request)
+        status = []
+        load._set_status = status.append
+        je({"event": "Location", "StarSystem": "Hook D", "SystemAddress": 1004,
+            "StarPos": [200.0, 0.0, 0.0]})     # step 6 left a garbage position behind
+        ST.planner = Planner(ST.db)
+        ST.net.offline = True
+        load._radius_var = mock.Mock(get=lambda: "40")
+        load._carrier_var = mock.Mock(get=lambda: 1)
+        ST.carrier = None
+        calls.clear()
+        load._start_survey()
+        check(not ST.active and status[-1:] == ["no carrier position known - dock at it once"]
+              and "async starting survey" not in calls,
+              "carrier start without a carrier position: refused, nothing started")
+        load._carrier_var = mock.Mock(get=lambda: 0)
+        load._start_survey()
+        check(ST.active and ST.center == ST.cur_pos and ST.radius == 40.0
+              and ST.start_system == ST.cur_system and "async starting survey" in calls,
+              "free start: sphere around the current system, worker started")
+        sp = ST.db.list_spheres()
+        check(len(sp) == 1 and sp[0]["origin"] == "free" and sp[0]["closed"] is None
+              and ST.sphere_id == sp[0]["id"], "free start: sphere recorded, still open")
+        sv = ST.db.load_survey()
+        check(sv["active"] == 1 and sv["radius"] == 40.0, "free start: survey saved as active")
+        first_id = ST.sphere_id
+        load._start_survey()
+        check(ST.sphere_id == first_id and len(ST.db.list_spheres()) == 1,
+              "the same sphere started again is not recorded twice")
+        status.clear()
+        load._start_worker()
+        check(ST.horizon == ST.radius and ST.plan_info,
+              "offline worker: horizon = sphere, a plan from local data")
+        # pruning: a new system flown to is dropped, a probe that now exists too
+        here = ST.cur_pos
+        ST.flight = [load.Target("Hook P", load.K_NEW, 5.0, pos=(here[0] + 5, here[1], here[2])),
+                     load.Target("Hook Q", load.K_NEW, 9.0, pos=(here[0] + 9, here[1], here[2]))]
+        ST.probe = [load.Target("Hook Probe AB-C d1", load.K_PROBE, 7.0, mc=3)]
+        je({"event": "FSDJump", "StarSystem": "Hook P", "SystemAddress": 1016,
+            "StarPos": [here[0] + 5, here[1], here[2]], "StarClass": "G", "JumpDist": 5.0},
+           cmdr="Tester")
+        check([t.name for t in ST.flight] == ["Hook Q"],
+              "FSDJump to a flight target: it leaves the queue, the next stays")
+        check([t.name for t in ST.probe] == ["Hook Probe AB-C d1"],
+              "unknown probe stays in the queue")
+        load.dashboard_entry("Tester", False, {"Flags": 0, "Destination": {
+            "System": 7268024264082, "Body": 0, "Name": "Hook Probe AB-C d1"}})
+        check(ST.probe == [], "probe confirmed by the target selection: dropped")
+        # sphere end: closed only when the plan says finished
+        ST.stats = {}
+        load._stop_survey()
+        check(not ST.active and ST.db.list_spheres()[0]["closed"] is None
+              and ST.flight == [] and ST.probe == [],
+              "stop with work left: sphere stays open, queues empty")
+        check(ST.db.load_survey()["active"] == 0, "stop: survey saved as inactive")
+        load._start_survey()
+        ST.stats = {"finished": True}
+        load._stop_survey()
+        closed = {r["id"]: r["closed"] for r in ST.db.list_spheres()}
+        check(len(closed) == 2 and closed[ST.sphere_id] is not None and closed[first_id] is None,
+              "stop of a finished sphere: that one closed in the history, the first still open")
+        status.clear()
+        load._carrier_var = mock.Mock(get=lambda: 0)
+        load._start_survey()
+        check(any(s.startswith("overlap 100%") for s in status),
+              "start on an earlier sphere: the overlap is reported (%r)" % status[:1])
+        load._stop_survey()
+        ST.net.offline = False
+        load._set_status = lambda m: None
 
         # 7) a second commander: nothing of the first one's position is kept
         je({"event": "LoadGame", "Commander": "Other"}, cmdr="Other", state={"FID": "F2"})
