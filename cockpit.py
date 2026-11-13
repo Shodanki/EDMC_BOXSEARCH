@@ -24,6 +24,7 @@ from .overlay import POSITIONS as OVERLAY_POSITIONS
 from .procgen import parse_name, star_pos
 from .sysdb import CURRENT, Q_ESTIMATE
 from .state import CFG, ST, cfg_bool, cfg_str, logger
+from . import overlaywin
 from . import panel
 from . import planning
 from . import uithread
@@ -42,8 +43,21 @@ def _overlay_apply_settings() -> None:
     ov.enabled = cfg_bool(CFG["overlay"], True)
     pos = cfg_str(CFG["overlay_pos"], "top-left")
     ov.position = pos if pos in OVERLAY_POSITIONS else "top-left"
+    _overlay_backend(ov)
     if not ov.enabled:
         ov.clear()
+
+
+def _overlay_backend(ov: Any) -> None:
+    """D3 (4.12): EDMCModernOverlay (default) or the plugin's own window."""
+    own = isinstance(ov.client, overlaywin.WindowClient)
+    want = cfg_str(CFG["overlay_backend"], "modern") == "window" and overlaywin.supported()
+    if want and not own:
+        ov.use_client(overlaywin.WindowClient(uithread._ui, root=lambda: panel._frame.winfo_toplevel()))
+        logger.info("overlay | own window (borderless game window needed)")
+    elif own and not want:
+        ov.client.close()
+        ov.use_client(None)
 
 
 OVERLAY_KEEP_MS = 60_000      # look once a minute whether the targets block needs sending

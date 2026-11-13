@@ -161,6 +161,8 @@ def plugin_stop() -> None:
     ov = getattr(ST, "overlay", None)
     if ov is not None:
         ov.clear()
+        if hasattr(ov.client, "close"):
+            ov.client.close()                  # D3: the own overlay window
     routewin._route_window_close()
     statswin._stats_window_close()
     probewin._probe_window_close()

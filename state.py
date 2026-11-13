@@ -88,6 +88,7 @@ CFG = {
     "overlay_brief": "%s_overlay_brief" % PLUGIN_NAME,
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
     "overlay_mining": "%s_overlay_mining" % PLUGIN_NAME,
+    "overlay_backend": "%s_overlay_backend" % PLUGIN_NAME,   # D3: "modern" | "window"
     "fis_autostart": "%s_fis_autostart" % PLUGIN_NAME,
     "main_cmdr": "%s_main_cmdr" % PLUGIN_NAME,      # C1: FID, "" = suggestion
 }

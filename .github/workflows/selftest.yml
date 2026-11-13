@@ -54,6 +54,8 @@ jobs:
         run: python tests/galaxy_list.py
       - name: UI hand-over (worker threads reach Tk only through one event)
         run: python tests/ui_threads.py
+      - name: own overlay window (drawn on the main thread, scaled, expiry, focus)
+        run: python tests/overlay_window.py
       - name: probe names at EDSM (one bundled request, budget, never twice)
         run: python tests/edsm_names.py
       - name: open bio signals (Brain Trees - one signal, several species)

@@ -251,6 +251,21 @@ class CockpitOverlay:
     def available(self) -> bool:
         return self._get() is not None
 
+    @property
+    def client(self) -> Any:
+        """The drawing client in use (edmcoverlay's, or the plugin's own window)."""
+        return self._client
+
+    def use_client(self, client: Any) -> None:
+        """D3 (4.12): draw through another client - the plugin's own window, or
+        None to look for EDMCModernOverlay again. What is on screen is cleared."""
+        self.clear()
+        self._client = client
+        self._tried = client is not None
+        self._drawn = {}
+        if self._last_targets and not self.mute_targets and not self.hidden:
+            self.draw("targets", self._last_targets, ttl=self.TARGETS_TTL)
+
     # -- drawing -----------------------------------------------------------
     def _origin(self, group: str) -> Tuple[int, int]:
         x, y = ANCHORS.get(self.position, ANCHORS["top-left"])

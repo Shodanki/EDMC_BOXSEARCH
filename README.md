@@ -68,7 +68,7 @@ failure that actually hurts.
 | **Elite Dangerous: Odyssey** | required | the plugin reads its journals and status files |
 | **EDDiscovery** | recommended | its system database is the local source: while it is current the plugin does not ask Spansh at all, EDSM once per shell (see [Fair use](#7-external-sources)). Open it now and then so its data stays current, then close it |
 | **Python 3.11 or newer** (python.org) | for SHBOX FIS only | the flight information system runs on it; the plugin itself needs nothing beyond EDMC |
-| **EDMCModernOverlay** | optional | for the cockpit overlay (route targets, surface compass, mining block) |
+| **EDMCModernOverlay** | optional | for the cockpit overlay (route targets, surface compass, mining block) - or the plugin's own overlay window (4.12, beta) |
 
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
 > all. On the first start 4.1 repairs boxel records written under a wrong
@@ -154,7 +154,8 @@ on first run and is **your data** - never overwrite it on an update.
 | `shells.py` | 321 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
 | `procgen.py` | 645 | Name ↔ id64 ↔ boxel maths, sector registry, computed sector names, named sectors over a boxel, self test | `edts_pgnames` |
 | `deepspace.py` | 441 | Fuel model, tritium rings, carrier staging | — |
-| `overlay.py` | 431 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `overlay.py` | 445 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `overlaywin.py` | 160 | The cockpit overlay in a window of the plugin's own (option, beta) | — |
 | `biopredict.py` | 204 | Genus prediction learned from your own samples | — |
 | `surfacenav.py` | 493 | Surface compass: parked SRV, open samples, known points | — |
 | `miningstat.py` | 337 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
@@ -1680,6 +1681,15 @@ position (four corners). The preferences show whether an overlay plugin was
 found. Without one nothing happens. The overlay is a separate transparent
 window drawn by the overlay plugin - it only displays, nothing is sent to the
 game.
+
+*Own window (4.12, beta).* *Draw with* in the same section chooses
+EDMCModernOverlay (the default) or *own window*: the plugin draws the same
+blocks into a transparent window of its own - no extra plugin, no extra
+package. The window has no frame, stays on top, lets every mouse click
+through to the game and never takes the focus; it shows only while the game
+is the window in front, so Alt+Tab hides it. The game must run in a
+*borderless window* - an exclusive full screen covers every other window
+(ModernOverlay's too). It uses the primary screen.
 
 ### Bio prediction from your own finds
 

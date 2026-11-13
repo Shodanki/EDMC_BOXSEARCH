@@ -25,6 +25,7 @@ from .state import (CFG, RADIUS_CHOICES, REPO_URL, ST, VERSION, cfg_bool, cfg_in
 from . import cockpit
 from . import fislaunch
 from . import maintenance
+from . import overlaywin
 from . import panel
 from . import planning
 from . import routewin
@@ -198,7 +199,17 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
         note(right, "right", "survey plan and statistics; each commander's own")
         note(right, "right", "visits and scans are kept apart, finds are shared")
 
-    head(right, "right", "Cockpit overlay (needs EDMCModernOverlay)")
+    head(right, "right", "Cockpit overlay")
+    # D3 (4.12): EDMCModernOverlay or a window of the plugin's own
+    backends = [("EDMCModernOverlay", "modern")]
+    if overlaywin.supported():
+        backends.append(("own window (beta)", "window"))
+    cur = cfg_str(CFG["overlay_backend"], "modern")
+    _p["overlay_backend"] = tk.StringVar(value=next((lb for lb, k in backends if k == cur), backends[0][0]))
+    _p["overlay_backends"] = dict(backends)
+    field(right, "right", "Draw with",
+          ttk.OptionMenu(right, _p["overlay_backend"], _p["overlay_backend"].get(), *[lb for lb, _k in backends]))
+    note(right, "right", "own window: the game in a borderless window; shown while the game is in front")
     _p["overlay"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay"], True) else 0)
     _p["overlay_brief"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_brief"], True) else 0)
     _p["overlay_pos"] = tk.StringVar(value=cfg_str(CFG["overlay_pos"], "top-left"))
@@ -220,7 +231,8 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
                          *OVERLAY_POSITIONS))
     ov = getattr(ST, "overlay", None)
     note(right, "right", "  overlay: %s" % (
-        "connected" if ov is not None and ov.available() else "not installed"))
+        "own window" if ov is not None and isinstance(ov.client, overlaywin.WindowClient)
+        else "EDMCModernOverlay connected" if ov is not None and ov.available() else "EDMCModernOverlay not installed"))
 
     head(right, "right", "SHBOX FIS - flight information system")
     fis_row = tk.Frame(right)
@@ -352,6 +364,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         if "fis_autostart" in _p:
             cfg_set(CFG["fis_autostart"], bool(_p["fis_autostart"].get()))
         cfg_set(CFG["overlay_pos"], _p["overlay_pos"].get())
+        cfg_set(CFG["overlay_backend"], _p["overlay_backends"].get(_p["overlay_backend"].get(), "modern"))
         cockpit._overlay_apply_settings()
         cockpit._overlay_targets()
         routewin._MAP_W = routewin._MAP_H = routewin._MAP_SIZES.get(_p["map_size"].get(), 480)
