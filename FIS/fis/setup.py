@@ -32,7 +32,8 @@ MSG: Dict[str, Dict[str, str]] = {
     "en": {
         "welcome": "SHBOX FIS - first start. A few questions, asked only once (change later: fis_settings.bat).",
         "lang": "Language of the FIS  [1] English  [2] Deutsch",
-        "access": "Who may open the FIS?\n  [1] only this PC\n  [2] this PC and devices in the home network (tablet, second PC) - with access token",
+        "access": ("Who may open the FIS?\n  [1] only this PC\n"
+                   "  [2] this PC and devices in the home network (tablet, second PC) - with access token"),
         "browser": "Open the browser when the FIS starts?  [Y/n]",
         "port": "Port (Enter = %d)",
         "db_found": "Plugin database: %s",
@@ -43,10 +44,12 @@ MSG: Dict[str, Dict[str, str]] = {
         "choice": "> ",
         "fw_ok": "Firewall: rule '%s' allows port %d.",
         "fw_missing": "Firewall: no rule for port %d - other devices will not reach the FIS.",
-        "fw_ask": "Create the rule now? Windows will ask for admin permission. Only TCP port %d, private networks, local subnet.  [Y/n]",
+        "fw_ask": ("Create the rule now? Windows will ask for admin permission. "
+                   "Only TCP port %d, private networks, local subnet.  [Y/n]"),
         "fw_created": "Firewall rule created.",
         "fw_failed": "Rule not created (cancelled or no permission). You can run fis_settings.bat again later.",
-        "fw_hint": "Create it later with fis_settings.bat, or allow port %d (TCP, private) in Windows Defender Firewall.",
+        "fw_hint": ("Create it later with fis_settings.bat, "
+                    "or allow port %d (TCP, private) in Windows Defender Firewall."),
         "fw_unknown": "Firewall state could not be read (not Windows?).",
         "lan_urls": "Open on other devices (same network):",
         "token_note": "The token is needed once per device; afterwards a cookie remembers it.",
@@ -54,7 +57,8 @@ MSG: Dict[str, Dict[str, str]] = {
     "de": {
         "welcome": "SHBOX FIS - erster Start. Ein paar Fragen, nur dieses eine Mal (später ändern: fis_settings.bat).",
         "lang": "Sprache des FIS  [1] English  [2] Deutsch",
-        "access": "Wer darf das FIS öffnen?\n  [1] nur dieser PC\n  [2] dieser PC und Geräte im Heimnetz (Tablet, zweiter PC) - mit Zugangs-Token",
+        "access": ("Wer darf das FIS öffnen?\n  [1] nur dieser PC\n"
+                   "  [2] dieser PC und Geräte im Heimnetz (Tablet, zweiter PC) - mit Zugangs-Token"),
         "browser": "Browser beim Start öffnen?  [J/n]",
         "port": "Port (Enter = %d)",
         "db_found": "Plugin-Datenbank: %s",
@@ -65,10 +69,12 @@ MSG: Dict[str, Dict[str, str]] = {
         "choice": "> ",
         "fw_ok": "Firewall: Regel '%s' erlaubt Port %d.",
         "fw_missing": "Firewall: keine Regel für Port %d - andere Geräte erreichen das FIS nicht.",
-        "fw_ask": "Regel jetzt anlegen? Windows fragt nach Admin-Rechten. Nur TCP-Port %d, private Netze, lokales Subnetz.  [J/n]",
+        "fw_ask": ("Regel jetzt anlegen? Windows fragt nach Admin-Rechten. "
+                   "Nur TCP-Port %d, private Netze, lokales Subnetz.  [J/n]"),
         "fw_created": "Firewall-Regel angelegt.",
         "fw_failed": "Regel nicht angelegt (abgebrochen oder keine Rechte). Später erneut mit fis_settings.bat.",
-        "fw_hint": "Später mit fis_settings.bat anlegen oder Port %d (TCP, privat) in der Windows-Defender-Firewall freigeben.",
+        "fw_hint": ("Später mit fis_settings.bat anlegen oder Port %d (TCP, privat) "
+                    "in der Windows-Defender-Firewall freigeben."),
         "fw_unknown": "Firewall-Zustand nicht lesbar (kein Windows?).",
         "lan_urls": "Auf anderen Geräten öffnen (gleiches Netz):",
         "token_note": "Das Token braucht jedes Gerät einmal; danach merkt es sich ein Cookie.",

@@ -37,7 +37,7 @@ import math
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from procgen import (MASSCODES, boxel_center, boxel_index_of_coords,
-                     boxel_intersects_sphere, boxel_key_of, boxel_labels,
+                     boxel_key_of, boxel_labels,
                      boxel_size, boxel_prefix, boxels_in_sphere,
                      ha_regions_near, id64_of_slot, make_name, parse_name)
 from sysdb import SystemDB
@@ -508,6 +508,7 @@ class Planner:
         # Effective cost per expected find: distance discounted by how
         # promising the neighbourhood is. A boxel twice as far but three times
         # as likely wins.
+
         def cost(key: str) -> float:
             return boxel_rank.get(key, 0.0) / (1.0 + boxel_score.get(key, 0.0))
 

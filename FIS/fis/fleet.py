@@ -163,9 +163,11 @@ _NAMES = [
     ("int_fighterbay", "Fighter Hangar"), ("int_passengercabin", "Passenger Cabin"),
     ("int_dronecontrol_prospector", "Prospector Limpets"), ("int_dronecontrol_collection", "Collector Limpets"),
     ("int_dronecontrol_fueltransfer", "Fuel Transfer Limpets"), ("int_dronecontrol_repair", "Repair Limpets"),
-    ("int_dronecontrol_resourcesiphon", "Hatch Breaker Limpets"), ("int_dronecontrol_decontamination", "Decontamination Limpets"),
+    ("int_dronecontrol_resourcesiphon", "Hatch Breaker Limpets"),
+    ("int_dronecontrol_decontamination", "Decontamination Limpets"),
     ("int_dronecontrol_recon", "Recon Limpets"), ("int_dronecontrol_unkvesselresearch", "Research Limpets"),
-    ("int_multidronecontrol_mining", "Mining Multi-Limpet"), ("int_multidronecontrol_operations", "Operations Multi-Limpet"),
+    ("int_multidronecontrol_mining", "Mining Multi-Limpet"),
+    ("int_multidronecontrol_operations", "Operations Multi-Limpet"),
     ("int_multidronecontrol_rescue", "Rescue Multi-Limpet"), ("int_multidronecontrol_xeno", "Xeno Multi-Limpet"),
     ("int_multidronecontrol_universal", "Universal Multi-Limpet"),
     ("int_planetapproachsuite", "Planetary Approach Suite"), ("int_stellarbodydiscoveryscanner", "Discovery Scanner"),
@@ -365,7 +367,8 @@ def rate_loadout(lo: Dict[str, Any], vehicles: Optional[Iterable[str]] = None) -
             "rescue limpets" if mlc else ("repair limpets" if repair else ""),
             "fuel transfer limpets" if fuel_lt else "",
             "%d t fuel" % tank if tank else "",
-            "scoop" if has("int_fuelscoop") else "no scoop") if x) if (repair or fuel_lt or mlc) else "no repair or fuel limpets",
+            "scoop" if has("int_fuelscoop") else "no scoop") if x)
+        if (repair or fuel_lt or mlc) else "no repair or fuel limpets",
     }
     # ties go to the specialised role - every hull carries some guns
     pref = ("mining", "exploration", "sar", "passengers", "transport", "combat")
@@ -725,7 +728,8 @@ class Archive:
             a, b = pos.get(j["from"]), pos.get(j["to"])
             ly = math.dist(a, b) if a and b else None
             hist.append({"from": j["from"], "to": j["to"], "ly": round(ly, 1) if ly else None,
-                         "used": (j["before"] - j["after"]) if j.get("before") is not None and j.get("after") is not None else None,
+                         "used": ((j["before"] - j["after"])
+                                  if j.get("before") is not None and j.get("after") is not None else None),
                          "predicted": tritium_for_jump(ly, j["load"] or 0, j["before"] or 0) if ly else None,
                          "ts": j.get("arrived") or j.get("ts")})
         pending = None

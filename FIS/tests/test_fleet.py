@@ -61,7 +61,7 @@ def _write_journals(d):
         _ev("2026-01-01T12:00:00Z", "Loadout", Ship="eagle", ShipID=7, ShipName="OLD", Modules=[]),
         _ev("2026-01-02T09:00:00Z", "CarrierStats", Callsign="ABC-123", Name="TESTCARRIER", FuelLevel=1000,
             DockingAccess="all", SpaceUsage={"TotalCapacity": 25000, "Crew": 6000, "Cargo": 5000,
-                                              "ShipPacks": 0, "ModulePacks": 0, "FreeSpace": 14000},
+                                             "ShipPacks": 0, "ModulePacks": 0, "FreeSpace": 14000},
             Finance={"CarrierBalance": 1000000000, "ReserveBalance": 100, "AvailableBalance": 900000000}),
         _ev("2026-01-02T09:01:00Z", "Location", StarSystem="Alpha", StarPos=[0, 0, 0]),
         _ev("2026-01-02T09:02:00Z", "CarrierLocation", StarSystem="Alpha"),

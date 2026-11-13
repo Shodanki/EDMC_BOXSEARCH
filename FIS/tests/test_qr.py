@@ -110,7 +110,6 @@ class TestQrEndpoint(_Base):
             Handler.LOCAL = old
 
 
-
 class TestNewToken(_Base):
     """E15: a new access token from the settings page locks out the old one."""
     @classmethod

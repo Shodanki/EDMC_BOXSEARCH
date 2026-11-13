@@ -79,8 +79,8 @@ class App:
     def _leg_ls(self, id64: int, a: str, b: str, at: float) -> Optional[float]:
         """Distance body a -> body b at time `at`, from the plugin's orbits."""
         try:
-            return self.model.plugin().sysroute.leg_distance_ls(self.db.bodies_of(int(id64)),
-                                                           a, b, at=at)
+            sysroute = self.model.plugin().sysroute
+            return sysroute.leg_distance_ls(self.db.bodies_of(int(id64)), a, b, at=at)
         except Exception:
             return None
 

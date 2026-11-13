@@ -1714,7 +1714,6 @@ def _theme_tree(widget, colours: Dict[str, str]) -> None:
 
 def _toggle_route_window() -> None:
     """Open or close the route window."""
-    global _route_win
     if _route_win is not None:
         _route_window_close()
         return
@@ -1935,7 +1934,6 @@ def _route_map_draw() -> None:
 
     col = _theme_colours()
     fg = col.get("fg") or "#ff8000"
-    dim = col.get("bg") or "#101010"
 
     # E17: bodies that land on one spot (the planets of a far companion
     # star on the log scale) are pulled apart on screen - planets 14 px,
@@ -2763,6 +2761,8 @@ def _count_switches(seq, bodies) -> int:
             n += 1
         last = g
     return n
+
+
 def _start_survey() -> None:
     """
     Free start  - the sphere is centred on the current system.
@@ -3023,7 +3023,6 @@ _stats_scroll: Optional[tk.Canvas] = None
 
 
 def _toggle_stats_window() -> None:
-    global _stats_win
     if _stats_win is not None:
         _stats_window_close()
         return
@@ -3768,9 +3767,9 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     in their own windows, reachable from one row of buttons.
     """
     global _frame, _ui_target, _v_status, _v_target, _v_kind, _v_sys, _v_queue, _v_probe
-    global _btn_start, _btn_absent, _btn_skip, _radius_var
-    global _btn_fc, _btn_stats, _lbl_stats, _v_stats, _carrier_var
-    global _btn_boxel, _btn_prefix, _btn_next, _v_route, _lbl_route, _btn_route
+    global _btn_start, _radius_var
+    global _btn_stats, _lbl_stats, _v_stats, _carrier_var
+    global _btn_next, _v_route, _lbl_route, _btn_route
     global _v_fuel, _lbl_queue, _lbl_fuel, _v_update, _lbl_update
 
     _frame = tk.Frame(parent)
@@ -3886,7 +3885,6 @@ _mine_mat: Optional[tk.StringVar] = None
 
 
 def _toggle_mining_window() -> None:
-    global _mine_win
     if _mine_win is not None:
         _mining_window_close()
         return
@@ -3925,6 +3923,8 @@ def _atlas_max_ly() -> Optional[float]:
         return float(v.split()[0])
     except (ValueError, IndexError):
         return None
+
+
 # signal kinds shown first, in this order; everything else follows by count
 _SIG_FIRST = ("mining_location", "geological", "biological", "genus:Brain Trees",
               "site:nonhuman", "site:guardian", "thargoid", "guardian", "human",
@@ -3982,7 +3982,7 @@ def _mining_window_open() -> None:
 
     One tab per kind; clicking a row copies the system name.
     """
-    global _mine_win, _mine_body, _mine_mat, _atlas_mode, _atlas_pick_frame, _atlas_range
+    global _mine_win, _mine_body, _atlas_mode, _atlas_pick_frame, _atlas_range
     if _frame is None or ST.db is None:
         return
     _mine_win = tk.Toplevel(_frame)
@@ -4153,7 +4153,6 @@ def _mining_refresh() -> None:
 
 
 def _toggle_probe_window() -> None:
-    global _probe_win
     if _probe_win is not None:
         _probe_window_close()
         return
@@ -4169,7 +4168,7 @@ def _probe_window_close() -> None:
     later _refresh raise `invalid command name ...!button2`, which is exactly
     what the log showed.
     """
-    global _probe_win, _btn_prefix, _btn_absent, _btn_boxel, _btn_skip
+    global _probe_win, _btn_prefix, _btn_bundle, _btn_absent, _btn_boxel, _btn_skip
     if _probe_win is not None:
         try:
             _probe_win.destroy()

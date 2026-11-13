@@ -141,7 +141,7 @@ class FavouriteStore:
     def set_online(self, fid: Optional[str], callsign: str, info: Dict[str, Any]) -> bool:
         """K5: keep the answer of an online lookup with the favourite."""
         keep = {k: info.get(k) for k in ("checked", "found", "source", "system", "id64",
-                                           "market_id", "updated", "pos", "docking_access")}
+                                         "market_id", "updated", "pos", "docking_access")}
         with self._lock:
             f = self._cmdr(fid)["favourites"].get(callsign)
             if not f:

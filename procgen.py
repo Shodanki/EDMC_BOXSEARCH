@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 try:
     # Sector names computed with EDTS's algorithm (BSD 3-Clause, Andy

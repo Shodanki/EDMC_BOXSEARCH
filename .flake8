@@ -1,0 +1,30 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2025-2026 Shodanki
+#
+# Code style, after EDMC's own .flake8 (EDMarketConnector 6.1.2): PEP 8 with
+# lines up to 120 characters. CI runs `python -m flake8` with this file.
+#
+# Not checked yet: EDMC also sets max-complexity = 15. 49 functions of the
+# plugin and the FIS are above that today (the journal dispatch, the
+# preferences page, the planners); they are the work list for splitting
+# load.py and sysdb.py, so the limit is measured, not enforced:
+#     python -m flake8 --max-complexity 15 --select C901
+
+[flake8]
+max-line-length = 120
+exclude =
+    .git,
+    __pycache__,
+    # third-party, shipped unchanged (see their SOURCE.md)
+    edts_pgnames/pgdata.py,
+    regionmap/RegionMapData.py,
+    FIS/fis/vendor,
+    FIS/web/vendor
+# test data reads best on one line (journal events, tables), and small
+# lambdas build rows; the code under test keeps the full rules
+per-file-ignores =
+    FIS/tests/*.py: E501, E731, E128
+    tests/*.py: E501

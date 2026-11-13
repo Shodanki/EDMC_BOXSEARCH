@@ -233,7 +233,8 @@ class MiningTracker:
         if free is not None:
             hold += " | %d t free" % free
         hold += " | %d limpets" % limpets
-        out.append((hold, c["warn"] if free is not None and self.capacity and free < 0.05 * self.capacity else c["data"]))
+        tight = free is not None and self.capacity and free < 0.05 * self.capacity
+        out.append((hold, c["warn"] if tight else c["data"]))
         rate = self.rate_h(now)
         if rate:
             txt = "RATE  %d t/h" % rate
@@ -251,7 +252,8 @@ class MiningTracker:
         elif self.ring:
             out.append(("HOTSPOT  not targeted - select it in the nav panel for the HUD compass", c["warn"]))
         else:
-            out.append(("SESSION  %d t%s | %d min" % (total, (" " + self.names.get(main, "")) if main else "", mins), c["head"]))
+            what = (" " + self.names.get(main, "")) if main else ""
+            out.append(("SESSION  %d t%s | %d min" % (total, what, mins), c["head"]))
         if room is not None and reach < room:
             out.append(("LIMPETS  last ~%d t - room for %d t" % (reach, room), c["warn"]))
         else:
@@ -266,11 +268,13 @@ def _selftest() -> int:
     t0 = "2026-11-06T10:00:%02dZ"
     m.feed({"timestamp": t0 % 0, "event": "LaunchDrone", "Type": "Prospector"})
     m.feed({"timestamp": t0 % 5, "event": "ProspectedAsteroid", "Content": "$AsteroidMaterialContent_High;",
-            "Materials": [{"Name": "Tritium", "Proportion": 31.5}, {"Name": "Water", "Proportion": 8}], "Remaining": 100})
+            "Materials": [{"Name": "Tritium", "Proportion": 31.5}, {"Name": "Water", "Proportion": 8}],
+            "Remaining": 100})
     for i in range(10, 40, 3):
         m.feed({"timestamp": t0 % i, "event": "MiningRefined", "Type": "$tritium_name;", "Type_Localised": "Tritium"},
                cargo={"tritium": (i - 10) // 3 + 1, "drones": 120})
-    m.status({"Flags": 1, "Destination": {"Name": "$SAA_RingHotspot:#type=$Tritium_name;;", "Name_Localised": "Tritium Hotspot"}})
+    m.status({"Flags": 1, "Destination": {"Name": "$SAA_RingHotspot:#type=$Tritium_name;;",
+                                          "Name_Localised": "Tritium Hotspot"}})
     now = _ts({"timestamp": t0 % 59})
     lines = m.lines(now)
     # in the ring: the session line becomes the hotspot line
@@ -288,7 +292,8 @@ def _selftest() -> int:
     rhino_idle = not rhino.active(now) and not rhino.refined
     # a collector limpet from a ship without mining tools (an explorer) starts nothing
     explorer = MiningTracker()
-    explorer.feed({"event": "Loadout", "CargoCapacity": 128, "Modules": [{"Item": "int_dronecontrol_collection_size1_class5"}]})
+    explorer.feed({"event": "Loadout", "CargoCapacity": 128,
+                   "Modules": [{"Item": "int_dronecontrol_collection_size1_class5"}]})
     explorer.feed({"timestamp": t0 % 1, "event": "LaunchDrone", "Type": "Collection"})
     explorer_idle = not explorer.active(now)
     # a collector limpet even from a mining ship starts nothing - only a prospector does
