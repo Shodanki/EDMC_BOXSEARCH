@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from . import fleet as fl
 from .data import Database
-from .live import parse_ts
+from .live import parse_ts, star_pos
 
 FIND_KINDS = ("site:guardian", "site:nonhuman", "guardian", "thargoid", "genus:Brain Trees")
 MAX_PATH = 20000
@@ -57,12 +57,13 @@ def flight_path(archive: fl.Archive, since: Optional[float] = None) -> List[Dict
     """Hyperspace jumps (and the first known position) of the commander in order."""
     out: List[Dict[str, Any]] = []
     for e in archive.events():
-        if e["event"] not in ("FSDJump", "Location", "CarrierJump") or not e.get("StarPos"):
+        p = star_pos(e.get("StarPos")) if e["event"] in ("FSDJump", "Location", "CarrierJump") else None
+        if not p:
             continue
         ts = parse_ts(e.get("timestamp"))
         if since and ts and ts < since:
             continue
-        x, y, z = e["StarPos"][:3]
+        x, y, z = p
         if out and out[-1]["name"] == e.get("StarSystem"):
             continue                                   # login in the same system
         out.append({"t": ts, "name": e.get("StarSystem"), "id64": e.get("SystemAddress"),
@@ -77,8 +78,9 @@ def _positions(archive: fl.Archive, db: Optional[Database] = None):
     (systems the carrier went to without you)."""
     pos: Dict[str, Any] = {}
     for e in archive.events():
-        if e.get("StarPos") and e.get("StarSystem"):
-            pos[e["StarSystem"]] = e["StarPos"]
+        p = star_pos(e.get("StarPos"))
+        if p and e.get("StarSystem"):
+            pos[e["StarSystem"]] = p
 
     def find(name: Optional[str]):
         if not name:

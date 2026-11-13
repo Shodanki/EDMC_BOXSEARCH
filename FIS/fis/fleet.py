@@ -33,7 +33,7 @@ import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from .live import parse_ts
+from .live import parse_ts, star_pos
 
 EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew",
           "ShipyardSell", "ShipyardTransfer", "SellShipOnRebuy", "CarrierStats",
@@ -448,7 +448,7 @@ class Archive:
                         # Location the docking: loading the game on a pad
                         # writes no Docked, only Location with Docked: true
                         slim = {"event": e["event"], "timestamp": e.get("timestamp"),
-                                "StarSystem": e.get("StarSystem"), "StarPos": e.get("StarPos"),
+                                "StarSystem": e.get("StarSystem"), "StarPos": star_pos(e.get("StarPos")),
                                 "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
                         if e.get("Docked"):
                             slim.update({k: e.get(k) for k in ("Docked", "StationName",
@@ -682,8 +682,9 @@ class Archive:
         arrived_ts = None        # CarrierLocation is written at every login; the
         for e in evs:            # day the carrier arrived is the last jump
             ev = e["event"]
-            if e.get("StarPos") and e.get("StarSystem"):
-                pos[e["StarSystem"]] = e["StarPos"]
+            p = star_pos(e.get("StarPos"))
+            if p and e.get("StarSystem"):
+                pos[e["StarSystem"]] = p
             if ev == "CarrierStats":
                 su = e.get("SpaceUsage") or {}
                 load = (su.get("Cargo") or 0) + (su.get("ShipPacks") or 0) + (su.get("ModulePacks") or 0)
