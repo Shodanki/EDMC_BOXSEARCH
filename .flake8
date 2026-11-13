@@ -7,11 +7,11 @@
 # Code style, after EDMC's own .flake8 (EDMarketConnector 6.1.2): PEP 8 with
 # lines up to 120 characters. CI runs `python -m flake8` with this file.
 #
-# Not checked yet: EDMC also sets max-complexity = 15. 49 functions of the
-# plugin and the FIS are above that today (the journal dispatch, the
-# preferences page, the planners); they are the work list for splitting
-# load.py and sysdb.py, so the limit is measured, not enforced:
-#     python -m flake8 --max-complexity 15 --select C901
+# EDMC also sets max-complexity = 15. Since 4.11 every module of the plugin
+# layer (load.py and the modules split from it) keeps it. 36 older functions
+# of the helper modules and the FIS are still above it; tests/complexity.py
+# (run by CI after flake8) lets none of them grow and no new one above 15:
+#     python tests/complexity.py
 
 [flake8]
 max-line-length = 120
