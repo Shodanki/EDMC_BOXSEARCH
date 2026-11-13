@@ -47,6 +47,7 @@ const REPORT = {
 };
 
 let root = null, data = null, busy = false, lostMsg = "";
+let controls = null;          // FG1: key bindings, asked when the view is shown
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
 // more lost systems than this: a summary line in UNSOLD DATA, the list in its own tab
 const LOST_INLINE = 10;
@@ -63,8 +64,47 @@ export async function update(ctx, reason) {
   if (!root || busy) return;
   busy = true;
   try { data = await getJSON("/api/shipstatus"); } catch (e) { data = null; }
+  if (reason === "show" || controls === null) {
+    try { controls = await getJSON("/api/controls"); } catch (e) { controls = { enabled: false }; }
+  }
   busy = false;
   render();
+}
+
+// FG1 (4.12): the key bindings an explorer reaches for, from the game's own
+// files - only when switched on in the settings (off by default)
+const PART = { ship: N_("SHIP"), srv: N_("SRV"), foot: N_("ON FOOT") };
+const ACTION = { HyperSuperCombination: N_("Jump / supercruise"), Supercruise: N_("Supercruise"),
+  Hyperspace: N_("Hyperspace jump"), TargetNextRouteSystem: N_("Next system in route"),
+  ExplorationFSSEnter: N_("Full spectrum scanner (FSS)"), PlayerHUDModeToggle: N_("HUD: analysis / combat"),
+  CycleFireGroupNext: N_("Next fire group"), CycleFireGroupPrevious: N_("Previous fire group"),
+  PrimaryFire: N_("Primary fire"), SecondaryFire: N_("Secondary fire"), DeployHardpointToggle: N_("Hardpoints"),
+  LandingGearToggle: N_("Landing gear"), ToggleCargoScoop: N_("Cargo scoop"), ShipSpotLightToggle: N_("Ship lights"),
+  NightVisionToggle: N_("Night vision"), ToggleFlightAssist: N_("Flight assist"), UseBoostJuice: N_("Boost"),
+  GalaxyMapOpen: N_("Galaxy map"), SystemMapOpen: N_("System map"), RecallDismissShip: N_("Recall / dismiss ship"),
+  HeadlightsBuggyButton: N_("SRV lights"), ToggleBuggyTurretButton: N_("SRV turret"),
+  HumanoidSwitchToSuitTool: N_("Suit tool (genetic sampler)"), HumanoidSwitchToCompAnalyser: N_("Composition scanner"),
+  HumanoidToggleFlashlightButton: N_("Flashlight"), HumanoidToggleNightVisionButton: N_("Night vision"),
+  HumanoidPrimaryInteractButton: N_("Interact") };
+
+function controlsFrame() {
+  const c = controls;
+  if (!c || !c.enabled) return null;
+  if (c.error) return frame(t("CONTROLS"), "", el("div", { class: "c-dim small", text: t("Key bindings not readable: {e}", { e: c.error }) }), { appear: false });
+  const fg = c.fire_group !== null && c.fire_group !== undefined ? t("fire group {g}", { g: String.fromCharCode(65 + c.fire_group) }) : "";
+  const rows = [];
+  for (const part of ["ship", "srv", "foot"]) {
+    const list = (c.parts || {})[part];
+    if (!list || !list.length) continue;
+    rows.push(el("details", { class: "sh-ctl", open: part === "ship" ? true : null },
+      el("summary", { text: t(PART[part]) }),
+      ...list.map(a => el("div", { class: "kv" + (a.keys.length ? "" : " c-dim") },
+        el("span", { class: "k", text: ACTION[a.action] ? t(ACTION[a.action]) : a.label }),
+        el("span", { class: "v", text: a.keys.length ? a.keys.join(" · ") : t("not bound") })))));
+  }
+  if (c.builtin && c.builtin.length) rows.push(el("div", { class: "c-dim small", text: t("Preset {p} comes with the game - its bindings are in the game folder, which the FIS does not read.", { p: c.builtin.join(", ") }) }));
+  rows.push(el("div", { class: "c-dim small", text: t("From {f} - read only. What is in a fire group is in no game file the FIS reads.", { f: (c.files || []).join(", ") || "-" }) }));
+  return frame(t("CONTROLS"), fg, rows, { appear: false });
 }
 
 const pct = (v) => (v === null || v === undefined ? null : Math.round(v * 100));
@@ -95,7 +135,7 @@ function render() {
   // engineer's module list, which needs the room (user, 05.11.2026)
   root.append(el("div", { class: "sh-grid" },
     el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), jumponium()),
-    el("div", { class: "sh-col sh-right" }, target(), unsold(), report(), hazards(), engineer())));
+    el("div", { class: "sh-col sh-right" }, target(), unsold(), report(), hazards(), engineer(), controlsFrame())));
 }
 
 // ------------------------------------------------------------ unsold data (M4)

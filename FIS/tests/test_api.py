@@ -606,6 +606,33 @@ class TestSettings(_Base):
         self.assertIn("language = de", ini)
         self.assertIn("open_browser = false", ini)
 
+    def test_controls_only_when_switched_on(self):
+        """FG1: off by default - then the Bindings folder is not even read;
+        on (saved in fis.ini), the bindings and the active fire group."""
+        from unittest import mock
+        from fis import bindings
+        hdr = {"X-FIS-Settings": "1", "Origin": self.base}
+
+        def get():
+            with urllib.request.urlopen(self.base + "/api/controls", timeout=5) as r:
+                return json.loads(r.read())
+        self.cfg.show_controls = False
+        with mock.patch.object(bindings, "read", side_effect=AssertionError("read while off")):
+            self.assertEqual(get(), {"enabled": False})
+        with self._post({"show_controls": True}, hdr) as r:
+            self.assertTrue(json.loads(r.read())["show_controls"])
+        with open(self.cfg.ini_path, encoding="utf-8") as fh:
+            self.assertIn("show_controls = true", fh.read())
+        fake = {"presets": {"ship": "Custom"}, "files": ["Custom.4.2.binds"], "builtin": [],
+                "parts": {"ship": [{"action": "LandingGearToggle", "label": "Landing gear", "keys": ["L"]}]}}
+        with mock.patch.object(bindings, "read", return_value=fake), \
+                mock.patch.object(self.app, "live_state", lambda: {"status": {"fire_group": 1}}):
+            d = get()
+        self.assertTrue(d["enabled"])
+        self.assertEqual((d["fire_group"], d["parts"]["ship"][0]["keys"]), (1, ["L"]))
+        with self._post({"show_controls": False}, hdr) as r:
+            self.assertFalse(json.loads(r.read())["show_controls"])
+
     def test_carriers_nearby_endpoint(self):
         """H2: only from the FIS page, only with a position, offline says so."""
         from unittest import mock

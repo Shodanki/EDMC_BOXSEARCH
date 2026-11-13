@@ -495,7 +495,9 @@ class Handler(BaseHTTPRequestHandler):
                 "main_auto": db.commander_name(auto_fid) or auto,
                 # 4.11: the commander's own limits for UNSOLD DATA (M Cr / systems)
                 "unsold": dict(cfg.unsold),
-                "unsold_defaults": {k: v[0] for k, v in config_mod.UNSOLD_LIMITS.items()}}
+                "unsold_defaults": {k: v[0] for k, v in config_mod.UNSOLD_LIMITS.items()},
+                # FG1: the key bindings in SHIP (reads the game's Bindings folder)
+                "show_controls": cfg.show_controls}
 
     def do_POST(self) -> None:
         wait = self._braked()
@@ -557,6 +559,7 @@ class Handler(BaseHTTPRequestHandler):
         lang = str(body.get("language", cfg.language)).lower()
         cfg.language = lang if lang in config_mod.LANGUAGES else cfg.language
         cfg.open_browser = bool(body.get("open_browser", cfg.open_browser))
+        cfg.show_controls = bool(body.get("show_controls", cfg.show_controls))
         cfg.lan = bool(body.get("lan", cfg.lan))
         if "main_cmdr" in body:
             mc = str(body.get("main_cmdr") or "")
@@ -780,6 +783,29 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 return None
 
+    def _settings_qr(self, qs: Dict[str, Any]) -> None:
+        """The tablet address WITH token as QR code - same rule as the
+        settings: only the game PC itself ever sees it."""
+        if not self._local():
+            return self._error(403, "settings only on the game PC")
+        urls = self._settings()["lan_urls"]
+        if not urls:
+            return self._error(404, "home network is off")
+        try:
+            i = int((qs.get("i") or ["0"])[0])
+        except ValueError:
+            i = 0
+        text = urls[i] if 0 <= i < len(urls) else urls[0]
+        return self._send(200, qr_mod.svg(text).encode("utf-8"), "image/svg+xml; charset=utf-8")
+
+    def _controls(self) -> Dict[str, Any]:
+        """FG1: the key bindings - read only while switched on in the settings."""
+        if not self.app.cfg.show_controls:
+            return {"enabled": False}
+        from . import bindings
+        st = (self.app.live_state() or {}).get("status") or {}
+        return dict(bindings.read(), enabled=True, fire_group=st.get("fire_group"))
+
     def _api(self, path: str, qs: Dict[str, Any]) -> None:
         app = self.app
         m = app.model
@@ -790,19 +816,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(403, "settings only on the game PC")
             return self._json(self._settings())
         if path == "/api/settings/qr":
-            # the tablet address WITH token as QR code - same rule as the
-            # settings: only the game PC itself ever sees it
-            if not self._local():
-                return self._error(403, "settings only on the game PC")
-            urls = self._settings()["lan_urls"]
-            if not urls:
-                return self._error(404, "home network is off")
-            try:
-                i = int((qs.get("i") or ["0"])[0])
-            except ValueError:
-                i = 0
-            text = urls[i] if 0 <= i < len(urls) else urls[0]
-            return self._send(200, qr_mod.svg(text).encode("utf-8"), "image/svg+xml; charset=utf-8")
+            return self._settings_qr(qs)
+        if path == "/api/controls":
+            return self._json(self._controls())
         if path == "/api/config":
             # addresses for other devices, never the token (that stays on this PC)
             return self._json({"language": app.cfg.language, "lan": app.cfg.lan,

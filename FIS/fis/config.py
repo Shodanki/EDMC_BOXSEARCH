@@ -82,6 +82,9 @@ class Config:
         self.ini_path = INI_PATH
         self.main_cmdr = ""         # C1: FID of the main commander, "" = automatic
         self.unsold = {k: v[0] for k, v in UNSOLD_LIMITS.items()}
+        # FG1 (4.12): show the game's key bindings in SHIP - reads
+        # Options\Bindings only while on; off by default
+        self.show_controls = False
 
     @property
     def filters(self) -> List[str]:
@@ -161,6 +164,7 @@ class Config:
         self.firewall = (s.get("firewall", "") or "").strip().lower()
         self.main_cmdr = (s.get("main_cmdr", "") or "").strip()
         self.set_unsold_limits({k: s.get("unsold_" + k) for k in UNSOLD_LIMITS})
+        self.show_controls = _bool(s.get("show_controls", "false"))
         if self.lan:
             self.host = "0.0.0.0"
         return self
@@ -220,6 +224,7 @@ class Config:
             "route_source": self.route_source, "main_cmdr": self.main_cmdr,
         }
         vals.update({"unsold_" + k: str(v) for k, v in self.unsold.items()})
+        vals["show_controls"] = "true" if self.show_controls else "false"
         for k, v in vals.items():
             cp.set("fis", k, v)
         for k, v, d in (("db_path", self.db_path, DEFAULT_DB),

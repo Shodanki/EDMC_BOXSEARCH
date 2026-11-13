@@ -103,6 +103,18 @@ hardpoints out with the HUD in combat mode) or **COMBAT** (red, blinking:
 under attack, shields down, hull hit, interdiction - whatever the HUD); it
 calms down by itself 30 s after the last hit.
 
+### Your key bindings (optional)
+
+The settings page has *Show my key bindings in SHIP* (off by default). While
+it is on, SHIP has a block CONTROLS with the keys for what an explorer
+reaches for - jump, FSS, HUD mode, fire groups, hardpoints, gear, scoop,
+lights, maps, the SRV and on foot the genetic sampler and the composition
+scanner - read from the game's own files in `Options\Bindings` (the preset
+in use per part, read only, never written) - and the active fire group from
+`Status.json`. What is in a fire group is in no game file the FIS reads.
+A preset that comes with the game keeps its bindings in the game folder,
+which the FIS does not read; the block says so.
+
 ### Unsold data: your own limits
 
 SHIP calls losing your unsold data a low, moderate or high risk and, from a

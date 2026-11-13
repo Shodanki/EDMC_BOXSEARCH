@@ -55,7 +55,7 @@ The rules were checked against EDMC 6.1.2 on 13.11.2026. When EDMC releases a ne
 
 * The release ZIP holds only what the plugin and the FIS run with. Tests, CI, development scripts, logs and the dotfiles are `export-ignore` (see `.gitattributes`). A new file that is not needed at run time gets the same treatment. Code that is no longer used is removed; git history is the archive.
 * No new Python package without a reason. EDMC's bundled standard library plus `requests` is the plugin's world; the FIS needs the standard library only. Third-party code is shipped only when it is needed, unchanged where possible, with its own licence (see below).
-* Files are read only where they belong: the plugin folder, the journal folder, EDDiscovery's database (read only) and, for the FIS, the plugin's own `shboxsearch_*` keys in EDMC's settings file. Nothing else on the PC is touched.
+* Files are read only where they belong: the plugin folder, the journal folder, EDDiscovery's database (read only) and, for the FIS, the plugin's own `shboxsearch_*` keys in EDMC's settings file and - only while the commander has the controls view switched on (off by default) - the game's key bindings (`Options\Bindings`, read only, never written). Nothing else on the PC is touched.
 * **The FIS:**
   * By default it serves this PC only: it binds to 127.0.0.1 and accepts only a localhost Host.
   * The home-network mode is the user's choice. In that mode every request needs the access token.
