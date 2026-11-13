@@ -63,7 +63,7 @@ import surfacenav  # noqa: E402
 import miningstat  # noqa: E402
 import journalscan  # noqa: E402
 
-VERSION = "4.9.0"
+VERSION = "4.9.1"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 

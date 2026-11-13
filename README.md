@@ -1276,6 +1276,7 @@ what changed in each release from 4.1 on.
 | 4.7.0 | Mozilla Public License 2.0; honest information levels in the briefing; fuel model per ship; FIS: known and favourite carriers with docking access, learning from your own mining, themes, combat mode, cockpit configuration, ATLAS SYSTEMS |
 | 4.8.0 | exploration per commander with a main commander; first route from the carrier; latest scoop on a plotted route; data lost with the ship planned again; FIS: VEHICLE tab, deeper themes, unsold data with risk level and the first-footfall bonus |
 | 4.9.0 | README in a new order; overlay: absolute course, "lost - redo"; route check of a plotted route (one EDSM request); prospecting learnt from your probes; FIS: synthesis per tier and tank size in VEHICLE, docked stations in the SYSTEM map, plot corridor in GALAXY |
+| 4.9.1 | fixes: live DSS timing, own carrier after a jump aboard, damaged StarPos, pre-release tags in the update check; journal reading in its own module `journalscan.py` |
 
 ## Fixed since v3.0.8
 
@@ -2158,6 +2159,31 @@ beside the main star); other carriers for a day after docking.
 
 After the update close the FIS window once so it starts with the new files,
 and keep `FIS/vehicle_tanks.json` like `favourites.json`.
+
+### 4.9.1 - fixes
+
+* **Live DSS timing never measured anything.** A second branch for
+  `ApproachBody` in the journal handling came after one that already took
+  the event, so the arrival at a body was never stored and the work model
+  learnt mapping times only from the journal replay at start. Live and
+  replay now share one meter, so a session measures the same way the
+  replay does (arrival at a supercruise exit included).
+* **Own carrier stayed in the old system after a jump aboard.** The panel
+  showed the new system only after the next carrier location; the database
+  was right. It now follows the jump at once.
+* **A damaged position no longer breaks the next survey start.** A
+  `StarPos` that is not three numbers is ignored instead of being stored
+  as the position. The game always writes three numbers; this guards
+  against damaged lines and other tools.
+* **Update check:** a pre-release tag such as `5.0.0-beta1` no longer
+  looks newer than `5.0.0`.
+* FIS: a request that is too large is read before it is refused, so the
+  answer arrives instead of a reset connection.
+* Inside: the journal file reading moved from `load.py` to the new
+  `journalscan.py`, and the plugin's journal handling has tests of its
+  own. **Copy `journalscan.py` together with `load.py`** when you update
+  by hand - without it the plugin does not start. Nothing new is stored;
+  no replay is needed.
 
 ---
 
