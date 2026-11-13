@@ -206,6 +206,7 @@ def _short_body(body: Optional[str], system: str) -> str:
 
 
 def _mining_refresh() -> None:
+    """Draw the atlas list for the chosen mode and filter."""
     if _mine_win is None or _mine_body is None or ST.db is None:
         return
     try:
@@ -218,20 +219,7 @@ def _mining_refresh() -> None:
     want = _mine_mat.get() if _mine_mat else "(all)"
     choices = dict(_atlas_choices(mode))
     key = choices.get(want)
-
-    with ST.lock:
-        if mode == ATLAS_MODES[1]:
-            rows = ST.db.find_signals(key, near=ST.cur_pos, limit=100000)
-        elif mode == ATLAS_MODES[2]:
-            rows = ST.db.find_materials(key, near=ST.cur_pos, limit=100000)
-        elif mode == ATLAS_MODES[3]:
-            rows = ST.db.find_marks(key, near=ST.cur_pos, limit=100000)
-        else:
-            rows = ST.db.find_hotspots(key, near=ST.cur_pos, limit=100000)
-    max_ly = _atlas_max_ly()
-    if max_ly and ST.cur_pos is not None:
-        rows = [r for r in rows if r.get("dist") is not None and r["dist"] <= max_ly]
-    rows = rows[:40]
+    rows = _atlas_query(mode, key)
 
     if not rows:
         hint = {ATLAS_MODES[0]: "map a ring with the DSS and its materials land here",
@@ -246,46 +234,73 @@ def _mining_refresh() -> None:
         skin._apply_theme(lbl, col, is_text=True)
         return
 
-    def dist(h):
-        return ("%.0f ly" % h["dist"]) if h.get("dist") is not None else "-"
-
-    if mode == ATLAS_MODES[1]:
-        head = "%-26s %-22s %4s  %s" % ("system", "body", "x", "distance")
-    elif mode == ATLAS_MODES[2]:
-        head = "%-26s %-22s %5s  %-10s %s" % ("system", "where", "got", "last", "distance")
-    elif mode == ATLAS_MODES[3]:
-        head = "%-26s %-10s %-28s %-17s %s" % ("system", "body", "what", "lat / lon", "distance")
-    else:
-        head = "%-26s %-26s %3s  %-10s %s" % ("system", "ring", "x", "ring type", "distance")
-    h = tk.Label(_mine_body, font=skin._FONT_GROUP, anchor=tk.W, text=head)
+    h = tk.Label(_mine_body, font=skin._FONT_GROUP, anchor=tk.W, text=_atlas_head(mode))
     h.grid(row=0, column=0, sticky=tk.W)
     skin._apply_theme(h, col, is_text=True)
 
     for i, r in enumerate(rows, 1):
         sysname = str(r["system"])
-        if mode == ATLAS_MODES[1]:
-            body = _short_body(r.get("body_name"), sysname) or "(system)"
-            text = "%-26s %-22s %4d  %s" % (sysname[:26], body[:22], r["count"] or 1, dist(r))
-            if key is None:
-                text += "   " + _sig_label({"kind": r["kind"], "label": r["label"]})
-        elif mode == ATLAS_MODES[3]:
-            body = _short_body(r.get("body_name"), sysname)
-            where = ("%+.4f %+.4f" % (r["lat"], r["lon"])) if r.get("lat") is not None else "-"
-            text = "%-26s %-10s %-28s %-17s %s" % (
-                sysname[:26], body[:10], str(r.get("label") or "")[:28], where, dist(r))
-        elif mode == ATLAS_MODES[2]:
-            body = _short_body(r.get("body_name"), sysname) or "(in space)"
-            text = "%-26s %-22s %5d  %-10s %s" % (
-                sysname[:26], body[:22], r["count"], str(r.get("last") or "")[:10], dist(r))
-            if key is None:
-                text += "   " + str(r.get("label") or r.get("material"))
-        else:
-            ring = _short_body(r["body"], sysname)
-            text = "%-26s %-26s %3d  %-10s %s" % (
-                sysname[:26], ring[:26], r["count"], (r["ring_class"] or "")[:10], dist(r))
-            if key is None:
-                text += "   " + str(r["material"])
-        _atlas_row(_mine_body, i, text, sysname, col)
+        _atlas_row(_mine_body, i, _atlas_line(mode, key, r, sysname), sysname, col)
 
     if _mine_mat:
         cfg_set(CFG[_ATLAS_KEY[mode]], want)
+
+
+def _atlas_query(mode: str, key: Optional[str]) -> List[Dict[str, Any]]:
+    """The atlas rows for a mode and filter, nearest first, within the
+    chosen distance, at most 40."""
+    with ST.lock:
+        if mode == ATLAS_MODES[1]:
+            rows = ST.db.find_signals(key, near=ST.cur_pos, limit=100000)
+        elif mode == ATLAS_MODES[2]:
+            rows = ST.db.find_materials(key, near=ST.cur_pos, limit=100000)
+        elif mode == ATLAS_MODES[3]:
+            rows = ST.db.find_marks(key, near=ST.cur_pos, limit=100000)
+        else:
+            rows = ST.db.find_hotspots(key, near=ST.cur_pos, limit=100000)
+    max_ly = _atlas_max_ly()
+    if max_ly and ST.cur_pos is not None:
+        rows = [r for r in rows if r.get("dist") is not None and r["dist"] <= max_ly]
+    return rows[:40]
+
+
+def _atlas_dist(h: Dict[str, Any]) -> str:
+    return ("%.0f ly" % h["dist"]) if h.get("dist") is not None else "-"
+
+
+def _atlas_head(mode: str) -> str:
+    """The column heads of a mode."""
+    if mode == ATLAS_MODES[1]:
+        return "%-26s %-22s %4s  %s" % ("system", "body", "x", "distance")
+    if mode == ATLAS_MODES[2]:
+        return "%-26s %-22s %5s  %-10s %s" % ("system", "where", "got", "last", "distance")
+    if mode == ATLAS_MODES[3]:
+        return "%-26s %-10s %-28s %-17s %s" % ("system", "body", "what", "lat / lon", "distance")
+    return "%-26s %-26s %3s  %-10s %s" % ("system", "ring", "x", "ring type", "distance")
+
+
+def _atlas_line(mode: str, key: Optional[str], r: Dict[str, Any], sysname: str) -> str:
+    """One atlas row as text; without a filter (key None) the kind is added."""
+    if mode == ATLAS_MODES[1]:
+        body = _short_body(r.get("body_name"), sysname) or "(system)"
+        text = "%-26s %-22s %4d  %s" % (sysname[:26], body[:22], r["count"] or 1, _atlas_dist(r))
+        if key is None:
+            text += "   " + _sig_label({"kind": r["kind"], "label": r["label"]})
+    elif mode == ATLAS_MODES[3]:
+        body = _short_body(r.get("body_name"), sysname)
+        where = ("%+.4f %+.4f" % (r["lat"], r["lon"])) if r.get("lat") is not None else "-"
+        text = "%-26s %-10s %-28s %-17s %s" % (
+            sysname[:26], body[:10], str(r.get("label") or "")[:28], where, _atlas_dist(r))
+    elif mode == ATLAS_MODES[2]:
+        body = _short_body(r.get("body_name"), sysname) or "(in space)"
+        text = "%-26s %-22s %5d  %-10s %s" % (
+            sysname[:26], body[:22], r["count"], str(r.get("last") or "")[:10], _atlas_dist(r))
+        if key is None:
+            text += "   " + str(r.get("label") or r.get("material"))
+    else:
+        ring = _short_body(r["body"], sysname)
+        text = "%-26s %-26s %3d  %-10s %s" % (
+            sysname[:26], ring[:26], r["count"], (r["ring_class"] or "")[:10], _atlas_dist(r))
+        if key is None:
+            text += "   " + str(r["material"])
+    return text

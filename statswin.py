@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .boxelplan import Planner
 from .state import CFG, ST, cfg_bool, cfg_set, logger
@@ -123,6 +123,32 @@ def _stats_window_refresh() -> None:
             table(title, rows)
 
     # this sphere, in time
+    sphere_rows = _sphere_rows()
+    if sphere_rows:
+        table("This sphere", sphere_rows)
+
+    # what it paid
+    try:
+        with ST.lock:
+            e = ST.db.earnings()
+        if e["sales"]:
+            table("Earnings", _earnings_rows(e))
+    except Exception:
+        logger.exception("earnings summary failed")
+
+    # everything ever
+    try:
+        with ST.lock:
+            lt = ST.db.lifetime()
+        table("All time", _lifetime_rows(lt))
+    except Exception:
+        logger.exception("lifetime statistics failed")
+
+    skin._theme_tree(_stats_win, col)
+
+
+def _sphere_rows() -> List[Tuple[str, str]]:
+    """This sphere: centre, bodies and time per system, fuel."""
     sphere_rows = []
     if ST.start_system:
         sphere_rows.append(("Centre", "%s  r=%.0f ly"
@@ -139,63 +165,53 @@ def _stats_window_refresh() -> None:
                             % (sum(ST.sys_minutes) / 60.0, len(ST.sys_minutes))))
     if ST.fuel.capacity:
         sphere_rows.append(("Fuel", ST.fuel.summary()))
-    if sphere_rows:
-        table("This sphere", sphere_rows)
+    return sphere_rows
 
-    # what it paid
-    try:
-        with ST.lock:
-            e = ST.db.earnings()
-        if e["sales"]:
-            rows = []
-            ex, bi = e.get("exploration"), e.get("organic")
-            if ex:
-                rows.append(("Exploration data", "%.1f M cr from %d bodies"
-                             % (ex["total"] / 1e6, ex["units"])))
-                if ex["units"]:
-                    rows.append(("  per body", "%s cr"
-                                 % _thousands(ex["total"] // ex["units"])))
-            if bi:
-                rows.append(("Biological data", "%.1f M cr from %d samples"
-                             % (bi["total"] / 1e6, bi["units"])))
-                if bi["units"]:
-                    rows.append(("  per sample", "%s cr"
-                                 % _thousands(bi["total"] // bi["units"])))
-            rows.append(("Total earned", "%.1f M cr over %d sales"
-                         % (e["total"] / 1e6, e["sales"])))
-            if ex and bi and ex["units"] and bi["units"]:
-                ratio = (bi["total"] / bi["units"]) / max(
-                    1.0, ex["total"] / ex["units"])
-                rows.append(("Bio vs mapping", "%.0fx more per unit" % ratio))
-            table("Earnings", rows)
-    except Exception:
-        logger.exception("earnings summary failed")
 
-    # everything ever
-    try:
-        with ST.lock:
-            lt = ST.db.lifetime()
-        who = []
-        if lt.get("commander"):
-            who.append(("Commander", "%s (main)" % lt["commander"]))
-        for nm, n in lt.get("also") or []:
-            who.append(("Also explored by", "%s: %d systems" % (nm, n)))
-        table("All time", who + [
-            ("Systems visited", "%d" % lt["systems_visited"]),
-            ("Distance flown", "%.0f ly" % lt["jumps_ly"]),
-            ("Bodies scanned", "%d" % lt["bodies"]),
-            ("Bodies mapped", "%d" % lt["mapped"]),
-            ("First discoveries", "%d" % lt["first_discoveries"]),
-            ("First to map", "%d" % lt["first_mapped"]),
-            ("Bio sampled", "%d" % lt["bio_sampled"]),
-            ("Boxels closed", "%d" % lt["boxels_closed"]),
-            ("Names ruled out", "%d" % lt["not_there"]),
-            ("Spheres surveyed", "%d" % lt["spheres"]),
-        ])
-    except Exception:
-        logger.exception("lifetime statistics failed")
+def _earnings_rows(e: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """What exploration and biology data sold for (``e`` from db.earnings)."""
+    rows = []
+    ex, bi = e.get("exploration"), e.get("organic")
+    if ex:
+        rows.append(("Exploration data", "%.1f M cr from %d bodies"
+                     % (ex["total"] / 1e6, ex["units"])))
+        if ex["units"]:
+            rows.append(("  per body", "%s cr"
+                         % _thousands(ex["total"] // ex["units"])))
+    if bi:
+        rows.append(("Biological data", "%.1f M cr from %d samples"
+                     % (bi["total"] / 1e6, bi["units"])))
+        if bi["units"]:
+            rows.append(("  per sample", "%s cr"
+                         % _thousands(bi["total"] // bi["units"])))
+    rows.append(("Total earned", "%.1f M cr over %d sales"
+                 % (e["total"] / 1e6, e["sales"])))
+    if ex and bi and ex["units"] and bi["units"]:
+        ratio = (bi["total"] / bi["units"]) / max(
+            1.0, ex["total"] / ex["units"])
+        rows.append(("Bio vs mapping", "%.0fx more per unit" % ratio))
+    return rows
 
-    skin._theme_tree(_stats_win, col)
+
+def _lifetime_rows(lt: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """Everything ever (``lt`` from db.lifetime), with the commanders."""
+    who = []
+    if lt.get("commander"):
+        who.append(("Commander", "%s (main)" % lt["commander"]))
+    for nm, n in lt.get("also") or []:
+        who.append(("Also explored by", "%s: %d systems" % (nm, n)))
+    return who + [
+        ("Systems visited", "%d" % lt["systems_visited"]),
+        ("Distance flown", "%.0f ly" % lt["jumps_ly"]),
+        ("Bodies scanned", "%d" % lt["bodies"]),
+        ("Bodies mapped", "%d" % lt["mapped"]),
+        ("First discoveries", "%d" % lt["first_discoveries"]),
+        ("First to map", "%d" % lt["first_mapped"]),
+        ("Bio sampled", "%d" % lt["bio_sampled"]),
+        ("Boxels closed", "%d" % lt["boxels_closed"]),
+        ("Names ruled out", "%d" % lt["not_there"]),
+        ("Spheres surveyed", "%d" % lt["spheres"]),
+    ]
 
 
 def _toggle_stats() -> None:
