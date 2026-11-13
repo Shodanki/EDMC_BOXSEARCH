@@ -30,8 +30,9 @@ The FIS itself is under the Mozilla Public License 2.0 like the plugin
 
 ## Start
 
-You need **Python 3.11 or newer** (python.org; 3.10 works, but cannot read the
-plugin's route filters). EDMC's built-in Python cannot run the FIS.
+You need **Python 3.11 or newer** (python.org; the FIS says so and stops on
+an older one). EDMC's built-in Python cannot run the FIS. The start scripts
+look for the `py` launcher first, then a python.org install, then `python`.
 
 Double-click **`start_fis.bat`** in `SHBOXSEARCH\FIS`. The first start asks a
 few questions in the console, once:

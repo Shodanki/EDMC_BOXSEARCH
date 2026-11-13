@@ -38,13 +38,16 @@ def _fis_settings() -> Dict[str, str]:
 
 
 def _fis_python() -> Optional[str]:
-    """A Python the start script will find (same order as start_fis.bat)."""
+    """A Python the start script will find, in the same order as
+    start_fis.bat: the py launcher, a python.org install for this user,
+    python on the PATH. The FIS itself checks for 3.11."""
     import glob
     import shutil
+    if shutil.which("py"):
+        return shutil.which("py")
     local = os.environ.get("LOCALAPPDATA", "")
-    found = sorted(glob.glob(os.path.join(local, "Programs", "Python", "Python3*", "python.exe")),
-                   reverse=True)
-    return found[0] if found else (shutil.which("py") or shutil.which("python"))
+    found = sorted(glob.glob(os.path.join(local, "Programs", "Python", "Python3*", "python.exe")))
+    return found[-1] if found else shutil.which("python")
 
 
 def _fis_running(port: str) -> bool:
