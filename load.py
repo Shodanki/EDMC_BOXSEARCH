@@ -72,13 +72,14 @@ VERSION = "4.10.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
-# sysdb and sources log through logging.getLogger(__name__), which sits
+# The helper modules log through logging.getLogger(__name__), which sits
 # outside EDMC's logger tree - their messages (database repair, EDD status,
-# source warnings) never reached the EDMC log. Route them through ours.
+# source warnings, the gateway's rests and retries) never reached the EDMC
+# log. Route them all through ours.
 import sysdb as _sysdb_mod      # noqa: E402
 import sources as _sources_mod  # noqa: E402
-_sysdb_mod.logger = logger
-_sources_mod.logger = logger
+for _mod in (_sysdb_mod, _sources_mod, netgate, sys.modules["overlay"]):
+    _mod.logger = logger
 
 DB_FILE = os.path.join(_PLUGIN_DIR, "shboxsearch.sqlite")
 
