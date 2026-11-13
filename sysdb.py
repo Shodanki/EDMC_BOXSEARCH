@@ -363,6 +363,11 @@ def _epoch(stamp: Optional[str]) -> Optional[float]:
         return None
 
 
+def _in_body_count(r: Any) -> bool:
+    """Counts toward the game's BodyCount: not a belt cluster, not a barycentre."""
+    return r["kind"] != "BaryCentre" and "Belt Cluster" not in (r["name"] or "")
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -1172,7 +1177,9 @@ class SystemDB:
             s = dict(s) if s is not None else None
             if s is not None:
                 s["fss_complete"] = own["fss_complete"] if own else 0
-        scanned = sum(1 for r in rows if r["scanned"])
+        # the game's BodyCount holds stars and planets only: belt clusters
+        # and barycentres are scanned too, but must not fill the count up
+        scanned = sum(1 for r in rows if r["scanned"] and _in_body_count(r))
         mapped = sum(1 for r in rows if r["mapped"])
         dss_open, bio_open, valuable = [], [], []
         bio_signals_open = 0
@@ -3159,6 +3166,24 @@ def _selftest() -> int:
         check(b[1]["planet_class"] == "Rocky body" and b[1]["was_discovered"] == 1
               and not b[1]["scanned"] and b[2]["scanned"] == 1,
               "NavBeaconDetail: body data stored, not counted as your scan (an own scan stays)")
+        ev = db.ingest_journal_event
+        ev({"event": "FSDJump", "StarSystem": "Cm Belt", "SystemAddress": 590,
+            "StarPos": [2.0, 0.0, 0.0], "timestamp": "2026-01-05T11:00:00Z"})
+        ev({"event": "FSSDiscoveryScan", "SystemName": "Cm Belt", "SystemAddress": 590,
+            "BodyCount": 3, "NonBodyCount": 0, "Progress": 0.3})
+        ev({"event": "Scan", "ScanType": "AutoScan", "StarSystem": "Cm Belt", "SystemAddress": 590,
+            "BodyName": "Cm Belt A", "BodyID": 0, "StarType": "K", "DistanceFromArrivalLS": 0.0})
+        for i in range(3):
+            ev({"event": "Scan", "ScanType": "Detailed", "StarSystem": "Cm Belt", "SystemAddress": 590,
+                "BodyName": "Cm Belt A A Belt Cluster %d" % (i + 1), "BodyID": 10 + i,
+                "DistanceFromArrivalLS": 5.0})
+        ev({"event": "Scan", "ScanType": "Detailed", "StarSystem": "Cm Belt", "SystemAddress": 590,
+            "BodyName": "Cm Belt A 1", "BodyID": 2, "PlanetClass": "Icy body", "DistanceFromArrivalLS": 90.0})
+        pb = db.system_progress(590, None)
+        check(pb["scanned"] == 2 and pb["body_count"] == 3,
+              "belt clusters are not in BodyCount: 2 of 3 scanned, not 5 (%s/%s)" % (pb["scanned"], pb["body_count"]))
+        check(any(u["name"] == "Cm Belt" for u in db.unfinished_systems((2.0, 0.0, 0.0), 1.0)),
+              "a system with a planet left is still open, whatever the belts")
         db.close()
         n_cmdr = _selftest_cmdr(d, check)
         fails += n_cmdr
