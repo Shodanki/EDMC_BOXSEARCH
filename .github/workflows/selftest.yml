@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.13"     # the interpreter EDMC 6.x ships
       - name: compile every module
-        run: python -m py_compile *.py
+        run: python -m py_compile *.py edts_pgnames/*.py regionmap/*.py
       - name: procgen self test
         run: python procgen.py
       - name: surface compass self test
@@ -48,8 +48,10 @@ jobs:
         run: python tests/plugin_hooks.py
       - name: dispatch lint (no dead branch in a journal event chain)
         run: python tests/dispatch_lint.py
+      - name: named sectors (planner and id64 names over hand-authored sectors)
+        run: python tests/named_sectors.py
       - name: plain-python modules import without EDMC
-        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan; print('imports ok')"
+        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan, edts_pgnames, regionmap; assert procgen._edts is not None; assert regionmap.find_region(0, 0, 0)[1] == 'Inner Orion Spur'; print('imports ok')"
       - name: FIS tests (flight information system)
         working-directory: FIS
         run: python -m unittest discover -s tests -t .
