@@ -329,7 +329,7 @@ def cfg_set(key: str, value) -> None:
     try:
         config.set(key, value)
     except Exception as e:
-        logger.warning("config.set(%s) fehlgeschlagen: %s", key, e)
+        logger.warning("config.set(%s) failed: %s", key, e)
 
 
 def get_filters() -> List[str]:
@@ -354,6 +354,10 @@ def get_masscodes() -> List[int]:
 # ============================================================================
 
 def plugin_start3(plugin_dir: str) -> str:
+    """
+    EDMC hook: load the plugin. Opens the database and starts the journal
+    reading in worker threads; returns the name shown in EDMC.
+    """
     global _MAP_W, _MAP_H
     logger.info("SHBOXSEARCH v%s starting", VERSION)
     _MAP_W = _MAP_H = _MAP_SIZES.get(cfg_str(CFG["map_size"], "medium"), 480)
@@ -425,6 +429,10 @@ def capi_fleetcarrier(data: Any) -> Optional[str]:
 
 
 def plugin_stop() -> None:
+    """
+    EDMC hook: EDMC is closing. Clears the overlay, closes the windows, stops
+    the gateway (no more requests), stores the call log, closes the database.
+    """
     ov = getattr(ST, "overlay", None)
     if ov is not None:
         ov.clear()
@@ -3251,18 +3259,26 @@ def _prune_queues() -> None:
 
 def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                   entry: Dict[str, Any], state: Dict[str, Any]) -> None:
+    """
+    EDMC hook: one journal event, on the main thread. Keeps the commander
+    (name and FID), then runs the dispatch chain; long work is handed to
+    worker threads. Never raises - errors are logged.
+    """
     if not ST.db:
         return
     ev = entry.get("event")
-    if cmdr and cmdr != ST.cmdr:
-        if ST.cmdr is not None:
-            _commander_switched()
-        ST.cmdr = cmdr
-    fid = state.get("FID") if isinstance(state, dict) else None
-    if fid and fid != ST.db.fid:
-        with ST.lock:
-            ST.db.set_commander(fid, cmdr)
-        _apply_main_cmdr()
+    try:
+        if cmdr and cmdr != ST.cmdr:
+            if ST.cmdr is not None:
+                _commander_switched()
+            ST.cmdr = cmdr
+        fid = state.get("FID") if isinstance(state, dict) else None
+        if fid and fid != ST.db.fid:
+            with ST.lock:
+                ST.db.set_commander(fid, cmdr)
+            _apply_main_cmdr()
+    except Exception:
+        logger.exception("journal_entry: commander switch failed")
     try:
         # Before the dispatch chain: any event naming a body updates where we
         # are. Putting this inside the chain meant whichever branch matched
@@ -4718,6 +4734,7 @@ def _pick_edd() -> None:
 
 
 def prefs_changed(cmdr: str, is_beta: bool) -> None:
+    """EDMC hook: the settings dialog was closed - store our settings."""
     try:
         cfg_set(CFG["radius"], int(_p["radius"].get()))
         cfg_set(CFG["masscodes"], ",".join(str(i) for i, v in _p["mc"].items() if v.get()))
