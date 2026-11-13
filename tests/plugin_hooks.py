@@ -261,6 +261,71 @@ try:
         ST.net.offline = False
         load._set_status = lambda m: None
 
+        # 6e) update check against a fake gateway: notify only, once a day
+        class R:
+            def __init__(self, code, body=None):
+                self.status_code, self._b = code, body or {}
+
+            def json(self):
+                return self._b
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError("HTTP %d" % self.status_code)
+
+        class Net:
+            usable, answer, asked = True, None, 0
+
+            def request(self, *a, **k):
+                Net.asked += 1
+                return Net.answer
+
+        real_net, real_set, real_flush = ST.net, load.cfg_set, load._flush_net_log
+        ST.net, load._flush_net_log = Net(), lambda: None
+        load.cfg_set = lambda k, v: cfg.__setitem__(k, v)
+        status = []
+        load._set_status = status.append
+        ST.update_version = None
+        cfg[load.CFG["check_updates"]] = False
+        load._check_for_update()
+        check(Net.asked == 0, "update check switched off: GitHub not asked")
+        cfg[load.CFG["check_updates"]] = True
+        cfg[load.CFG["update_checked"]] = str(int(NOW[0] - 3600))
+        load._check_for_update()
+        check(Net.asked == 0, "update check: checked an hour ago -> not again")
+        cfg[load.CFG["update_checked"]] = str(int(NOW[0] - 90000))
+        load._check_for_update()
+        check(Net.asked == 1 and cfg[load.CFG["update_checked"]] == str(int(NOW[0] - 90000)),
+              "no answer (offline): asked once, the day is not used up")
+        for code, what in ((403, "rate limited"), (404, "no release yet")):
+            Net.answer = R(code)
+            cfg[load.CFG["update_checked"]] = ""
+            load._check_for_update()
+            check(cfg[load.CFG["update_checked"]] == str(int(NOW[0])) and ST.update_version is None,
+                  "update check %d (%s): remembered for the day, nothing offered" % (code, what))
+        Net.answer = R(200, {"tag_name": "v" + load.VERSION, "body": "x"})
+        load._check_for_update(force=True)
+        check(ST.update_version is None and status[-1:] == ["up to date (%s)" % load.VERSION],
+              "same version, asked by hand: 'up to date'")
+        Net.answer = R(200, {"tag_name": "v99.0.0", "body": "line 1\nline 2"})
+        n = Net.asked
+        load._check_for_update()
+        check(Net.asked == n, "a check today already: the daily timer holds without force")
+        load._check_for_update(force=True)
+        check(ST.update_version == "v99.0.0" and ST.update_notes == "line 1\nline 2"
+              and status[-1] == "update v99.0.0 available - click here",
+              "newer release: offered with its notes, no file touched")
+        Net.answer = R(500)
+        ST.update_version = None
+        load._check_for_update(force=True)
+        check(ST.update_version is None, "a server error is swallowed")
+        check(load._version_tuple("v4.10.0") > load._version_tuple("4.9.1")
+              and load._version_tuple("5.0.0-beta1") == (5, 0, 0)
+              and load._version_tuple("garbage") == (0,),
+              "version compare: numeric, not text (%r)" % (load._version_tuple("5.0.0-beta1"),))
+        ST.net, load.cfg_set, load._flush_net_log = real_net, real_set, real_flush
+        load._set_status = lambda m: None
+
         # 7) a second commander: nothing of the first one's position is kept
         je({"event": "LoadGame", "Commander": "Other"}, cmdr="Other", state={"FID": "F2"})
         check(ST.cmdr == "Other" and ST.db.fid == "F2", "second commander taken over")

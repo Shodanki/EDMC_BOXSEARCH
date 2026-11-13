@@ -22,6 +22,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -2235,11 +2236,13 @@ def _bootstrap_work_model() -> None:
 
 
 def _version_tuple(v: str) -> Tuple[int, ...]:
-    """'v4.1.0' -> (4, 1, 0). Anything unparseable sorts lowest."""
+    """'v4.1.0' -> (4, 1, 0). Anything unparseable sorts lowest. Only the
+    leading digits of a part count: '5.0.0-beta1' is (5, 0, 0), not newer
+    than 5.0.0 (up to 5.0 the digits of 'beta1' made it (5, 0, 1))."""
     parts = []
     for chunk in (v or "").lstrip("vV").split(".")[:4]:
-        digits = "".join(c for c in chunk if c.isdigit())
-        parts.append(int(digits) if digits else 0)
+        m = re.match(r"\s*(\d+)", chunk)
+        parts.append(int(m.group(1)) if m else 0)
     return tuple(parts) or (0,)
 
 
