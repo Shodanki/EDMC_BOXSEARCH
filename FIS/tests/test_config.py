@@ -32,6 +32,14 @@ class TestPluginFilters(unittest.TestCase):
         c = self._cfg('[settings]\nshboxsearch_route_all = false\nshboxsearch_filters = "new,signals,bogus"\n')
         self.assertEqual(c.filters, ["new", "signals"])
 
+    def test_only_the_plugins_keys_are_kept(self):
+        # 4.10.1: EDMC's file also holds other plugins' settings and API keys
+        c = self._cfg('[settings]\nshboxsearch_offline = true\nedsm_apikeys = ["secret"]\n'
+                      'inara_apikeys = ["secret"]\nSHBOXSEARCH_Radius = 50\n')
+        data = c._plugin_settings()
+        self.assertEqual(sorted(data), ["SHBOXSEARCH_Radius", "shboxsearch_offline"])
+        self.assertNotIn("secret", repr(c.__dict__))
+
     def test_arrival_star(self):
         # R2: default on (the run starts at the arrival star); off in EDMC skips it
         self.assertFalse(self._cfg('[settings]\nother = 1\n').skip_arrival)

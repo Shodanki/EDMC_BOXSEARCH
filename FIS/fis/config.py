@@ -36,6 +36,7 @@ DEFAULT_PORT = 8770
 DEFAULT_FILTERS = "todo"
 # EDMC's own settings file - the plugin's route filters live there
 EDMC_CONFIG = os.path.join(_LOCAL, "EDMarketConnector", "config.toml")
+PLUGIN_PREFIX = "shboxsearch_"     # the only keys of that file the FIS keeps
 PLUGIN_FILTERS = ("all", "new", "unmapped", "signals", "landable", "valuable", "rings", "todo")
 LANGUAGES = ("en", "de")
 
@@ -100,6 +101,9 @@ class Config:
         # EDMC 6 keeps everything under [settings]; older files at the top level
         if isinstance(data.get("settings"), dict):
             data = data["settings"]
+        # keep only the plugin's own keys: the file also holds EDMC's and other
+        # plugins' settings, API keys among them, which the FIS has no use for
+        data = {k: v for k, v in data.items() if str(k).lower().startswith(PLUGIN_PREFIX)}
         self._pf_cache = (sig, data)
         return data
 
