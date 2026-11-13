@@ -26,8 +26,11 @@ The briefing and the FIS name the codex region - see
 **Licence:** [Mozilla Public License 2.0](LICENSE) since 4.7 - use, change and
 share it freely; whoever passes on a changed file of this project keeps that
 file open under the same licence (files of your own next to it are yours).
-4.6 and earlier were released under MIT and stay MIT. Third-party parts keep
-their own licence: Three.js 0.170.0 (MIT, `FIS/web/vendor/three`),
+4.6 and earlier were released under MIT and stay MIT. The MPL is compatible
+with EDMC's GPL-2.0-or-later: its section 3.3 names the GPL as a "Secondary
+License", and no file of this project carries the "Incompatible With
+Secondary Licenses" notice. Third-party parts keep their own licence:
+Three.js 0.170.0 (MIT, `FIS/web/vendor/three`),
 Project Nayuki's QR Code generator (MIT, `FIS/fis/vendor`), EDTS's sector
 name algorithm by Andy Martin (BSD 3-Clause, `edts_pgnames`) and Ben
 Peddell's region map (MIT, `regionmap`) - origin and licence text in the
