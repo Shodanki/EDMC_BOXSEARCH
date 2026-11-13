@@ -14,11 +14,12 @@ own database and maths.
 **It only reads.** The plugin database (opened read-only), the game's journal
 and its state files (`Status.json`, `NavRoute.json`, `ModulesInfo.json`,
 `Cargo.json`, ...). It sends nothing to the game and automates nothing. It asks
-a service on the internet in one case only: when you click *online* at a
-favourite carrier in CARRIER - one request to Spansh for where someone last
-reported it, through the plugin's polite gateway (pacing, the daily cap shared
-with the plugin, the plugin's *offline* switch), at most once per carrier every
-six hours.
+a service on the internet in two cases only, both on your click in CARRIER:
+*online* at a favourite carrier - where someone last reported it, at most once
+per carrier every six hours - and *find carriers near me* - the carriers
+within 100 ly of you, at most once a day per region of space. Each is one
+request to Spansh, through the plugin's polite gateway (pacing, the daily cap
+shared with the plugin, the plugin's *offline* switch).
 
 The FIS itself is under the Mozilla Public License 2.0 like the plugin
 (`LICENSE` in the plugin folder).
@@ -215,7 +216,7 @@ QR code on the settings page is drawn with Project Nayuki's QR Code generator
 
 The FIS reads the game's own journal and state files and, from EDMC's
 Frontier data (Companion API), what the journal does not say about your
-carrier; Spansh is asked only on your click at *online* (above). All
+carrier; Spansh is asked only on your click (*online*, *find carriers near me* - above). All
 third-party parts of the project, and Frontier's data:
 [Third-party parts](../README.md#third-party-parts) in the plugin README.
 
@@ -245,7 +246,10 @@ third-party parts of the project, and Frontier's data:
   a value resting on few rocks, runs or rigs is marked as thin.
 * Known carriers come from your own journals - a carrier's position is
   where *you* last saw it, unless you click *online* at a favourite (one
-  Spansh request, shown with its date). Favourites,
+  Spansh request, shown with its date). *Find carriers near me* lists the
+  carriers Spansh knows within 100 ly - callsign, system, distance, who may
+  dock, services, when it was reported; a carrier starred there keeps that
+  position without a second request. Favourites,
   notes and the last market of each visited carrier are kept per commander
   in `favourites.json` next to `fis.ini` (personal - keep it out of anything
   you share). Starring works from the tablet too (with the home-network

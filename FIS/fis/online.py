@@ -23,6 +23,12 @@ when the commander clicks it for one favourite:
 
 Spansh knows where someone last docked and reported it through EDDN - the
 answer can be hours or weeks old, and is always shown with its date.
+
+H2 (4.12): carriers near you - the same rules, one request on a click:
+Spansh stations/search for Drake-Class Carriers within NEARBY_LY of your
+position, nearest first, NEARBY_SIZE of them. The answer is kept for
+NEARBY_CACHE_S per CELL_LY cell of space (asking again in the same region
+asks nothing); distances are worked out again from where you are.
 """
 
 from __future__ import annotations
@@ -31,11 +37,20 @@ import json
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Callable, Dict, Optional
+import math
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 SPANSH_STATIONS = "https://spansh.co.uk/api/stations/search"
 CACHE_S = 6 * 3600.0
 CARRIER_TYPES = ["Drake-Class Carrier"]
+NEARBY_LY = 100           # H2: how far to look
+NEARBY_SIZE = 15          # how many carriers, nearest first
+NEARBY_CACHE_S = 24 * 3600.0
+CELL_LY = 50.0            # one answer per cell of space and day
+# Spansh service names -> the FIS's keys (what an explorer far out needs)
+NEARBY_SERVICES = {"Refuel": "refuel", "Repair": "repair", "Restock": "rearm",
+                   "Universal Cartographics": "exploration", "Vista Genomics": "vistagenomics",
+                   "Shipyard": "shipyard", "Outfitting": "outfitting", "Market": "commodities"}
 
 
 class _Resp:
@@ -101,6 +116,7 @@ class CarrierLookup:
         self._factory = session_factory or UrllibSession
         self._clock = clock
         self._gw = None
+        self._nearby: Dict[Tuple[int, int, int], Tuple[float, Dict[str, Any]]] = {}
 
     def _gateway(self) -> Any:
         if self._gw is None:
@@ -148,3 +164,72 @@ class CarrierLookup:
                        docking_access=hit.get("carrier_docking_access") or None,
                        pos=pos if all(v is not None for v in pos) else None)
         return out
+
+    # ------------------------------------------------------------------ H2
+    @staticmethod
+    def _cell(pos: Sequence[float]) -> Tuple[int, int, int]:
+        return tuple(int(math.floor(float(c) / CELL_LY)) for c in pos)   # type: ignore[return-value]
+
+    def nearby(self, pos: Sequence[float]) -> Dict[str, Any]:
+        """H2: the Drake-Class Carriers Spansh knows near ``pos`` -
+        {'checked', 'ref', 'cached', 'carriers': [...]} nearest first, or
+        {'error': ...}. One request per CELL_LY cell and NEARBY_CACHE_S."""
+        cell = self._cell(pos)
+        hit = self._nearby.get(cell)
+        if hit and self._clock() - hit[0] < NEARBY_CACHE_S:
+            return dict(hit[1], cached=True, carriers=_with_distance(hit[1]["carriers"], pos))
+        if self._offline():
+            return {"error": "offline"}
+        gw = self._gateway()
+        body = {"filters": {"type": {"value": CARRIER_TYPES},
+                            "distance": {"min": "0", "max": str(NEARBY_LY)}},
+                "sort": [{"distance": {"direction": "asc"}}], "size": NEARBY_SIZE, "page": 0,
+                "reference_coords": {"x": float(pos[0]), "y": float(pos[1]), "z": float(pos[2])}}
+        resp = gw.request("spansh", "POST", SPANSH_STATIONS, "stations/search", json=body,
+                          timeout=20)
+        if resp is None:
+            why = gw.resting("spansh") if hasattr(gw, "resting") else None
+            return {"error": why or "Spansh did not answer"}
+        if resp.status_code != 200:
+            return {"error": "Spansh HTTP %d" % resp.status_code}
+        try:
+            rows = resp.json().get("results") or []
+        except ValueError:
+            return {"error": "Spansh answer unreadable"}
+        out = {"checked": _now_iso(), "ref": [float(c) for c in pos],
+               "carriers": [c for c in (_nearby_row(r) for r in rows) if c]}
+        self._nearby[cell] = (self._clock(), out)
+        return dict(out, cached=False, carriers=_with_distance(out["carriers"], pos))
+
+    def from_nearby(self, callsign: str) -> Optional[Dict[str, Any]]:
+        """A carrier of a fresh nearby answer, shaped like lookup()'s answer -
+        a carrier starred from that list keeps where Spansh saw it, without
+        asking again."""
+        for at, ans in self._nearby.values():
+            if self._clock() - at >= NEARBY_CACHE_S:
+                continue
+            for c in ans["carriers"]:
+                if c["callsign"] == callsign:
+                    return {"checked": ans["checked"], "found": True, "source": "Spansh",
+                            "system": c["system"], "id64": c["id64"], "pos": c["pos"],
+                            "updated": c["updated"], "docking_access": c["access"]}
+        return None
+
+
+def _nearby_row(r: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """One carrier of a Spansh answer, as the CARRIER view shows it."""
+    cs = str(r.get("name") or "")
+    p = [r.get("system_x"), r.get("system_y"), r.get("system_z")]
+    if not cs or not all(isinstance(v, (int, float)) for v in p):
+        return None
+    names = {s.get("name") for s in r.get("services") or [] if isinstance(s, dict)}
+    return {"callsign": cs, "system": r.get("system_name"), "id64": r.get("system_id64"),
+            "pos": [float(v) for v in p], "updated": r.get("updated_at"),
+            "access": r.get("carrier_docking_access") or None,
+            "services": sorted({k for n, k in NEARBY_SERVICES.items() if n in names})}
+
+
+def _with_distance(carriers: List[Dict[str, Any]], pos: Sequence[float]) -> List[Dict[str, Any]]:
+    """The list with each carrier's distance from ``pos``, nearest first."""
+    out = [dict(c, distance=round(math.dist(c["pos"], [float(v) for v in pos]), 2)) for c in carriers]
+    return sorted(out, key=lambda c: c["distance"])

@@ -606,6 +606,44 @@ class TestSettings(_Base):
         self.assertIn("language = de", ini)
         self.assertIn("open_browser = false", ini)
 
+    def test_carriers_nearby_endpoint(self):
+        """H2: only from the FIS page, only with a position, offline says so."""
+        from unittest import mock
+        asked = []
+
+        class FakeLookup:
+            def nearby(self, pos):
+                asked.append(pos)
+                return {"checked": "2026-11-13T21:00:00Z", "ref": pos, "cached": False,
+                        "carriers": [{"callsign": "JFM-21Z", "distance": 5.0}]}
+        hdr = {"X-FIS-Settings": "1", "Origin": self.base}
+
+        def post(headers):
+            req = urllib.request.Request(self.base + "/api/carriers/nearby", data=b"{}", method="POST",
+                                         headers=dict({"Content-Type": "application/json"}, **headers))
+            return urllib.request.urlopen(req, timeout=5)
+        with mock.patch.object(self.app, "lookup", FakeLookup()):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                post({})
+            self.assertEqual(e.exception.code, 403)
+            e.exception.close()
+            self.assertEqual(asked, [])
+            with mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": [1, 2, 3]}}):
+                with post(hdr) as r:
+                    d = json.loads(r.read())
+            self.assertEqual((d["carriers"][0]["callsign"], asked), ("JFM-21Z", [[1.0, 2.0, 3.0]]))
+            with mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": "garbage"}}):
+                with self.assertRaises(urllib.error.HTTPError) as e:
+                    post(hdr)
+                self.assertEqual(e.exception.code, 409)
+                e.exception.close()
+        with mock.patch.object(self.app.lookup, "nearby", lambda pos: {"error": "offline"}), \
+                mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": [1, 2, 3]}}):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                post(hdr)
+            self.assertEqual(e.exception.code, 409)
+            e.exception.close()
+
     def test_internal_error_tells_no_details(self):
         """N10: a failure answers 500 without the exception's text (paths,
         names) - that stays in the FIS console."""

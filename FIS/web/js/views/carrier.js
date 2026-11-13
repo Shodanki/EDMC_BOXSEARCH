@@ -30,6 +30,7 @@ const ACCESS = { all: N_("everyone"), friends: N_("friends"), squadron: N_("squa
   squadronfriends: N_("squadron and friends"), none: N_("nobody") };
 
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
+let nearby = null, nearbyMsg = "";      // H2: carriers near you, asked at Spansh on a click
 let root = null, data = null, known = null, knownQuery = "", knownMsg = "", showAllSeen = false, roleFilter = store("fis.cag.role") || "";
 // E4: ship list sortable by every column, with a text filter and "on board only"
 let sortKey = store("fis.cag.sort") || "", sortDir = store("fis.cag.dir") === "asc" ? 1 : -1;
@@ -115,6 +116,50 @@ async function lookup(c, btn) {
   render();
 }
 
+// H2: the carriers Spansh knows near you - one request on a click, kept a day per region
+async function findNearby(btn) {
+  btn.disabled = true; btn.textContent = "…";
+  try { nearby = await postJSON("/api/carriers/nearby", {}); nearbyMsg = ""; }
+  catch (e) { nearbyMsg = t("Online lookup failed: {e}", { e: e.message || e }); }
+  render();
+}
+
+function nearbyRow(c) {
+  const key = (c.access || "").toLowerCase().replace(/[^a-z]/g, "");
+  const svc = (c.services || []).filter(s => KC_SERVICE[s]).map(s => t(KC_SERVICE[s]));
+  const fav = !!(known && known.favourites.some(f => f.callsign === c.callsign));
+  return el("div", { class: "kc-row" + (fav ? " fav" : "") },
+    el("button", { class: "fav-star" + (fav ? " on" : ""), text: fav ? "★" : "☆",
+      title: fav ? t("remove from favourites") : t("mark as favourite"), onclick: () => star(c, !fav) }),
+    el("div", { class: "kc-main" },
+      el("div", {}, el("span", { class: "c-cyan", text: c.callsign }),
+        el("span", { class: "c-dim", text: "  " + fmt(c.distance, 1) + " ly" }),
+        c.access ? el("span", { class: "chip" + (key === "all" ? " mapped" : ""), text: ACCESS[key] ? t(ACCESS[key]) : c.access }) : null),
+      el("div", { class: "small" }, el("span", { text: c.system || "?" }),
+        el("span", { class: "c-dim", text: "  " + t("reported {d}", { d: day(c.updated) }) })),
+      svc.length ? el("div", { class: "small" }, el("span", { class: "c-dim", text: t("services") + ": " }), svc.join(" · ")) : null),
+    el("div", { class: "kc-act" },
+      c.id64 ? el("button", { text: t("open system"), title: t("show the system with everything known about it"),
+        onclick: () => window.open(location.pathname + "?solo=tactical&system=" + c.id64, "fis-detail", "popup,width=1280,height=860") }) : null,
+      el("button", { text: t("copy system"), disabled: c.system ? null : true,
+        title: t("copy the system name - paste it in the galaxy map to plot the jump"),
+        onclick: (e) => copyText(c.system, e.currentTarget) })));
+}
+
+function nearbyRows() {
+  const rows = [el("div", { class: "sr-h", text: t("NEAR YOU - ONLINE") }),
+    el("div", { class: "kc-act" }, el("button", { text: t("find carriers near me"),
+      title: t("ask Spansh once for the carriers within 100 ly of you - at most once a day per region"),
+      onclick: (e) => findNearby(e.currentTarget) }))];
+  if (nearbyMsg) rows.push(el("div", { class: "c-red small", text: nearbyMsg }));
+  if (nearby && nearby.carriers) {
+    if (!nearby.carriers.length) rows.push(el("div", { class: "c-dim small", text: t("Spansh knows no carrier within 100 ly.") }));
+    rows.push(...nearby.carriers.map(nearbyRow));
+    rows.push(el("div", { class: "c-dim small", text: t("Spansh, asked {d}: where someone last reported each carrier - it may have jumped since.", { d: since(nearby.checked) }) }));
+  }
+  return rows;
+}
+
 function carrierRow(c) {
   const what = [];
   if (c.docked_n) what.push(t("docked {n}×", { n: c.docked_n }));
@@ -195,6 +240,7 @@ function knownCarriers() {
       onclick: () => { showAllSeen = !showAllSeen; render(); } }));
   }
   rows.push(el("div", { class: "c-dim small", text: t("Last known positions from your own journals; the market is the one you last opened there. Online only when you click it for a favourite (Spansh, the place someone last reported).") }));
+  rows.push(...nearbyRows());
   return frame(t("KNOWN CARRIERS"), t("{f} favourites · {n} known", { f: k.counts.favourites, n: k.counts.known }), rows, { cls: "ns-known", appear: false });
 }
 

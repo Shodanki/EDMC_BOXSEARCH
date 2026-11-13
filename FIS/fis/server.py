@@ -525,6 +525,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._post_favourite(raw)
         if url.path == "/api/carriers/lookup":
             return self._post_lookup(raw)
+        if url.path == "/api/carriers/nearby":
+            return self._post_nearby()
         if url.path == "/api/ship/lost_hidden":
             return self._post_lost_hidden(raw)
         if url.path != "/api/settings":
@@ -636,6 +638,9 @@ class Handler(BaseHTTPRequestHandler):
                                                note=None if note is None else str(note), info=info)
         except ValueError as exc:
             return self._error(400, str(exc))
+        seen = app.lookup.from_nearby(cs) if fav is not None and not fav.get("online") else None
+        if seen:
+            app.favourites.set_online(fid, cs, seen)     # H2: starred from the nearby list
         return self._json({"callsign": cs, "favourite": fav is not None, "note": (fav or {}).get("note", "")})
 
     def _post_lost_hidden(self, raw: bytes) -> None:
@@ -716,6 +721,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(dict(res, callsign=cs), 503 if res["error"] != "offline" else 409)
         app.favourites.set_online(fid, cs, res)
         return self._json(dict(res, callsign=cs, cached=False))
+
+    def _post_nearby(self) -> None:
+        """H2: carriers near the commander at Spansh - on a click only, one
+        request per region and day (online.CarrierLookup.nearby)."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "lookups only from the FIS page")
+        from .live import star_pos
+        pos = star_pos(((self.app.live_state() or {}).get("system") or {}).get("pos"))
+        if pos is None:
+            return self._error(409, "position unknown - jump once or open the galaxy map")
+        res = self.app.lookup.nearby(pos)
+        if res.get("error"):
+            return self._json(res, 503 if res["error"] != "offline" else 409)
+        return self._json(res)
 
     def _json(self, obj: Any, code: int = 200) -> None:
         body = json.dumps(obj, ensure_ascii=False, separators=(",", ":"),
