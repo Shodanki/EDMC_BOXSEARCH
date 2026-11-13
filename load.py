@@ -4773,7 +4773,7 @@ def _import_journals(max_files: int = 0) -> None:
 
 def _first_run_migration() -> None:
     """
-    Runs once on first start. Replaces calling migrate.py, so no system-wide
+    Runs once on first start (it replaced the 4.0 script migrate.py), so no system-wide
     Python installation is needed - EDMC ships its own interpreter.
     """
     logger.info("first-run import starting")

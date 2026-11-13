@@ -139,10 +139,8 @@ on first run and is **your data** - never overwrite it on an update.
 | `shells.py` | 321 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
 | `procgen.py` | 645 | Name ↔ id64 ↔ boxel maths, sector registry, computed sector names, named sectors over a boxel, self test | `edts_pgnames` |
 | `deepspace.py` | 441 | Fuel model, tritium rings, carrier staging | — |
-| `migrate.py` | 77 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
 | `overlay.py` | 431 | Cockpit overlay through EDMCModernOverlay (optional) | — |
 | `biopredict.py` | 204 | Genus prediction learned from your own samples | — |
-| `diagnostics.py` | 289 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
 | `surfacenav.py` | 493 | Surface compass: parked SRV, open samples, known points | — |
 | `miningstat.py` | 337 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
 | `journalscan.py` | 367 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay, self test | — |
@@ -223,8 +221,9 @@ this can take a few minutes; EDMC stays usable throughout.
 | **Export boxel prefixes** | writes the prefix list for the galaxy map search |
 | **Self test** | verifies maths and reports database statistics |
 
-`migrate.py` is included only in case you ever have your own Python. It is not
-needed for normal operation.
+The plugin imports the old JSON files itself on first start. The 4.0 helper
+scripts `migrate.py` and `diagnostics.py` were removed in 4.10.1; they stay in
+the git history.
 
 ## Preferences
 
