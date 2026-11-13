@@ -2370,6 +2370,10 @@ position lies in the boxel its number names. See
 
 # For maintainers
 
+The rules every change follows - EDMC's plugin rules, fair use of the
+community services, least privilege, licence, code style, versions - are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Releasing (for whoever maintains this)
 
 The update check compares the running `VERSION` against the newest release
