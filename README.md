@@ -665,9 +665,11 @@ network. Tip: open EDDiscovery once before you start a survey (it fetches
 the latest changes), then close it - while it runs, its file can be locked.
 The plugin notices a locked file and reads it again later.
 
-*FIS.* The flight information system asks Spansh only when you click *online*
-at a favourite carrier (where it was last reported), through the same
-gateway and daily cap, at most once per carrier every six hours.
+*FIS.* The flight information system asks Spansh only on your click in
+CARRIER - *online* at a favourite carrier (where it was last reported, at
+most once per carrier every six hours) and *find carriers near me* (the
+carriers within 100 ly, at most once a day per region) - through the same
+gateway and daily cap.
 
 *Route check.* When you plot a route of two jumps or more through space no
 source was asked about (outside the fetched shells), its systems are checked
@@ -677,6 +679,17 @@ and EDSM switch. Every system asked is remembered for 14 days, so plotting
 the same route again asks nothing, and the briefing can tell *known* from
 *in no database (checked: EDSM)* there instead of *not checked*. A single
 jump is never checked.
+
+*Probe names at EDSM (4.12).* Some systems are on EDSM with their name only -
+reported before the game wrote a journal, without a position (what the
+EDSM-RSE plugin shows). After EDDiscovery's file, the plan's probe
+candidates are asked by name: ONE EDSM request with at most 40 names per
+plan, at most 10 such requests a day (EDSM's other 40 stay for the shells),
+same gateway, offline switch and EDSM switch. A name asked is not asked
+again for 14 days - also when EDSM did not know it, which does not make it
+absent. A name EDSM knows without a position is certain to exist: it
+becomes a flight target at the centre of its boxel (the galaxy map finds it
+by name).
 
 *Limits.* At most 50 requests per service and UTC day (a 50 ly survey needs
 about five), at most 20 Spansh pages (10 000 systems) per shell. The

@@ -25,7 +25,7 @@ from . import netgate
 from . import shells
 from .boxelplan import K_EMPTY, K_PROBE, Planner, Target, corridor_targets
 from .deepspace import tritium_systems
-from .sysdb import CURRENT, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN
+from .sysdb import CURRENT, Q_CONFIRMED, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN
 from .state import CFG, ST, cfg_bool, cfg_int, cfg_str, get_masscodes, logger
 from . import cockpit
 from . import maintenance
@@ -414,6 +414,10 @@ def _copy_route_target() -> None:
 EDD_ID64_META = "edd_id64_410"     # EDD read again with id64s (4.10)
 EDD_FILL_ROUNDS = 3
 EDD_WALK_MAX = 64          # numbers walked upwards per boxel in one lookup
+EDSM_NAMES_MAX = 40        # H3 #5: probe names in the one EDSM request (as the route check)
+EDSM_NAMES_TTL_S = 14 * 86400
+EDSM_NAMES_PER_DAY = 10    # of EDSM's 50 a day - the shells of the sphere come first
+EDSM_NAMES_LABEL = "systems/names"
 
 
 def _plan_build() -> Dict[str, Any]:
@@ -498,6 +502,70 @@ def _edd_walk_up(look, frontier: List[int]) -> List[Dict[str, Any]]:
     return found
 
 
+def _fill_probes(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Look the probe candidates up before they are flown to - EDDiscovery's
+    file first (local, a few rounds: filling gaps raises a boxel's maximum,
+    which brings new probes above it), then EDSM by name (H3 #5, one
+    request). The plan is built again after each find."""
+    for _round in range(EDD_FILL_ROUNDS):
+        if not _edd_fill(plan["probe"]):
+            break
+        plan = _plan_build()
+    if _edsm_names(plan["probe"]):
+        plan = _plan_build()
+    return plan
+
+
+def _edsm_names(probe: Sequence[Target]) -> int:
+    """
+    H3 #5: probe candidates EDSM knows by name. Some systems are on EDSM with
+    their name only - reported from the time before the journal, without a
+    position (what EDSM-RSE shows). Their existence is certain, so they are
+    no probe but a flight target: stored with the centre of their boxel as
+    an estimated position (from the id64), "existence confirmed". Names EDSM
+    knows with a position are stored like any EDSM system.
+
+    Fair use: ONE request with up to EDSM_NAMES_MAX names (the same bundled
+    request as the route check), through the gateway (pacing, daily cap,
+    offline switch, EDSM switch), at most EDSM_NAMES_PER_DAY of EDSM's daily
+    50 (the sphere's shells come first); a name asked is not asked again for
+    EDSM_NAMES_TTL_S - also when EDSM did not know it (which does not make
+    it absent). Returns the number of names EDSM knew.
+    """
+    if not cfg_bool(CFG["src_edsm"], True) or ST.sources is None or ST.db is None:
+        return 0
+    edsm = ST.sources.sources.get("edsm")
+    if edsm is None or not hasattr(edsm, "lookup"):
+        return 0
+    _log_net(_flush_net_log())                  # today's count includes the last requests
+    with ST.lock:
+        asked = ST.db.edsm_names_asked()
+        today = ST.db.external_calls_since(time.time() // 86400 * 86400, "edsm", EDSM_NAMES_LABEL)
+    if today >= EDSM_NAMES_PER_DAY:
+        return 0
+    todo = [t for t in probe if t.name and t.id64 and t.name not in asked][:EDSM_NAMES_MAX]
+    if not todo:
+        return 0
+    res = edsm.lookup([t.name for t in todo], endpoint=EDSM_NAMES_LABEL)
+    _log_net(_flush_net_log())
+    if res is None:
+        return 0                                # not asked now (offline, cap, rest)
+    with_pos = [dict(res[t.name.lower()], source=edsm.name) for t in todo
+                if t.name.lower() in res and res[t.name.lower()].get("x") is not None]
+    name_only = [t for t in todo if t.name.lower() in res and res[t.name.lower()].get("x") is None]
+    with ST.lock:
+        ST.db.edsm_names_mark([t.name for t in todo], EDSM_NAMES_TTL_S)
+        for t in name_only:
+            ST.db.upsert(t.name, id64=t.id64, quality=Q_CONFIRMED, source=edsm.name, commit=False)
+        ST.db.cx.commit()
+    if with_pos:
+        _store_rows(with_pos)
+    logger.info("EDSM by name: %d of %d probe candidates known - %d without coordinates "
+                "(flight targets now, at the boxel centre), %d with", len(with_pos) + len(name_only),
+                len(todo), len(name_only), len(with_pos))
+    return len(with_pos) + len(name_only)
+
+
 def _rebuild_plan() -> None:
     if not (ST.center and ST.planner):
         return
@@ -513,13 +581,7 @@ def _rebuild_plan() -> None:
         uithread._ui(statswin._stats_window_refresh)
         _maybe_extend()
         return
-    plan = _plan_build()
-    # filling gaps raises a boxel's maximum, which brings new probes above
-    # it - those are looked up too, a few rounds at most
-    for _round in range(EDD_FILL_ROUNDS):
-        if not _edd_fill(plan["probe"]):
-            break
-        plan = _plan_build()
+    plan = _fill_probes(_plan_build())
     with ST.lock:
         ST.stats = ST.planner.statistics(plan)
     ST.flight = plan["flight"]

@@ -276,6 +276,13 @@ CREATE TABLE IF NOT EXISTS fetched_shells (
 );
 CREATE INDEX IF NOT EXISTS fetched_shells_svc ON fetched_shells(service, expires_at);
 
+-- 4.12 (H3 #5): probe names asked at EDSM by name, and until when that counts.
+-- A name EDSM did not know is NOT absent - it is only not asked again soon.
+CREATE TABLE IF NOT EXISTS edsm_names (
+    name       TEXT PRIMARY KEY,
+    expires_at REAL NOT NULL
+);
+
 -- 4.8 (C1): more than one commander on one PC. What is KNOWN about a system
 -- or body (positions, bodies, signals, rings, hotspots, finds) stays shared in
 -- the tables above; what each commander EXPLORED (visited, FSS, scanned,
@@ -703,9 +710,14 @@ class SystemDB:
             self.cx.commit()
         return len(rows)
 
-    def external_calls_since(self, since: float,
-                             service: Optional[str] = None) -> int:
-        if service:
+    def external_calls_since(self, since: float, service: Optional[str] = None,
+                             endpoint: Optional[str] = None) -> int:
+        """Requests in the call log since an epoch time - of one service and,
+        when given, one endpoint label."""
+        if service and endpoint:
+            r = self.cx.execute("SELECT COUNT(*) FROM external_calls "
+                                "WHERE ts>=? AND service=? AND endpoint=?", (since, service, endpoint))
+        elif service:
             r = self.cx.execute("SELECT COUNT(*) FROM external_calls "
                                 "WHERE ts>=? AND service=?", (since, service))
         else:
@@ -729,6 +741,20 @@ class SystemDB:
             " fetched_at, expires_at, systems) VALUES (?,?,?,?,?,?,?,?,?)",
             (service, float(center[0]), float(center[1]), float(center[2]),
              float(r_min), float(r_max), now, now + float(ttl_s), int(systems)))
+        self.cx.commit()
+
+    def edsm_names_asked(self, now: Optional[float] = None) -> Set[str]:
+        """H3 #5: the probe names asked at EDSM whose answer still counts."""
+        now = time.time() if now is None else now
+        return {r["name"] for r in self.cx.execute(
+            "SELECT name FROM edsm_names WHERE expires_at > ?", (now,))}
+
+    def edsm_names_mark(self, names: Sequence[str], ttl_s: float,
+                        now: Optional[float] = None) -> None:
+        """H3 #5: these names were asked at EDSM - not again for ttl_s."""
+        now = time.time() if now is None else now
+        self.cx.executemany("INSERT OR REPLACE INTO edsm_names(name, expires_at) VALUES (?,?)",
+                            [(n, now + float(ttl_s)) for n in names if n])
         self.cx.commit()
 
     def valid_shells(self, service: str, now: Optional[float] = None

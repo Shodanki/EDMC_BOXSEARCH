@@ -60,6 +60,12 @@ class Resp:
         pass
 
 
+def shell_requests():
+    """The shell requests of the session log - the name lookups (route check,
+    4.12 EDSM by name for probe candidates) are counted where they are tested."""
+    return [x for x in Sess.log if x[0] != "edsm-names"]
+
+
 class Sess:
     log = []
 
@@ -120,14 +126,14 @@ with tempfile.TemporaryDirectory() as d:
     # 1) start: shell 0-25 from both; plan finds nothing left (fake names)
     #    -> extends once more to 25-50, then stops at the radius
     survey._start_worker()
-    check(Sess.log[:2] == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)],
+    check(shell_requests()[:2] == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)],
           "start: first shell 0-25 ly from Spansh and EDSM")
-    check(ST.horizon == 25.0 and len(Sess.log) == 2 and ST.flight,
+    check(ST.horizon == 25.0 and len(shell_requests()) == 2 and ST.flight,
           "targets left inside 25 ly: the next shell waits")
     ST.cur_pos = (16.0, 0.0, 0.0)
     planning._maybe_extend()
-    check(ST.horizon == 50.0 and ("spansh", 25.0, 50.0) in Sess.log
-          and ("edsm", 25.0, 50.0) in Sess.log and len(Sess.log) == 4,
+    check(ST.horizon == 50.0 and ("spansh", 25.0, 50.0) in shell_requests()
+          and ("edsm", 25.0, 50.0) in shell_requests() and len(shell_requests()) == 4,
           "10 ly from the edge -> next shell 25-50, then stop at 50 ly")
     ST.cur_pos = (0.0, 0.0, 0.0)
     n_db = ST.db.cx.execute("SELECT COUNT(*) FROM systems").fetchone()[0]
@@ -135,13 +141,13 @@ with tempfile.TemporaryDirectory() as d:
     check(n_db == inside, "every system of the sphere stored once (%d)" % inside)
     check(len(ST.db.valid_shells("edsm")) == 2 and len(ST.db.valid_shells("spansh")) == 2,
           "both shells remembered per service")
-    calls = ST.db.external_calls_since(0)
-    check(calls == 4, "call log: 4 requests")
+    calls = ST.db.external_calls_since(0) - ST.db.external_calls_since(0, "edsm", "systems/names")
+    check(calls == 4, "call log: 4 shell requests")
 
     # 2) EDMC restart with the survey running: valid shells, no request
     Sess.log.clear()
     planning._resume_worker()
-    check(Sess.log == [] and ST.horizon == 50.0, "restart: shells still valid - no request")
+    check(shell_requests() == [] and ST.horizon == 50.0, "restart: shells still valid - no request")
 
     # 3) shells expire -> restart plans nothing until asked, then asks shell 1
     #    (F2: no phantom plan with radius 0, even with no position known)
@@ -153,7 +159,7 @@ with tempfile.TemporaryDirectory() as d:
     ST.planner.build = lambda c, r, **kw: seen.append(r) or real_build(c, r, **kw)
     planning._resume_worker()
     ST.planner.build = real_build
-    check(Sess.log == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)]
+    check(shell_requests() == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)]
           and ST.horizon == 25.0 and ST.flight,
           "expired: asked again, nearest shell first, then a real plan")
     check(seen and min(seen) > 0, "no plan built with radius 0 (phantom probes)")
@@ -162,21 +168,21 @@ with tempfile.TemporaryDirectory() as d:
     # 4) reload button: the shells up to the horizon again - and no further (F3)
     Sess.log.clear()
     planning._reload_online()
-    check(Sess.log == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)],
+    check(shell_requests() == [("spansh", 0.0, 25.0), ("edsm", 0.0, 25.0)],
           "reload: shells up to the horizon asked again, not beyond")
 
     # 5) offline: nothing sent, the plan uses local data to the radius
     Sess.log.clear()
     ST.net.offline = True
     survey._start_worker()
-    check(Sess.log == [] and ST.horizon == 50.0, "offline: no request, horizon = sphere")
+    check(shell_requests() == [] and ST.horizon == 50.0, "offline: no request, horizon = sphere")
     ST.net.offline = False
 
     # 6) a new survey 3 ly away: its shells count as fetched (>= 90 %)
     Sess.log.clear()
     ST.center = (3.0, 0.0, 0.0)
     survey._start_worker()
-    check(not any(lo == 0.0 for _, lo, _ in Sess.log) and ST.horizon >= 25.0,
+    check(not any(lo == 0.0 for _, lo, _ in shell_requests()) and ST.horizon >= 25.0,
           "survey 3 ly away: the valid 0-25 shell is not asked again")
 
     # 7) EDSM switched off: only Spansh asked
@@ -184,7 +190,7 @@ with tempfile.TemporaryDirectory() as d:
     cfg[state.CFG["src_edsm"]] = False
     ST.center = (200.0, 0.0, 0.0)
     survey._start_worker()
-    check(Sess.log and all(s == "spansh" for s, _, _ in Sess.log),
+    check(shell_requests() and all(s == "spansh" for s, _, _ in shell_requests()),
           "EDSM off: only Spansh asked")
     cfg[state.CFG["src_edsm"]] = True
 
@@ -217,7 +223,7 @@ with tempfile.TemporaryDirectory() as d:
     Sess.log.clear()
     ST.center = (400.0, 0.0, 0.0)
     survey._start_worker()
-    check(Sess.log and all(svc == "edsm" for svc, _, _ in Sess.log),
+    check(shell_requests() and all(svc == "edsm" for svc, _, _ in shell_requests()),
           "EDD current: only EDSM asked, Spansh's data from EDD")
     check(any(r == (0.0, 25.0) for r in edd.reads),
           "EDD read locally for the shell instead")
@@ -230,7 +236,7 @@ with tempfile.TemporaryDirectory() as d:
     Sess.log.clear()
     ST.center = (800.0, 0.0, 0.0)
     survey._start_worker()
-    check(ST.edd_pending and ("spansh", 0.0, 25.0) in Sess.log,
+    check(ST.edd_pending and ("spansh", 0.0, 25.0) in shell_requests(),
           "EDD busy: noted; not current any more, so Spansh is asked")
     edd.busy = False
     ST.edd_next_try = 0.0
@@ -249,7 +255,7 @@ with tempfile.TemporaryDirectory() as d:
     # fetched at all - see shells.needs_next)
     ST.cur_pos = (1245.0, 0.0, 0.0)
     survey._start_worker()
-    check(Sess.log == [] and ST.horizon == ST.radius,
+    check(shell_requests() == [] and ST.horizon == ST.radius,
           "daily cap %d reached: no request, local plan" % netgate.DAILY_CAP["edsm"])
     check("50 of 50" in planning._external_today_line(), "statistics show the count")
 

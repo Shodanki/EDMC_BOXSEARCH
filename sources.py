@@ -108,17 +108,18 @@ class EDSMSource(Source):
             out[s["name"]] = {"name": s["name"], "x": float(c["x"]), "y": float(c["y"]),
                               "z": float(c["z"]), "id64": s.get("id64")}
 
-    def lookup(self, names: Sequence[str]) -> Optional[Dict[str, Dict]]:
+    def lookup(self, names: Sequence[str], endpoint: str = "systems") -> Optional[Dict[str, Dict]]:
         """
         I1 route check: ONE request for several systems by name
         (systemName[] repeated). Returns {lower-case name: row} of those EDSM
         knows - with coordinates where it has them - or None when EDSM was
         not asked (offline, resting, daily cap) or the answer failed.
+        `endpoint` is the label in the call log (H3 #5 counts its own).
         """
         names = [n for n in names if n]
         if not names:
             return {}
-        resp = self.gw.request("edsm", "GET", EDSM_SYSTEMS, "systems", timeout=self.timeout,
+        resp = self.gw.request("edsm", "GET", EDSM_SYSTEMS, endpoint, timeout=self.timeout,
                                params={"systemName[]": list(names), "showCoordinates": 1,
                                        "showId": 1},
                                headers={"Accept": "application/json"})
