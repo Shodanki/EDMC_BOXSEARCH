@@ -39,8 +39,8 @@ import sqlite3
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from procgen import (MASSCODES, SectorRegistry, decode_id64, make_name,
-                     parse_boxel_key, parse_name, star_pos)
+from procgen import (MASSCODES, SectorRegistry, boxel_labels, decode_id64,
+                     make_name, parse_boxel_key, parse_name, star_pos)
 from shells import INHABITED, inhabited_event
 
 logger = logging.getLogger(__name__)
@@ -725,13 +725,20 @@ class SystemDB:
                             (p.sector, int(idx[0]), int(idx[1]), int(idx[2])))
 
     def name_from_id64(self, id64: int) -> Optional[str]:
-        """Rebuild the procgen name from an id64 alone (sector must be known)."""
+        """Rebuild the procgen name from an id64 alone - only when the boxel
+        can carry one name. Inside a hand-authored sector the name is that
+        sector's; where the sector's surface cuts the boxel the id64 cannot
+        tell which name the star has, so None (4.10; before, the procedural
+        name was invented there)."""
         try:
             d = decode_id64(id64)
-            sect = self.sectors.name_of(d["sector_idx"])
-            if not sect:
+            per = 128 >> d["mc"]
+            g = tuple(s * per + b for s, b in zip(d["sector_idx"], d["boxel"]))
+            labels = boxel_labels(g, d["mc"], self.sectors.resolve)
+            if len(labels) != 1:
                 return None
-            return make_name(sect, d["mc"], d["boxel"], d["n2"])
+            sect, bx = labels[0]
+            return make_name(sect, d["mc"], bx, d["n2"])
         except Exception:
             return None
 

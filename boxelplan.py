@@ -37,8 +37,9 @@ import math
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from procgen import (MASSCODES, boxel_center, boxel_index_of_coords,
-                     boxel_intersects_sphere, boxel_size,
-                     boxel_prefix, boxels_in_sphere, make_name, parse_name)
+                     boxel_intersects_sphere, boxel_key_of, boxel_labels,
+                     boxel_size, boxel_prefix, boxels_in_sphere,
+                     ha_regions_near, make_name, parse_name)
 from sysdb import SystemDB
 
 K_NEW = "new"
@@ -299,7 +300,23 @@ class Planner:
         boxel_n2 = self.db.boxel_n2_map()
         # neighbourhood reaches one boxel beyond the sphere
         margin = radius + boxel_size(max(masscodes) if masscodes else 0) * 2
-        pmap = ProspectMap(self.db.sphere(center, margin), masscodes)
+        near_rows = self.db.sphere(center, margin)
+        pmap = ProspectMap(near_rows, masscodes)
+        # Names a physical boxel was really seen under (4.10): where the
+        # surface of a hand-authored sector cuts a boxel, its systems carry
+        # either label; a name some source or the journal gave with a
+        # position is proof, so it is tried first.
+        observed: Dict[Tuple[int, Tuple[int, int, int]], List[Tuple[str, Tuple[int, int, int]]]] = {}
+        for r in near_rows:
+            p = parse_name(r["name"])
+            if p is None or r["x"] is None:
+                continue
+            g = boxel_index_of_coords(r["x"], r["y"], r["z"], p.mc)
+            lab = (p.sector, tuple(p.boxel))
+            lst = observed.setdefault((p.mc, g), [])
+            if lab not in lst:
+                lst.append(lab)
+        ha_near = ha_regions_near(center, margin)
         boxel_score: Dict[str, float] = {}
         raw_score: Dict[str, Tuple[int, float]] = {}
         calib = ProspectCalibration()
@@ -350,25 +367,53 @@ class Planner:
             per_sector = 128 >> mc
             for gidx in boxels_in_sphere(mc, center, radius):
                 boxel_total += 1
-                sect_idx = tuple(g // per_sector for g in gidx)
-                sect = self.db.sectors.name_of(sect_idx)
-                if sect is None:
-                    sectors_missing.add(sect_idx)
+                # every label this physical boxel can carry: computed
+                # (procedural sector, hand-authored spheres cutting it) and
+                # seen; a seen label goes first
+                labels = boxel_labels(gidx, mc, self.db.sectors.resolve, ha_near)
+                seen = observed.get((mc, tuple(gidx)), [])
+                labels = ([lab for lab in seen if lab in labels]
+                          + [lab for lab in seen if lab not in labels]
+                          + [lab for lab in labels if lab not in seen])
+                if not labels:
+                    sectors_missing.add(tuple(g // per_sector for g in gidx))
                     continue
-                bx = tuple(g % per_sector for g in gidx)
+                keys = [boxel_key_of(s, mc, b) for s, b in labels]
                 bcenter = boxel_center(gidx, mc)
                 bdist = math.dist(bcenter, center)
-                probe0 = make_name(sect, mc, bx, 0)
-                key = parse_name(probe0).boxel_key
-                known = boxel_n2.get(key, set())
+                key = keys[0]
+                # the system number n2 is shared by all labels of a boxel
+                known: Set[int] = set()
+                for k in keys:
+                    known |= boxel_n2.get(k, set())
+                also = ("also named: " + ", ".join(boxel_prefix(k) for k in keys[1:])
+                        ) if len(keys) > 1 else ""
+
+                def variant(n2: int) -> Tuple[Optional[str], str, bool]:
+                    """(name to probe, its boxel key, already known) - the
+                    first label whose name is neither known nor marked
+                    'not there'; None when every label was ruled out."""
+                    for (s, b), k in zip(labels, keys):
+                        nm = make_name(s, mc, b, n2)
+                        if nm in known_names:
+                            return None, k, True
+                    for (s, b), k in zip(labels, keys):
+                        nm = make_name(s, mc, b, n2)
+                        if nm not in absent:
+                            return nm, k, False
+                    return None, key, False
+
                 raw = pmap.score(mc, gidx)
-                raw_score[key] = (mc, raw)
-                if key in client_boxels and key not in db_boxels:
+                for k in keys:
+                    raw_score[k] = (mc, raw)
+                probe0, key0, _ = variant(0)
+                if any(k in client_boxels for k in keys) and not any(k in db_boxels for k in keys):
                     calib.add(mc, raw, True)
-                elif not known and probe0 in absent:
+                elif not known and probe0 is None:
                     calib.add(mc, raw, False)
 
-                closed = self.db.boxel_end(key) is not None
+                # closed only when every label's list was seen to its end
+                closed = all(self.db.boxel_end(k) is not None for k in keys)
                 if closed:
                     boxel_closed += 1
                     probed.setdefault(mc, []).append(len(known))
@@ -379,8 +424,9 @@ class Planner:
 
                 if not known:
                     boxel_unknown += 1
-                    if include_empty and probe0 not in absent:
-                        targets.append(Target(probe0, K_EMPTY, bdist, mc, key, 0, bcenter))
+                    if include_empty and probe0 is not None:
+                        targets.append(Target(probe0, K_EMPTY, bdist, mc, key0, 0, bcenter,
+                                              detail=also))
                         counts[K_EMPTY] += 1
                     continue
 
@@ -388,18 +434,19 @@ class Planner:
                 for n2 in range(0, top):
                     if n2 in known:
                         continue
-                    nm = make_name(sect, mc, bx, n2)
-                    if nm in absent or nm in known_names:
+                    nm, k, _ = variant(n2)
+                    if nm is None:
                         continue
-                    targets.append(Target(nm, K_GAP, bdist, mc, key, n2, bcenter))
+                    targets.append(Target(nm, K_GAP, bdist, mc, k, n2, bcenter, detail=also))
                     counts[K_GAP] += 1
 
                 if not closed:
-                    for k in range(1, probe_depth + 1):
-                        nm = make_name(sect, mc, bx, top + k)
-                        if nm in absent or nm in known_names:
+                    for d in range(1, probe_depth + 1):
+                        nm, k, _ = variant(top + d)
+                        if nm is None:
                             continue
-                        targets.append(Target(nm, K_PROBE, bdist, mc, key, top + k, bcenter))
+                        targets.append(Target(nm, K_PROBE, bdist, mc, k, top + d, bcenter,
+                                              detail=also))
                         counts[K_PROBE] += 1
 
         # --- 5. outstanding work in systems already visited -----------------
