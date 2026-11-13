@@ -42,59 +42,16 @@ def _rebuild_route() -> None:
     if not (ST.db and ST.cur_id64):
         logger.info("route | no current system known yet")
         return
-    with ST.lock:
-        # C1: what THIS commander still has to do here (knowledge is shared)
-        rows = ST.db.bodies_for(ST.cur_id64, ST.db.view_fid(CURRENT))
-    if not rows and ST.cur_id64 not in cockpit._replayed_for:
-        # Nothing stored for this system - the scans may predate the plugin or
-        # have happened while it was not running. Replay the recent journals
-        # once per system and session: arriving in a fresh, unscanned system
-        # used to trigger a full replay on every route rebuild, which could
-        # never find anything the live journal feed had not already seen.
-        cockpit._replayed_for.add(ST.cur_id64)
-        logger.info("route | no bodies stored for %s, replaying recent journals",
-                    ST.cur_system)
-        d = maintenance._journal_dir()
-        if d:
-            res = ST.db.import_journals(d, max_files=6, lock=ST.lock)
-            logger.info("route | replayed %s", res)
-            with ST.lock:
-                rows = ST.db.bodies_for(ST.cur_id64, ST.db.view_fid(CURRENT))
+    rows = _route_body_rows()
     if not rows:
         logger.info("route | %s has no scanned bodies yet - run a system scan",
                     ST.cur_system)
         uithread._ui(_route_window_refresh)
         return
-    bodies = bodies_from_rows(rows, now=time.time())
-    for b in bodies.values():
-        b.short = shorten(b.name, ST.cur_system or "")
-    try:
-        model = cockpit._get_bio_model()
-        by_id = {r["body_id"]: r for r in rows}
-        for b in bodies.values():
-            r = by_id.get(b.body_id)
-            b.bio_hint = model.hint(r) if r is not None else ""
-    except Exception:
-        logger.debug("bio hints failed", exc_info=True)
+    bodies = _route_bodies(rows)
     filters = [F_ALL] if cfg_bool(CFG["route_all"], False) else get_filters()
     # R2: start the run at the arrival star (default) or with the first body
-    skip_arrival = not cfg_bool(CFG["route_arrival"], True)
-    # R3: riding along on a carrier into a system you have not explored, you
-    # start at the carrier - this visit's route begins at its body, without
-    # the arrival star. Later visits start at the main star again.
-    start = (0.0, 0.0, 0.0)
-    ST.route_from = None
-    ST.route_start_pos = None
-    with ST.lock:
-        r3 = ST.db.route_start(ST.db.view_fid(CURRENT), ST.cur_id64)
-    if r3:
-        at = start_at_body(bodies, r3[0])
-        if at:
-            start, skip_arrival = at, True
-            ST.route_start_pos = at
-            ST.route_from = shorten(r3[1], ST.cur_system or "") if r3[1] else "#%d" % r3[0]
-            logger.info("route | starting at the carrier (%s), not at the main star",
-                        r3[1] or r3[0])
+    start, skip_arrival = _route_start(bodies, not cfg_bool(CFG["route_arrival"], True))
     route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
                        filters=filters, skip_arrival=skip_arrival, start=start)
     ST.route_full = False
@@ -105,14 +62,7 @@ def _rebuild_route() -> None:
         route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
                            filters=[F_ALL], skip_arrival=skip_arrival, start=start)
         ST.route_full = True
-    lost_of = {r["body_id"]: r["lost_what"] for r in rows
-               if "lost_what" in r.keys() and r["lost_what"]}
-    for s in route.stops:
-        if s.body.bio_hint and s.body.wants_bio:
-            s.work = (s.work + " | " if s.work else "") + s.body.bio_hint
-        if s.body.body_id in lost_of:
-            # lost with the ship and not redone yet - worth doing again
-            s.work = "LOST: redo | " + (s.work or "")
+    _route_work_notes(route, rows)
     ST.route = route
     # Restore the ticks for this system, then drop any that no longer refer to
     # a stop on the current route.
@@ -131,6 +81,77 @@ def _rebuild_route() -> None:
     for line in route.lines(limit=8):
         logger.info("route | %s", line)
     uithread._ui(_route_window_refresh)
+
+
+def _route_body_rows():
+    """The bodies THIS commander still has to do here (C1: knowledge is
+    shared). Nothing stored for the system: the scans may predate the plugin
+    or have happened while it was not running - the recent journals are
+    replayed once per system and session (arriving in a fresh, unscanned
+    system used to trigger a full replay on every route rebuild, which could
+    never find anything the live journal feed had not already seen)."""
+    with ST.lock:
+        rows = ST.db.bodies_for(ST.cur_id64, ST.db.view_fid(CURRENT))
+    if not rows and ST.cur_id64 not in cockpit._replayed_for:
+        cockpit._replayed_for.add(ST.cur_id64)
+        logger.info("route | no bodies stored for %s, replaying recent journals",
+                    ST.cur_system)
+        d = maintenance._journal_dir()
+        if d:
+            res = ST.db.import_journals(d, max_files=6, lock=ST.lock)
+            logger.info("route | replayed %s", res)
+            with ST.lock:
+                rows = ST.db.bodies_for(ST.cur_id64, ST.db.view_fid(CURRENT))
+    return rows
+
+
+def _route_bodies(rows) -> Dict[Any, Any]:
+    """The route's bodies with their short names and exobiology hints."""
+    bodies = bodies_from_rows(rows, now=time.time())
+    for b in bodies.values():
+        b.short = shorten(b.name, ST.cur_system or "")
+    try:
+        model = cockpit._get_bio_model()
+        by_id = {r["body_id"]: r for r in rows}
+        for b in bodies.values():
+            r = by_id.get(b.body_id)
+            b.bio_hint = model.hint(r) if r is not None else ""
+    except Exception:
+        logger.debug("bio hints failed", exc_info=True)
+    return bodies
+
+
+def _route_start(bodies, skip_arrival: bool) -> Tuple[Tuple[float, float, float], bool]:
+    """Where the route starts. R3: riding along on a carrier into a system
+    you have not explored, you start at the carrier - this visit's route
+    begins at its body, without the arrival star. Later visits start at the
+    main star again."""
+    start = (0.0, 0.0, 0.0)
+    ST.route_from = None
+    ST.route_start_pos = None
+    with ST.lock:
+        r3 = ST.db.route_start(ST.db.view_fid(CURRENT), ST.cur_id64)
+    if r3:
+        at = start_at_body(bodies, r3[0])
+        if at:
+            start, skip_arrival = at, True
+            ST.route_start_pos = at
+            ST.route_from = shorten(r3[1], ST.cur_system or "") if r3[1] else "#%d" % r3[0]
+            logger.info("route | starting at the carrier (%s), not at the main star",
+                        r3[1] or r3[0])
+    return start, skip_arrival
+
+
+def _route_work_notes(route, rows) -> None:
+    """Add the exobiology hint and "LOST: redo" to the stops' work."""
+    lost_of = {r["body_id"]: r["lost_what"] for r in rows
+               if "lost_what" in r.keys() and r["lost_what"]}
+    for s in route.stops:
+        if s.body.bio_hint and s.body.wants_bio:
+            s.work = (s.work + " | " if s.work else "") + s.body.bio_hint
+        if s.body.body_id in lost_of:
+            # lost with the ship and not redone yet - worth doing again
+            s.work = "LOST: redo | " + (s.work or "")
 
 
 _route_win: Optional[tk.Toplevel] = None

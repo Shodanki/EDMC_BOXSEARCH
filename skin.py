@@ -64,28 +64,9 @@ def _theme_colours() -> Dict[str, str]:
 
     # 2. live values off the plugin frame
     if not bg and panel._frame is not None:
-        for widget in (panel._frame, getattr(panel._frame, "master", None)):
-            if widget is None:
-                continue
-            try:
-                v = str(widget.cget("background"))
-            except Exception:
-                continue
-            if v:
-                bg = v
-                break
+        bg = _frame_background()
     if not fg and panel._frame is not None:
-        try:
-            for child in panel._frame.winfo_children():
-                try:
-                    v = str(child.cget("foreground"))
-                except Exception:
-                    continue
-                if v:
-                    fg = v
-                    break
-        except Exception:
-            pass
+        fg = _frame_foreground()
 
     # 3. a readable pair rather than Tk's defaults
     if not bg:
@@ -93,6 +74,35 @@ def _theme_colours() -> Dict[str, str]:
     if not fg or fg == bg:
         fg = "#ffffff" if _is_dark(bg) else "#000000"
     return {"bg": bg, "fg": fg}
+
+
+def _frame_background() -> str:
+    """The background of the plugin frame or its master, "" if neither says."""
+    for widget in (panel._frame, getattr(panel._frame, "master", None)):
+        if widget is None:
+            continue
+        try:
+            v = str(widget.cget("background"))
+        except Exception:
+            continue
+        if v:
+            return v
+    return ""
+
+
+def _frame_foreground() -> str:
+    """The text colour of the first child of the plugin frame that has one."""
+    try:
+        for child in panel._frame.winfo_children():
+            try:
+                v = str(child.cget("foreground"))
+            except Exception:
+                continue
+            if v:
+                return v
+    except Exception:
+        pass
+    return ""
 
 
 def _is_dark(colour: str) -> bool:
