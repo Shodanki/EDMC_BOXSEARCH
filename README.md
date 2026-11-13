@@ -133,7 +133,18 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 4715 | EDMC entry point: panel, windows, journal handling, all UI | all of the below |
+| `load.py` | 172 | EDMC entry point: start, stop, carrier data; hands the other hooks to the modules below | the plugin layer |
+| `state.py` | 282 | Version, settings keys, the shared state of the survey | the helpers below |
+| `uithread.py` | 93 | Worker threads, and their one way to the window (EDMC's threading rule) | `state`, `panel` |
+| `journal.py` | 571 | EDMC's journal and Status.json hooks: one handler per event | the plugin layer |
+| `planning.py` | 713 | Local-first data flow, online shells, EDD lookups, the plan | the plugin layer |
+| `survey.py` | 588 | Start and stop, targets, galaxy map checks, queues, work timings | the plugin layer |
+| `cockpit.py` | 356 | Briefing, route check, fuel-scoop plan, cockpit overlay | the plugin layer |
+| `panel.py` | 365 | The panel in EDMC's window | the plugin layer |
+| `routewin.py` | 793 | In-system route and its window with the system map | the plugin layer |
+| `statswin.py`, `probewin.py`, `miningwin.py` | 691 | The statistics, probe and mining/atlas windows | the plugin layer |
+| `prefs.py` | 371 | The plugin's page in EDMC's settings | the plugin layer |
+| `skin.py`, `updater.py`, `fislaunch.py`, `maintenance.py` | 693 | Window colours; update check; starting the FIS; journal import, export | the plugin layer |
 | `sysdb.py` | 3133 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
 | `sysroute.py` | 980 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
 | `boxelplan.py` | 999 | Sphere planner: gaps, probes, prospecting score, statistics, labels of named sectors | `procgen`, `sysdb` |
@@ -151,8 +162,12 @@ on first run and is **your data** - never overwrite it on an update.
 | `regionmap/` | | Codex regions of the galaxy (third-party, MIT, see its `SOURCE.md`) | — |
 | `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
 
-Only `load.py` touches tkinter or the EDMC API; everything else is plain
-Python with no third-party dependencies and can be run and tested on its own.
+Only the plugin layer (`load.py` and the modules split from it in 4.11, from
+`state.py` to `maintenance.py`) touches tkinter or the EDMC API; the helpers
+from `sysdb.py` on are plain Python with no third-party dependencies and can
+be run and tested on its own. The plugin imports its modules relatively, as
+members of its own package, so no module name can clash with another
+plugin's.
 `python procgen.py` runs the maths self test and should print `failures: 0`.
 
 ### Suggested `.gitignore`
@@ -2426,7 +2441,9 @@ tag, so the two have to be set together or the notice lies.
 
 ### Checklist
 
-1. **Bump `VERSION` in `load.py`.** It is the single source of truth:
+1. **Bump `VERSION` in `state.py`** (`load.py` re-exports it; up to 4.10 it
+   lived in `load.py`) and `__version__` in `FIS/fis/__init__.py` to the same
+   number - `tests/package_import.py` checks that they match:
 
    ```python
    VERSION = "4.1.0"

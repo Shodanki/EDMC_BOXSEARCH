@@ -17,6 +17,7 @@ Both ways EDMC loads a plugin are checked, each in a fresh interpreter:
     python tests/package_import.py      (from the plugin folder)
 """
 import os
+import re
 import subprocess
 import sys
 
@@ -86,5 +87,14 @@ def run(name, script):
 
 run("EDMC's normal import: <folder>.load as a package", NORMAL)
 run("EDMC's fallback: load.py by path registers its own package", FALLBACK)
+
+# the plugin and the FIS are released together: one version number
+with open(os.path.join(ROOT, "state.py"), encoding="utf-8") as fh:
+    plugin_v = re.search(r'^VERSION = "([^"]+)"', fh.read(), re.M).group(1)
+with open(os.path.join(ROOT, "FIS", "fis", "__init__.py"), encoding="utf-8") as fh:
+    fis_v = re.search(r'^__version__ = "([^"]+)"', fh.read(), re.M).group(1)
+same = plugin_v == fis_v and re.fullmatch(r"\d+\.\d+\.\d+", plugin_v) is not None
+fails += 0 if same else 1
+print("  [%s] plugin %s and FIS %s: the same SemVer version" % ("OK" if same else "FAIL", plugin_v, fis_v))
 print("package import: %s" % ("all OK" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)
