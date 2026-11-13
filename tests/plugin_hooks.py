@@ -160,6 +160,10 @@ try:
         except Exception:
             ok = False
         check(ok, "a malformed event does not raise out of journal_entry")
+        check(ST.cur_pos == (200.0, 0.0, 0.0),
+              "a malformed StarPos is not taken as the position (was up to 5.0 run 1)")
+        row = ST.db.system("Hook E")
+        check(row is None or row["x"] is None, "and not stored as coordinates")
 
         # 6b) briefing (what the overlay shows before a jump), own data only
         calls.clear()
@@ -192,8 +196,6 @@ try:
         # 6d) survey start / queue pruning / sphere end (offline: no request)
         status = []
         load._set_status = status.append
-        je({"event": "Location", "StarSystem": "Hook D", "SystemAddress": 1004,
-            "StarPos": [200.0, 0.0, 0.0]})     # step 6 left a garbage position behind
         ST.planner = Planner(ST.db)
         ST.net.offline = True
         load._radius_var = mock.Mock(get=lambda: "40")

@@ -40,7 +40,7 @@ import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from procgen import (MASSCODES, SectorRegistry, decode_id64, make_name,
-                     parse_boxel_key, parse_name)
+                     parse_boxel_key, parse_name, star_pos)
 from shells import INHABITED, inhabited_event
 
 logger = logging.getLogger(__name__)
@@ -1686,8 +1686,8 @@ class SystemDB:
             if inhabited_event(entry):
                 n += self.mark_inhabited(entry.get("StarSystem"), entry.get("SystemAddress"))
             if ev in ("FSDJump", "Location", "CarrierJump"):
-                pos = entry.get("StarPos")
-                if entry.get("StarSystem") and pos and len(pos) >= 3:
+                pos = star_pos(entry.get("StarPos"))
+                if entry.get("StarSystem") and pos:
                     self.upsert(entry["StarSystem"], pos[0], pos[1], pos[2],
                                 id64=entry.get("SystemAddress"), quality=Q_JOURNAL,
                                 source="journal", visited=True)
@@ -1717,8 +1717,8 @@ class SystemDB:
 
             elif ev in ("NavRoute", "Route"):
                 for hop in entry.get("Route") or []:
-                    pos = hop.get("StarPos")
-                    if hop.get("StarSystem") and pos and len(pos) >= 3:
+                    pos = star_pos(hop.get("StarPos"))
+                    if hop.get("StarSystem") and pos:
                         self.upsert(hop["StarSystem"], pos[0], pos[1], pos[2],
                                     id64=hop.get("SystemAddress"), quality=Q_JOURNAL,
                                     source="navroute", star_class=hop.get("StarClass"),
@@ -1914,17 +1914,16 @@ class SystemDB:
 
             elif ev == "CarrierLocation" and self._own_carrier_event(ev, entry):
                 nm = entry.get("StarSystem")
-                pos = entry.get("StarPos")
+                pos = star_pos(entry.get("StarPos"))
                 a = entry.get("SystemAddress")
                 if nm:
-                    if pos and len(pos) >= 3:
+                    if pos:
                         self.upsert(nm, pos[0], pos[1], pos[2], id64=a,
                                     quality=Q_JOURNAL, source="carrier",
                                     visited=(ev == "CarrierJump"))
                     else:
                         self.upsert(nm, id64=a, quality=Q_CONFIRMED, source="carrier")
-                    self.set_carrier(nm, a,
-                                     tuple(pos[:3]) if pos and len(pos) >= 3 else None)
+                    self.set_carrier(nm, a, pos)
                     n += 1
 
             elif ev == "CarrierStats" and entry.get("CarrierType", "FleetCarrier") == "FleetCarrier":

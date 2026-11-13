@@ -33,6 +33,8 @@ import os
 import time
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
+from procgen import star_pos
+
 __all__ = ["journal_files", "newest_location", "last_body", "approached_bodies", "WorkMeter",
            "replay_work", "replay_fuel", "read_events"]
 
@@ -100,9 +102,9 @@ def newest_location(folder: Optional[str]
             continue
         if e.get("event") not in LOCATION_EVENTS:
             continue
-        pos = e.get("StarPos") or []
-        if e.get("StarSystem") and e.get("SystemAddress") and len(pos) >= 3:
-            return (e["StarSystem"], e["SystemAddress"], (pos[0], pos[1], pos[2]))
+        pos = star_pos(e.get("StarPos"))
+        if e.get("StarSystem") and e.get("SystemAddress") and pos:
+            return (e["StarSystem"], e["SystemAddress"], pos)
     return None
 
 

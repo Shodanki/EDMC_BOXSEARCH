@@ -38,7 +38,7 @@ _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
     sys.path.append(_PLUGIN_DIR)
 
-from procgen import MASSCODES, boxel_prefix, parse_name        # noqa: E402
+from procgen import MASSCODES, boxel_prefix, parse_name, star_pos  # noqa: E402
 from sysdb import SystemDB, Q_ESTIMATE, Q_EXTERNAL, Q_JOURNAL, Q_UNKNOWN   # noqa: E402
 from sysdb import CMDR_READY, CURRENT, LOSS_REPLAY, PLAN        # noqa: E402
 from sources import SourceManager                              # noqa: E402
@@ -1183,9 +1183,8 @@ def _note_navroute(route: Any) -> None:
     """F1: keep the plotted route (EDMC hands NavRoute with its Route)."""
     hops = []
     for h in route or []:
-        pos = h.get("StarPos")
         hops.append((h.get("StarSystem") or "", h.get("StarClass"),
-                     tuple(pos[:3]) if pos and len(pos) >= 3 else None))
+                     star_pos(h.get("StarPos"))))
     ST.navroute = hops
     if len(hops) > 2:
         sl = scoop_line(_scoop_plan())
@@ -3175,9 +3174,9 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                 ST.last_body_name = ""
             ST.cur_system = entry.get("StarSystem")
             ST.cur_id64 = entry.get("SystemAddress")
-            pos = entry.get("StarPos")
-            if pos and len(pos) >= 3:
-                ST.cur_pos = (pos[0], pos[1], pos[2])
+            pos = star_pos(entry.get("StarPos"))
+            if pos:
+                ST.cur_pos = pos
             if ST.active:
                 _prune_queues()
                 _resort_queues()
@@ -3225,9 +3224,9 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
             if entry.get("StarSystem"):
                 ST.cur_system = entry["StarSystem"]
                 ST.cur_id64 = entry.get("SystemAddress") or ST.cur_id64
-                pos = entry.get("StarPos")
-                if pos and len(pos) >= 3:
-                    ST.cur_pos = (pos[0], pos[1], pos[2])
+                pos = star_pos(entry.get("StarPos"))
+                if pos:
+                    ST.cur_pos = pos
                 ST.awaiting_position = False
             if not ST.awaiting_position:
                 _run_async(_recheck_route, "game restart", label="route recheck")
