@@ -376,11 +376,11 @@ def _selftest() -> None:
                           sig_bio=2, genera=["Brain Trees", "Bacterium"])
     assert lines[1][0].startswith("NOMAD PARKED"), lines
     assert "to find: Bacterium" in lines[0][0], lines
-    assert not any(l[0].startswith("Roseum Brain Tree ") and "/3" not in l[0]
-                   for l in lines), lines
+    assert not any(ln[0].startswith("Roseum Brain Tree ") and "/3" not in ln[0]
+                   for ln in lines), lines
     # every point names its absolute course next to the turn
-    assert all(" brg " in l[0] for l in lines[1:]), lines
-    assert all(len(l[0]) <= 44 for l in lines[1:]), lines   # the points; the head may run on
+    assert all(" brg " in ln[0] for ln in lines[1:]), lines
+    assert all(len(ln[0]) <= 44 for ln in lines[1:]), lines   # the points; the head may run on
     assert len(compass_lines({"lat": 0.0, "lon": 0.0, "heading": 0.0}, [
         {"ts": "1", "kind": "codex", "label": "Very long find name of a site", "detail": None,
          "lat": 0.0, "lon": -1.0}], 400000.0)[1][0]) <= 44
@@ -405,7 +405,7 @@ def _selftest() -> None:
     lost = ["map", "bio:Stratum Tectonicas", "bio:Bacterium Cerbrus"]
     bad = compass_lines(here, lm, 400000.0, sig_bio=2, orbit=True, lost=lost)
     assert bad[0][0].startswith("KNOWN POINTS  bio 0 done, 2 lost - redo"), bad
-    st_row = [l for l in bad if l[0].startswith("Stratum Tecton LOST")]
+    st_row = [ln for ln in bad if ln[0].startswith("Stratum Tecton LOST")]
     assert st_row and "brg 090 ^ ahead" in st_row[0][0], bad
     assert st_row[0][1] == "#FFB23E", st_row
     # one redo started: that species is open again (n/3), the other still lost
@@ -413,7 +413,7 @@ def _selftest() -> None:
                "detail": "Stratum", "lat": 0.0, "lon": 0.02})
     redo = compass_lines(here, lm, 400000.0, sig_bio=2, orbit=True, lost=lost)
     assert redo[0][0] == "KNOWN POINTS  bio 0 done, 1 open, 1 lost", redo   # 44 chars
-    assert any(l[0].startswith("Stratum Tectoni 1/3") for l in redo), redo
+    assert any(ln[0].startswith("Stratum Tectoni 1/3") for ln in redo), redo
     # the head never runs past 44 characters - what gives way, in order
     assert head_line("NAV", 2, signals=3) == "NAV  bio 2 done | 3 signals"
     h = head_line("KNOWN POINTS", 1, 1, 2, ["Bacterium", "Fungoida", "Stratum"], 5)
@@ -442,7 +442,7 @@ def _selftest() -> None:
     s = body_state(rh)["ship"]
     assert s and s["hover"] and s["lat"] == -26.05, s
     lines = compass_lines({"lat": -26.06, "lon": 143.61, "heading": 0}, rh, 492617.0)
-    assert any(l[0].startswith("SHIP (hover)") for l in lines), lines
+    assert any(ln[0].startswith("SHIP (hover)") for ln in lines), lines
     assert body_state(rh + [{"ts": "2", "kind": "srv_in", "label": "SRV Rhino",
                              "detail": None, "lat": 0.0, "lon": 0.0}])["ship"] is None
     # on foot from the Rhino and back into it: the ship still hovers
@@ -465,6 +465,7 @@ def _selftest() -> None:
                           "lat": -26.2, "lon": 143.7}])["ship"]
     assert s["lat"] == -26.2 and s["kind"] == "touchdown", s
     # Rhino rigs: tonnes close in time and place are one rig; numbered per launch
+
     def iso(sec):
         return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(1794330000 + sec))
 

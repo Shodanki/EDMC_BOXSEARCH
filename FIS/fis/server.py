@@ -79,8 +79,8 @@ class App:
     def _leg_ls(self, id64: int, a: str, b: str, at: float) -> Optional[float]:
         """Distance body a -> body b at time `at`, from the plugin's orbits."""
         try:
-            return self.model.plugin().sysroute.leg_distance_ls(self.db.bodies_of(int(id64)),
-                                                           a, b, at=at)
+            sysroute = self.model.plugin().sysroute
+            return sysroute.leg_distance_ls(self.db.bodies_of(int(id64)), a, b, at=at)
         except Exception:
             return None
 
@@ -584,9 +584,19 @@ class Handler(BaseHTTPRequestHandler):
         if origin and origin != "http://" + host:
             return False
         if not self.app.cfg.lan:
-            name = host.rsplit(":", 1)[0] if not host.endswith("]") else host
-            return name in self.LOCAL_HOSTS
+            return self._local_host()
         return self._authorised({})
+
+    def _local_host(self) -> bool:
+        """The Host header names this PC (127.0.0.1, localhost, [::1]). A page
+        of another site that re-points its own name at 127.0.0.1 (DNS
+        rebinding) still sends its own name and is refused. No Host at all
+        (HTTP/1.0 tools) cannot come from a browser and is let through."""
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return True
+        name = host.rsplit(":", 1)[0] if not host.endswith("]") else host
+        return name in self.LOCAL_HOSTS
 
     def _post_favourite(self, raw: bytes) -> None:
         if not self._page_write_ok():
@@ -710,6 +720,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._too_many(wait)
         url = urlparse(self.path)
         qs = parse_qs(url.query)
+        if not self.app.cfg.lan and not self._local_host():
+            # DNS rebinding: refused, but not counted for the brake - every
+            # such request comes from 127.0.0.1, and the brake would then
+            # lock out the commander's own browser too
+            return self._error(403, "this PC only - open http://127.0.0.1:%d/" % self.app.cfg.port)
         if not self._authorised(qs):
             self._note_fail()
             return self._error(401, "token required")

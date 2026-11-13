@@ -15,7 +15,7 @@ Reads the journal only.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from . import fleet as fl
 from .live import parse_ts

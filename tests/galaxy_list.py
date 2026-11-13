@@ -44,7 +44,6 @@ except ImportError:
         sys.modules[m] = mock.MagicMock()
 
 import load  # noqa: E402
-import procgen  # noqa: E402
 from boxelplan import K_GAP, K_PROBE, Planner, Target  # noqa: E402
 from sources import EDDiscoverySource, SourceManager  # noqa: E402
 from sysdb import SystemDB  # noqa: E402

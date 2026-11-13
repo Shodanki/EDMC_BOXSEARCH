@@ -181,8 +181,9 @@ class SpanshSource(Source):
     name = "Spansh"
     priority = 20
     PAGE = 500
-    MAX_PAGES = 20         # per shell: 10 000 systems, far more than a 25 ly
-                           # shell holds outside the core (fair use)
+    # per shell: 10 000 systems, far more than a 25 ly shell holds outside
+    # the core (fair use)
+    MAX_PAGES = 20
 
     def __init__(self, gateway: Gateway, timeout: int = 40):
         self.gw = gateway

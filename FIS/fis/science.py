@@ -23,7 +23,7 @@ language (web/js/views/planet.js, table REPORT). Sections in reading order:
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 # FSD injection (jumponium) recipes - the raw materials of the game's recipes
 JUMPONIUM = {
@@ -232,6 +232,7 @@ def system_report(rows: List[Dict[str, Any]], sys_out: Dict[str, Any]) -> List[D
     if jp:
         out.append(_f("resources", "sys_jumponium", list=", ".join(jp[:6]), level="good"))
     # notable orbits and bodies
+
     def lst(xs):
         return ", ".join(xs[:6]) + (" …" if len(xs) > 6 else "")
     ecc = [s(r) for r in planets if (r.get("ecc") or 0) >= ECC_HIGH]
@@ -240,7 +241,8 @@ def system_report(rows: List[Dict[str, Any]], sys_out: Dict[str, Any]) -> List[D
     fast = [s(r) for r in planets if r.get("period") and 0 < abs(r["period"]) < ORBIT_FAST_S]
     if fast:
         out.append(_f("notable", "sys_fast_orbit", list=lst(fast)))
-    spin = [s(r) for r in planets if r.get("rotation") and abs(r["rotation"]) < ROTATION_FAST_S and not r.get("tidal_lock")]
+    spin = [s(r) for r in planets
+            if r.get("rotation") and abs(r["rotation"]) < ROTATION_FAST_S and not r.get("tidal_lock")]
     if spin:
         out.append(_f("notable", "sys_fast_spin", list=lst(spin)))
     close = []

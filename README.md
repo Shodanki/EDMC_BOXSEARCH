@@ -26,8 +26,11 @@ The briefing and the FIS name the codex region - see
 **Licence:** [Mozilla Public License 2.0](LICENSE) since 4.7 - use, change and
 share it freely; whoever passes on a changed file of this project keeps that
 file open under the same licence (files of your own next to it are yours).
-4.6 and earlier were released under MIT and stay MIT. Third-party parts keep
-their own licence: Three.js 0.170.0 (MIT, `FIS/web/vendor/three`),
+4.6 and earlier were released under MIT and stay MIT. The MPL is compatible
+with EDMC's GPL-2.0-or-later: its section 3.3 names the GPL as a "Secondary
+License", and no file of this project carries the "Incompatible With
+Secondary Licenses" notice. Third-party parts keep their own licence:
+Three.js 0.170.0 (MIT, `FIS/web/vendor/three`),
 Project Nayuki's QR Code generator (MIT, `FIS/fis/vendor`), EDTS's sector
 name algorithm by Andy Martin (BSD 3-Clause, `edts_pgnames`) and Ben
 Peddell's region map (MIT, `regionmap`) - origin and licence text in the
@@ -139,10 +142,8 @@ on first run and is **your data** - never overwrite it on an update.
 | `shells.py` | 321 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
 | `procgen.py` | 645 | Name ↔ id64 ↔ boxel maths, sector registry, computed sector names, named sectors over a boxel, self test | `edts_pgnames` |
 | `deepspace.py` | 441 | Fuel model, tritium rings, carrier staging | — |
-| `migrate.py` | 77 | Optional command-line import (the plugin does this itself) | `sysdb`, `boxelplan` |
 | `overlay.py` | 431 | Cockpit overlay through EDMCModernOverlay (optional) | — |
 | `biopredict.py` | 204 | Genus prediction learned from your own samples | — |
-| `diagnostics.py` | 289 | Legacy stand-alone checker for the old JSON files; not used by the plugin | — |
 | `surfacenav.py` | 493 | Surface compass: parked SRV, open samples, known points | — |
 | `miningstat.py` | 337 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
 | `journalscan.py` | 367 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay, self test | — |
@@ -223,8 +224,9 @@ this can take a few minutes; EDMC stays usable throughout.
 | **Export boxel prefixes** | writes the prefix list for the galaxy map search |
 | **Self test** | verifies maths and reports database statistics |
 
-`migrate.py` is included only in case you ever have your own Python. It is not
-needed for normal operation.
+The plugin imports the old JSON files itself on first start. The 4.0 helper
+scripts `migrate.py` and `diagnostics.py` were removed in 4.10.1; they stay in
+the git history.
 
 ## Preferences
 
@@ -1390,6 +1392,7 @@ what changed in each release from 4.1 on.
 | 4.9.0 | README in a new order; overlay: absolute course, "lost - redo"; route check of a plotted route (one EDSM request); prospecting learnt from your probes; FIS: synthesis per tier and tank size in VEHICLE, docked stations in the SYSTEM map, plot corridor in GALAXY |
 | 4.9.1 | fixes: live DSS timing, own carrier after a jump aboard, damaged StarPos, pre-release tags in the update check; journal reading in its own module `journalscan.py` |
 | 4.10.0 | sector names computed (EDTS) and hand-authored sectors planned under their own names; codex region in the briefing and the FIS (region map); galaxy map list: catalogue stars fill their number, *list ends at* replaces *boxel done*; probe candidates looked up in EDDiscovery by id64 |
+| 4.10.1 | fixes: worker threads reach the window only through EDMC's one allowed call; FIS: BRIEFING comes to the front only for a jump target, reads only for this PC's own address, only the plugin's keys from EDMC's settings; EDMC's User-Agent; flake8 by EDMC's rules; the 4.0 helper scripts removed |
 
 ## Fixed since v3.0.8
 
@@ -2364,9 +2367,57 @@ position lies in the boxel its number names. See
 * No new column, no journal replay. Close the FIS window once so it starts
   with the new files.
 
+### 4.10.1 - fixes
+
+Checked against the listing rules of the EDMC plugin browser; nothing new
+to learn, everything works as before - only steadier and tidier.
+
+* **Window updates from background work follow EDMC's rule.** The plugin
+  reads journals, EDDiscovery and the online sources in background threads.
+  They used to schedule their panel updates on the window themselves; EDMC
+  allows a background thread exactly one call, a virtual event, and none
+  while EDMC closes. Now they queue the update and send that one event, and
+  the main thread draws. During EDMC's shutdown nothing is drawn any more.
+* **FIS: BRIEFING only for a jump target.** With *Auto view* on, the FIS
+  switched to BRIEFING whenever a target changed - also when you picked a
+  body or a station inside the system, or locked a ship. In system flight
+  that got in the way. Now only a new jump target (a system picked, a route
+  plotted) brings BRIEFING to the front; arriving still shows SYSTEM, and
+  landing still shows PLANET.
+* **FIS: this PC only means this PC.** Without the home-network option the
+  FIS now answers only requests addressed to `127.0.0.1`, `localhost` or
+  `[::1]`. A web page of another site can no longer read it by pointing its
+  own name at your PC (DNS rebinding). With the home network the access
+  token works as before.
+* **FIS: only the plugin's own settings.** The FIS reads EDMC's settings
+  file for the plugin's route filters and offline switch; it now keeps only
+  the `shboxsearch_*` entries, not EDMC's or other plugins' (API keys among
+  them).
+* **EDMC's User-Agent.** Requests to EDSM, Spansh and GitHub name EDMC
+  first, as EDMC asks of plugins, then SHBOXSEARCH with version and address.
+  Limits, pauses and the offline switch are unchanged.
+* **Log:** the gateway's pauses, retries and failed requests now reach the
+  EDMC log (they went to a logger EDMC does not write). A failed commander
+  switch in the journal handling is logged instead of skipping the event.
+* **Tidier download:** the 4.0 helper scripts `diagnostics.py` and
+  `migrate.py` are gone (the plugin imports the old files itself), and so
+  are `.gitignore`/`.gitattributes`. The code passes flake8 with EDMC's own
+  line length; the README says up front why the MPL fits EDMC's GPL.
+
+**Updating to 4.10.1:** copy `load.py`, `netgate.py`, `sysdb.py`,
+`sources.py`, `sysroute.py`, `procgen.py`, `boxelplan.py`, `biopredict.py`,
+`miningstat.py`, `surfacenav.py` and the `FIS` folder (keep your
+`FIS/fis.ini`, `favourites.json`, `lost_hidden.json`, `vehicle_tanks.json`).
+You may delete `diagnostics.py` and `migrate.py`. No database change, no
+replay. Close the FIS window once so it starts with the new files.
+
 ---
 
 # For maintainers
+
+The rules every change follows - EDMC's plugin rules, fair use of the
+community services, least privilege, licence, code style, versions - are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Releasing (for whoever maintains this)
 

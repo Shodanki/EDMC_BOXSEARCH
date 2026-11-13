@@ -307,6 +307,7 @@ function setLed(state) {
 
 // ---------------------------------------------------------------- live push
 let lastFix;
+let jumpTargetPending = false;     // an FSDTarget arrived, BRIEFING may come to the front
 setLed("wait");
 subscribe({
   open() { store.connected = true; setLed(""); },
@@ -324,12 +325,25 @@ subscribe({
     if (mounted.has("galaxy") && store.view === "galaxy") later("galaxy", 1500, () => galaxy.update(ctx, "data"));
     if (autoView() && store.view !== "planet") show("tactical");
   },
-  target() {
+  target(data) {
     // E5: the SHIP sheet shows destination and locked ship - follow them
     if (mounted.has("ship") && store.view === "ship") later("shipview", 400, () => ship.update(ctx, "data"));
+    // 4.10.1: BRIEFING comes to the front only for a new jump target (FSDTarget:
+    // a system picked or a route plotted in the galaxy map). A body or station
+    // picked in the system (Status.json Destination), a locked ship, NavRoute
+    // or StartJump update the data but leave the view alone - in system flight
+    // the switch got in the way more than it helped.
+    // later() keeps the first call of a burst and drops the rest, and picking
+    // a jump target also changes Status.json - so the FSDTarget is remembered
+    // until the refresh runs, whichever event of the burst came first
+    if (data && data.event === "FSDTarget") jumpTargetPending = true;
     later("target", 250, async () => {
       await refresh("briefing"); await refresh("ship");
-      if (autoView() && store.briefing && store.briefing.target && store.view !== "planet") show("briefing");
+      const jump = jumpTargetPending;
+      jumpTargetPending = false;
+      if (jump && autoView() && store.briefing && store.briefing.target && store.view !== "planet") {
+        show("briefing");
+      }
     });
   },
   scan() { later("scan", 1200, () => { refresh("system"); refresh("planet"); }); },

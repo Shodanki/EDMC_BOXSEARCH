@@ -27,7 +27,6 @@ Reads the plugin database and the journals only.
 
 from __future__ import annotations
 
-import math
 import json
 import time
 from typing import Any, Dict, List, Optional, Sequence

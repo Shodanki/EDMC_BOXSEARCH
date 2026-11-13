@@ -61,6 +61,8 @@ def surface_distance_m(lat1: float, lon1: float, lat2: float, lon2: float,
     dp, dl = p2 - p1, math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * radius_m * math.asin(min(1.0, math.sqrt(a)))
+
+
 GRAV_TOL = 0.15      # +-15 % around the observed gravity range
 TEMP_TOL = 15.0      # +-15 K around the observed temperature range
 

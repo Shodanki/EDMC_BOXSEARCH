@@ -96,7 +96,7 @@ class TestModel(_Base):
         self.assertEqual(by[1]["flags"]["bio"], 2)
         self.assertEqual(by[3]["rings"][0]["cls"], "Icy")
         route = s["route"]
-        self.assertEqual([l["body_id"] for l in route["legs"]], [1])   # DSS+bio open
+        self.assertEqual([leg["body_id"] for leg in route["legs"]], [1])   # DSS+bio open
         self.assertRegex(route["legs"][0]["label"], r"^LEG 1 · 49\d LS · ~\d+ min$")
         self.assertEqual(route["next"], 1)
 
@@ -342,8 +342,8 @@ class TestRealData(unittest.TestCase):
         fast = sr.CostModel(entry=80.0, k=4.0)
         s = self.model.build_system(self.db, row["id64"], None, ["all"], now=now,
                                     cost_model=fast, order_model=sr.DEFAULT_MODEL)
-        self.assertEqual([l["body_id"] for l in s["route"]["legs"]],
-                         [l["body_id"] for l in base["route"]["legs"]])
+        self.assertEqual([leg["body_id"] for leg in s["route"]["legs"]],
+                         [leg["body_id"] for leg in base["route"]["legs"]])
         self.assertLess(s["route"]["total_min"], base["route"]["total_min"])
         self.assertTrue(s["route"]["calibrated"])
         self.assertFalse(base["route"]["calibrated"])
@@ -422,6 +422,28 @@ class TestServer(_Base):
             self.assertEqual(r.status, 404, p)
             c.close()
 
+    def test_reads_need_a_localhost_host_without_lan(self):
+        # 4.10.1: DNS rebinding - another site's page re-points its own name at
+        # 127.0.0.1 and reads the API; its Host header gives it away
+        import http.client
+        port = self.srv.server_address[1]
+        for host, want in (("127.0.0.1:%d" % port, 200), ("localhost:%d" % port, 200),
+                           ("LOCALHOST:%d" % port, 200), ("[::1]:%d" % port, 200),
+                           ("evil.example:%d" % port, 403), ("evil.example", 403),
+                           ("127.0.0.1.evil.example:%d" % port, 403)) * 3:
+            for path in ("/api/briefing", "/"):
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                c.putrequest("GET", path, skip_host=True)
+                c.putheader("Host", host)
+                c.endheaders()
+                r = c.getresponse()
+                r.read()
+                c.close()
+                self.assertEqual(r.status, want, "%s %s" % (host, path))
+        # refused hosts do not feed the brake: the own browser still gets in
+        st, _js = self.getj("/api/briefing")
+        self.assertEqual(st, 200)
+
     def test_survey_export(self):
         # M14: the survey sphere as a file
         st, h, body = self.get("/api/survey/export?format=csv")
@@ -480,7 +502,8 @@ class TestServer(_Base):
             self.assertEqual(r.headers.get_content_type(), "text/event-stream")
             first = r.readline().decode()
             self.assertEqual(first.strip(), "event: snapshot")
-            r.readline(); r.readline()
+            r.readline()
+            r.readline()
             self.app.hub.publish("jump", {"x": 1})
             ev = r.readline().decode().strip()
             data = r.readline().decode().strip()

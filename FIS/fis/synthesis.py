@@ -71,8 +71,8 @@ def learn(events: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
             mats = [(_k(m.get("Name")), int(m.get("Count") or 1))
                     for m in e.get("Materials") or [] if m.get("Name")]
             r = out.setdefault(_k(name), {"name": name, "kind": kind, "tier": tier,
-                                         "materials": mats, "made": 0, "last": None,
-                                         "vehicles": []})
+                                          "materials": mats, "made": 0, "last": None,
+                                          "vehicles": []})
             r["made"] += 1
             if mats:
                 r["materials"] = mats

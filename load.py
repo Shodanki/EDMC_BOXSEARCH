@@ -22,6 +22,7 @@ import json
 import logging
 import math
 import os
+import queue
 import re
 import sys
 import threading
@@ -67,17 +68,18 @@ try:                # 4.10: codex regions (klightspeed's map, MIT) - optional
 except Exception:   # pragma: no cover - folder missing
     regionmap = None
 
-VERSION = "4.10.0"
+VERSION = "4.10.1"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 
-# sysdb and sources log through logging.getLogger(__name__), which sits
+# The helper modules log through logging.getLogger(__name__), which sits
 # outside EDMC's logger tree - their messages (database repair, EDD status,
-# source warnings) never reached the EDMC log. Route them through ours.
+# source warnings, the gateway's rests and retries) never reached the EDMC
+# log. Route them all through ours.
 import sysdb as _sysdb_mod      # noqa: E402
 import sources as _sources_mod  # noqa: E402
-_sysdb_mod.logger = logger
-_sources_mod.logger = logger
+for _mod in (_sysdb_mod, _sources_mod, netgate, sys.modules["overlay"]):
+    _mod.logger = logger
 
 DB_FILE = os.path.join(_PLUGIN_DIR, "shboxsearch.sqlite")
 
@@ -145,6 +147,14 @@ KIND_SHORT = {K_SCAN: "FSS", K_DSS: "DSS", K_BIO: "BIO", K_NEW: "NEW",
               K_CHECK: "CHECK"}
 
 
+def _edmc_user_agent() -> str:
+    """EDMC's own User-Agent (config.user_agent), which PLUGINS.md asks
+    plugins to send, with ours appended by netgate. Empty on EDMC builds
+    without it."""
+    ua = getattr(config, "user_agent", "")
+    return ua if isinstance(ua, str) else ""
+
+
 # ============================================================================
 # State
 # ============================================================================
@@ -155,7 +165,7 @@ class State:
         self.lock = threading.RLock()
         # the plugin's one door to the internet - created once, so pacing
         # and rests survive a rebuilt SourceManager
-        self.net = Gateway(VERSION)
+        self.net = Gateway(VERSION, base_ua=_edmc_user_agent())
         self.sources = SourceManager(gateway=self.net)
         # local-first (shells.py): how far out the online sources have been
         # asked for the running survey; the planner plans only inside it
@@ -319,7 +329,7 @@ def cfg_set(key: str, value) -> None:
     try:
         config.set(key, value)
     except Exception as e:
-        logger.warning("config.set(%s) fehlgeschlagen: %s", key, e)
+        logger.warning("config.set(%s) failed: %s", key, e)
 
 
 def get_filters() -> List[str]:
@@ -344,6 +354,10 @@ def get_masscodes() -> List[int]:
 # ============================================================================
 
 def plugin_start3(plugin_dir: str) -> str:
+    """
+    EDMC hook: load the plugin. Opens the database and starts the journal
+    reading in worker threads; returns the name shown in EDMC.
+    """
     global _MAP_W, _MAP_H
     logger.info("SHBOXSEARCH v%s starting", VERSION)
     _MAP_W = _MAP_H = _MAP_SIZES.get(cfg_str(CFG["map_size"], "medium"), 480)
@@ -415,6 +429,10 @@ def capi_fleetcarrier(data: Any) -> Optional[str]:
 
 
 def plugin_stop() -> None:
+    """
+    EDMC hook: EDMC is closing. Clears the overlay, closes the windows, stops
+    the gateway (no more requests), stores the call log, closes the database.
+    """
     ov = getattr(ST, "overlay", None)
     if ov is not None:
         ov.clear()
@@ -1696,7 +1714,6 @@ def _theme_tree(widget, colours: Dict[str, str]) -> None:
 
 def _toggle_route_window() -> None:
     """Open or close the route window."""
-    global _route_win
     if _route_win is not None:
         _route_window_close()
         return
@@ -1917,7 +1934,6 @@ def _route_map_draw() -> None:
 
     col = _theme_colours()
     fg = col.get("fg") or "#ff8000"
-    dim = col.get("bg") or "#101010"
 
     # E17: bodies that land on one spot (the planets of a far companion
     # star on the log scale) are pulled apart on screen - planets 14 px,
@@ -2745,6 +2761,8 @@ def _count_switches(seq, bodies) -> int:
             n += 1
         last = g
     return n
+
+
 def _start_survey() -> None:
     """
     Free start  - the sphere is centred on the current system.
@@ -3005,7 +3023,6 @@ _stats_scroll: Optional[tk.Canvas] = None
 
 
 def _toggle_stats_window() -> None:
-    global _stats_win
     if _stats_win is not None:
         _stats_window_close()
         return
@@ -3241,18 +3258,26 @@ def _prune_queues() -> None:
 
 def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
                   entry: Dict[str, Any], state: Dict[str, Any]) -> None:
+    """
+    EDMC hook: one journal event, on the main thread. Keeps the commander
+    (name and FID), then runs the dispatch chain; long work is handed to
+    worker threads. Never raises - errors are logged.
+    """
     if not ST.db:
         return
     ev = entry.get("event")
-    if cmdr and cmdr != ST.cmdr:
-        if ST.cmdr is not None:
-            _commander_switched()
-        ST.cmdr = cmdr
-    fid = state.get("FID") if isinstance(state, dict) else None
-    if fid and fid != ST.db.fid:
-        with ST.lock:
-            ST.db.set_commander(fid, cmdr)
-        _apply_main_cmdr()
+    try:
+        if cmdr and cmdr != ST.cmdr:
+            if ST.cmdr is not None:
+                _commander_switched()
+            ST.cmdr = cmdr
+        fid = state.get("FID") if isinstance(state, dict) else None
+        if fid and fid != ST.db.fid:
+            with ST.lock:
+                ST.db.set_commander(fid, cmdr)
+            _apply_main_cmdr()
+    except Exception:
+        logger.exception("journal_entry: commander switch failed")
     try:
         # Before the dispatch chain: any event naming a body updates where we
         # are. Putting this inside the chain meant whichever branch matched
@@ -3678,12 +3703,52 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
 # User interface
 # ============================================================================
 
+# Worker threads never touch Tk themselves (EDMC PLUGINS.md, "All tkinter
+# calls in main thread"): they queue the update and send one virtual event,
+# the only Tk call a sub-thread may make. The main thread runs the queue.
+# The event goes to EDMC's top-level window: Tk drops virtual events for a
+# widget that is not mapped yet, the top level receives them even hidden.
+_UI_EVENT = "<<SHBOXSEARCHUpdate>>"
+_ui_queue: "queue.Queue[Any]" = queue.Queue()
+_ui_target: Any = None
+
+
+def _shutting_down() -> bool:
+    """EDMC is closing: no more events (config.shutting_down is a property)."""
+    return bool(getattr(config, "shutting_down", False))
+
+
 def _ui(fn) -> None:
-    if _frame:
+    """Run fn on Tk's main thread, from any thread."""
+    if not _frame or _ui_target is None or _shutting_down():
+        return
+    if threading.current_thread() is threading.main_thread():
         try:
-            _frame.after(0, fn)
+            _frame.after(0, fn)          # after the current handler, as before
+            _frame.after(0, _ui_drain)   # and whatever workers left waiting
         except Exception:
             pass
+        return
+    _ui_queue.put(fn)
+    try:
+        _ui_target.event_generate(_UI_EVENT, when="tail")
+    except Exception:
+        pass                             # window gone - nothing left to update
+
+
+def _ui_drain(_event: Any = None) -> None:
+    """Main thread: run every queued UI update."""
+    while True:
+        try:
+            fn = _ui_queue.get_nowait()
+        except queue.Empty:
+            return
+        if _shutting_down():
+            continue                     # empty the queue, draw nothing
+        try:
+            fn()
+        except Exception:
+            logger.exception("UI update failed")
 
 
 def _set_status(txt: str) -> None:
@@ -3701,14 +3766,16 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     and where you are. Counters, fuel, statistics and the route list all live
     in their own windows, reachable from one row of buttons.
     """
-    global _frame, _v_status, _v_target, _v_kind, _v_sys, _v_queue, _v_probe
-    global _btn_start, _btn_absent, _btn_skip, _radius_var
-    global _btn_fc, _btn_stats, _lbl_stats, _v_stats, _carrier_var
-    global _btn_boxel, _btn_prefix, _btn_next, _v_route, _lbl_route, _btn_route
+    global _frame, _ui_target, _v_status, _v_target, _v_kind, _v_sys, _v_queue, _v_probe
+    global _btn_start, _radius_var
+    global _btn_stats, _lbl_stats, _v_stats, _carrier_var
+    global _btn_next, _v_route, _lbl_route, _btn_route
     global _v_fuel, _lbl_queue, _lbl_fuel, _v_update, _lbl_update
 
     _frame = tk.Frame(parent)
     _frame.columnconfigure(1, weight=1)
+    _ui_target = _frame.winfo_toplevel()  # updates sent by worker threads
+    _ui_target.bind(_UI_EVENT, _ui_drain, add="+")
 
     _v_status = tk.StringVar(value="ready")
     _v_target = tk.StringVar(value="-")
@@ -3818,7 +3885,6 @@ _mine_mat: Optional[tk.StringVar] = None
 
 
 def _toggle_mining_window() -> None:
-    global _mine_win
     if _mine_win is not None:
         _mining_window_close()
         return
@@ -3857,6 +3923,8 @@ def _atlas_max_ly() -> Optional[float]:
         return float(v.split()[0])
     except (ValueError, IndexError):
         return None
+
+
 # signal kinds shown first, in this order; everything else follows by count
 _SIG_FIRST = ("mining_location", "geological", "biological", "genus:Brain Trees",
               "site:nonhuman", "site:guardian", "thargoid", "guardian", "human",
@@ -3914,7 +3982,7 @@ def _mining_window_open() -> None:
 
     One tab per kind; clicking a row copies the system name.
     """
-    global _mine_win, _mine_body, _mine_mat, _atlas_mode, _atlas_pick_frame, _atlas_range
+    global _mine_win, _mine_body, _atlas_mode, _atlas_pick_frame, _atlas_range
     if _frame is None or ST.db is None:
         return
     _mine_win = tk.Toplevel(_frame)
@@ -4085,7 +4153,6 @@ def _mining_refresh() -> None:
 
 
 def _toggle_probe_window() -> None:
-    global _probe_win
     if _probe_win is not None:
         _probe_window_close()
         return
@@ -4101,7 +4168,7 @@ def _probe_window_close() -> None:
     later _refresh raise `invalid command name ...!button2`, which is exactly
     what the log showed.
     """
-    global _probe_win, _btn_prefix, _btn_absent, _btn_boxel, _btn_skip
+    global _probe_win, _btn_prefix, _btn_bundle, _btn_absent, _btn_boxel, _btn_skip
     if _probe_win is not None:
         try:
             _probe_win.destroy()
@@ -4666,6 +4733,7 @@ def _pick_edd() -> None:
 
 
 def prefs_changed(cmdr: str, is_beta: bool) -> None:
+    """EDMC hook: the settings dialog was closed - store our settings."""
     try:
         cfg_set(CFG["radius"], int(_p["radius"].get()))
         cfg_set(CFG["masscodes"], ",".join(str(i) for i, v in _p["mc"].items() if v.get()))
@@ -4773,7 +4841,7 @@ def _import_journals(max_files: int = 0) -> None:
 
 def _first_run_migration() -> None:
     """
-    Runs once on first start. Replaces calling migrate.py, so no system-wide
+    Runs once on first start (it replaced the 4.0 script migrate.py), so no system-wide
     Python installation is needed - EDMC ships its own interpreter.
     """
     logger.info("first-run import starting")

@@ -20,7 +20,7 @@ import queue
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from . import combat
 
@@ -395,7 +395,8 @@ class LiveTracker:
             return None
         ship_key = e.get("Ship")
         out: Dict[str, Any] = {}
-        if prev and prev.get("ship_key") == ship_key and                 (e.get("PilotName") is None or prev.get("pilot_key") in (None, e.get("PilotName"))):
+        if prev and prev.get("ship_key") == ship_key and \
+                (e.get("PilotName") is None or prev.get("pilot_key") in (None, e.get("PilotName"))):
             out.update(prev)
         out.update({"ship_key": ship_key, "ts": ts,
                     "ship": e.get("Ship_Localised") or (ship_key or "").replace("_", " ").title(),

@@ -107,6 +107,7 @@ def info_level(row: Any, regions: Optional[Dict[str, list]]) -> Tuple[str, List[
         return ("known" if Database.known_sources(row) else "checked"), []
     return sh.info_level(srcs, pos, regions or {})
 
+
 def _r(v: Optional[float], nd: int = 2) -> Optional[float]:
     if v is None:
         return None
@@ -568,6 +569,7 @@ def bio_list(db: Database, id64: int, rows, bodies: List[Dict[str, Any]]
     p = plugin()
     short = {b["body_id"]: b for b in bodies}
     out: List[Dict[str, Any]] = []
+
     def col(r, k):
         try:
             return r[k]
@@ -820,6 +822,8 @@ def survey_export(db: Database, fmt: str) -> Any:
                     "1" if r["only_us"] else "0", "|".join(r["sources"]),
                     r["bodies"] if r["bodies"] is not None else ""])
     return buf.getvalue()
+
+
 # M1: Horizons-era organics are logged with the composition scanner (codex)
 # only - the genetic sampler never analyses them, so a body whose only open
 # signals are these counts as done. Assumption, to confirm in game.
@@ -1231,7 +1235,6 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
 # ---------------------------------------------------------------------------
 
 
-
 def _iso_epoch(ts: Optional[str]) -> Optional[float]:
     try:
         return calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
@@ -1336,7 +1339,7 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
     else:
         pos = [m for m in marks if m["lat"] is not None] or list(track)
         if not pos or not radius:
-            out["marks"] = [{"kind": m["kind"], 
+            out["marks"] = [{"kind": m["kind"],
                              "label": m["label"], "ts": m["ts"], "x": None, "y": None}
                             for m in marks if m["kind"] != "refined"]
             return out
@@ -1359,7 +1362,7 @@ def _build_surface(db: Database, live: Optional[Dict[str, Any]],
     for m in marks:
         if m["kind"] == "refined":
             continue                 # one per tonne - shown as rigs below
-        item = {"kind": m["kind"], 
+        item = {"kind": m["kind"],
                 "label": m["label"], "detail": m["detail"], "ts": m["ts"], "x": None, "y": None}
         if m["lat"] is not None:
             x, y = _local_xy(m["lat"], m["lon"], lat0, lon0, radius)
@@ -1742,7 +1745,8 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]],
                 f["jumps_after"] = fs2.jumps_left
         # a scoopable target: you refuel where you arrive - no fuel warning
         # as long as the jump itself is covered (11.11.: a G star, 5+ jumps)
-        if f.get("warning") and out["target"]["scoopable"] and not f.get("beyond_range")                 and (f.get("cost_t") is None or fs.level > f["cost_t"]):
+        if f.get("warning") and out["target"]["scoopable"] and not f.get("beyond_range") \
+                and (f.get("cost_t") is None or fs.level > f["cost_t"]):
             f["warning"] = None
             f["scoop_at_target"] = True
         out["fuel"] = f
@@ -1838,8 +1842,8 @@ def _vehicle_view(v: Dict[str, Any], now: float,
         r = pos.get("radius") or spot.get("radius")
         if r:
             d = plugin().biopredict.surface_distance_m(pos["lat"], pos["lon"], spot["lat"], spot["lon"], r)
-            out["ship"] = {"dist_m": _r(d, 0), "bearing": _r(_bearing(pos["lat"], pos["lon"],
-                                                                        spot["lat"], spot["lon"]), 0),
+            brg = _bearing(pos["lat"], pos["lon"], spot["lat"], spot["lon"])
+            out["ship"] = {"dist_m": _r(d, 0), "bearing": _r(brg, 0),
                            "landed": spot.get("landed")}
     return out
 

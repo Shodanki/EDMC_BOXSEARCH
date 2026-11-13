@@ -228,6 +228,7 @@ def limpet_ratio(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
     per hull type, with what it rests on."""
     use = [r for r in runs if r["total"] >= MIN_TONNES and r.get("kind") != "ground"
            and (r["drones"]["prospector"] + r["drones"]["collection"])]
+
     def agg(lst):
         lim = sum(r["drones"]["prospector"] + r["drones"]["collection"] for r in lst)
         t = sum(r["total"] for r in lst)
@@ -284,13 +285,15 @@ def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
         cargo = _read_json(os.path.join(journal_dir, "Cargo.json")) or {}
     inv = cargo.get("Inventory") or [] if cargo.get("Vessel", "Ship") == "Ship" else []
     limpets = sum(c.get("Count") or 0 for c in inv if (c.get("Name") or "").lower() == "drones")
-    goods = sorted(({"key": type_key(c.get("Name")), "name": c.get("Name_Localised") or (c.get("Name") or "").capitalize(),
+    goods = sorted(({"key": type_key(c.get("Name")),
+                     "name": c.get("Name_Localised") or (c.get("Name") or "").capitalize(),
                      "count": c.get("Count") or 0} for c in inv if (c.get("Name") or "").lower() != "drones"),
                    key=lambda g: -g["count"])
     cap = int(lo.get("CargoCapacity") or 0)
     used = limpets + sum(g["count"] for g in goods)
     out: Dict[str, Any] = {"generated": now, "ship": lo.get("ShipName") or lo.get("Ship"), "capacity": cap,
-                           "limpets": limpets, "goods": goods, "used": used, "free": max(0, cap - used) if cap else None,
+                           "limpets": limpets, "goods": goods, "used": used,
+                           "free": max(0, cap - used) if cap else None,
                            "target": _target_material(live),
                            "target_name": (((live.get("status") or {}).get("destination") or {}).get("name"))}
     rh = rhino_hold(live, cargo)

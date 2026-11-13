@@ -20,7 +20,6 @@ temporary database.
 
     python tests/named_sectors.py      (from the plugin folder)
 """
-import math
 import os
 import sys
 import tempfile

@@ -39,7 +39,7 @@ import sqlite3
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from procgen import (MASSCODES, SectorRegistry, boxel_index_of_coords,
+from procgen import (SectorRegistry, boxel_index_of_coords,
                      boxel_labels, computed_sector_index, decode_id64,
                      id64_of_slot, id64_slot, make_name, parse_boxel_key,
                      parse_name, star_pos)
@@ -53,8 +53,9 @@ Q_CONFIRMED = 20
 Q_EXTERNAL = 30
 Q_JOURNAL = 40
 
-SCHEMA_VERSION = 5          # 4: external_calls, fetched_shells (4.6 local-first)
-                            # 5: exploration per commander (4.8, C1)
+# 4: external_calls, fetched_shells (4.6 local-first)
+# 5: exploration per commander (4.8, C1)
+SCHEMA_VERSION = 5
 
 # Body classes that are always worth mapping (DSS)
 VALUABLE_CLASSES = {
@@ -813,22 +814,27 @@ class SystemDB:
             sets: List[str] = []
             args: List[object] = []
             if id64 and not row["id64"]:
-                sets.append("id64=?"); args.append(id64)
+                sets.append("id64=?")
+                args.append(id64)
             if x is not None and quality >= (row["quality"] or 0):
                 if (row["x"] is None or quality > (row["quality"] or 0)
                         or abs((row["x"] or 0) - x) > 1e-6):
                     sets += ["x=?", "y=?", "z=?", "quality=?", "source=?"]
                     args += [x, y, z, quality, source]
             if star_class and not row["star_class"]:
-                sets.append("star_class=?"); args.append(star_class)
+                sets.append("star_class=?")
+                args.append(star_class)
             if visited and not row["visited"]:
-                sets += ["visited=1", "visited_ts=?"]; args.append(now)
+                sets += ["visited=1", "visited_ts=?"]
+                args.append(now)
             have = set((row["sources"] or "").split(",")) - {""}
             if source and source not in have:
                 have.add(source)
-                sets.append("sources=?"); args.append(",".join(sorted(have)))
+                sets.append("sources=?")
+                args.append(",".join(sorted(have)))
             if sets:
-                sets.append("updated=?"); args.append(now); args.append(name)
+                sets.append("updated=?")
+                args += [now, name]
                 self.cx.execute("UPDATE systems SET %s WHERE name=?" % ",".join(sets), args)
                 changed = True
 
@@ -929,7 +935,6 @@ class SystemDB:
             return
         row = self.cx.execute("SELECT n2_max,n2_end FROM boxels WHERE key=?",
                               (p.boxel_key,)).fetchone()
-        known_here = self.system(name) is not None or n2_end is None
         n2_max = row["n2_max"] if row and row["n2_max"] is not None else -1
         if n2_end is None:
             n2_max = max(n2_max, p.n2)
@@ -1075,9 +1080,11 @@ class SystemDB:
             for k, v in fields.items():
                 if v is None:
                     continue
-                cols.append("%s=?" % k); args.append(v)
+                cols.append("%s=?" % k)
+                args.append(v)
             if cols:
-                cols.append("updated=?"); args.append(_now())
+                cols.append("updated=?")
+                args.append(_now())
                 args += [sys_id64, body_id]
                 self.cx.execute("UPDATE bodies SET %s WHERE sys_id64=? AND body_id=?"
                                 % ",".join(cols), args)
@@ -1854,7 +1861,8 @@ class SystemDB:
                 self.cx.execute(
                     "UPDATE systems SET body_count=?, nonbody_count=?, updated=? WHERE id64=?",
                     (entry.get("BodyCount"), entry.get("NonBodyCount"), _now(), a))
-                self.cx.commit(); n += 1
+                self.cx.commit()
+                n += 1
 
             elif ev == "FSSAllBodiesFound":
                 a = entry.get("SystemAddress")
@@ -1864,7 +1872,8 @@ class SystemDB:
                     "UPDATE systems SET body_count=?, fss_complete=1, updated=? WHERE id64=?",
                     (entry.get("Count"), _now(), a))
                 self._cmdr_system(a, fss=True)
-                self.cx.commit(); n += 1
+                self.cx.commit()
+                n += 1
 
             elif ev in ("Scan", "ScanBaryCentre"):
                 a = entry.get("SystemAddress")
@@ -2585,7 +2594,8 @@ class SystemDB:
         """Bodies (or systems) carrying a signal kind, nearest first."""
         sql = ("SELECT g.kind, g.label, g.count, g.body_name, g.body_id, "
                "s.name sys_name, g.sys_id64, s.x, s.y, s.z FROM signals g "
-               "LEFT JOIN (SELECT id64, name, x, y, z, MAX(quality) q FROM systems GROUP BY id64) s ON s.id64 = g.sys_id64")
+               "LEFT JOIN (SELECT id64, name, x, y, z, MAX(quality) q FROM systems GROUP BY id64) s "
+               "ON s.id64 = g.sys_id64")
         args: List[object] = []
         if kind:
             sql += " WHERE g.kind = ?"
@@ -2602,7 +2612,8 @@ class SystemDB:
         sql = ("SELECT m.material, MAX(m.label) label, MAX(m.category) category, "
                "m.body_name, m.sys_id64, s.name sys_name, s.x, s.y, s.z, "
                "SUM(m.count) count, MAX(m.ts) last FROM material_finds m "
-               "LEFT JOIN (SELECT id64, name, x, y, z, MAX(quality) q FROM systems GROUP BY id64) s ON s.id64 = m.sys_id64")
+               "LEFT JOIN (SELECT id64, name, x, y, z, MAX(quality) q FROM systems GROUP BY id64) s "
+               "ON s.id64 = m.sys_id64")
         args: List[object] = []
         if material:
             sql += " WHERE m.material = ?"
@@ -2768,7 +2779,8 @@ class SystemDB:
         figure available without keeping a separate flight log, and it is
         right to within the odd out-of-order jump.
         """
-        q = lambda s, *a: self.cx.execute(s, a).fetchone()[0]
+        def q(s, *a):
+            return self.cx.execute(s, a).fetchone()[0]
         fid = self.view_fid(PLAN)
         if fid:
             return self._lifetime_of(fid)
@@ -2802,7 +2814,8 @@ class SystemDB:
     def _lifetime_of(self, fid: str) -> Dict[str, object]:
         """lifetime() for one commander (C1): his visits, scans and finds;
         boxels, absent names and spheres stay shared survey knowledge."""
-        q = lambda s, *a: self.cx.execute(s, a).fetchone()[0]   # noqa: E731
+        def q(s, *a):
+            return self.cx.execute(s, a).fetchone()[0]
         rows = self.cx.execute(
             "SELECT s.x, s.y, s.z FROM cmdr_systems c JOIN systems s ON s.id64=c.sys_id64 "
             "WHERE c.fid=? AND c.visited_ts IS NOT NULL AND s.x IS NOT NULL "
@@ -2834,7 +2847,8 @@ class SystemDB:
         }
 
     def stats(self) -> Dict[str, int]:
-        q = lambda s, *a: self.cx.execute(s, a).fetchone()[0]
+        def q(s, *a):
+            return self.cx.execute(s, a).fetchone()[0]
         return {
             "systems": q("SELECT COUNT(*) FROM systems"),
             "visited": q("SELECT COUNT(*) FROM systems WHERE visited=1"),
@@ -2860,7 +2874,8 @@ class SystemDB:
             try:
                 nm = str(s["Name"]).strip()
                 if not nm:
-                    skipped += 1; continue
+                    skipped += 1
+                    continue
                 self.upsert(nm, float(s["X"]), float(s["Y"]), float(s["Z"]),
                             id64=s.get("id64"), quality=Q_EXTERNAL,
                             source="neareststars.json", commit=False)

@@ -20,8 +20,9 @@ plugin makes goes through one Gateway, which keeps them polite:
   ... up to 120 s), at most 3 tries - then the service rests for the rest
   of the EDMC session. A wait longer than 120 s is not slept through: the
   service rests until then and the caller gets nothing;
-* an honest User-Agent with the plugin version and the repository address,
-  so the operators can see who asks and reach us;
+* an honest User-Agent: EDMC's own (config.user_agent, as EDMC asks of
+  plugins) followed by the plugin version and the repository address, so
+  the operators can see who asks and reach us;
 * at most DAILY_CAP requests per service and UTC day (EDSM, Spansh: 50 -
   a 50 ly survey needs about 5); then the service rests until midnight UTC;
 * an offline switch: nothing is sent at all;
@@ -62,8 +63,10 @@ SESSION_REST = float("inf")
 DAILY_CAP = {"edsm": 50, "spansh": 50}   # requests per UTC day (user, 10.11.)
 
 
-def user_agent(version: str) -> str:
-    return "SHBOXSEARCH/%s (EDMC plugin; +%s)" % (version or "?", REPO_URL)
+def user_agent(version: str, base: str = "") -> str:
+    """Ours, appended to EDMC's own (config.user_agent) when there is one."""
+    own = "SHBOXSEARCH/%s (EDMC plugin; +%s)" % (version or "?", REPO_URL)
+    return ("%s %s" % (base.strip(), own)) if base and base.strip() else own
 
 
 def _retry_after(value: Optional[str], now: float) -> Optional[float]:
@@ -109,8 +112,9 @@ class Gateway:
     def __init__(self, version: str = "",
                  session_factory: Optional[Callable[[], Any]] = None,
                  clock: Callable[[], float] = time.time,
-                 rand: Callable[[], float] = random.random):
-        self.ua = user_agent(version)
+                 rand: Callable[[], float] = random.random,
+                 base_ua: str = ""):
+        self.ua = user_agent(version, base_ua)
         self._factory = session_factory or (requests.Session if requests else None)
         self._clock = clock
         self._rand = rand
@@ -364,6 +368,9 @@ def _selftest() -> int:
     check(sess.headers.get("User-Agent", "").startswith("SHBOXSEARCH/9.9.9")
           and REPO_URL in sess.headers["User-Agent"],
           "User-Agent names version and repository")
+    check(user_agent("9.9.9", "EDCD-EDMarketConnector-6.1.2")
+          == "EDCD-EDMarketConnector-6.1.2 SHBOXSEARCH/9.9.9 (EDMC plugin; +%s)" % REPO_URL,
+          "inside EDMC: EDMC's User-Agent first, ours appended")
     rec = gw.drain()
     check(len(rec) == 2 and rec[0][1:5] == ("edsm", "sphere", 200, True)
           and not gw.drain(), "every attempt recorded, drain empties")

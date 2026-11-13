@@ -169,10 +169,10 @@ def orbital_position(sma_m: float, ecc: float, inc_deg: float,
     yv = sma_m * (math.sqrt(max(0.0, 1.0 - e * e)) * math.sin(E))
 
     w = math.radians(peri_deg or 0.0)
-    O = math.radians(node_deg or 0.0)
+    node = math.radians(node_deg or 0.0)
     i = math.radians(inc_deg or 0.0)
     cw, sw = math.cos(w), math.sin(w)
-    cO, sO = math.cos(O), math.sin(O)
+    cO, sO = math.cos(node), math.sin(node)
     ci, si = math.cos(i), math.sin(i)
 
     x = (cw * cO - sw * ci * sO) * xv + (-sw * cO - cw * ci * sO) * yv
@@ -508,7 +508,8 @@ def body_matches(b: Body, filters: Sequence[str]) -> bool:
         return b.kind in ("Planet", "Star")
     # rings are discovered together with their planet - routing to a ring as
     # a stop of its own sent the commander to the same planet twice
-    if F_UNDISCOVERED in filters and b.was_discovered is False             and b.kind in ("Planet", "Star"):
+    if F_UNDISCOVERED in filters and b.was_discovered is False \
+            and b.kind in ("Planet", "Star"):
         return True
     if F_UNMAPPED in filters and b.kind == "Planet" and b.was_mapped is False:
         return True
@@ -802,6 +803,7 @@ def calibrate_work_from_journal(dss: List[float], bio: List[float],
 
 
 MIN_TRAVEL_LEGS = 20     # clean body-to-body legs of 100 LS or more before fitting
+
 
 def calibrate_from_journal(segments: Iterable[Tuple[float, float]],
                            base: CostModel = DEFAULT_MODEL) -> CostModel:

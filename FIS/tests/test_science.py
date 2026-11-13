@@ -55,7 +55,7 @@ class ScienceTest(unittest.TestCase):
 
     def test_star(self):
         rep = science.body_report({"kind": "Star", "star": {"type": "N", "subclass": 0, "luminosity": "VII",
-                                                           "mass_sol": 1.4, "age_my": 100, "scoopable": False},
+                                                            "mass_sol": 1.4, "age_my": 100, "scoopable": False},
                                    "flags": {}, "bio": {}})
         self.assertEqual(ids(rep)[0], "star")
         self.assertIn("neutron", ids(rep))

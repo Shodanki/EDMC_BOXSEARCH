@@ -23,7 +23,7 @@ EVENTS = [
     ev("05:01", "MiningRefined", Type="$water_name;", Type_Localised="Water"),
     ev("07:00", "LaunchDrone", Type="Prospector"),
     ev("07:01", "ProspectedAsteroid", **dict(ROCK, Materials=[{"Name": "Tritium", "Proportion": 12.0}],
-                                              Content="$AsteroidMaterialContent_Low;")),
+                                             Content="$AsteroidMaterialContent_Low;")),
     ev("07:02", "LaunchDrone", Type="Prospector"),
     ev("07:03", "ProspectedAsteroid", **ROCK),
     ev("07:04", "LaunchDrone", Type="Collection"),
