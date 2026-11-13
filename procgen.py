@@ -230,6 +230,22 @@ def id64_from_name(name: str, sector_idx: Sequence[int]) -> Optional[int]:
 # Geometry
 # ---------------------------------------------------------------------------
 
+def star_pos(value: object) -> Optional[Tuple[float, float, float]]:
+    """A journal StarPos as (x, y, z) - or None unless it is three finite
+    numbers. The game always writes a list of three floats; anything else
+    (a damaged line, a third-party tool) must not become the position, or
+    every distance after it fails."""
+    if not isinstance(value, (list, tuple)) or len(value) < 3:
+        return None
+    try:
+        out = tuple(float(v) for v in value[:3])
+    except (TypeError, ValueError):
+        return None
+    if any(isinstance(v, bool) for v in value[:3]) or not all(math.isfinite(v) for v in out):
+        return None
+    return out  # type: ignore[return-value]
+
+
 def sector_index_of_coords(x: float, y: float, z: float) -> Tuple[int, int, int]:
     return tuple(int(math.floor((c - o) / SECTOR_SIZE))
                  for c, o in zip((x, y, z), GALAXY_ORIGIN))  # type: ignore[return-value]
@@ -437,6 +453,14 @@ def _selftest() -> int:
                 fails += 1
                 print("  [FAIL] round trip mc=%d boxel=%s -> %s" % (mc, b, nm))
     print("  [%s] round trip across all mass codes" % ("OK" if fails == 0 else "FAIL"))
+    check("star_pos list", star_pos([1, 2.5, -3]), (1.0, 2.5, -3.0))
+    check("star_pos extra items", star_pos((1.0, 2.0, 3.0, 4.0)), (1.0, 2.0, 3.0))
+    check("star_pos text", star_pos("garbage"), None)
+    check("star_pos short", star_pos([1.0, 2.0]), None)
+    check("star_pos None in it", star_pos([1.0, None, 2.0]), None)
+    check("star_pos nan", star_pos([1.0, float("nan"), 2.0]), None)
+    check("star_pos bool", star_pos([True, 0.0, 0.0]), None)
+    check("star_pos missing", star_pos(None), None)
     print("failures:", fails)
     return fails
 
