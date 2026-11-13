@@ -799,6 +799,7 @@ def _copy_route_target() -> None:
 
 EDD_ID64_META = "edd_id64_410"     # EDD read again with id64s (4.10)
 EDD_FILL_ROUNDS = 3
+EDD_WALK_MAX = 64          # numbers walked upwards per boxel in one lookup
 
 
 def _plan_build() -> Dict[str, Any]:
@@ -820,6 +821,11 @@ def _edd_fill(probe: Sequence[Target]) -> int:
     "gaps - in no database" were systems EDD knew (945 of 950 in the
     developer's sphere). What EDD has is stored with its position and the
     candidate is gone; a catalogue star found there fills its slot.
+
+    Where EDD has a probe above a boxel's maximum (or the first number of an
+    "empty" boxel), it is asked for the next number of that boxel too, and
+    so on until it has none - one plan rebuild instead of one per number
+    (4.10 fix: with three rebuilds, 12 probes EDD knew were still left).
     Returns the number of systems found.
     """
     if not cfg_bool(CFG["src_edd"], True) or ST.edd_pending or ST.sources is None:
@@ -843,13 +849,35 @@ def _edd_fill(probe: Sequence[Target]) -> int:
     ST.edd_asked.update(ids)
     if not rows:
         return 0
-    for r in rows:
+    asked = len(ids)
+    upward = {t.id64 for t in probe if t.id64 and t.kind in (K_PROBE, K_EMPTY)}
+    found = list(rows)
+    frontier = [r["id64"] for r in rows if r["id64"] in upward]
+    for _step in range(EDD_WALK_MAX):
+        nxt = [i + (1 << (44 - 3 * (i & 7))) for i in frontier]
+        nxt = [i for i in nxt if i not in ST.edd_asked]
+        if not nxt:
+            break
+        try:
+            more = look(nxt)
+        except Exception:
+            logger.exception("EDD lookup by id64 failed")
+            more = None
+        if not more:                            # none there, or busy: stop here
+            if more is not None:
+                ST.edd_asked.update(nxt)
+            break
+        ST.edd_asked.update(nxt)
+        asked += len(nxt)
+        found += more
+        frontier = [r["id64"] for r in more]
+    for r in found:
         r["source"] = edd.name
-    _store_rows(rows)
+    _store_rows(found)
     logger.info("EDD by id64: %d of %d probe candidates are in EDDiscovery's file "
-                "(beyond the radius it was read to) - stored, plan rebuilt",
-                len(rows), len(ids))
-    return len(rows)
+                "(beyond the radius it was read to; %d more above them) - stored, "
+                "plan rebuilt", len(rows), len(ids), len(found) - len(rows))
+    return len(found)
 
 
 def _rebuild_plan() -> None:
@@ -2858,6 +2886,7 @@ def _list_end() -> None:
     if not t or not t.boxel_key:
         return
     key = t.boxel_key
+    _prune_known_probes()          # names known meanwhile are no gaps any more
     raw = (_list_end_var.get() if _list_end_var is not None else "").strip()
     raw = raw.rsplit("-", 1)[-1].strip()       # "Synuefe RH-U c19-21" works too
     try:
@@ -3195,8 +3224,12 @@ def _prune_queues() -> None:
                 break
             ST.flight.pop(0)
             changed = True
-        while ST.probe and ST.db.system(ST.probe[0].name) is not None:
-            ST.probe.pop(0)
+        # every known name, not only the head: a plotted route or a pick
+        # in the galaxy map's list can confirm any of them (4.10 fix - a
+        # stale entry kept "1 gaps left" after "list end")
+        keep = [q for q in ST.probe if ST.db.system(q.name) is None]
+        if len(keep) != len(ST.probe):
+            ST.probe = keep
             changed = True
     if changed:
         _refresh()
@@ -3251,6 +3284,9 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
 
         with ST.lock:
             ST.db.ingest_journal_event(entry)
+        if ev == "NavRoute" and ST.active:
+            # every hop of a plotted route is a confirmed system now
+            _prune_queues()
         _measure_work(ev, entry)
 
         # Supercruise timing, measured on the legs the route actually plans:

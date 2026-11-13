@@ -20,7 +20,10 @@ EDDiscovery-layout file built here.
     position lies in the id64's boxel count;
   * a restored sphere reads EDD again once for 4.10 (id64s);
   * picking any listed name in the map drops that candidate, not only the
-    head of the queue.
+    head of the queue; so does a route that made it known, and "list end"
+    counts no such stale entry;
+  * EDD is walked upwards per boxel until it has no number - one plan
+    rebuild is enough.
 
     python tests/galaxy_list.py      (from the plugin folder)
 """
@@ -214,6 +217,48 @@ def part_flow(tmp, edd_path):
     load._prune_known_probes()
     left = sorted(q.n2 for q in ST.probe if q.boxel_key == KEY)
     check(15 not in left and 6 in left, "a confirmed name leaves the queue, not only the head")
+    # a plotted route made a gap known: the next jump/route/scan prunes it
+    ST.db.upsert(KEY + "-13", id64=ID0 + 13 * STEP, source="navroute")
+    load._prune_queues()
+    left = sorted(q.n2 for q in ST.probe if q.boxel_key == KEY)
+    check(13 not in left, "a name known from a route leaves the queue (%s)" % left)
+    # ... and "list end" drops a name known meanwhile before it counts
+    ST.db.upsert(KEY + "-14", id64=ID0 + 14 * STEP, source="navroute")
+    load._list_end_var.get.return_value = "21"
+    load._list_end()
+    left = sorted(q.n2 for q in ST.probe if q.boxel_key == KEY)
+    check(left == [6, 16, 18], "'list end' counts no stale entry: gaps left %s" % left)
+    ST.db.close()
+
+
+def part_chain(tmp, edd_path):
+    '''EDD knows numbers far above the boxel's maximum: one plan rebuild
+    walks them up until EDD has none (4.10 fix - three rebuilds left 12
+    known probes in the developer's sphere).'''
+    print("EDDiscovery walked upwards")
+    ST = load.ST
+    ST.db = SystemDB(os.path.join(tmp, "c.sqlite"))
+    ST.planner = Planner(ST.db)
+    ST.sources = SourceManager(edd_path, gateway=ST.net)
+    ST.center, ST.radius, ST.cur_pos, ST.horizon = CENTER, 10.0, CENTER, 10.0
+    ST.active, ST.edd_asked = True, set()
+    for n2 in (1, 2, 4, 5):
+        ST.db.upsert("%s-%d" % (KEY, n2), *KNOWN[n2], id64=ID0 + n2 * STEP, source="navroute")
+    rounds = load.EDD_FILL_ROUNDS
+    load.EDD_FILL_ROUNDS = 1           # one rebuild only: the walk must do it
+    try:
+        load._rebuild_plan()
+    finally:
+        load.EDD_FILL_ROUNDS = rounds
+    stored = sorted(n for n in range(0, 23) if ST.db.system("%s-%d" % (KEY, n)))
+    check(stored == [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12],
+          "walked up from 7 to 12, where EDD has no 13 (stored %s)" % stored)
+    gaps = sorted(q.n2 for q in ST.probe if q.boxel_key == KEY and q.kind == K_GAP)
+    probes = sorted(q.n2 for q in ST.probe if q.boxel_key == KEY and q.kind == K_PROBE)
+    check(gaps == [6] and probes == [13, 14],
+          "left: gap 6 (EDD's row is in the wrong place), probes 13 and 14 (%s / %s)"
+          % (gaps, probes))
+    check(ST.db.system("HIP 33254") is not None, "slot 0 came as HIP 33254")
     ST.db.close()
 
 
@@ -223,6 +268,7 @@ def main():
     part_db(tmp)
     edd = part_edd(tmp)
     part_flow(tmp, edd)
+    part_chain(tmp, edd)
     print("failures:", FAILS)
     return 1 if FAILS else 0
 
