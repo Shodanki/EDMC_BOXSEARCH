@@ -32,6 +32,10 @@ first: systems you discovered first (the arrival star's scan said
 WasDiscovered false) and species analysed on a body where you made the
 first footfall (Scan WasFootfalled false, then you disembarked there).
 Either of them makes the risk at least moderate.
+
+The four limits (sell advice in M Cr and systems, moderate and high risk in
+M Cr) are the user's defaults of 11.11.; since 4.11 each commander sets
+their own on the FIS settings page (fis.ini, section [fis], unsold_*).
 """
 
 from __future__ import annotations
@@ -45,11 +49,20 @@ WARN_CR = 50_000_000             # from here on the sheet advises to sell
 WARN_SYSTEMS = 100
 RISK_MODERATE_CR = 50_000_000    # user 11.11.: below this a loss is a low risk
 RISK_HIGH_CR = 100_000_000       # ... from here on a real one
+# the defaults of the settings page (fis.ini unsold_*), in M Cr / systems
+DEFAULT_LIMITS = {"sell_mcr": WARN_CR // 1_000_000, "sell_systems": WARN_SYSTEMS,
+                  "moderate_mcr": RISK_MODERATE_CR // 1_000_000, "high_mcr": RISK_HIGH_CR // 1_000_000}
 
 
-def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[str, int]]] = None
-                 ) -> Dict[str, Any]:
+def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[str, int]]] = None,
+                 limits: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+    """What is unsold and what its loss would cost. ``limits`` (M Cr and
+    systems, keys as DEFAULT_LIMITS) are the commander's own; missing keys
+    take the defaults."""
     values = values or {}
+    lim = dict(DEFAULT_LIMITS, **(limits or {}))
+    warn_cr, warn_systems = lim["sell_mcr"] * 1_000_000, lim["sell_systems"]
+    risk_moderate, risk_high = lim["moderate_mcr"] * 1_000_000, lim["high_mcr"] * 1_000_000
     bio: List[Dict[str, Any]] = []
     scanned: Dict[str, Set[Any]] = {}             # system -> bodies scanned, not sold yet
     mapped: Dict[str, Set[Any]] = {}              # system -> bodies mapped, not sold yet
@@ -128,12 +141,12 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
         items.append(dict(x, value=val))
     systems = set(scanned) | set(mapped)
     advice = None
-    if total >= WARN_CR or len(systems) >= WARN_SYSTEMS:
+    if total >= warn_cr or len(systems) >= warn_systems:
         advice = "sell"
     ff_bio = sum(1 for x in bio if x["footfall"])
     first_sys &= systems
-    risk = ("high" if total >= RISK_HIGH_CR else
-            "moderate" if total >= RISK_MODERATE_CR or first_sys or ff_bio else "low")
+    risk = ("high" if total >= risk_high else
+            "moderate" if total >= risk_moderate or first_sys or ff_bio else "low")
     return {"bio": {"count": len(bio), "value": total, "priced": priced, "unknown": unknown,
                     "first": sum(1 for x in bio if x["footfall"]), "items": items[-12:],
                     "since": last_sale["bio"]},
@@ -142,7 +155,7 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
                             "bodies": sum(len(v) for v in scanned.values()),
                             "since": last_sale["exploration"]},
             "lost_last": lost, "advice": advice,
-            "warn_cr": WARN_CR, "warn_systems": WARN_SYSTEMS,
+            "warn_cr": warn_cr, "warn_systems": warn_systems,
             # what a loss would cost and what is irreplaceable
             "risk": risk, "first_systems": len(first_sys), "footfall_bio": ff_bio,
-            "risk_cr": {"moderate": RISK_MODERATE_CR, "high": RISK_HIGH_CR}}
+            "risk_cr": {"moderate": risk_moderate, "high": risk_high}}

@@ -48,7 +48,6 @@ LEGACY = {
     ("FIS/fis/science.py", "system_report"): 34,
     ("FIS/fis/server.py", "Handler._api"): 51,
     ("FIS/fis/server.py", "Handler._post_lost_hidden"): 16,
-    ("FIS/fis/server.py", "Handler.do_POST"): 21,
     ("FIS/fis/shipview.py", "build_shipstatus"): 19,
     ("FIS/fis/unsold.py", "build_unsold"): 24,
     ("boxelplan.py", "Planner.build"): 43,

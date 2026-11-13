@@ -39,6 +39,14 @@ EDMC_CONFIG = os.path.join(_LOCAL, "EDMarketConnector", "config.toml")
 PLUGIN_PREFIX = "shboxsearch_"     # the only keys of that file the FIS keeps
 PLUGIN_FILTERS = ("all", "new", "unmapped", "signals", "landable", "valuable", "rings", "todo")
 LANGUAGES = ("en", "de")
+# UNSOLD DATA on the SHIP sheet (4.11): the commander's own risk limits,
+# fis.ini key -> (default, lowest, highest). M Cr, or systems.
+UNSOLD_LIMITS = {
+    "sell_mcr": (50, 1, 100_000),        # "consider selling" from this value ...
+    "sell_systems": (100, 1, 100_000),   # ... or this many systems unsold
+    "moderate_mcr": (50, 1, 100_000),    # risk moderate from here
+    "high_mcr": (100, 1, 100_000),       # risk high from here (never below moderate)
+}
 
 
 def _bool(v) -> bool:
@@ -73,6 +81,7 @@ class Config:
         self.poll_s = 0.5
         self.ini_path = INI_PATH
         self.main_cmdr = ""         # C1: FID of the main commander, "" = automatic
+        self.unsold = {k: v[0] for k, v in UNSOLD_LIMITS.items()}
 
     @property
     def filters(self) -> List[str]:
@@ -151,9 +160,30 @@ class Config:
         self.setup_done = _bool(s.get("setup_done", "false"))
         self.firewall = (s.get("firewall", "") or "").strip().lower()
         self.main_cmdr = (s.get("main_cmdr", "") or "").strip()
+        self.set_unsold_limits({k: s.get("unsold_" + k) for k in UNSOLD_LIMITS})
         if self.lan:
             self.host = "0.0.0.0"
         return self
+
+    def set_unsold_limits(self, raw: Dict[str, Any]) -> bool:
+        """Take the UNSOLD DATA limits from ``raw`` (a form or fis.ini): whole
+        numbers within UNSOLD_LIMITS; a key that is missing or not a number
+        keeps its value, one out of range is clamped. High risk never lies
+        below moderate. True if every given value was a usable number."""
+        ok = True
+        for k, (_default, lo, hi) in UNSOLD_LIMITS.items():
+            v = raw.get(k)
+            if v is None or v == "":
+                continue
+            try:
+                n = int(float(str(v).strip()))
+            except ValueError:
+                ok = False
+                continue
+            self.unsold[k] = min(hi, max(lo, n))
+        if self.unsold["high_mcr"] < self.unsold["moderate_mcr"]:
+            self.unsold["high_mcr"] = self.unsold["moderate_mcr"]
+        return ok
 
     def ensure_token(self, save: bool = True) -> bool:
         """Create a random LAN token (stored in fis.ini). True if new."""
@@ -189,6 +219,7 @@ class Config:
             "firewall": self.firewall, "route_filters": self.route_filters,
             "route_source": self.route_source, "main_cmdr": self.main_cmdr,
         }
+        vals.update({"unsold_" + k: str(v) for k, v in self.unsold.items()})
         for k, v in vals.items():
             cp.set("fis", k, v)
         for k, v, d in (("db_path", self.db_path, DEFAULT_DB),

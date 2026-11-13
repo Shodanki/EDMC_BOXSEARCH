@@ -12,7 +12,7 @@ import { el, frame } from "../ui.js";
 import { t } from "../i18n.js";
 import { cockpitRows } from "./cockpit.js";
 
-let root = null, data = null, msg = "", qrIndex = 0;
+let root = null, data = null, msg = "", unsoldMsg = "", qrIndex = 0;
 // E6/P7: display links - one view alone, for OBS, a wall screen or a tablet
 const LINK_VIEWS = [["briefing", "BRIEFING"], ["surface", "PLANET"], ["tactical", "SYSTEM"], ["galaxy", "GALAXY"],
   ["planet", "PLANET INFO"], ["atlas", "ATLAS"], ["ship", "SHIP"], ["vehicle", "VEHICLE"], ["carrier", "CARRIER"], ["mining", "MINING"],
@@ -99,12 +99,42 @@ function render() {
   }
   root.append(el("div", { class: "st-grid" },
     frame(t("SETTINGS"), t("only on this PC"), rows, { appear: false }),
+    data.unsold ? frame(t("UNSOLD DATA"), t("your risk limits"), unsoldRows(), { appear: false }) : null,
     frame(t("DISPLAY LINKS"), t("one view alone"), linkRows(), { appear: false }),
     frame(t("APP"), t("only on this PC"), appRows(), { appear: false }),
     frame(t("COCKPIT"), t("only on this PC"), cockpitRows((w) => linkUrl({ view: w.view, obs: false, kiosk: true, scale: w.scale }), render),
       { appear: false }),
     data.lan ? frame(t("HOME NETWORK"), "", lanRows.length ? lanRows : el("div", { class: "c-dim", text: t("Save to create the address.") }), { appear: false }) : null,
     el("div", { class: "c-dim small", text: t("Stored in {f}.", { f: data.ini }) })));
+}
+
+// 4.11: the limits of UNSOLD DATA on the SHIP sheet - each commander's own
+// taste for risk (the defaults are the developer's: 50 / 100 M Cr, 100 systems)
+function unsoldRows() {
+  const U = data.unsold, D = data.unsold_defaults || {};
+  const num = (k) => el("input", { type: "number", min: "1", step: "1", class: "st-num", value: String(U[k]) });
+  const f = { moderate_mcr: num("moderate_mcr"), high_mcr: num("high_mcr"), sell_mcr: num("sell_mcr"), sell_systems: num("sell_systems") };
+  const save = async () => {
+    const body = { unsold: {} };
+    for (const k of Object.keys(f)) body.unsold[k] = f[k].value;
+    try {
+      data = await postJSON("/api/settings", body);
+      unsoldMsg = t("Saved.");
+    } catch (e) { unsoldMsg = t("Could not save: {e}", { e: e.message }); }
+    render();
+  };
+  const reset = () => { for (const k of Object.keys(f)) if (D[k] !== undefined) f[k].value = String(D[k]); };
+  return [
+    el("div", { class: "c-dim small", text: t("When the SHIP sheet calls losing your unsold data a moderate or high risk, and when it advises to sell. Set them to your own taste for risk.") }),
+    el("label", { class: "st-set" }, el("span", { text: t("Risk moderate from (M Cr)") }), f.moderate_mcr),
+    el("label", { class: "st-set" }, el("span", { text: t("Risk high from (M Cr)") }), f.high_mcr),
+    el("label", { class: "st-set" }, el("span", { text: t("Advise selling from (M Cr)") }), f.sell_mcr),
+    el("label", { class: "st-set" }, el("span", { text: t("… or from this many systems") }), f.sell_systems),
+    el("div", { class: "c-dim small", text: t("Systems you discovered first and species with the first-footfall bonus make the risk at least moderate, whatever their value. High is never below moderate.") }),
+    el("div", { class: "st-url" }, el("button", { onclick: save, text: t("Save") }),
+      el("button", { onclick: reset, title: t("50 / 100 M Cr, sell from 50 M Cr or 100 systems"), text: t("Defaults") })),
+    unsoldMsg ? el("div", { class: "c-green small", text: unsoldMsg }) : null,
+  ];
 }
 
 // M12: install the FIS as an app - own window and taskbar icon, nothing cached

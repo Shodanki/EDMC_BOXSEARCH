@@ -96,6 +96,41 @@ class TestUnsold(unittest.TestCase):
         self.assertEqual(unsold.build_unsold(st[:3], VALUES)["risk"], "moderate")   # 57 M
         self.assertEqual(unsold.build_unsold(st, VALUES)["risk"], "high")           # 114 M
 
+    def test_own_limits(self):
+        """4.11: each commander sets the limits on the settings page."""
+        st = [analyse("08:%02d" % i, "Stratum Tectonicas") for i in range(3)]       # 57 M
+        careful = {"moderate_mcr": 10, "high_mcr": 40, "sell_mcr": 20}
+        u = unsold.build_unsold(st, VALUES, careful)
+        self.assertEqual((u["risk"], u["advice"]), ("high", "sell"))
+        self.assertEqual(u["risk_cr"], {"moderate": 10_000_000, "high": 40_000_000})
+        self.assertEqual((u["warn_cr"], u["warn_systems"]), (20_000_000, 100))     # missing: default
+        bold = {"moderate_mcr": 500, "high_mcr": 1000, "sell_mcr": 800, "sell_systems": 1000}
+        u = unsold.build_unsold(st, VALUES, bold)
+        self.assertEqual((u["risk"], u["advice"]), ("low", None))
+        self.assertEqual(unsold.build_unsold(st, VALUES)["risk"], "moderate")      # no limits: defaults
+
+    def test_sheet_follows_changed_limits(self):
+        """The SHIP sheet's cache holds while the journals are unchanged - but
+        new limits from the settings page count at once."""
+        from fis import shipview
+        st = [analyse("08:%02d" % i, "Stratum Tectonicas") for i in range(3)]       # 57 M
+
+        class Archive:
+            rev = 7
+
+            def refresh(self):
+                pass
+
+            def events(self):
+                return st
+
+            def organic_values(self):
+                return VALUES
+        a = Archive()
+        self.assertEqual(shipview._unsold(a)["risk"], "moderate")
+        self.assertEqual(shipview._unsold(a, {"moderate_mcr": 10, "high_mcr": 40})["risk"], "high")
+        self.assertEqual(shipview._unsold(a)["risk"], "moderate")
+
     def test_first_discovery_and_first_footfall_are_valuable(self):
         evs = [ev("08:00", "FSDJump", StarSystem="New", SystemAddress=5),
                ev("08:01", "Scan", StarSystem="New", SystemAddress=5, BodyID=0, BodyName="New A",

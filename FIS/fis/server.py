@@ -492,7 +492,10 @@ class Handler(BaseHTTPRequestHandler):
                 "firewall": fw,
                 # C1: main commander ("" = automatic: the plugin's choice / suggestion)
                 "main_cmdr": cfg.main_cmdr, "commanders": cmdrs,
-                "main_auto": db.commander_name(auto_fid) or auto}
+                "main_auto": db.commander_name(auto_fid) or auto,
+                # 4.11: the commander's own limits for UNSOLD DATA (M Cr / systems)
+                "unsold": dict(cfg.unsold),
+                "unsold_defaults": {k: v[0] for k, v in config_mod.UNSOLD_LIMITS.items()}}
 
     def do_POST(self) -> None:
         wait = self._braked()
@@ -526,6 +529,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._post_lost_hidden(raw)
         if url.path != "/api/settings":
             return self._error(404, "not found")
+        return self._post_settings(raw)
+
+    def _post_settings(self, raw: bytes) -> None:
+        """POST /api/settings: only from the game PC, only from the FIS page.
+        Fields that are missing keep their value; nothing is changed when the
+        request is refused."""
         if not self._local():
             return self._error(403, "settings only on the game PC")
         if not self._same_origin():
@@ -537,6 +546,12 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             return self._error(400, "bad request")
         cfg = self.app.cfg
+        if "unsold" in body:
+            # 4.11: the commander's own limits for UNSOLD DATA - checked first
+            before = dict(cfg.unsold)
+            if not isinstance(body["unsold"], dict) or not cfg.set_unsold_limits(body["unsold"]):
+                cfg.unsold = before
+                return self._error(400, "limits must be whole numbers")
         lang = str(body.get("language", cfg.language)).lower()
         cfg.language = lang if lang in config_mod.LANGUAGES else cfg.language
         cfg.open_browser = bool(body.get("open_browser", cfg.open_browser))
@@ -845,7 +860,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
-                                                        lost_hidden=app.lost_hidden))
+                                                        lost_hidden=app.lost_hidden,
+                                                        unsold_limits=app.cfg.unsold))
         if path == "/api/carrier":
             from . import shipview
             from . import capi

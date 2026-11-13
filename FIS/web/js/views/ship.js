@@ -120,7 +120,7 @@ function unsold() {
   }
   if (X.systems) rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exploration") + " " }),
     el("span", { text: t("{s} systems · {b} bodies · {m} mapped", { s: X.systems, b: X.bodies, m: X.mapped }) })));
-  // risk (user 11.11.): low below 50 M, moderate from 50 M, high from 100 M;
+  // risk: low, moderate, high by the limits on the settings page (4.11; default 50 / 100 M);
   // first discoveries and first-footfall biology are what cannot be had again
   const RISK = { low: [N_("RISK LOW"), "c-green"], moderate: [N_("RISK MODERATE"), "c-amber"], high: [N_("RISK HIGH"), "c-red"] };
   if (U.risk && RISK[U.risk]) rows.unshift(el("div", { class: "pl-line" }, el("span", { class: RISK[U.risk][1], text: t(RISK[U.risk][0]) }),
