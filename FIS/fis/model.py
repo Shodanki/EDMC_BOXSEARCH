@@ -48,6 +48,11 @@ def plugin():
                     shells = None
             except ImportError:
                 shells = None
+            try:
+                import regionmap  # type: ignore   # plugin 4.10+: codex regions
+                regionmap.region_names()           # load the map now, no bytecode
+            except Exception:
+                regionmap = None
         finally:
             sys.dont_write_bytecode = keep
 
@@ -58,8 +63,25 @@ def plugin():
             sysroute, biopredict, deepspace, procgen
         p.surfacenav = surfacenav
         p.shells = shells
+        p.regionmap = regionmap
         _plugin = p
     return _plugin
+
+
+def region_of(pos: Optional[Sequence[float]], id64: Optional[int] = None) -> Optional[Tuple[int, str]]:
+    """Codex region (id, name) of a position, else of an id64's boxel - or
+    None (outside, unknown, or a plugin older than 4.10)."""
+    rm = getattr(plugin(), "regionmap", None)
+    if rm is None:
+        return None
+    try:
+        if pos:
+            return rm.find_region(float(pos[0]), float(pos[1]), float(pos[2]))
+        if id64:
+            return rm.find_region_for_id64(int(id64))
+    except Exception:
+        return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1690,6 +1712,11 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]],
         "lost": next((d for d in db.lost_summary(fid)
                       if shared is not None and d["id64"] == shared["id64"]), None) if fid else None,
     }
+    # 4.10: codex region of the target, and whether the jump leaves yours
+    reg = region_of(tpos, id64)
+    here = region_of(cpos) if cpos else None
+    out["target"]["region"] = reg[1] if reg else None
+    out["target"]["region_from"] = here[1] if here and reg and here[0] != reg[0] else None
     out["boxel"] = boxel_info(db, name) if name else None
     out["sphere"] = _sphere_of(db, tpos)
     sid = id64 or (row["id64"] if row is not None else None)

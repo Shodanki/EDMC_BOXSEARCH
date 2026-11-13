@@ -62,6 +62,10 @@ from biopredict import BioModel, COLONY_RANGE_M, surface_distance_m  # noqa: E40
 import surfacenav  # noqa: E402
 import miningstat  # noqa: E402
 import journalscan  # noqa: E402
+try:                # 4.10: codex regions (klightspeed's map, MIT) - optional
+    import regionmap  # noqa: E402
+except Exception:   # pragma: no cover - folder missing
+    regionmap = None
 
 VERSION = "4.9.1"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
@@ -1065,6 +1069,18 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     except Exception:
         regions = {}
     info["level"], info["checked_by"] = shells.info_level(srcs, pos, regions)
+    # 4.10: the codex region - from the position, else from the id64 boxel
+    if regionmap is not None:
+        try:
+            reg = None
+            if row is not None and row["x"] is not None:
+                reg = regionmap.find_region(row["x"], row["y"], row["z"])
+            elif id64:
+                reg = regionmap.find_region_for_id64(int(id64))
+            if reg:
+                info["region"] = reg[1]
+        except Exception:
+            logger.debug("region lookup failed", exc_info=True)
     if row is not None and kind == "target":
         with ST.lock:
             if ST.db.is_visited(row, CURRENT):
@@ -3992,7 +4008,7 @@ def _probe_window_refresh() -> None:
             "prefix       %s%s\n"
             "distance     %.1f ly   uncertainty +-%.0f ly\n"
             "this boxel   %d candidate%s   odds %s\n"
-            "queue        %d probes (gap %d, probe %d, empty %d)%s"
+            "queue        %d probes (gap %d, probe %d, empty %d)%s%s"
             % (p.name,
                boxel_prefix(p.boxel_key) if p.boxel_key else "?",
                # n1 = 0 boxels: the prefix also lists the d1-.., d2-.. boxels
@@ -4001,6 +4017,9 @@ def _probe_window_refresh() -> None:
                p.dist_origin, p.uncertainty,
                same, "" if same == 1 else "s", odds, len(ST.probe),
                c.get(K_GAP, 0), c.get(K_PROBE, 0), c.get(K_EMPTY, 0),
+               # 4.10: a named sector's surface cuts this boxel - its
+               # systems can carry either name (same number n2)
+               ("\nedge         %s" % p.detail) if p.detail else "",
                ("\nplot route   %s  %.0f ly, %d unprobed boxels on the way"
                 "\n             (economical route = more hops = more systems)"
                 % (ST.route_targets[0]["name"], ST.route_targets[0]["dist"],
