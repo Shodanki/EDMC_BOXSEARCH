@@ -4,10 +4,11 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025-2026 Shodanki
 """
-Dispatch lint (5.0): no journal event name may appear in two branches of
-one if/elif chain on `ev`. The first matching branch wins, so the later one
-is dead code - up to 4.9 that silently switched off the live DSS timing
-(ApproachBody) and the own carrier refresh after a CarrierJump.
+Dispatch lint (5.0): no value may appear in two branches of one if/elif
+chain on the same subject (`ev`, `kind`, `e["event"]`, `e.get("event")` ...).
+The first matching branch wins, so the later one is dead code - up to 4.9
+that silently switched off the live DSS timing (ApproachBody) and the own
+carrier refresh after a CarrierJump. Checks every plugin module and the FIS.
 
 Reads the source only (ast), nothing is imported or run.
 
@@ -19,19 +20,40 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FILES = ["load.py", "sysdb.py"]
+FILES = sorted(os.path.basename(f) for f in glob.glob(os.path.join(ROOT, "*.py")))
+
+
+def _subject(node):
+    """A stable key for what a branch compares: a name (ev), a subscript
+    (e["event"]) or a call (e.get("event")). None for anything else."""
+    if isinstance(node, (ast.Name, ast.Subscript, ast.Call, ast.Attribute)):
+        return ast.dump(node)
+    return None
 
 
 def _names(test):
-    """Event names a branch test compares `ev` with (ev == "X", ev in (...))."""
+    """(subject, value) pairs a branch test compares (ev == "X", ev in (...)).
+    Only a literal tuple / list / set after `in` counts: `x in "ABC"` is a
+    substring test, not a dispatch."""
     out = set()
     for n in ast.walk(test):
-        if isinstance(n, ast.Compare) and isinstance(n.left, ast.Name) and n.left.id == "ev" \
-                and all(isinstance(op, (ast.Eq, ast.In)) for op in n.ops):
-            for c in n.comparators:
-                for k in ast.walk(c):
-                    if isinstance(k, ast.Constant) and isinstance(k.value, str):
-                        out.add(k.value)
+        if not (isinstance(n, ast.Compare) and len(n.ops) == 1
+                and isinstance(n.ops[0], (ast.Eq, ast.In))):
+            continue
+        subj = _subject(n.left)
+        if subj is None:
+            continue
+        c = n.comparators[0]
+        if isinstance(n.ops[0], ast.Eq):
+            vals = [c]
+        elif isinstance(c, (ast.Tuple, ast.List, ast.Set)):
+            vals = c.elts
+        else:
+            continue
+        for k in vals:
+            if isinstance(k, ast.Constant) and isinstance(k.value, (str, int)) \
+                    and not isinstance(k.value, bool):
+                out.add((subj, k.value))
     return out
 
 
@@ -65,10 +87,10 @@ def lint(path):
                         plain |= _names(v)
             elif not _guarded(cur.test):
                 plain = names
-            for n in sorted(names):
+            for n in sorted(names, key=repr):
                 if n in claimed:
                     found.append("%s:%d %r already caught in line %d"
-                                 % (os.path.basename(path), cur.lineno, n, claimed[n]))
+                                 % (os.path.basename(path), cur.lineno, n[1], claimed[n]))
             for n in plain:
                 claimed.setdefault(n, cur.lineno)
             if len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If):
@@ -81,13 +103,16 @@ def lint(path):
 def _selftest_lint():
     import tempfile
     bad = ("def f(ev):\n    if ev in ('A', 'B'):\n        pass\n    elif ev == 'A':\n        pass\n"
-           "    elif ev == 'C' and x:\n        pass\n    elif ev == 'C':\n        pass\n")
+           "    elif ev == 'C' and x:\n        pass\n    elif ev == 'C':\n        pass\n"
+           "def g(e, kind):\n    if e.get('event') == 'X':\n        pass\n"
+           "    elif e['event'] == 'X':\n        pass\n    elif e.get('event') == 'X':\n        pass\n"
+           "    elif kind == 'X':\n        pass\n    elif kind in 'XY':\n        pass\n")
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "x.py")
         with open(p, "w", encoding="utf-8") as f:
             f.write(bad)
         got = lint(p)
-    return len(got) == 1 and "'A'" in got[0]
+    return len(got) == 2 and "'A'" in got[0] and "'X'" in got[1] and ":15 " in got[1] and "line 11" in got[1]
 
 
 fails = 0
