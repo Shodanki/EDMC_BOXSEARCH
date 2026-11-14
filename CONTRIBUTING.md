@@ -16,7 +16,7 @@ three places:
 
 A change that breaks one of them is not merged.
 
-The rules were checked against EDMC 6.1.2 on 13.11.2026. When EDMC releases a new version (pre-releases included), read its changelog and PLUGINS.md again. Then update this file and the plugin in time.
+The rules were checked against EDMC 6.1.2 on 13.11.2026, and again on 14.11.2026 against the pre-release 6.1.3-beta3 (ship data and bug fixes; PLUGINS.md unchanged since 21.01.2026). When EDMC releases a new version (pre-releases included), read its changelog and PLUGINS.md again. Then update this file and the plugin in time.
 
 ## 1. The game and the community services
 
