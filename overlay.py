@@ -216,7 +216,8 @@ class CockpitOverlay:
         self.size = "small"
         self.hidden = False                  # a game screen is in front
         self._last_targets: List[Line] = []
-        self.mute_targets = False            # mining: the route block steps aside
+        self.mute_targets = False            # mining / on the ground: the route block steps aside
+        self._mute_why: set = set()          # 4.12: why ("mining", "surface") - each lifts its own
         self._pending_brief: Optional[Tuple[List[Line], int, float]] = None
         self._targets_t = 0.0                # when the targets block was last sent
 
@@ -380,9 +381,12 @@ class CockpitOverlay:
             return False
         return self.draw("nav", list(lines), ttl=seconds)
 
-    def mute_route(self, on: bool) -> None:
-        """While mining the route targets are no help: hide them, bring them
-        back afterwards."""
+    def mute_route(self, on: bool, why: str = "mining") -> None:
+        """While mining - and since 4.12 on the ground (landed, in the SRV,
+        on foot) - the route targets are no help: hide them, bring them back
+        when no reason is left. Each reason lifts only itself."""
+        (self._mute_why.add if on else self._mute_why.discard)(why)
+        on = bool(self._mute_why)
         if on == self.mute_targets:
             return
         self.mute_targets = on

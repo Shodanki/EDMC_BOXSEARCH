@@ -364,11 +364,13 @@ def _surface_status(entry: Dict[str, Any]) -> None:
         pos = ST.db.note_status(entry)
     if not pos or not ST.cur_id64:
         ST.last_track = None
+        _surface_left()
         return
     radius = float(pos.get("radius") or 0.0)
     alt = pos.get("alt")
     low = pos["landed"] or pos["mode"] != "ship" or (alt is not None and alt < TRACK_MAX_ALT)
     now = time.time()
+    _surface_route(pos["landed"] or pos["mode"] != "ship")
     if low and radius > 0:
         last = ST.last_track
         moved = (surface_distance_m(last["lat"], last["lon"], pos["lat"], pos["lon"], radius)
@@ -380,6 +382,59 @@ def _surface_status(entry: Dict[str, Any]) -> None:
             ST.last_track = dict(pos, t=now)
     _nav_overlay(pos, radius, now, low)
     _bio_distance_line(pos, radius, now)
+    # 4.12: Status.json is quiet while you stand still - the compass is
+    # redrawn from the last fix so it does not run out (it showed only
+    # when a side panel was opened, which writes Status.json)
+    ST._nav_args = (pos, radius, low) if low and radius > 0 else None
+    if ST._nav_args:
+        _nav_keep_start()
+
+
+NAV_KEEP_MS = 2000        # compass redraw while near a body and Status.json is quiet
+
+
+def _nav_keep_start() -> None:
+    """Start the compass redraw (main thread; one timer at a time)."""
+    if ST._nav_timer or panel._frame is None:
+        return
+    ST._nav_timer = True
+    try:
+        panel._frame.after(NAV_KEEP_MS, _nav_keepalive)
+    except Exception:                         # EDMC is closing
+        ST._nav_timer = False
+
+
+def _nav_keepalive() -> None:
+    """Every NAV_KEEP_MS while near a body: the compass from the last fix."""
+    ST._nav_timer = False
+    args = ST._nav_args
+    if not args:
+        return
+    try:
+        if time.time() - ST._nav_shown >= NAV_KEEP_MS / 1000.0:
+            pos, radius, low = args
+            _nav_overlay(pos, radius, time.time(), low)
+    except Exception:
+        logger.debug("nav keep-alive failed", exc_info=True)
+    _nav_keep_start()
+
+
+def _surface_route(on_ground: bool) -> None:
+    """4.12: landed, in the SRV or on foot the route block steps aside -
+    the compass is what counts there; back when you lift off."""
+    ov = getattr(ST, "overlay", None)
+    if ov is not None:
+        ov.mute_route(on_ground, "surface")
+
+
+def _surface_left() -> None:
+    """Away from the body: no compass to keep, the route block back."""
+    if ST._nav_args is not None:
+        ST._nav_args = None
+        ov = getattr(ST, "overlay", None)
+        if ov is not None:
+            ov.clear("nav")
+    _surface_route(False)
 
 
 NAV_EVERY_S = 1.0         # compass refresh while a position is reported

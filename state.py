@@ -168,6 +168,10 @@ class State:
         self.bio_active: Optional[Dict[str, Any]] = None
         self._bio_shown = 0.0
         self._nav_shown = 0.0
+        # 4.12: the last surface fix (pos, radius, low) while near a body, so
+        # the compass can be redrawn when Status.json is quiet (standing still)
+        self._nav_args: Optional[Tuple[Dict[str, Any], float, bool]] = None
+        self._nav_timer = False
         self.mine = miningstat.MiningTracker()          # overlay mining block
         self._mine_shown = 0.0
         self._mine_drawn = False
