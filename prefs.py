@@ -37,169 +37,126 @@ _p: Dict[str, Any] = {}
 
 def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.Frame]:
     """
-    Preferences, laid out in two columns.
+    Preferences, on tabs of their own (4.12): Survey, Data, Overlay,
+    Windows, FIS, Maintenance.
 
     Everything is grid() - EDMC's notebook frames already use the grid
-    manager, and mixing in pack() raises TclError. The two columns exist
-    because a single stack of every option runs off the bottom of the window
-    on a 1080p screen.
+    manager, and mixing in pack() raises TclError. All options in two
+    columns had grown taller than a 1080p screen (the OK button was just
+    reachable, user 14.11.2026); on tabs the window is as tall as the
+    longest tab.
     """
     f = nb.Frame(parent)
-    f.columnconfigure(0, weight=1, uniform="cols")
-    f.columnconfigure(1, weight=1, uniform="cols")
+    f.columnconfigure(0, weight=1)
+    nb.Label(f, text="SHBOXSEARCH v%s" % VERSION).grid(row=0, column=0, sticky=tk.W, pady=(0, 4))
+    tabs = nb.Notebook(f)
+    tabs.grid(row=1, column=0, sticky=tk.NSEW)
+    for title, build in (("Survey", _tab_survey), ("Data", _tab_data), ("Overlay", _tab_overlay),
+                         ("Windows", _tab_windows), ("FIS", _tab_fis), ("Maintenance", _tab_maintenance)):
+        page = nb.Frame(tabs)
+        page.columnconfigure(3, weight=1)
+        tabs.add(page, text=title)
+        build(_Rows(page))
+    return f
 
-    nb.Label(f, text="SHBOXSEARCH v%s" % VERSION).grid(
-        row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 4))
 
-    left = nb.Frame(f)
-    left.grid(row=1, column=0, sticky=tk.NW, padx=(0, 14))
-    right = nb.Frame(f)
-    right.grid(row=1, column=1, sticky=tk.NW)
+class _Rows:
+    """One settings tab: headings, labelled fields and notes, row after row."""
 
-    state = {"left": 0, "right": 0}
+    def __init__(self, frame: Any) -> None:
+        self.f = frame
+        self.row = 0
 
-    def head(parent_frame, side: str, text: str) -> None:
-        nb.Label(parent_frame, text=text).grid(
-            row=state[side], column=0, columnspan=4, sticky=tk.W,
-            pady=(10 if state[side] else 0, 2))
-        state[side] += 1
+    def head(self, text: str) -> None:
+        """A section heading."""
+        nb.Label(self.f, text=text).grid(row=self.row, column=0, columnspan=4, sticky=tk.W,
+                                         pady=(10 if self.row else 6, 2))
+        self.row += 1
 
-    def field(parent_frame, side: str, label: str, widget) -> None:
+    def field(self, label: str, widget: Any) -> None:
+        """A widget, with a label on its left when one is given."""
         if label:
-            nb.Label(parent_frame, text=label).grid(
-                row=state[side], column=0, sticky=tk.W, padx=(12, 6))
-            widget.grid(row=state[side], column=1, columnspan=3, sticky=tk.W)
+            nb.Label(self.f, text=label).grid(row=self.row, column=0, sticky=tk.W, padx=(12, 6))
+            widget.grid(row=self.row, column=1, columnspan=3, sticky=tk.W)
         else:
-            widget.grid(row=state[side], column=0, columnspan=4, sticky=tk.W,
-                        padx=(12, 0))
-        state[side] += 1
+            widget.grid(row=self.row, column=0, columnspan=4, sticky=tk.W, padx=(12, 0))
+        self.row += 1
 
-    def note(parent_frame, side: str, text: str) -> None:
-        nb.Label(parent_frame, text=text).grid(
-            row=state[side], column=0, columnspan=4, sticky=tk.W, padx=(12, 0))
-        state[side] += 1
+    def note(self, text: str) -> None:
+        """A line of explanation."""
+        nb.Label(self.f, text=text).grid(row=self.row, column=0, columnspan=4, sticky=tk.W, padx=(12, 0))
+        self.row += 1
 
-    # ======================= left column: the survey =======================
-    head(left, "left", "Sphere")
+    def check(self, key: str, cfg: str, default: bool, text: str) -> None:
+        """A tick box bound to one setting (kept in _p[key])."""
+        _p[key] = tk.IntVar(value=1 if cfg_bool(CFG[cfg], default) else 0)
+        self.field("", nb.Checkbutton(self.f, text=text, variable=_p[key]))
 
+
+def _tab_survey(r: _Rows) -> None:
+    """The sphere and what counts as needing a visit."""
+    r.head("Sphere")
     _p["radius"] = tk.StringVar(value=str(cfg_int(CFG["radius"], 50)))
-    field(left, "left", "Radius (ly)",
-          ttk.OptionMenu(left, _p["radius"], _p["radius"].get(), *RADIUS_CHOICES))
-
-    nb.Label(left, text="Mass codes").grid(row=state["left"], column=0,
-                                           sticky=tk.W, padx=(12, 6))
-    mcf = nb.Frame(left)
-    mcf.grid(row=state["left"], column=1, columnspan=3, sticky=tk.W)
+    r.field("Radius (ly)", ttk.OptionMenu(r.f, _p["radius"], _p["radius"].get(), *RADIUS_CHOICES))
+    mcf = nb.Frame(r.f)
     _p["mc"] = {}
     active_mc = set(get_masscodes())
     for i in range(8):
         v = tk.IntVar(value=1 if i in active_mc else 0)
         _p["mc"][i] = v
-        nb.Checkbutton(mcf, text=MASSCODES[i], variable=v).grid(
-            row=0, column=i, sticky=tk.W)
-    state["left"] += 1
-
+        nb.Checkbutton(mcf, text=MASSCODES[i], variable=v).grid(row=0, column=i, sticky=tk.W)
+    r.field("Mass codes", mcf)
     _p["probe"] = tk.StringVar(value=str(cfg_int(CFG["probe_depth"], 2)))
-    field(left, "left", "Probes above max",
-          nb.EntryMenu(left, textvariable=_p["probe"], width=5))
-
-    _p["empty"] = tk.IntVar(value=1 if cfg_bool(CFG["include_empty"], True) else 0)
-    field(left, "left", "", nb.Checkbutton(
-        left, text="probe unexplored boxels", variable=_p["empty"]))
-
-    _p["tasks"] = tk.IntVar(value=1 if cfg_bool(CFG["include_tasks"], True) else 0)
-    field(left, "left", "", nb.Checkbutton(
-        left, text="queue outstanding scans", variable=_p["tasks"]))
-
-    _p["carrier_start"] = tk.IntVar(
-        value=1 if cfg_bool(CFG["carrier_start"], False) else 0)
-    field(left, "left", "", nb.Checkbutton(
-        left, text="carrier start (centre on the carrier)",
-        variable=_p["carrier_start"]))
-
-    head(left, "left", "What counts as needing a visit")
-    note(left, "left", "Any ticked reason is enough.")
+    r.field("Probes above max", nb.EntryMenu(r.f, textvariable=_p["probe"], width=5))
+    r.check("empty", "include_empty", True, "probe unexplored boxels")
+    r.check("tasks", "include_tasks", True, "queue outstanding scans")
+    r.check("carrier_start", "carrier_start", False, "carrier start (centre on the carrier)")
+    r.head("What counts as needing a visit")
+    r.note("Any ticked reason is enough.")
     active_f = set(get_filters())
     _p["filters"] = {}
     for key in ALL_FILTERS:
         v = tk.IntVar(value=1 if key in active_f else 0)
         _p["filters"][key] = v
-        field(left, "left", "", nb.Checkbutton(
-            left, text=FILTER_LABEL[key], variable=v))
+        r.field("", nb.Checkbutton(r.f, text=FILTER_LABEL[key], variable=v))
 
-    # ================= right column: sources, display, tools ===============
-    head(right, "right", "Data sources")
 
-    _p["edd"] = tk.IntVar(value=1 if cfg_bool(CFG["src_edd"], True) else 0)
-    _p["spansh"] = tk.IntVar(value=1 if cfg_bool(CFG["src_spansh"], True) else 0)
-    _p["edsm"] = tk.IntVar(value=1 if cfg_bool(CFG["src_edsm"], True) else 0)
-    field(right, "right", "", nb.Checkbutton(
-        right, text="EDDiscovery (local)", variable=_p["edd"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="Spansh", variable=_p["spansh"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="EDSM", variable=_p["edsm"]))
-    _p["offline"] = tk.IntVar(value=1 if cfg_bool(CFG["offline"], False) else 0)
-    field(right, "right", "", nb.Checkbutton(
-        right, text="offline - no online requests at all (EDSM, Spansh, "
-                    "update check)", variable=_p["offline"]))
-
+def _tab_data(r: _Rows) -> None:
+    """Where the data comes from, what is read from the game, commanders."""
+    r.head("Data sources")
+    r.check("edd", "src_edd", True, "EDDiscovery (local)")
+    r.check("spansh", "src_spansh", True, "Spansh")
+    r.check("edsm", "src_edsm", True, "EDSM")
+    r.check("offline", "offline", False, "offline - no online requests at all (EDSM, Spansh, update check)")
     _p["eddpath"] = tk.StringVar(value=cfg_str(CFG["edd_path"]))
-    nb.Label(right, text="EDDSystem.sqlite").grid(
-        row=state["right"], column=0, sticky=tk.W, padx=(12, 6))
-    nb.EntryMenu(right, textvariable=_p["eddpath"], width=30).grid(
-        row=state["right"], column=1, columnspan=2, sticky=tk.W)
-    tk.Button(right, text="...", width=3, command=_pick_edd).grid(
-        row=state["right"], column=3, sticky=tk.W, padx=4)
-    state["right"] += 1
-
+    row = nb.Frame(r.f)
+    nb.EntryMenu(row, textvariable=_p["eddpath"], width=30).grid(row=0, column=0, sticky=tk.W)
+    tk.Button(row, text="...", width=3, command=_pick_edd).grid(row=0, column=1, sticky=tk.W, padx=4)
+    r.field("EDDSystem.sqlite", row)
     for name, ok, why in ST.sources.status():
-        note(right, "right", "  %-12s %-4s %s" % (name, "ok" if ok else "no",
-                                                  why[:40]))
-
-    head(right, "right", "Harvesting")
-    _p["navroute"] = tk.IntVar(value=1 if cfg_bool(CFG["harvest_navroute"], True) else 0)
-    _p["dest"] = tk.IntVar(value=1 if cfg_bool(CFG["harvest_destination"], True) else 0)
-    _p["autocopy"] = tk.IntVar(value=1 if cfg_bool(CFG["autocopy"], True) else 0)
-    field(right, "right", "", nb.Checkbutton(
-        right, text="read NavRoute", variable=_p["navroute"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="read target selection", variable=_p["dest"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="copy next target to clipboard", variable=_p["autocopy"]))
-
-    head(right, "right", "Windows")
-    _p["route_top"] = tk.IntVar(value=1 if cfg_bool(CFG["route_top"], True) else 0)
-    _p["route_map"] = tk.IntVar(value=1 if cfg_bool(CFG["route_map"], True) else 0)
-    _p["route_all"] = tk.IntVar(value=1 if cfg_bool(CFG["route_all"], False) else 0)
-    _p["route_arrival"] = tk.IntVar(value=1 if cfg_bool(CFG["route_arrival"], True) else 0)
-    _p["show_route"] = tk.IntVar(value=1 if cfg_bool(CFG["show_route"], True) else 0)
-    field(right, "right", "", nb.Checkbutton(
-        right, text="keep windows on top", variable=_p["route_top"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="draw the system map", variable=_p["route_map"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="route every body", variable=_p["route_all"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="start the route at the arrival star", variable=_p["route_arrival"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="show the route line in the panel", variable=_p["show_route"]))
-
+        r.note("  %-12s %-4s %s" % (name, "ok" if ok else "no", why[:40]))
+    r.head("Harvesting")
+    r.check("navroute", "harvest_navroute", True, "read NavRoute")
+    r.check("dest", "harvest_destination", True, "read target selection")
+    r.check("autocopy", "autocopy", True, "copy next target to clipboard")
+    r.check("check_updates", "check_updates", True, "check GitHub for a newer release (once a day, notify only)")
     # C1: more than one commander on this PC
     choices = planning._main_cmdr_choices()
     if len(choices) > 1:
-        head(right, "right", "Commanders")
+        r.head("Commanders")
         labels = [c[0] for c in choices]
         cur = cfg_str(CFG["main_cmdr"], "")
         sel = next((c[0] for c in choices if c[1] == cur), labels[0])
         _p["main_cmdr"] = tk.StringVar(value=sel)
         _p["main_cmdr_map"] = {c[0]: c[1] for c in choices}
-        field(right, "right", "Main commander",
-              ttk.OptionMenu(right, _p["main_cmdr"], sel, *labels))
-        note(right, "right", "survey plan and statistics; each commander's own")
-        note(right, "right", "visits and scans are kept apart, finds are shared")
+        r.field("Main commander", ttk.OptionMenu(r.f, _p["main_cmdr"], sel, *labels))
+        r.note("survey plan and statistics; each commander's own")
+        r.note("visits and scans are kept apart, finds are shared")
 
-    head(right, "right", "Cockpit overlay")
+
+def _tab_overlay(r: _Rows) -> None:
+    """The cockpit overlay: how it is drawn, its blocks, the situation column."""
+    r.head("Cockpit overlay")
     # D3 (4.12): EDMCModernOverlay or a window of the plugin's own
     backends = [("EDMCModernOverlay", "modern")]
     if overlaywin.supported():
@@ -207,85 +164,65 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     cur = cfg_str(CFG["overlay_backend"], "modern")
     _p["overlay_backend"] = tk.StringVar(value=next((lb for lb, k in backends if k == cur), backends[0][0]))
     _p["overlay_backends"] = dict(backends)
-    field(right, "right", "Draw with",
-          ttk.OptionMenu(right, _p["overlay_backend"], _p["overlay_backend"].get(), *[lb for lb, _k in backends]))
-    note(right, "right", "own window: the game in a borderless window; shown while the game is in front")
-    _p["overlay"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay"], True) else 0)
-    _p["overlay_brief"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_brief"], True) else 0)
+    r.field("Draw with", ttk.OptionMenu(r.f, _p["overlay_backend"], _p["overlay_backend"].get(),
+                                        *[lb for lb, _k in backends]))
+    r.note("own window: the game in a borderless window; shown while the game is in front")
     _p["overlay_pos"] = tk.StringVar(value=cfg_str(CFG["overlay_pos"], "top-left"))
-    _p["overlay_nav"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_nav"], True) else 0)
-    _p["overlay_mining"] = tk.IntVar(value=1 if cfg_bool(CFG["overlay_mining"], True) else 0)
-    field(right, "right", "", nb.Checkbutton(
-        right, text="show the next route targets in the game", variable=_p["overlay"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="briefing on target selection and arrival",
-        variable=_p["overlay_brief"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="surface compass: parked SRV, open samples, known points",
-        variable=_p["overlay_nav"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="mining: last rock, hold, rate, session, limpets (5 lines)",
-        variable=_p["overlay_mining"]))
+    r.field("Position", ttk.OptionMenu(r.f, _p["overlay_pos"], _p["overlay_pos"].get(), *OVERLAY_POSITIONS))
+    r.head("Blocks")
+    r.check("overlay", "overlay", True, "show the next route targets in the game")
+    r.check("overlay_brief", "overlay_brief", True, "briefing on target selection and arrival")
+    r.check("overlay_nav", "overlay_nav", True, "surface compass: parked SRV, open samples, known points")
+    r.check("overlay_mining", "overlay_mining", True, "mining: last rock, hold, rate, session, limpets (5 lines)")
     # 4.12: the situation column in the opposite corner (cockpitinfo)
-    for key, text in (("overlay_info_warn", "warnings: dangerous star ahead, unsold data at stake"),
-                      ("overlay_info_place", "places: landing card, system value, ring, boxel, route fuel, carrier"),
-                      ("overlay_info_session", "session tally after a sale or on docking")):
-        _p[key] = tk.IntVar(value=1 if cfg_bool(CFG[key], True) else 0)
-        field(right, "right", "", nb.Checkbutton(right, text=text, variable=_p[key]))
-    field(right, "right", "Position",
-          ttk.OptionMenu(right, _p["overlay_pos"], _p["overlay_pos"].get(),
-                         *OVERLAY_POSITIONS))
+    r.head("Situation column (the opposite corner)")
+    r.check("overlay_info_warn", "overlay_info_warn", True, "warnings: dangerous star ahead, unsold data at stake")
+    r.check("overlay_info_place", "overlay_info_place", True,
+            "places: landing card, system value, ring, boxel, route fuel, carrier")
+    r.check("overlay_info_session", "overlay_info_session", True, "session tally after a sale or on docking")
     ov = getattr(ST, "overlay", None)
-    note(right, "right", "  overlay: %s" % (
+    r.note("overlay: %s" % (
         "own window" if ov is not None and isinstance(ov.client, overlaywin.WindowClient)
         else "EDMCModernOverlay connected" if ov is not None and ov.available() else "EDMCModernOverlay not installed"))
 
-    head(right, "right", "SHBOX FIS - flight information system")
-    fis_row = tk.Frame(right)
+
+def _tab_windows(r: _Rows) -> None:
+    """The plugin's windows and its line in EDMC's main window."""
+    r.head("Windows")
+    r.check("route_top", "route_top", True, "keep windows on top")
+    r.check("route_map", "route_map", True, "draw the system map")
+    r.check("route_all", "route_all", False, "route every body")
+    r.check("route_arrival", "route_arrival", True, "start the route at the arrival star")
+    _p["map_size"] = tk.StringVar(value=cfg_str(CFG["map_size"], "medium"))
+    r.field("Map size", ttk.OptionMenu(r.f, _p["map_size"], _p["map_size"].get(), "small", "medium", "large"))
+    r.head("Panel in EDMC")
+    r.check("show_route", "show_route", True, "show the route line in the panel")
+    r.check("panel_fuel", "panel_fuel", False, "show fuel in the panel (warnings always show)")
+    r.check("panel_queue", "panel_queue", False, "show queue counters in the panel")
+    _p["jump"] = tk.StringVar(value=str(cfg_int(CFG["jump_range"], 0) or ""))
+    r.field("Jump range (0=auto)", nb.EntryMenu(r.f, textvariable=_p["jump"], width=6))
+
+
+def _tab_fis(r: _Rows) -> None:
+    """SHBOX FIS: start, open, autostart."""
+    r.head("SHBOX FIS - flight information system")
+    fis_row = tk.Frame(r.f)
     tk.Button(fis_row, text="start FIS", command=fislaunch._fis_start).pack(side=tk.LEFT)
     tk.Button(fis_row, text="open in browser", command=fislaunch._fis_open).pack(side=tk.LEFT, padx=(6, 0))
     fis_state = tk.StringVar(value=fislaunch._fis_status())
     tk.Button(fis_row, text="check", command=lambda: fis_state.set(fislaunch._fis_status())).pack(
         side=tk.LEFT, padx=(6, 0))
-    field(right, "right", "", fis_row)
-    _p["fis_autostart"] = tk.IntVar(value=1 if cfg_bool(CFG["fis_autostart"], False) else 0)
-    field(right, "right", "", nb.Checkbutton(
-        right, text="start the FIS together with EDMC (window minimised)",
-        variable=_p["fis_autostart"]))
-    nb.Label(right, textvariable=fis_state).grid(
-        row=state["right"], column=0, columnspan=4, sticky=tk.W, padx=(12, 0))
-    state["right"] += 1
-    note(right, "right", "  or double-click FIS\\start_fis.bat - first start asks, then remembers;")
-    note(right, "right", "  change it later with FIS\\fis_settings.bat. Details: FIS\\README.md")
+    r.field("", fis_row)
+    r.check("fis_autostart", "fis_autostart", False, "start the FIS together with EDMC (window minimised)")
+    r.field("", nb.Label(r.f, textvariable=fis_state))
+    r.note("or double-click FIS\\start_fis.bat - first start asks, then remembers;")
+    r.note("change it later with FIS\\fis_settings.bat. Details: FIS\\README.md")
 
-    _p["panel_fuel"] = tk.IntVar(value=1 if cfg_bool(CFG["panel_fuel"], False) else 0)
-    _p["check_updates"] = tk.IntVar(
-        value=1 if cfg_bool(CFG["check_updates"], True) else 0)
-    field(right, "right", "", nb.Checkbutton(
-        right, text="check GitHub for a newer release (once a day, notify only)",
-        variable=_p["check_updates"]))
 
-    _p["panel_queue"] = tk.IntVar(value=1 if cfg_bool(CFG["panel_queue"], False) else 0)
-    field(right, "right", "", nb.Checkbutton(
-        right, text="show fuel in the panel (warnings always show)",
-        variable=_p["panel_fuel"]))
-    field(right, "right", "", nb.Checkbutton(
-        right, text="show queue counters in the panel", variable=_p["panel_queue"]))
-
-    _p["map_size"] = tk.StringVar(value=cfg_str(CFG["map_size"], "medium"))
-    field(right, "right", "Map size",
-          ttk.OptionMenu(right, _p["map_size"], _p["map_size"].get(),
-                         "small", "medium", "large"))
-
-    _p["jump"] = tk.StringVar(value=str(cfg_int(CFG["jump_range"], 0) or ""))
-    field(right, "right", "Jump range (0=auto)",
-          nb.EntryMenu(right, textvariable=_p["jump"], width=6))
-
-    # ========================= full width: tools ===========================
-    tools = nb.Frame(f)
-    tools.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(12, 0))
-    nb.Label(tools, text="Maintenance").grid(row=0, column=0, columnspan=6,
-                                             sticky=tk.W)
+def _tab_maintenance(r: _Rows) -> None:
+    """Imports, exports, self test, update check; where things are."""
+    r.head("Maintenance")
+    tools = nb.Frame(r.f)
     buttons = [
         ("Run first import", lambda: uithread._run_async(maintenance._first_run_migration,
                                                          label="first-run import")),
@@ -298,30 +235,17 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
          lambda: uithread._run_async(updater._check_for_update, True, label="update check")),
     ]
     for i, (text, cmd) in enumerate(buttons):
-        tk.Button(tools, text=text, command=cmd).grid(
-            row=1 + i // 3, column=i % 3, sticky=tk.W, padx=(0, 6), pady=2)
-
-    info = nb.Frame(f)
-    info.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(10, 0))
+        tk.Button(tools, text=text, command=cmd).grid(row=i // 3, column=i % 3, sticky=tk.W, padx=(0, 6), pady=2)
+    r.field("", tools)
+    r.head("About")
     jd = maintenance._journal_dir()
     car = ST.db.get_carrier() if ST.db else None
-    lines = [
-        "Version %s  -  %s" % (VERSION, REPO_URL),
-        "Journal folder: %s" % (jd or "NOT FOUND"),
-        "First import: %s" % ((ST.db.get_meta("migrated") if ST.db else None)
-                              or "not run yet"),
-        "Carrier: %s" % ("%s%s" % (car["system"],
-                                   "  (%s)" % car["callsign"]
-                                   if car.get("callsign") else "")
-                         if car else "not known yet - dock at it once"),
-    ]
-    for i, line in enumerate(lines):
-        nb.Label(info, text=line).grid(row=i, column=0, sticky=tk.W)
-
-    _p["debug"] = tk.IntVar(value=1 if cfg_bool(CFG["debug"], False) else 0)
-    nb.Checkbutton(f, text="verbose logging", variable=_p["debug"]).grid(
-        row=4, column=0, columnspan=2, sticky=tk.W, pady=(10, 0))
-    return f
+    r.note("Version %s  -  %s" % (VERSION, REPO_URL))
+    r.note("Journal folder: %s" % (jd or "NOT FOUND"))
+    r.note("First import: %s" % ((ST.db.get_meta("migrated") if ST.db else None) or "not run yet"))
+    r.note("Carrier: %s" % ("%s%s" % (car["system"], "  (%s)" % car["callsign"] if car.get("callsign") else "")
+                            if car else "not known yet - dock at it once"))
+    r.check("debug", "debug", False, "verbose logging")
 
 
 def _pick_edd() -> None:

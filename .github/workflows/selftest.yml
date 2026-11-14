@@ -60,6 +60,8 @@ jobs:
         run: python tests/ground_mining.py
       - name: situation column (value formula, board, 44-character texts, plugin end to end)
         run: python tests/situation.py
+      - name: settings page on tabs, fits a 1080p screen (skipped without a display)
+        run: python tests/prefs_layout.py
       - name: own overlay window (drawn on the main thread, scaled, expiry, focus)
         run: python tests/overlay_window.py
       - name: probe names at EDSM (one bundled request, budget, never twice)

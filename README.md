@@ -115,8 +115,8 @@ Clicking opens the release page. Then:
 
 The database migrates itself: new columns are added in place, nothing is
 dropped. When an update adds new per-body data, the plugin replays your
-journals once on its own (4.1 does); *Preferences -> SHBOXSEARCH -> Replay
-journals* repeats that at any time and is safe to run as often as you like.
+journals once on its own (4.1 does); *Preferences -> SHBOXSEARCH -> Maintenance ->
+Replay journals* repeats that at any time and is safe to run as often as you like.
 Since 4.6 the plugin copies the database to `shboxsearch.sqlite.schema<N>-<time>.bak`
 before it changes the schema or repairs records (the last three are kept).
 
@@ -247,7 +247,7 @@ Progress appears in the plugin status line (`first-run import: journals`,
 `journals 12/340`) and in full in the EDMC log. With years of flight history
 this can take a few minutes; EDMC stays usable throughout.
 
-3. Open Preferences → SHBOXSEARCH and check:
+3. Open Preferences → SHBOXSEARCH → Maintenance and check:
    * *Journal folder* — must show a path, not `NOT FOUND`
    * *First import* — shows the timestamp of the run
    * *EDDSystem.sqlite* — set the path via `...` if needed
@@ -273,25 +273,30 @@ the git history.
 
 ## Preferences
 
+Since 4.12 the plugin's settings page has tabs of its own - all options at
+once had grown taller than a 1080p screen.
+
 **Survey** — radius (50/100/150), active mass codes, probe depth above the
-boxel maximum, empty probes on/off, queue outstanding scans on/off, jump range,
-carrier start on/off, statistics block on/off. Shows the remembered carrier and
-the last six surveyed spheres.
+boxel maximum, empty probes on/off, queue outstanding scans on/off, carrier
+start on/off, what counts as needing a visit.
 
-**Data sources** — EDDiscovery / Spansh / EDSM individually switchable, path to
-`EDDSystem.sqlite` with a file picker, per-source status line.
+**Data** — EDDiscovery / Spansh / EDSM individually switchable, offline,
+path to `EDDSystem.sqlite` with a file picker, per-source status line; read
+NavRoute, read target selection, auto-copy; the update check; the main
+commander when several fly on this PC.
 
-**Automatic harvesting** — read NavRoute, read target selection, auto-copy.
+**Overlay** — draw with EDMCModernOverlay or the own window, position, the
+blocks (route targets, briefing, surface compass, mining) and the situation
+column (warnings, places, session tally).
+
+**Windows** — on top, system map, route every body, start at the arrival
+star, map size; the panel's route line, fuel and queue counters, jump range.
+
+**FIS** — start, open in the browser, start together with EDMC.
 
 **Maintenance** — run first import, replay journals, import JSON, export plan
-as CSV, export boxel prefixes, self test, database statistics.
-
-## Preferences layout
-
-Two columns instead of one stack, because the full set ran off the bottom of a
-1080p window. Left holds everything about the survey itself (sphere, mass
-codes, what counts as needing a visit); right holds sources, harvesting and
-window behaviour; maintenance buttons run full width in a 3x2 grid underneath.
+as CSV, export boxel prefixes, self test, update check; journal folder, first
+import, carrier; verbose logging.
 
 ## Known limits
 
@@ -1740,7 +1745,7 @@ DSS  3 to map ~+9.8 M Cr · 3 first
 What you were paid is read once from your journals at the start; nothing
 leaves your computer.
 
-*Preferences -> SHBOXSEARCH -> Cockpit overlay*: on/off, briefing on/off,
+*Preferences -> SHBOXSEARCH -> Overlay*: on/off, briefing on/off,
 the situation column's warnings, places and session tally each on/off,
 position (four corners). The preferences show whether an overlay plugin was
 found. Without one nothing happens. The overlay is a separate transparent
