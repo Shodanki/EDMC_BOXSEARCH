@@ -60,6 +60,8 @@ def _path(raw: str) -> str:
 
 
 class Config:
+    """The FIS settings: host, port, home network and token, paths, route
+    filters, language and views - read from and written to fis.ini."""
     def __init__(self) -> None:
         self.host = "127.0.0.1"
         self.port = DEFAULT_PORT
@@ -88,6 +90,8 @@ class Config:
 
     @property
     def filters(self) -> List[str]:
+        """The route filters in use: the plugin's when chosen and set, else the
+        FIS's own."""
         if self.route_source == "plugin":
             pf = self.plugin_filters()
             if pf:
@@ -142,6 +146,7 @@ class Config:
 
     # ------------------------------------------------------------------ ini
     def load(self, path: Optional[str] = None) -> "Config":
+        """Read fis.ini (missing values keep their defaults); returns self."""
         path = path or self.ini_path
         self.ini_path = path
         cp = configparser.ConfigParser(interpolation=None)

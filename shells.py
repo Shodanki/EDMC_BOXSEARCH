@@ -112,6 +112,7 @@ def coverage(center: Sequence[float], r_min: float, r_max: float,
 
 def is_fresh(center: Sequence[float], r_min: float, r_max: float,
              regions: Iterable[Region]) -> bool:
+    """True when the stored regions cover the shell to at least FRESH_SHARE."""
     return coverage(center, r_min, r_max, regions) >= FRESH_SHARE
 
 
@@ -153,6 +154,7 @@ def edsm_queries(center: Sequence[float], r_min: float,
 
 def in_shell(p: Sequence[float], center: Sequence[float], r_min: float,
              r_max: float) -> bool:
+    """True when p lies between r_min and r_max from center."""
     d = _dist(p, center)
     return r_min - 1e-6 <= d <= r_max + 1e-6
 

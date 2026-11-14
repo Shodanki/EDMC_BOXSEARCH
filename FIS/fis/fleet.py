@@ -82,6 +82,8 @@ CARRIER_TANK = 1000
 
 
 def tritium_for_jump(ly: float, load_t: float, tritium_t: float) -> int:
+    """Tritium in tonnes a carrier jump of ly costs with this cargo and tritium
+    load (TRITIUM_BASE / TRITIUM_DIV)."""
     return int(round(5 + ly * (load_t + tritium_t + TRITIUM_BASE) / TRITIUM_DIV))
 
 
@@ -236,6 +238,8 @@ def readable_module(localised: Optional[str], raw: Optional[str] = None) -> str:
 
 
 def slot_group(slot: str) -> str:
+    """The group a module slot belongs to: utility, hardpoints, core, optional
+    ..."""
     s = slot or ""
     if s.startswith("TinyHardpoint"):
         return "utility"
@@ -250,6 +254,7 @@ def slot_group(slot: str) -> str:
 
 
 def slot_size(slot: str) -> Optional[int]:
+    """The size class of a slot (0 utility to 8), or None."""
     m = re.search(r"Size(\d+)", slot or "")
     if m:
         return int(m.group(1))
@@ -394,6 +399,8 @@ class Archive:
         self.rev = 0
 
     def refresh(self, force: bool = False) -> None:
+        """Read the journals again - only the files that changed - at most
+        every MIN_RESCAN_S unless forced."""
         if not force and time.time() - self._scanned < self.MIN_RESCAN_S:
             return
         with self._lock:
@@ -651,6 +658,7 @@ class Archive:
         return out
 
     def current_loadout(self) -> Optional[Dict[str, Any]]:
+        """The newest Loadout event, or None."""
         last = None
         for e in self.events():
             if e["event"] == "Loadout":
@@ -668,6 +676,9 @@ class Archive:
         return [e for e, foreign in zip(evs, own_jump_flags(evs)) if not foreign]
 
     def carrier(self) -> Optional[Dict[str, Any]]:
+        """The own carrier from the journals: stats, location, fuel, load, jump
+        history, a pending jump with its tritium, upkeep and changed
+        services."""
         evs = self.own_carrier_events()
         stats = loc = None
         pos: Dict[str, Any] = {}

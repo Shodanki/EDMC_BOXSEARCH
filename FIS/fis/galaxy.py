@@ -236,6 +236,9 @@ def corridor(db: Database, now: float) -> Optional[Dict[str, Any]]:
 def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
                  mc: Optional[int] = None, days: Optional[float] = None,
                  now: Optional[float] = None) -> Dict[str, Any]:
+    """The GALAXY view: jump path, carrier, survey spheres, boxels of one mass
+    code and known systems (see the module docstring), optionally only the
+    last days."""
     now = time.time() if now is None else now
     since = now - days * 86400 if days else None
     out: Dict[str, Any] = {"generated": now, "days": days}

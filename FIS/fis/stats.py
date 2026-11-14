@@ -50,6 +50,7 @@ SECTIONS = ("Exploration", "Exobiology", "Mining", "FLEETCARRIER", "Bank_Account
 
 
 def rank_name(kind: str, n: Optional[int]) -> Optional[str]:
+    """The name of a rank number (Elite ranks), or the number when unknown."""
     names = RANKS.get(kind) or []
     if n is None:
         return None
@@ -62,6 +63,8 @@ def _numbers(d: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_statistics(archive: fl.Archive, days: Optional[float] = None,
                      now: Optional[float] = None) -> Dict[str, Any]:
+    """The STATISTICS view from the game's Statistics events: ranks,
+    reputation, the numbers and how much they grew over the period."""
     now = time.time() if now is None else now
     evs = archive.events()
     stats = [e for e in evs if e["event"] == "Statistics"]

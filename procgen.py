@@ -129,6 +129,7 @@ class ParsedName:
 
     @property
     def size(self) -> float:
+        """Edge length of the boxel in ly (from the mass code)."""
         return boxel_size(self.mc)
 
     @property
@@ -146,6 +147,7 @@ class ParsedName:
         return boxel_prefix(self.boxel_key)
 
     def with_n2(self, n2: int) -> str:
+        """The same boxel's system name with another number n2."""
         return make_name(self.sector, self.mc, self.boxel, n2)
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -291,6 +293,7 @@ def star_pos(value: object) -> Optional[Tuple[float, float, float]]:
 
 
 def sector_index_of_coords(x: float, y: float, z: float) -> Tuple[int, int, int]:
+    """The sector grid index (1280 ly cubes) of a position."""
     return tuple(int(math.floor((c - o) / SECTOR_SIZE))
                  for c, o in zip((x, y, z), GALAXY_ORIGIN))  # type: ignore[return-value]
 
@@ -303,11 +306,13 @@ def boxel_index_of_coords(x: float, y: float, z: float, mc: int) -> Tuple[int, i
 
 
 def boxel_corner(global_idx: Sequence[int], mc: int) -> Tuple[float, float, float]:
+    """The corner of a boxel with the lowest coordinates."""
     s = boxel_size(mc)
     return tuple(o + i * s for i, o in zip(global_idx, GALAXY_ORIGIN))  # type: ignore[return-value]
 
 
 def boxel_center(global_idx: Sequence[int], mc: int) -> Tuple[float, float, float]:
+    """The centre of a boxel."""
     s = boxel_size(mc)
     c = boxel_corner(global_idx, mc)
     return (c[0] + s / 2, c[1] + s / 2, c[2] + s / 2)
@@ -491,6 +496,8 @@ class SectorRegistry:
         self.conflicts: List[Tuple[str, Tuple[int, int, int], Tuple[int, int, int]]] = []
 
     def learn_from_id64(self, name: str, id64: int) -> bool:
+        """Learn a sector's position from a system name and its id64; False
+        when they disagree."""
         p = parse_name(name)
         if p is None:
             return False
@@ -500,6 +507,8 @@ class SectorRegistry:
         return self._add(p.sector, d["sector_idx"])  # type: ignore[arg-type]
 
     def learn_from_coords(self, name: str, x: float, y: float, z: float) -> bool:
+        """Learn a sector's position from a system name and its coordinates;
+        False when the position does not lie in the boxel the name implies."""
         p = parse_name(name)
         if p is None:
             return False
@@ -531,9 +540,11 @@ class SectorRegistry:
         return True
 
     def index_of(self, sector: str) -> Optional[Tuple[int, int, int]]:
+        """The grid index of a known sector, or None."""
         return self.by_name.get(sector)
 
     def name_of(self, idx: Sequence[int]) -> Optional[str]:
+        """The name of the sector at a grid index, or None."""
         return self.by_index.get(tuple(idx))  # type: ignore[arg-type]
 
     def resolve(self, idx: Sequence[int]) -> Optional[str]:
@@ -541,10 +552,13 @@ class SectorRegistry:
         return self.name_of(idx) or computed_sector_name(idx)
 
     def name_for_coords(self, x: float, y: float, z: float) -> Optional[str]:
+        """The name of the sector a position lies in, or None."""
         return self.name_of(sector_index_of_coords(x, y, z))
 
     def known_sectors_in_sphere(self, center: Sequence[float], radius: float
                                 ) -> List[Tuple[str, Tuple[int, int, int]]]:
+        """(name, index) of every known sector the sphere touches; the unknown
+        ones are left in last_missing."""
         found, missing = [], []
         rng = []
         for k in range(3):
@@ -561,9 +575,11 @@ class SectorRegistry:
         return found
 
     def to_dict(self) -> Dict[str, List[int]]:
+        """The known sectors as {name: [x, y, z]} - for storing."""
         return {k: list(v) for k, v in self.by_name.items()}
 
     def load_dict(self, d: Dict[str, Sequence[int]]) -> None:
+        """Add sectors stored with to_dict."""
         for k, v in d.items():
             self._add(k, tuple(v))  # type: ignore[arg-type]
 

@@ -37,6 +37,8 @@ def _json(raw: Any, default: Any = None) -> Any:
 
 
 class Database:
+    """The plugin's database, read only: every query opens its own read-only
+    connection, so the FIS never writes or locks it."""
     def __init__(self, path: str) -> None:
         self.path = path
         self._lock = threading.Lock()
@@ -48,15 +50,18 @@ class Database:
     # ------------------------------------------------------------ plumbing
     @property
     def exists(self) -> bool:
+        """True when the database file is there."""
         return bool(self.path) and os.path.exists(self.path)
 
     def connect(self) -> sqlite3.Connection:
+        """A new read-only connection (mode=ro) with rows by column name."""
         uri = "file:%s?mode=ro" % self.path.replace("\\", "/")
         cx = sqlite3.connect(uri, uri=True, timeout=2.0, check_same_thread=False)
         cx.row_factory = sqlite3.Row
         return cx
 
     def query(self, sql: str, args: tuple = ()) -> List[sqlite3.Row]:
+        """All rows of one query; [] when the database is missing."""
         if not self.exists:
             return []
         cx = self.connect()
@@ -66,6 +71,7 @@ class Database:
             cx.close()
 
     def one(self, sql: str, args: tuple = ()) -> Optional[sqlite3.Row]:
+        """The first row of one query, or None."""
         rows = self.query(sql, args)
         return rows[0] if rows else None
 
@@ -81,19 +87,24 @@ class Database:
 
     # ------------------------------------------------------------- systems
     def system_by_id64(self, id64: int) -> Optional[sqlite3.Row]:
+        """The systems row with this id64, or None."""
         return self.one("SELECT * FROM systems WHERE id64=?", (int(id64),))
 
     def system_by_name(self, name: str) -> Optional[sqlite3.Row]:
+        """The systems row with this name (any case), or None."""
         return self.one("SELECT * FROM systems WHERE name=? COLLATE NOCASE", (name,))
 
     def bodies_of(self, id64: int) -> List[sqlite3.Row]:
+        """The shared body rows of a system."""
         return self.query("SELECT * FROM bodies WHERE sys_id64=?", (int(id64),))
 
     def body(self, id64: int, body_id: int) -> Optional[sqlite3.Row]:
+        """One body row, or None."""
         return self.one("SELECT * FROM bodies WHERE sys_id64=? AND body_id=?",
                         (int(id64), int(body_id)))
 
     def hotspots_of(self, id64: int, body_id: Optional[int] = None) -> List[sqlite3.Row]:
+        """The ring hotspots of a system, or of one body."""
         if body_id is None:
             return self.query("SELECT * FROM hotspots WHERE sys_id64=?", (int(id64),))
         return self.query("SELECT * FROM hotspots WHERE sys_id64=? AND body_id=?",
@@ -101,6 +112,7 @@ class Database:
 
     # ------------------------------------------------- atlas (plugin 4.3)
     def has_table(self, name: str) -> bool:
+        """True when the table exists (an older plugin may lack it)."""
         try:
             return self.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                             (name,)) is not None
@@ -132,6 +144,8 @@ class Database:
         return self.query(sql + " GROUP BY material, body_name ORDER BY count DESC", tuple(args))
 
     def atlas_signals(self, kind: Optional[str] = None) -> List[sqlite3.Row]:
+        """Every stored signal with its system's name and position, or those of
+        one kind - for ATLAS."""
         if not self.has_table("signals"):
             return []
         sql = ("SELECT g.*, s.name sys_name, s.x, s.y, s.z FROM signals g "
@@ -139,6 +153,8 @@ class Database:
         return self.query(sql + (" WHERE g.kind=?" if kind else ""), (kind,) if kind else ())
 
     def atlas_materials(self, material: Optional[str] = None) -> List[sqlite3.Row]:
+        """Materials picked up, per place, with system and position - for
+        ATLAS."""
         if not self.has_table("material_finds"):
             return []
         sql = ("SELECT m.material, MAX(m.label) label, MAX(m.category) category, m.body_name, "
@@ -153,6 +169,8 @@ class Database:
     FIND_KINDS = ("codex", "bio_analyse", "settlement", "screenshot")
 
     def atlas_rings(self, material: Optional[str] = None) -> List[sqlite3.Row]:
+        """Ring hotspots with system and position, or those of one material -
+        for ATLAS."""
         if not self.has_table("hotspots"):
             return []
         sql = ("SELECT h.*, s.name sys_name, s.x, s.y, s.z FROM hotspots h "
@@ -227,6 +245,7 @@ class Database:
 
     # ------------------------------------------------ surface (plugin 4.4)
     def surface_track(self, id64: int, body: str) -> List[sqlite3.Row]:
+        """The stored surface track of a body, oldest first."""
         if not self.has_table("surface_track"):
             return []
         return self.query("SELECT * FROM surface_track WHERE sys_id64=? AND body_name=? "
@@ -241,6 +260,7 @@ class Database:
                           (id64,))
 
     def surface_marks(self, id64: int, body: str) -> List[sqlite3.Row]:
+        """The surface marks of a body (samples, SRV, finds), oldest first."""
         if not self.has_table("surface_marks"):
             return []
         return self.query("SELECT * FROM surface_marks WHERE sys_id64=? AND body_name=? "
@@ -254,9 +274,11 @@ class Database:
                         "WHERE lat IS NOT NULL ORDER BY ts DESC LIMIT 1")
 
     def body_by_name(self, id64: int, name: str) -> Optional[sqlite3.Row]:
+        """One body row by its name, or None."""
         return self.one("SELECT * FROM bodies WHERE sys_id64=? AND name=?", (int(id64), name))
 
     def last_visited(self) -> Optional[sqlite3.Row]:
+        """The system visited last, or None."""
         return self.one("SELECT * FROM systems WHERE visited=1 AND visited_ts IS NOT NULL "
                         "ORDER BY visited_ts DESC LIMIT 1")
 
@@ -290,6 +312,8 @@ class Database:
 
     @staticmethod
     def known_sources(row: Optional[sqlite3.Row]) -> List[str]:
+        """Which external databases (EDSM, Spansh, EDDiscovery) already know a
+        system, from its sources column."""
         if row is None:
             return []
         srcs = set((row["sources"] or "").split(","))
@@ -297,9 +321,11 @@ class Database:
 
     # -------------------------------------------------------------- boxels
     def boxel(self, key: str) -> Optional[sqlite3.Row]:
+        """One boxels row (end of list, complete), or None."""
         return self.one("SELECT * FROM boxels WHERE key=?", (key,))
 
     def systems_with_prefix(self, prefix: str) -> List[sqlite3.Row]:
+        """Systems whose name starts with a boxel prefix (LIKE, escaped)."""
         # names like "Synuefe UC-J b42-3": prefix "Synuefe UC-J b42-"
         esc = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         return self.query("SELECT * FROM systems WHERE name LIKE ? ESCAPE '\\'",
@@ -310,13 +336,16 @@ class Database:
         return self.query("SELECT name, boxel, ts FROM absent ORDER BY name")
 
     def absent_in(self, key: str) -> List[sqlite3.Row]:
+        """Names the galaxy map did not know, in one boxel."""
         return self.query("SELECT * FROM absent WHERE boxel=?", (key,))
 
     # -------------------------------------------------------------- survey
     def survey(self) -> Optional[sqlite3.Row]:
+        """The plugin's running survey row, or None."""
         return self.one("SELECT * FROM survey WHERE id=1")
 
     def spheres(self) -> List[sqlite3.Row]:
+        """All survey spheres, oldest first."""
         return self.query("SELECT * FROM spheres ORDER BY id")
 
     def systems_in_sphere(self, cx: float, cy: float, cz: float, r: float,
@@ -340,6 +369,8 @@ class Database:
         return self.one("SELECT 1 FROM meta WHERE k=?", (CMDR_READY,)) is not None
 
     def commanders(self) -> List[Dict[str, Any]]:
+        """The commanders the plugin knows, with carrier, last login and logins
+        - for the settings page."""
         if not self.has_table("commanders"):
             return []
         return [dict(r) for r in self.query(
@@ -364,6 +395,7 @@ class Database:
         return (r["v"] if r is not None and r["v"] else None) or self.suggest_main()
 
     def commander_name(self, fid: Optional[str]) -> Optional[str]:
+        """The commander name stored for a Frontier ID, or None."""
         if not fid or not self.has_table("commanders"):
             return None
         r = self.one("SELECT name FROM commanders WHERE fid=?", (fid,))
@@ -478,16 +510,20 @@ class Database:
         return [r["name"] or r["fid"] for r in rows if r["fid"] != but]
 
     def boxel_counts(self) -> Dict[str, int]:
+        """How many boxels are stored and how many of them complete."""
         row = self.one("SELECT COUNT(*) AS n, SUM(complete) AS done FROM boxels")
         if row is None:
             return {"total": 0, "complete": 0}
         return {"total": row["n"] or 0, "complete": row["done"] or 0}
 
     def meta(self) -> Dict[str, str]:
+        """The plugin's key/value table as a dict."""
         return {r["k"]: r["v"] for r in self.query("SELECT k, v FROM meta")}
 
     # -------------------------------------------------------------- health
     def health(self) -> Dict[str, Any]:
+        """Path, schema, row counts and journal mode - for /api/health; ok
+        False with the error when it cannot be read."""
         out: Dict[str, Any] = {"path": self.path, "exists": self.exists}
         if not self.exists:
             return out

@@ -94,6 +94,8 @@ def _ammo_full(archive: fl.Archive) -> Dict[tuple, int]:
 def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str, db: Any = None,
                      now: Optional[float] = None, lost_hidden: Any = None,
                      unsold_limits: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+    """The SHIP view: status, modules, fuel, data at risk (with the own
+    limits), cargo, ships lost or hidden."""
     now = time.time() if now is None else now
     st = live.get("status") or {}
     flags, flags2 = int(st.get("flags") or 0), int(st.get("flags2") or 0)
@@ -360,6 +362,8 @@ def _capi_hold(capi_path: Optional[str], now: float) -> Optional[Dict[str, Any]]
 
 
 def hold_tritium(capi_path: Optional[str], now: float) -> Optional[Dict[str, Any]]:
+    """Tritium in the carrier's hold from Frontier's answer stored by the
+    plugin, with its age, or None."""
     from . import capi
     d = capi.load(capi_path, now)
     return {"t": d["tritium"], "age_s": d["age_s"], "saved": d["saved"]} if d else None
@@ -421,6 +425,7 @@ def visiting_carrier(archive: Any, live: Dict[str, Any], journal_dir: Optional[s
 def build_carrier(archive: fl.Archive, live: Dict[str, Any],
                   now: Optional[float] = None, journal_dir: Optional[str] = None,
                   capi_path: Optional[str] = None) -> Dict[str, Any]:
+    """The CARRIER view: the own carrier, its jumps and hold, the fleet."""
     now = time.time() if now is None else now
     c = archive.carrier()
     fleet = archive.fleet()

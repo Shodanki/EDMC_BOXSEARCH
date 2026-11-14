@@ -57,6 +57,8 @@ def _ts(e: Dict[str, Any]) -> float:
 
 
 def type_key(s: Optional[str]) -> str:
+    """A material's internal key from a journal name, a hotspot type or a label
+    - lower case, no 'hotspot', no blanks."""
     s = (s or "").strip().strip("$;").lower()
     if "#type=" in s:
         s = s.split("#type=", 1)[1].strip("$;")
@@ -66,6 +68,8 @@ def type_key(s: Optional[str]) -> str:
 
 
 class MiningTracker:
+    """One mining session from the journal: last prospected rock, refined
+    tonnes, rate, limpets - the mining block of the overlay."""
     def __init__(self) -> None:
         self.reset()
         self.capacity = 0
@@ -76,6 +80,7 @@ class MiningTracker:
         self.miner: Optional[bool] = None         # ship has mining tools (None: no Loadout yet)
 
     def reset(self) -> None:
+        """Start a new session (the hold and the capacity stay)."""
         self.start = 0.0
         self.last = 0.0
         self.refined: Dict[str, int] = {}
@@ -170,6 +175,8 @@ class MiningTracker:
 
     # -- derived -------------------------------------------------------------
     def key(self) -> Optional[str]:
+        """The material the block follows: the chosen target, else the most
+        refined, else the richest in the last rock."""
         if self.target:
             return self.target
         if self.refined:
@@ -183,20 +190,26 @@ class MiningTracker:
         return max((p for mk, _n, p in (rock or {}).get("mats", []) if mk == k), default=0.0)
 
     def active(self, now: Optional[float] = None) -> bool:
+        """True while the last mining event is no older than ACTIVE_S."""
         now = time.time() if now is None else now
         return bool(self.last) and now - self.last <= ACTIVE_S
 
     def rate_h(self, now: Optional[float] = None) -> int:
+        """Refined tonnes per hour over the last RATE_S seconds."""
         now = time.time() if now is None else now
         n = sum(1 for t in self.ticks if now - t <= RATE_S)
         return round(n * 3600.0 / RATE_S)
 
     def ratio(self) -> float:
+        """Limpets used per refined tonne - measured after 20 t, else the
+        default."""
         total = sum(self.refined.values())
         return self.limpets_used / total if total >= 20 and self.limpets_used else DEFAULT_RATIO
 
     # -- the five lines ------------------------------------------------------
     def lines(self, now: Optional[float] = None, col: Optional[Dict[str, str]] = None) -> List[Line]:
+        """The mining block as (text, colour) lines, at most five: rock, hold,
+        rate, session, limpets."""
         now = time.time() if now is None else now
         c = dict(COLOURS, **(col or {}))
         out: List[Line] = []

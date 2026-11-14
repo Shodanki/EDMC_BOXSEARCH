@@ -359,10 +359,12 @@ def _stop_survey() -> None:
 # ============================================================================
 
 def current_flight() -> Optional[Target]:
+    """The head of the flight queue, or None."""
     return ST.flight[0] if ST.flight else None
 
 
 def current_probe() -> Optional[Target]:
+    """The head of the probe queue (galaxy map checks), or None."""
     return ST.probe[0] if ST.probe else None
 
 

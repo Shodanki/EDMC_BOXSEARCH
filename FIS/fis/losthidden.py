@@ -100,6 +100,8 @@ def beyond(visible: Iterable[Dict[str, Any]], ly: float) -> List[Dict[str, Any]]
 
 
 class LostHiddenStore:
+    """Ships marked lost or hidden in FIS/lost_hidden.json: read again when the
+    file changes, written atomically, one writer at a time."""
     def __init__(self, path: str) -> None:
         self.path = path
         self._lock = threading.Lock()

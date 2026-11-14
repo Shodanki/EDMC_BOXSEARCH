@@ -48,6 +48,7 @@ def parse_signal(signal: Optional[str]) -> Optional[Dict[str, str]]:
 
 
 def is_callsign(s: Any) -> bool:
+    """True for a fleet carrier callsign (XXX-XXX)."""
     return isinstance(s, str) and bool(_CALLSIGN.match(s))
 
 
@@ -70,6 +71,8 @@ class DockTracker:
         self.at: Optional[Dict[str, Any]] = None
 
     def feed(self, e: Dict[str, Any]) -> None:
+        """Follow docking from one journal event: where we are docked, or
+        nowhere after undocking, a jump, a new session or death."""
         ev = e.get("event")
         if ev == "Docked" or (ev == "Location" and e.get("Docked")):
             self.at = {"type": e.get("StationType"), "name": e.get("StationName"),

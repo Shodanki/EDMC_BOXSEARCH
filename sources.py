@@ -61,6 +61,9 @@ def _dist(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 class Source:
+    """One external star catalogue. fetch() gives the systems of a shell around
+    a point; last_ok and truncated tell the local-first logic whether the
+    shell may be remembered as fetched."""
     name = "?"
     priority = 99
     # did the last fetch deliver the whole region? Only then is the shell
@@ -71,6 +74,7 @@ class Source:
     truncated = False
 
     def available(self) -> Tuple[bool, str]:
+        """(usable, why) - shown on the settings page."""
         return False, "not implemented"
 
     def fetch(self, center: Sequence[float], radius: float,
@@ -84,6 +88,8 @@ class Source:
 # ---------------------------------------------------------------------------
 
 class EDSMSource(Source):
+    """EDSM's sphere and cube endpoints through the gateway (100 ly sphere, 200
+    ly cube at most per request)."""
     name = "EDSM"
     priority = 30
     MAX_SPHERE = 100.0     # API limit
@@ -94,6 +100,7 @@ class EDSMSource(Source):
         self.timeout = timeout
 
     def available(self) -> Tuple[bool, str]:
+        """Usable when the gateway may send to EDSM now."""
         return self.gw.status("edsm")
 
     def _parse(self, data, out: Dict[str, Dict]) -> None:
@@ -184,6 +191,8 @@ class EDSMSource(Source):
 # ---------------------------------------------------------------------------
 
 class SpanshSource(Source):
+    """Spansh's systems search through the gateway: pages of 500 systems sorted
+    by distance, at most MAX_PAGES pages per shell (fair use)."""
     name = "Spansh"
     priority = 20
     PAGE = 500
@@ -196,11 +205,16 @@ class SpanshSource(Source):
         self.timeout = timeout
 
     def available(self) -> Tuple[bool, str]:
+        """Usable when the gateway may send to Spansh now; its index lags up to
+        48 h."""
         ok, why = self.gw.status("spansh")
         return ok, (why + ", index up to 48 h old") if ok else why
 
     def fetch(self, center, radius, progress: ProgressCB = None,
               r_min: float = 0.0) -> List[Dict]:
+        """Systems with r_min <= distance <= radius from Spansh, page by page
+        until a short page or the page cap. last_ok only when the shell came
+        complete (a cut at the cap counts as complete and sets truncated)."""
         self.last_ok = False
         self.truncated = False
         out: Dict[str, Dict] = {}
@@ -480,6 +494,8 @@ class EDDiscoverySource(Source):
         return True, self.reason
 
     def available(self) -> Tuple[bool, str]:
+        """Usable when EDDSystem.sqlite was found and its coordinate scale is
+        calibrated (calibrates on the first call)."""
         if not self.path:
             return False, "EDDSystem.sqlite not found"
         if not self.calibrated:
@@ -535,6 +551,8 @@ class EDDiscoverySource(Source):
 
     @classmethod
     def with_sector(cls, sector: Optional[str], rest: str) -> str:
+        """The full system name from sector and rest; NO_SECTOR stands for
+        names without a sector."""
         if sector and sector != cls.NO_SECTOR:
             return "%s %s" % (sector, rest)
         return rest
@@ -658,6 +676,8 @@ class EDDiscoverySource(Source):
 
     def fetch(self, center, radius, progress: ProgressCB = None,
               r_min: float = 0.0) -> List[Dict]:
+        """Systems of the shell from the local EDDiscovery database - no
+        network. last_ok when EDD's table was readable."""
         rows = self._fetch_ball(center, radius, progress)
         self.last_ok = bool(self.table)
         if r_min > 0:
@@ -710,6 +730,8 @@ class EDDiscoverySource(Source):
 # ---------------------------------------------------------------------------
 
 class SourceManager:
+    """The sources in priority order (EDDiscovery, Spansh, EDSM) behind one
+    gateway, and their merged answer for a shell."""
     def __init__(self, edd_path: Optional[str] = None,
                  gateway: Optional[Gateway] = None):
         # one gateway for the whole plugin: pass it in so that pacing and
@@ -723,11 +745,15 @@ class SourceManager:
 
     def set_reference(self, id64: Optional[int],
                       coords: Optional[Sequence[float]]) -> None:
+        """Hand the current system (id64 and coordinates) to EDDiscovery's
+        calibration."""
         edd = self.sources.get("edd")
         if isinstance(edd, EDDiscoverySource):
             edd.set_reference(id64, coords)
 
     def status(self) -> List[Tuple[str, bool, str]]:
+        """(name, usable, why) of every source, in priority order - for the
+        settings page."""
         out = []
         for key, s in sorted(self.sources.items(), key=lambda kv: kv[1].priority):
             ok, why = s.available()

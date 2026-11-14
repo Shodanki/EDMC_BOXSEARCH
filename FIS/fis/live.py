@@ -42,6 +42,7 @@ def star_pos(v: Any) -> Optional[List[float]]:
 
 
 def parse_ts(stamp: Optional[str]) -> Optional[float]:
+    """A journal timestamp as Unix time, or None."""
     if not stamp:
         return None
     try:
@@ -56,6 +57,8 @@ def parse_ts(stamp: Optional[str]) -> Optional[float]:
 # ---------------------------------------------------------------------------
 
 class Hub:
+    """Hands live events to the browsers (server-sent events): one queue per
+    client."""
     def __init__(self, maxsize: int = 200) -> None:
         self._subs: List[queue.Queue] = []
         self._lock = threading.Lock()
@@ -63,22 +66,27 @@ class Hub:
         self.published = 0
 
     def subscribe(self) -> queue.Queue:
+        """A new client queue."""
         q: queue.Queue = queue.Queue(self.maxsize)
         with self._lock:
             self._subs.append(q)
         return q
 
     def unsubscribe(self, q: queue.Queue) -> None:
+        """Drop a client queue."""
         with self._lock:
             if q in self._subs:
                 self._subs.remove(q)
 
     @property
     def clients(self) -> int:
+        """How many clients listen."""
         with self._lock:
             return len(self._subs)
 
     def publish(self, event: str, data: Any) -> None:
+        """Hand one event to every client; a stalled client loses it rather
+        than holding up the others."""
         self.published += 1
         with self._lock:
             subs = list(self._subs)
@@ -104,6 +112,8 @@ FIX_EVENTS = {"ApproachBody", "SupercruiseExit", "Touchdown", "Liftoff",
 
 
 def empty_state() -> Dict[str, Any]:
+    """The live state before the first journal line: no commander, ship,
+    system, target ..."""
     return {
         "commander": None,
         "ship": {},
@@ -202,6 +212,7 @@ class LiveTracker:
         self.state["jumps"] = list(self._jumps_by_ship.get(key, []))
 
     def snapshot(self) -> Dict[str, Any]:
+        """A deep copy of the live state, safe to read in another thread."""
         with self._lock:
             return copy.deepcopy(self.state)
 
@@ -633,6 +644,7 @@ class LiveTracker:
         return False
 
     def journals(self) -> List[str]:
+        """The journal files, oldest first."""
         files = glob.glob(os.path.join(self.journal_dir, "Journal.*.log"))
         return sorted(files, key=lambda p: (os.path.getmtime(p), p))
 
@@ -684,6 +696,8 @@ class LiveTracker:
         self._read_status()
 
     def poll_once(self) -> None:
+        """Read what is new: the newest journal (from the start again when the
+        game rewrote it), Status.json and NavRoute.json."""
         files = self.journals()
         if files and files[-1] != self._file:
             self._file = files[-1]
@@ -705,6 +719,7 @@ class LiveTracker:
         self.last_poll = time.time()
 
     def alive(self) -> bool:
+        """True while the reading thread runs."""
         return bool(self._thread and self._thread.is_alive())
 
     def restart(self) -> None:
@@ -722,11 +737,13 @@ class LiveTracker:
             self._stop.wait(self.poll_s)
 
     def start(self) -> None:
+        """Read the past once (prime), then follow the journal in a thread."""
         self.prime()
         self._thread = threading.Thread(target=self._run, name="fis-live", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
+        """Stop following and wait up to 2 s for the thread."""
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2.0)

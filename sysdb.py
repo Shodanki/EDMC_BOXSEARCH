@@ -407,6 +407,8 @@ def stored_state(path: str) -> Optional[Tuple[int, Set[str]]]:
 
 
 def needs_migration(state: Optional[Tuple[int, Set[str]]]) -> bool:
+    """True when a stored database is older than SCHEMA_VERSION or misses a
+    repair (then it is backed up first); False for a new file."""
     if state is None:
         return False
     version, done = state
@@ -689,6 +691,7 @@ class SystemDB:
 
     # ------------------------------------------------------------------ util
     def close(self) -> None:
+        """Commit and close the connection; errors on the way out are ignored."""
         try:
             self.cx.commit()
             self.cx.close()
@@ -696,10 +699,12 @@ class SystemDB:
             pass
 
     def get_meta(self, k: str, default: Optional[str] = None) -> Optional[str]:
+        """One value from the key/value table meta, or default."""
         r = self.cx.execute("SELECT v FROM meta WHERE k=?", (k,)).fetchone()
         return r["v"] if r else default
 
     def set_meta(self, k: str, v: str) -> None:
+        """Store one value in meta (as text) and commit."""
         self.cx.execute("INSERT OR REPLACE INTO meta(k,v) VALUES (?,?)", (k, str(v)))
         self.cx.commit()
 
@@ -731,6 +736,7 @@ class SystemDB:
         return int(r.fetchone()[0])
 
     def prune_external_calls(self, days: int = CALL_LOG_DAYS) -> int:
+        """Delete call-log entries older than days; returns how many went."""
         n = self.cx.execute("DELETE FROM external_calls WHERE ts<?",
                             (time.time() - days * 86400.0,)).rowcount
         self.cx.commit()
@@ -740,6 +746,8 @@ class SystemDB:
     def record_shell(self, service: str, center: Sequence[float], r_min: float,
                      r_max: float, systems: int, ttl_s: float,
                      now: Optional[float] = None) -> None:
+        """Remember that service delivered the shell r_min..r_max around center
+        (local first: not asked again before ttl_s has passed)."""
         now = time.time() if now is None else now
         self.cx.execute(
             "INSERT INTO fetched_shells(service, cx, cy, cz, r_min, r_max,"
@@ -785,6 +793,8 @@ class SystemDB:
 
     def learn_sector(self, name: str, id64: Optional[int] = None,
                      coords: Optional[Sequence[float]] = None) -> None:
+        """Teach the sector registry where a named system's sector lies, from
+        its id64 or its coordinates; a newly placed sector is stored."""
         p = parse_name(name)
         if p is None:
             return
@@ -907,13 +917,18 @@ class SystemDB:
         return 1
 
     def system_by_id64(self, id64: int) -> Optional[sqlite3.Row]:
+        """The systems row with this id64, or None."""
         return self.cx.execute("SELECT * FROM systems WHERE id64=?", (id64,)).fetchone()
 
     def system(self, name: str) -> Optional[sqlite3.Row]:
+        """The systems row with this exact name, or None."""
         return self.cx.execute("SELECT * FROM systems WHERE name=?", (name,)).fetchone()
 
     def sphere(self, center: Sequence[float], radius: float,
                min_quality: int = 0) -> List[sqlite3.Row]:
+        """Systems with coordinates inside the sphere, of at least min_quality;
+        visited and FSS state are the main commander's (the survey plans for
+        them)."""
         cx0, cy0, cz0 = center
         rows = self.cx.execute(
             "SELECT * FROM systems WHERE quality>=? AND x BETWEEN ? AND ? "
@@ -962,10 +977,12 @@ class SystemDB:
         return closes
 
     def unmark_absent(self, name: str) -> None:
+        """Take a name off the absent list (it was found after all)."""
         self.cx.execute("DELETE FROM absent WHERE name=?", (name.strip(),))
         self.cx.commit()
 
     def absent_set(self) -> Set[str]:
+        """Every name the galaxy map said does not exist."""
         return {r[0] for r in self.cx.execute("SELECT name FROM absent")}
 
     # ------------------------------------------------------------------ boxel
@@ -1092,6 +1109,7 @@ class SystemDB:
         return end
 
     def boxel_end(self, key: str) -> Optional[int]:
+        """The end of a boxel's list (n2_end, from 'list ends at'), or None."""
         r = self.cx.execute("SELECT n2_end FROM boxels WHERE key=?", (key,)).fetchone()
         return r["n2_end"] if r else None
 
@@ -1564,6 +1582,7 @@ class SystemDB:
         return int(r["start_body"]), r["start_name"]
 
     def cmdr_system(self, fid: str, id64: int) -> Optional[sqlite3.Row]:
+        """One commander's row for a system (visited, FSS complete), or None."""
         return self.cx.execute("SELECT * FROM cmdr_systems WHERE fid=? AND sys_id64=?",
                                (fid, id64)).fetchone()
 
@@ -1647,6 +1666,7 @@ class SystemDB:
         return use
 
     def commander_name(self, fid: Optional[str]) -> Optional[str]:
+        """The commander name stored for a Frontier ID, or None."""
         if not fid:
             return None
         r = self.cx.execute("SELECT name FROM commanders WHERE fid=?", (fid,)).fetchone()
@@ -1719,6 +1739,8 @@ class SystemDB:
         return p
 
     def add_track_point(self, sys_id64: int, pos: Dict[str, Any], ts: float) -> None:
+        """Store one point of the surface track (position, altitude, heading,
+        mode); the same time twice is ignored."""
         self.cx.execute(
             "INSERT OR IGNORE INTO surface_track(sys_id64,body_name,ts,lat,lon,alt,"
             "heading,mode) VALUES (?,?,?,?,?,?,?,?)",
@@ -1853,11 +1875,13 @@ class SystemDB:
             " GROUP BY sys_id64, body_name ORDER BY last DESC").fetchall()
 
     def marks_of(self, sys_id64: int, body_name: str) -> List[sqlite3.Row]:
+        """The surface marks of a body (samples, SRV, finds), oldest first."""
         return self.cx.execute(
             "SELECT * FROM surface_marks WHERE sys_id64=? AND body_name=? ORDER BY ts",
             (sys_id64, body_name)).fetchall()
 
     def track_of(self, sys_id64: int, body_name: str) -> List[sqlite3.Row]:
+        """The surface track of a body, oldest first."""
         return self.cx.execute(
             "SELECT * FROM surface_track WHERE sys_id64=? AND body_name=? ORDER BY ts",
             (sys_id64, body_name)).fetchall()
@@ -2272,6 +2296,8 @@ class SystemDB:
         return len(rows)
 
     def ingest_external(self, systems: Iterable[dict], source: str) -> int:
+        """Store systems from a catalogue (EDSM, Spansh, EDDiscovery) at
+        external quality; returns how many were new or improved."""
         n = 0
         for s in systems:
             if self.upsert(s.get("name"), s.get("x"), s.get("y"), s.get("z"),
@@ -2285,6 +2311,8 @@ class SystemDB:
     def save_survey(self, active: bool, start_system: Optional[str],
                     center: Optional[Sequence[float]], radius: float,
                     masscodes: Sequence[int]) -> None:
+        """Store the running survey (start, centre, radius, mass codes); the
+        first start time is kept."""
         c = tuple(center) if center else (None, None, None)
         self.cx.execute(
             "INSERT OR REPLACE INTO survey(id,active,start_system,cx,cy,cz,radius,"
@@ -2295,6 +2323,7 @@ class SystemDB:
         self.cx.commit()
 
     def load_survey(self) -> Optional[sqlite3.Row]:
+        """The stored survey row, or None."""
         return self.cx.execute("SELECT * FROM survey WHERE id=1").fetchone()
 
     # --------------------------------------------------------------- carrier
@@ -2362,6 +2391,8 @@ class SystemDB:
         self.set_meta("carrier_updated", _now())
 
     def get_carrier(self) -> Optional[Dict[str, object]]:
+        """The own carrier from meta: system, coordinates (from the systems
+        table if not stored), id64, callsign, name, last update - or None."""
         nm = self.get_meta("carrier_system")
         if not nm:
             return None
@@ -2401,10 +2432,12 @@ class SystemDB:
         return c.lastrowid
 
     def close_sphere(self, sphere_id: int) -> None:
+        """Mark a survey sphere as closed now."""
         self.cx.execute("UPDATE spheres SET closed=? WHERE id=?", (_now(), sphere_id))
         self.cx.commit()
 
     def list_spheres(self) -> List[sqlite3.Row]:
+        """All survey spheres, oldest first."""
         return self.cx.execute("SELECT * FROM spheres ORDER BY id").fetchall()
 
     @staticmethod
@@ -2465,11 +2498,13 @@ class SystemDB:
         self.cx.commit()
 
     def route_done_of(self, sys_id64: int) -> Set[int]:
+        """Body ids of a system that the in-system route marked as done."""
         return {r[0] for r in self.cx.execute(
             "SELECT body_id FROM bodies WHERE sys_id64=? AND route_done=1",
             (sys_id64,))}
 
     def clear_route_done(self, sys_id64: int) -> int:
+        """Reset the route's done marks of a system; returns how many."""
         cur = self.cx.execute(
             "UPDATE bodies SET route_done=0, route_done_ts=NULL "
             "WHERE sys_id64=? AND route_done=1", (sys_id64,))
@@ -2595,6 +2630,8 @@ class SystemDB:
     # Guardian material "guardian_..." / "ancient...".
     @staticmethod
     def site_from_material(mat: str) -> Optional[Tuple[str, str]]:
+        """A surface site the journal never reports, from what was picked up
+        there: (key, label) for Thargoid or Guardian material, else None."""
         m = (mat or "").lower()
         if m.startswith(("unknown", "tg_")):
             return "site:nonhuman", "Non-human site (from pickup)"
@@ -2632,6 +2669,8 @@ class SystemDB:
         return out
 
     def material_kinds(self) -> List[Dict[str, object]]:
+        """Every material found, with label, category, how many places and the
+        total collected - for the atlas."""
         out = []
         for r in self.cx.execute(
                 "SELECT material, MAX(label) label, MAX(category) category, "
@@ -2769,6 +2808,7 @@ class SystemDB:
         return out[:limit]
 
     def bodies_of(self, sys_id64: int) -> List[sqlite3.Row]:
+        """The shared body rows of a system (no commander view)."""
         return self.cx.execute("SELECT * FROM bodies WHERE sys_id64=?",
                                (sys_id64,)).fetchall()
 
@@ -2913,6 +2953,8 @@ class SystemDB:
         }
 
     def stats(self) -> Dict[str, int]:
+        """Counts for the log and the self test: systems by quality, visited,
+        bodies, mapped and more."""
         def q(s, *a):
             return self.cx.execute(s, a).fetchone()[0]
         return {
@@ -2932,6 +2974,8 @@ class SystemDB:
 
     # -------------------------------------------------------------- migration
     def import_neareststars(self, path: str) -> Tuple[int, int]:
+        """Import the old plugin's neareststars.json at external quality;
+        returns (imported, skipped)."""
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         rows = data.get("Nearest", []) if isinstance(data, dict) else []
@@ -2952,6 +2996,8 @@ class SystemDB:
         return ok, skipped
 
     def import_survey_state(self, path: str) -> Tuple[int, int]:
+        """Import the old plugin's survey_state.json (pending, all and visited
+        systems); returns (systems, visited)."""
         with open(path, "r", encoding="utf-8") as f:
             st = json.load(f)
         ok = 0

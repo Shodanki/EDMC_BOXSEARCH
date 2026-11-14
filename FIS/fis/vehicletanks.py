@@ -35,6 +35,9 @@ MAX_T = 10.0                 # a vehicle tank, not a ship's: anything above is a
 
 
 class VehicleTankStore:
+    """The tank size per vehicle type, learnt from the first Status.json
+    reading after a refuel synthesis, in FIS/vehicle_tanks.json: read again
+    when the file changes, written atomically."""
     def __init__(self, path: str) -> None:
         self.path = path
         self._lock = threading.Lock()
@@ -76,10 +79,12 @@ class VehicleTankStore:
             self._mtime = None
 
     def all(self) -> Dict[str, Dict[str, Any]]:
+        """Every stored vehicle type with its values."""
         with self._lock:
             return {k: dict(v) for k, v in self._load()["types"].items() if isinstance(v, dict)}
 
     def get(self, typ: Optional[str]) -> Optional[Dict[str, Any]]:
+        """The values of one vehicle type, or None."""
         return self.all().get(typ or "")
 
     def learn(self, typ: Optional[str], tonnes: Any, name: Optional[str] = None,

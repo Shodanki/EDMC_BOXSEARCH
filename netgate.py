@@ -133,6 +133,8 @@ class Gateway:
     # ----------------------------------------------------------- status
     @property
     def usable(self) -> bool:
+        """False when the requests module is missing: then nothing is ever
+        sent."""
         return self._factory is not None
 
     def resting(self, service: str) -> Optional[str]:
@@ -163,6 +165,9 @@ class Gateway:
             self._day[svc] = (day, max(int(n), self.today(svc)))
 
     def status(self, service: str) -> Tuple[bool, str]:
+        """(ready, why) for one service - for the settings page: requests
+        missing, offline, resting, or how many calls today (against the
+        daily cap)."""
         if not self.usable:
             return False, "requests module missing"
         if self.offline:
@@ -249,6 +254,12 @@ class Gateway:
     # ----------------------------------------------------------- request
     def request(self, service: str, method: str, url: str, endpoint: str = "",
                 **kw: Any) -> Any:
+        """Send one request to a community service, or return None without
+        sending: offline, stopped, resting or the daily cap reached. Paces
+        the calls (minimum interval with jitter), records every call,
+        follows Retry-After and the rate-limit headers, retries 429/5xx a
+        few times and rests the service when it keeps refusing. Returns the
+        response; the caller checks its content."""
         if not self.usable or self.offline or self._stop.is_set():
             return None
         if self.resting(service):

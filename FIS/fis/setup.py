@@ -83,6 +83,7 @@ MSG: Dict[str, Dict[str, str]] = {
 
 
 def msg(lang: str, key: str) -> str:
+    """A setup text in the chosen language (English when missing)."""
     return MSG.get(lang, MSG["en"]).get(key) or MSG["en"][key]
 
 
@@ -120,6 +121,7 @@ def _private(ip: str) -> bool:
 
 
 def lan_urls(port: int, token: str) -> List[str]:
+    """The addresses the FIS answers at in the home network, with the token."""
     q = "?token=%s" % token if token else ""
     urls = ["http://%s:%d/%s" % (ip, port, q) for ip in lan_addresses()]
     urls.append("http://%s:%d/%s" % (socket.gethostname(), port, q))
@@ -308,6 +310,7 @@ def check_lan(cfg, inp: Callable[[str], str] = input, out: Callable[[str], None]
 
 
 def interactive_console() -> bool:
+    """True when the FIS runs in a console someone can answer in."""
     try:
         return sys.stdin is not None and sys.stdin.isatty()
     except (AttributeError, ValueError):

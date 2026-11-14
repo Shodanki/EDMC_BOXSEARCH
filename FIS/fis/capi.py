@@ -77,4 +77,5 @@ def load(path: Optional[str], now: Optional[float] = None) -> Optional[Dict[str,
 
 
 def path_for(plugin_dir: Optional[str]) -> Optional[str]:
+    """Where the plugin stores Frontier's carrier answer, in the plugin folder."""
     return os.path.join(plugin_dir, FILE) if plugin_dir else None

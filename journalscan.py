@@ -172,6 +172,7 @@ def approached_bodies(folder: Optional[str], sys_id64: Any, last: int = 8
 
 
 def event_time(e: Dict[str, Any]) -> Optional[float]:
+    """The event's timestamp as Unix time, or None."""
     try:
         return float(calendar.timegm(time.strptime(e["timestamp"], "%Y-%m-%dT%H:%M:%SZ")))
     except (ValueError, KeyError, TypeError):

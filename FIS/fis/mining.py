@@ -138,11 +138,13 @@ def _runs(events: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
 
 
 def session(events: List[Dict[str, Any]], now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """The newest mining session from the journal events, or None."""
     runs = _runs(events)
     return _summary(runs[-1], now) if runs else None
 
 
 def sessions(events: List[Dict[str, Any]], now: Optional[float] = None) -> List[Dict[str, Any]]:
+    """Every mining session from the journal events."""
     return [_summary(r, now) for r in _runs(events)]
 
 
@@ -210,6 +212,8 @@ MIN_TONNES = 20              # sessions shorter than this tell nothing
 
 
 def limpet_load(cargo: int, ratio: float, reserve: float = LIMPET_RESERVE) -> Dict[str, int]:
+    """Limpets to take for a cargo hold at this limpets-per-tonne ratio, with a
+    reserve, and the room left for ore."""
     if not cargo:
         return {"limpets": 0, "ore": 0}
     n = max(0, min(cargo, int(math.ceil(ratio * cargo * (1.0 + reserve)))))
@@ -357,6 +361,8 @@ def hotspots_near(db: Any, pos, limit: int = 60) -> List[Dict[str, Any]]:
 
 def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optional[str],
                  now: Optional[float] = None, capi_path: Optional[str] = None) -> Dict[str, Any]:
+    """The MINING view: the session, history, the hold, limpets, rings and what
+    they paid."""
     from . import fleet as fl
     now = time.time() if now is None else now
     evs = archive.events()

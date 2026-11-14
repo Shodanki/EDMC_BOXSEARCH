@@ -95,11 +95,14 @@ class CostModel:
         self.work_samples = work_samples
 
     def travel(self, distance_ls: float) -> float:
+        """Supercruise seconds for a leg: entry time plus k * sqrt(distance),
+        at least floor."""
         if distance_ls <= 0.05:
             return self.floor
         return max(self.floor, self.entry + self.k * math.sqrt(distance_ls))
 
     def hop(self, distance_ls: float) -> float:
+        """Seconds for a leg including the drop out of supercruise."""
         return self.travel(distance_ls) + self.dropout
 
     def work(self, body: "Body") -> float:
@@ -113,6 +116,7 @@ class CostModel:
         return t
 
     def as_dict(self) -> Dict[str, float]:
+        """The calibrated values, rounded - for the log and the route window."""
         return {"entry": round(self.entry, 1), "k": round(self.k, 2),
                 "dropout": self.dropout, "floor": self.floor,
                 "travel_samples": self.samples,
@@ -233,6 +237,8 @@ class Body:
     # -- what is still to do here ------------------------------------------
     @property
     def wants_dss(self) -> bool:
+        """True for an unmapped planet worth mapping: bio signals, a valuable
+        class or terraformable."""
         if self.mapped or self.kind != "Planet":
             return False
         return (self.sig_bio > 0
@@ -241,13 +247,17 @@ class Body:
 
     @property
     def wants_bio(self) -> bool:
+        """True while bio signals are left that no species analysis covers."""
         return self.sig_bio > 0 and self.organics < self.sig_bio
 
     @property
     def has_work(self) -> bool:
+        """True when the body wants a DSS or bio work."""
         return self.wants_dss or self.wants_bio
 
     def work_label(self) -> str:
+        """What is to do on the body, short: DSS, bio count, first discovery,
+        a valuable class or terraformable."""
         bits = []
         if self.wants_dss:
             bits.append("DSS")
@@ -383,6 +393,9 @@ def is_moon(body: Body) -> bool:
 
 
 class Stop:
+    """One stop of the in-system route: the body, the leg there (LS and
+    seconds), the time so far, the work on station and the planetary system
+    it belongs to."""
     __slots__ = ("body", "leg_ls", "leg_s", "cum_s", "work",
                  "group", "group_start", "is_moon", "work_s")
 
@@ -401,6 +414,8 @@ class Stop:
 
 
 class SystemRoute:
+    """The planned order of bodies in one system, with times from the cost
+    model."""
     def __init__(self, system: str, stops: List[Stop], skipped: int,
                  model: CostModel):
         self.system = system
@@ -410,25 +425,31 @@ class SystemRoute:
 
     @property
     def total_s(self) -> float:
+        """Seconds for the whole route, travel and work."""
         return self.stops[-1].cum_s if self.stops else 0.0
 
     @property
     def total_ls(self) -> float:
+        """Light seconds flown over the whole route."""
         return sum(s.leg_ls for s in self.stops)
 
     @property
     def travel_s(self) -> float:
+        """Seconds in supercruise over the whole route."""
         return sum(s.leg_s for s in self.stops)
 
     @property
     def work_s(self) -> float:
+        """Seconds of work on station (DSS, bio) over the whole route."""
         return sum(s.work_s for s in self.stops)
 
     @property
     def group_switches(self) -> int:
+        """How often the route moves on to another planetary system."""
         return sum(1 for s in self.stops[1:] if s.group_start)
 
     def lines(self, limit: int = 0) -> List[str]:
+        """The route as text lines, one per stop (limit: only the first ones)."""
         out = []
         stops = self.stops if not limit else self.stops[:limit]
         for i, s in enumerate(stops, 1):
@@ -457,6 +478,7 @@ class SystemRoute:
         return (min(xs), max(xs), min(zs), max(zs))
 
     def summary(self) -> str:
+        """One line: stops, planetary systems, distance and minutes."""
         if not self.stops:
             return "%s: nothing left to do here" % self.system
         return ("%s: %d stops in %d planetary systems, %.0f LS, about %.0f min "

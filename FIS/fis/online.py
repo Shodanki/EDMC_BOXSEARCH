@@ -61,9 +61,11 @@ class _Resp:
 
     @property
     def text(self) -> str:
+        """The body as text."""
         return self._body.decode("utf-8", "replace")
 
     def json(self) -> Any:
+        """The body as JSON."""
         return json.loads(self._body.decode("utf-8"))
 
 
@@ -75,6 +77,8 @@ class UrllibSession:
 
     def request(self, method: str, url: str, json_body: Any = None, timeout: float = 20.0,
                 **kw: Any) -> _Resp:
+        """One HTTP request with urllib, shaped like requests' Session.request
+        (for the plugin's gateway)."""
         if json_body is None:
             json_body = kw.get("json")
         data = None

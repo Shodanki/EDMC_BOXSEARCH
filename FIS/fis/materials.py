@@ -87,6 +87,8 @@ def stock(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def readiness(have: Dict[str, int]) -> List[Dict[str, Any]]:
+    """For each jump boost grade: how many injections the materials make, and
+    which material runs short first."""
     out = []
     for grade in ("basic", "standard", "premium"):
         recipe = JUMPONIUM[grade]
@@ -128,6 +130,8 @@ def sources(db: Any, wanted: Iterable[str], pos, per: int = 3) -> Dict[str, List
 
 
 def build_jumponium(archive: Any, db: Any = None, pos=None) -> Dict[str, Any]:
+    """The jumponium view: stock, readiness per grade and where to find what is
+    short."""
     st = stock(archive.events())
     have = st["have"]
     ready = readiness(have)

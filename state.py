@@ -124,6 +124,9 @@ def _edmc_user_agent() -> str:
 # ============================================================================
 
 class State:
+    """The shared state of the plugin: database, gateway, sources, the survey,
+    the queues and the live position. Worker threads hold lock while they
+    change it."""
     def __init__(self):
         self.db: Optional[SystemDB] = None
         self.lock = threading.RLock()
@@ -250,6 +253,7 @@ def cfg_str(key: str, default: str = "") -> str:
 
 
 def cfg_set(key: str, value) -> None:
+    """Store a setting through EDMC's config; a failure is logged, not raised."""
     try:
         config.set(key, value)
     except Exception as e:
@@ -264,6 +268,7 @@ def get_filters() -> List[str]:
 
 
 def get_masscodes() -> List[int]:
+    """The mass codes chosen in the settings (0-7), default a to d."""
     raw = cfg_str(CFG["masscodes"], "0,1,2,3")
     out = []
     for p in raw.split(","):

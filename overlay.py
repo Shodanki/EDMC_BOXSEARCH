@@ -249,6 +249,8 @@ class CockpitOverlay:
         return self._client
 
     def available(self) -> bool:
+        """True when a drawing client is there (EDMCModernOverlay or the own
+        window)."""
         return self._get() is not None
 
     @property
@@ -283,6 +285,8 @@ class CockpitOverlay:
         return x, y
 
     def draw(self, group: str, lines: Sequence[Line], ttl: int) -> bool:
+        """Draw one block of lines at its place; lines left over from a longer
+        block before are blanked. True when sent."""
         if not self.enabled:
             return False
         c = self._get()
@@ -307,6 +311,7 @@ class CockpitOverlay:
             return False
 
     def clear(self, group: Optional[str] = None) -> None:
+        """Blank one block, or all blocks."""
         c = self._client
         if c is None:
             return
@@ -322,6 +327,8 @@ class CockpitOverlay:
 
     # -- the two blocks ----------------------------------------------------
     def show_targets(self, route: Any, done: Iterable[int]) -> bool:
+        """The next targets of the in-system route; not drawn while muted or
+        while a game screen hides the overlay."""
         lines = targets_lines(route, done)
         self._last_targets = lines
         if self.mute_targets:
@@ -376,6 +383,8 @@ class CockpitOverlay:
         return self.draw("mine", list(lines)[:5], ttl=seconds)
 
     def show_briefing(self, info: Dict[str, Any], seconds: int = 10) -> bool:
+        """The briefing of a jump target; while a game screen hides the overlay
+        only the newest is kept and drawn afterwards."""
         lines = briefing_lines(info)
         if self.hidden:
             # newest wins: picking several targets in the map shows only

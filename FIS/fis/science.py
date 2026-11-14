@@ -315,5 +315,6 @@ def system_report(rows: List[Dict[str, Any]], sys_out: Dict[str, Any]) -> List[D
 
 
 def worst(report: List[Dict[str, Any]]) -> str:
+    """The highest level in a report: danger, warn, good or info."""
     order = {"danger": 3, "warn": 2, "good": 1, "info": 0}
     return max((f["level"] for f in report), key=lambda lv: order.get(lv, 0), default="info")

@@ -85,6 +85,9 @@ LABEL = {
 
 
 class Target:
+    """One entry of a work queue: a system to fly to, check in the galaxy map
+    or survey, with its kind, distance, boxel and position (exact or
+    estimated)."""
     __slots__ = ("name", "kind", "dist", "dist_origin", "mc", "boxel_key", "n2",
                  "x", "y", "z", "uncertainty", "detail", "id64", "score")
 
@@ -105,6 +108,8 @@ class Target:
 
     @property
     def is_speculative(self) -> bool:
+        """True for targets only the galaxy map can confirm (gap, probe, empty
+        boxel), not known systems."""
         return self.kind in (K_GAP, K_PROBE, K_EMPTY)
 
     def __repr__(self):  # pragma: no cover
@@ -232,6 +237,7 @@ class ProspectCalibration:
 
     @staticmethod
     def band(raw: float) -> int:
+        """The score band of a formula score (SCORE_BANDS)."""
         return sum(1 for e in SCORE_BANDS if raw >= e)
 
     @staticmethod
@@ -239,6 +245,8 @@ class ProspectCalibration:
         return max(0.0, min(raw / 5.0, 1.0))
 
     def add(self, mc: int, raw: float, hit: bool) -> None:
+        """Count one outcome - the boxel held a system (hit) or not - for its
+        mass code and band, and for all mass codes."""
         b = self.band(raw)
         for k in ((mc, b), ("*", b)):
             c = self.cells.setdefault(k, [0, 0])
@@ -249,12 +257,17 @@ class ProspectCalibration:
         self.sum_p0 += self._p0(raw)
 
     def outcomes(self) -> int:
+        """How many outcomes were counted."""
         return self.n
 
     def active(self) -> bool:
+        """True once there are LEARN_MIN_HITS hits: before that the formula
+        score stays as it is."""
         return self.hits >= LEARN_MIN_HITS
 
     def score(self, mc: int, raw: float) -> float:
+        """The formula score read against the own outcomes (see the class
+        docstring); unchanged while not active."""
         if not self.active():
             return raw
         f = self.sum_p0 / self.n
@@ -284,6 +297,8 @@ class ProspectCalibration:
 
 
 class Planner:
+    """Plans a survey sphere from the database: boxel gaps, probes, known
+    systems to visit and to survey, sorted into the work queues."""
     def __init__(self, db: SystemDB):
         self.db = db
 
@@ -778,6 +793,8 @@ class Planner:
     # ----------------------------------------------------------------- output
     @staticmethod
     def summary(plan: Dict[str, object]) -> str:
+        """The plan as text for the log: sphere, known systems, boxels, the
+        queues."""
         c = plan["counts"]
         L = []
         L.append("sphere r=%.0f ly around (%.2f, %.2f, %.2f)"
@@ -817,6 +834,8 @@ class Planner:
 
     @staticmethod
     def export_csv(plan: Dict[str, object], path: str) -> int:
+        """Write the plan's targets to a CSV file (semicolons); returns how
+        many rows."""
         import csv
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f, delimiter=";")

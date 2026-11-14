@@ -30,6 +30,8 @@ LegLookup = Callable[[int, Optional[int], Optional[str]], Optional[float]]
 
 
 class Measurements:
+    """Work timings measured in the journals: DSS and bio durations,
+    supercruise legs (arrival distance, seconds)."""
     def __init__(self) -> None:
         self.dss: List[float] = []
         self.bio: List[float] = []
@@ -38,6 +40,7 @@ class Measurements:
         self.files = 0
 
     def as_dict(self) -> Dict[str, Any]:
+        """How many of each were measured, and from how many events and files."""
         return {"dss": len(self.dss), "bio": len(self.bio), "sc": len(self.sc),
                 "events": self.events, "files": self.files}
 
@@ -113,12 +116,14 @@ def measure(events: Iterable[Dict[str, Any]], leg: Optional[LegLookup] = None,
 
 
 def journal_files(journal_dir: str, limit: int = 30) -> List[str]:
+    """The newest journal files (at most limit), oldest first."""
     files = glob.glob(os.path.join(journal_dir, "Journal.*.log")) + \
         glob.glob(os.path.join(journal_dir, "Journal_*.log"))
     return sorted(files)[-limit:]
 
 
 def read_events(paths: Iterable[str]) -> Iterable[Dict[str, Any]]:
+    """Every journal event of the files, in order; broken lines are skipped."""
     for fn in paths:
         try:
             with open(fn, "r", encoding="utf-8", errors="replace") as f:
@@ -174,6 +179,8 @@ class Calibrator:
             return None
 
     def run_once(self) -> Any:
+        """Measure the newest journals once and fit the route's cost model and
+        body order model from them; returns the model."""
         paths = journal_files(self.journal_dir, self.files)
         sig = self._signature(paths)
         m = Measurements()

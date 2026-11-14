@@ -135,6 +135,8 @@ def body_class(row) -> str:
 
 # Colour category for the 3D view and the legend - kept rule based and small
 def colour_key(row) -> str:
+    """The display colour class of a body: star class, remnant, planet class or
+    belt."""
     if row["kind"] == "Star":
         st = (row["star_type"] or "?").upper()
         if st.startswith(("D", "N", "H")) or st in ("SUPERMASSIVEBLACKHOLE",):
@@ -161,6 +163,7 @@ def colour_key(row) -> str:
 
 
 def is_scoopable(star_type: Optional[str]) -> bool:
+    """True for star classes a fuel scoop works at (the plugin's rule)."""
     return bool(plugin().deepspace.is_scoopable(star_type))
 
 
@@ -702,6 +705,7 @@ def _fix(system: Dict[str, Any], by_row: Dict[int, Any],
 # ---------------------------------------------------------------------------
 
 def sig_label(kind: str, label: Optional[str]) -> str:
+    """The display name of a stored signal kind."""
     if kind == "genus:Brain Trees":
         return "Brain Trees"
     if kind == "mining_location":
@@ -714,6 +718,7 @@ def sig_label(kind: str, label: Optional[str]) -> str:
 
 
 def sig_tone(kind: str) -> str:
+    """The colour tone of a signal kind: violet Thargoid, cyan Guardian ..."""
     if kind in ("site:nonhuman", "thargoid", "uss:nonhuman"):
         return "violet"
     if kind in ("site:guardian", "guardian"):
@@ -728,6 +733,8 @@ _SIG_SKIP = ("biological", "geological")
 
 
 def body_signals(rows) -> List[Dict[str, Any]]:
+    """The signals of a body for display (one line per kind; genera are shown
+    with the biology)."""
     out = []
     for r in rows:
         k = r["kind"]
@@ -740,6 +747,7 @@ def body_signals(rows) -> List[Dict[str, Any]]:
 
 
 def system_signals(rows) -> List[Dict[str, Any]]:
+    """The signals of a system, summed per kind, for display."""
     agg: Dict[str, Dict[str, Any]] = {}
     for r in rows:
         k = r["kind"]
@@ -1309,6 +1317,8 @@ def life_support(st: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 def build_surface(db: Database, live: Optional[Dict[str, Any]],
                   id64: Optional[int] = None, body: Optional[str] = None) -> Dict[str, Any]:
+    """The SURFACE view of a body: track, marks, samples; on foot with the life
+    support."""
     out = _build_surface(db, live, id64, body)
     life = life_support((live or {}).get("status") or {})
     if life:
@@ -1698,6 +1708,8 @@ def approach_info(db: Database, live: Dict[str, Any]) -> Optional[Dict[str, Any]
 
 def build_briefing(db: Database, live: Optional[Dict[str, Any]],
                    fid: Optional[str] = None) -> Dict[str, Any]:
+    """The BRIEFING of the jump target: system, star, what is known about it,
+    the plotted route."""
     live = live or {}
     tgt = current_target(live)
     out: Dict[str, Any] = {"target": None, "generated": time.time(),
@@ -1906,10 +1918,13 @@ def build_vehicle(live: Optional[Dict[str, Any]], now: Optional[float] = None,
 
 
 def decode_flags(flags: int) -> List[str]:
+    """The names of the bits set in Status.json's Flags."""
     return [n for bit, n in FLAGS.items() if flags & (1 << bit)]
 
 
 def build_ship(live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The ship's state for the cockpit view: status flags, fuel, ship,
+    location."""
     live = live or {}
     st = live.get("status") or {}
     ship = live.get("ship") or {}
@@ -1940,6 +1955,7 @@ def build_ship(live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def build_survey(db: Database) -> Dict[str, Any]:
+    """The survey state: active sphere, spheres, boxel counts, the own carrier."""
     s = db.survey()
     meta = db.meta()
     out: Dict[str, Any] = {"active": False, "spheres": [], "boxels": db.boxel_counts()}

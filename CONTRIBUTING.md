@@ -77,7 +77,7 @@ The rules were checked against EDMC 6.1.2 on 13.11.2026. When EDMC releases a ne
 
 * **PEP 8** as EDMC checks it: `python -m flake8` with the project's `.flake8` (120 characters, third-party files excluded). CI runs it. New code adds no finding.
 * **Complexity:** EDMC's limit is 15 (`--max-complexity 15 --select C901`). Every new function keeps it; the older functions above it (helper modules and the FIS, listed in `tests/complexity.py`) may not get more complex, and leave the list once they are split. CI enforces both.
-* **Readable for a reviewer:** a docstring for every hook, every module and every public function you add or change. Comments explain *why*, not what. Keep files and functions small; new features go into their own module.
+* **Readable for a reviewer:** a docstring for every hook, every module and every public function and class (`tests/docstrings.py` checks the plugin and the FIS). Comments explain *why*, not what. Keep files and functions small; new features go into their own module.
 * **Splitting code without changing it:** a refactoring that only moves code is checked against the code before it - same tests, and where a window draws, the same widget calls with Tk replaced by a recorder.
 * **Tests:** every fix comes with a test that fails without it, and every CI step stays green:
   * the procgen self test (`python procgen.py`, also behind the *Self test* button);

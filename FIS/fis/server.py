@@ -113,9 +113,11 @@ class App:
         return th
 
     def stop(self) -> None:
+        """Ask the background watchers to stop."""
         self._stop.set()
 
     def live_state(self) -> Dict[str, Any]:
+        """A copy of the live state."""
         return self.live.snapshot()
 
     def cached(self, key: str, sig: Any, build) -> Any:
@@ -158,6 +160,9 @@ class App:
             return None
 
     def system(self, id64: int) -> Dict[str, Any]:
+        """The SYSTEM record of a system: bodies with positions, signals,
+        carriers and places; cached for 30 s while the database does not
+        change."""
         live = self.live_state()
         fx = live.get("last_fix") or {}
         cur = live.get("system") or {}
@@ -281,6 +286,7 @@ class App:
         return out
 
     def current_id64(self) -> Optional[int]:
+        """The current system: from the journal, else the last one visited."""
         cur = self.live_state().get("system") or {}
         if cur.get("id64"):
             return int(cur["id64"])
@@ -292,6 +298,8 @@ class App:
     STALL_S = 20.0
 
     def watchdog_state(self) -> Dict[str, Any]:
+        """State of the live reader for /api/health: thread alive, age of the
+        last poll, journal rewrites, restarts."""
         lp = getattr(self.live, "last_poll", 0.0) or 0.0
         return {"live_thread": self.live.alive() if hasattr(self.live, "alive") else None,
                 "poll_age_s": round(time.time() - lp, 1) if lp else None,
@@ -348,6 +356,8 @@ class App:
         threading.Thread(target=run, name="fis-watchdog", daemon=True).start()
 
     def health(self) -> Dict[str, Any]:
+        """The FIS's state for /api/health: version, uptime, database, journal,
+        live reader."""
         live = self.live_state()
         return {
             "ok": True, "version": __version__, "uptime_s": round(time.time() - self.started, 1),
@@ -363,11 +373,14 @@ class App:
 
 
 class Handler(BaseHTTPRequestHandler):
+    """The FIS's HTTP handler: static files and the JSON API, local only unless
+    the home network is switched on (token)."""
     server_version = "SHBOX-FIS/" + __version__
     app: App  # set on the class by make_server
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt: str, *args: Any) -> None:  # quiet console
+        """Quiet: requests are written only with FIS_DEBUG set."""
         if os.environ.get("FIS_DEBUG"):
             sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
@@ -500,6 +513,9 @@ class Handler(BaseHTTPRequestHandler):
                 "show_controls": cfg.show_controls}
 
     def do_POST(self) -> None:
+        """The few writing calls (carrier favourites and lookups, lost and
+        hidden ships, settings): a body of at most 4 KiB, under the request
+        brake; each call checks who may write."""
         wait = self._braked()
         if wait is not None:
             self.close_connection = True
@@ -750,9 +766,12 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------- verbs
     def do_HEAD(self) -> None:
+        """As GET (the body is sent the same way)."""
         self.do_GET()
 
     def do_GET(self) -> None:
+        """Static files, the JSON API and the live event stream, under the
+        request brake."""
         wait = self._braked()
         if wait is not None:
             return self._too_many(wait)
@@ -1050,11 +1069,14 @@ class _Server(ThreadingHTTPServer):
 
 
 def make_server(app: App, host: Optional[str] = None, port: Optional[int] = None) -> ThreadingHTTPServer:
+    """The HTTP server for an app, on the configured host and port."""
     handler = type("FISHandler", (Handler,), {"app": app})
     return _Server((host or app.cfg.host, app.cfg.port if port is None else port), handler)
 
 
 def main(argv: Optional[list] = None) -> int:
+    """Start the FIS: settings (first start asks), database, live reader,
+    watchers and the HTTP server, until Ctrl+C."""
     # parameters are for development and tests - users start start_fis.bat,
     # the first start asks and remembers the answers in fis.ini
     ap = argparse.ArgumentParser(prog="fis", description="SHBOX FIS - flight information system")

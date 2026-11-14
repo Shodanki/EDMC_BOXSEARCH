@@ -49,6 +49,7 @@ def _g(m: Any, k: str) -> Any:
 
 def surface_distance_m(lat1: float, lon1: float, lat2: float, lon2: float,
                        radius_m: float) -> float:
+    """Great-circle distance in metres between two points on a body."""
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dp, dl = p2 - p1, math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
@@ -95,6 +96,8 @@ def course_text(bearing: float, heading: Optional[float]) -> str:
 
 
 def fmt_dist(m: float) -> str:
+    """A distance for the overlay: metres, then km with one decimal, then whole
+    km."""
     if m < 1000:
         return "%d m" % round(m)
     if m < 100000:

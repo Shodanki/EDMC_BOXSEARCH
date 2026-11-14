@@ -58,6 +58,8 @@ def ring_class(raw: Optional[str]) -> str:
 
 
 def ring_prospects(events: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """What the own prospector limpets found, per ring, from the journal
+    events."""
     out: Dict[str, Dict[str, Any]] = {}
     ring: Optional[str] = None
     for e in events:
