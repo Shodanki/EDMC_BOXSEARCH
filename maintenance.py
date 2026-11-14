@@ -22,6 +22,7 @@ from .sysdb import CMDR_READY, LOSS_REPLAY
 from .state import CFG, ST, _PLUGIN_DIR, cfg_bool, cfg_int, get_masscodes, logger
 from . import panel
 from . import planning
+from . import procgen
 from . import routewin
 
 
@@ -143,7 +144,6 @@ def _selftest() -> None:
     """Verify the procgen maths. Result goes to the EDMC log."""
     import io
     import contextlib
-    import procgen
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         fails = procgen._selftest()

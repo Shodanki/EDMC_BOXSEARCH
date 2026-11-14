@@ -456,7 +456,10 @@ def _selftest() -> int:
 
     # the sources use the gateway: EDSM over 100 ly needs several spheres,
     # a resting EDSM stops the loop at once; Spansh pages are paced
-    from sources import EDSMSource, SpanshSource
+    if __package__:
+        from .sources import EDSMSource, SpanshSource
+    else:
+        from sources import EDSMSource, SpanshSource
     gw, sess, clock = _make([_FakeResp(429)] * 3)
     EDSMSource(gw).fetch((0.0, 0.0, 0.0), 250.0)
     check(len(sess.sent) == 3, "EDSM over 100 ly: stops after the rest, no more spheres")

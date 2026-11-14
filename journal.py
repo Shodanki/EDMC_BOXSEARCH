@@ -19,6 +19,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from . import miningstat
+from . import overlay
 from . import surfacenav
 from .biopredict import COLONY_RANGE_M, surface_distance_m
 from .procgen import star_pos
@@ -418,9 +419,8 @@ def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> N
         genera = [g for g in ((r["genuses"] if r else None) or "").split(",") if g]
         c = ST._nav_cache = (key, marks, r["sig_bio"] if r else None, genera, lost)
         _bio_resume(pos["body"], marks)
-    from overlay import COL
     lines = surfacenav.compass_lines(pos, c[1], radius, sig_bio=c[2], genera=c[3],
-                                     colours=COL, orbit=not low, lost=c[4])
+                                     colours=overlay.COL, orbit=not low, lost=c[4])
     if lines:
         ov.show_nav(lines, seconds=4)
 
@@ -445,8 +445,7 @@ def _mining_overlay(force: bool = False) -> None:
     if not force and now - ST._mine_shown < MINE_EVERY_S:
         return
     ST._mine_shown = now
-    from overlay import COL
-    if ov.show_mining(ST.mine.lines(now, COL), seconds=30):
+    if ov.show_mining(ST.mine.lines(now, overlay.COL), seconds=30):
         ST._mine_drawn = True
 
 
@@ -474,16 +473,15 @@ def _bio_distance_line(pos: Dict[str, Any], radius: float, now: float) -> None:
     near = min(surface_distance_m(la, lo, pos["lat"], pos["lon"], radius)
                for la, lo in b["points"])
     ok = rng is not None and near >= rng
-    from overlay import COL
     head = "BIO > %s  %d/3" % ((b["species"] or "?")[:30], len(b["points"]) + 1)
     if rng is None:
-        line = ("%.0f m from nearest sample (range unknown)" % near, COL["dim"])
+        line = ("%.0f m from nearest sample (range unknown)" % near, overlay.COL["dim"])
     else:
         line = ("%.0f m / %d m  %s" % (near, rng, "OK - sample here" if ok else "too close"),
-                COL["data"] if ok else COL["warn"])
+                overlay.COL["data"] if ok else overlay.COL["warn"])
     ov = getattr(ST, "overlay", None)
     if ov is not None and ov.enabled:
-        ov.show_bio([(head, COL["head"]), line], seconds=6)
+        ov.show_bio([(head, overlay.COL["head"]), line], seconds=6)
 
 
 def _bio_event(entry: Dict[str, Any]) -> None:
@@ -497,8 +495,7 @@ def _bio_event(entry: Dict[str, Any]) -> None:
         ST.bio_active = None
         ov = getattr(ST, "overlay", None)
         if ov is not None:
-            from overlay import COL
-            ov.show_bio([("BIO > %s analysed" % (species or "?")[:30], COL["data"])],
+            ov.show_bio([("BIO > %s analysed" % (species or "?")[:30], overlay.COL["data"])],
                         seconds=6)
         return
     if kind not in ("Log", "Sample") or not pos:

@@ -24,7 +24,7 @@ from .deepspace import best_staging, staging_lines
 from .procgen import boxel_prefix
 from .sysdb import PLAN
 from .sysroute import (bodies_from_rows, calibrate_from_journal, calibrate_work_from_journal,
-                       leg_distance_ls, plan_route, resolve_positions, shorten)
+                       group_label, leg_distance_ls, plan_route, resolve_positions, shorten)
 from .state import CFG, ST, cfg_bool, get_masscodes, logger
 from . import maintenance
 from . import panel
@@ -272,7 +272,6 @@ def _actual_visits(sys_id64: int) -> List[Tuple[str, float]]:
 
 def _count_switches(seq, bodies) -> int:
     """How often the flown order moved from one planetary system to another."""
-    from sysroute import group_label
     n = 0
     last = None
     for b in seq:

@@ -91,6 +91,43 @@ def run(name, script):
         print("        " + ln)
 
 
+def absolute_sibling_imports():
+    """Every import of a plugin module by its plain name, outside the
+    "if __package__: ... else:" fallback that runs only without a package.
+    In EDMC such an import finds nothing (the plugin folder is not on
+    sys.path) - or another plugin's module of the same name. 4.12: imports
+    inside functions had come along unchanged when load.py was split."""
+    import ast
+    names = set(PLUGIN_MODULES)
+    found = []
+    for m in PLUGIN_MODULES:
+        path = os.path.join(ROOT, m + ".py")
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        fallback = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == "__package__":
+                fallback.update(id(x) for e in n.orelse for x in ast.walk(e))
+        for n in ast.walk(tree):
+            if id(n) in fallback:
+                continue
+            if isinstance(n, ast.Import):
+                hit = [a.name for a in n.names if a.name.split(".")[0] in names]
+            elif isinstance(n, ast.ImportFrom) and not n.level:
+                hit = [n.module] if (n.module or "").split(".")[0] in names else []
+            else:
+                hit = []
+            found += ["%s.py:%d %s" % (m, n.lineno, h) for h in hit]
+    return found
+
+
+bad = absolute_sibling_imports()
+fails += 1 if bad else 0
+print("  [%s] no plugin module imported by its plain name" % ("FAIL" if bad else "OK"))
+for b in bad:
+    print("        " + b)
 run("EDMC's normal import: <folder>.load as a package", NORMAL)
 run("EDMC's fallback: load.py by path registers its own package", FALLBACK)
 
