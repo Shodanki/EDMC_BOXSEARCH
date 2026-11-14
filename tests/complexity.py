@@ -54,10 +54,6 @@ LEGACY = {
     ("journalscan.py", "WorkMeter.feed"): 19,
     ("overlay.py", "briefing_lines"): 16,
     ("surfacenav.py", "body_state"): 19,
-    ("sysdb.py", "SystemDB._cmdr_carried"): 22,
-    ("sysdb.py", "SystemDB._migrate"): 24,
-    ("sysdb.py", "SystemDB._surface_event"): 16,
-    ("sysdb.py", "SystemDB.ingest_journal_event"): 56,
     ("sysroute.py", "plan_route"): 18,
     ("sysroute.py", "resolve_positions"): 22,
 }
