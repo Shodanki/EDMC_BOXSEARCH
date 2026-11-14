@@ -90,6 +90,10 @@ CFG = {
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
     "overlay_mining": "%s_overlay_mining" % PLUGIN_NAME,
     "overlay_backend": "%s_overlay_backend" % PLUGIN_NAME,   # D3: "modern" | "window"
+    # 4.12: the situation column (cockpitinfo) - warnings, places, session tally
+    "overlay_info_warn": "%s_overlay_info_warn" % PLUGIN_NAME,
+    "overlay_info_place": "%s_overlay_info_place" % PLUGIN_NAME,
+    "overlay_info_session": "%s_overlay_info_session" % PLUGIN_NAME,
     "fis_autostart": "%s_fis_autostart" % PLUGIN_NAME,
     "main_cmdr": "%s_main_cmdr" % PLUGIN_NAME,      # C1: FID, "" = suggestion
 }

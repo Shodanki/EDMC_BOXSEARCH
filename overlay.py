@@ -15,6 +15,8 @@ EDMCOverlay) using their common `edmcoverlay` API:
                  changes or a stop is ticked off
   BRIEFING       a few seconds after selecting a jump target and on arrival:
                  star class, scoopable, whether any database knows the system
+  SITUATION      (4.12, cockpitinfo / situation.py) in the opposite corner:
+                 warnings, the landing card, the system's value, the session
 
 Rules this module keeps:
   * it never raises - a missing or broken overlay must not touch the survey
@@ -57,6 +59,7 @@ LINE_H = {"small": 16, "normal": 20}
 BRIEFING_GAP = 8          # lines below the targets block where a briefing goes
 MAX_LINES = 8
 NAV_BELOW_BIO = 3         # the compass starts this many lines below the bio line
+MAX_INFO = 9              # 4.12: lines of the situation column
 
 Line = Tuple[str, str]    # (text, colour)
 
@@ -287,6 +290,8 @@ class CockpitOverlay:
     # -- drawing -----------------------------------------------------------
     def _origin(self, group: str) -> Tuple[int, int]:
         x, y = ANCHORS.get(self.position, ANCHORS["top-left"])
+        if group == "info":
+            return self._info_origin()
         if group in ("brief", "bio", "nav", "mine"):
             lh = LINE_H.get(self.size, 16)
             down = (self._drawn.get("targets", 0) + 1) * lh
@@ -301,6 +306,13 @@ class CockpitOverlay:
                 if group == "mine" and self._drawn.get("nav"):
                     y += (self._drawn["nav"] + 1) * lh     # 4.12: below the compass (Rhino)
         return x, y
+
+    def _info_origin(self) -> Tuple[int, int]:
+        """4.12: the situation column - the corner across from the other
+        blocks (left <-> right), so the two never cover each other."""
+        side, _sep, edge = self.position.partition("-")
+        other = "%s-%s" % (side, "right" if edge == "left" else "left")
+        return ANCHORS.get(other, ANCHORS["top-right"])
 
     def draw(self, group: str, lines: Sequence[Line], ttl: int) -> bool:
         """Draw one block of lines at its place; lines left over from a longer
@@ -402,6 +414,13 @@ class CockpitOverlay:
         if self.hidden:
             return False
         return self.draw("mine", list(lines)[:5], ttl=seconds)
+
+    def show_info(self, lines: Sequence[Line], seconds: int = 7) -> bool:
+        """4.12: the situation column (cockpitinfo); not while a game screen
+        is in front - the next tick draws it again."""
+        if self.hidden:
+            return False
+        return self.draw("info", list(lines)[:MAX_INFO], ttl=seconds)
 
     def show_briefing(self, info: Dict[str, Any], seconds: int = 10) -> bool:
         """The briefing of a jump target; while a game screen hides the overlay

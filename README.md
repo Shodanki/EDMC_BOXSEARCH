@@ -68,7 +68,7 @@ failure that actually hurts.
 | **Elite Dangerous: Odyssey** | required | the plugin reads its journals and status files |
 | **EDDiscovery** | recommended | its system database is the local source: while it is current the plugin does not ask Spansh at all, EDSM once per shell (see [Fair use](#7-external-sources)). Open it now and then so its data stays current, then close it |
 | **Python 3.11 or newer** (python.org) | for SHBOX FIS only | the flight information system runs on it; the plugin itself needs nothing beyond EDMC |
-| **EDMCModernOverlay** | optional | for the cockpit overlay (route targets, surface compass, mining block) - or the plugin's own overlay window (4.12, beta) |
+| **EDMCModernOverlay** | optional | for the cockpit overlay (route targets, surface compass, mining block, situation column) - or the plugin's own overlay window (4.12, beta) |
 
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
 > all. On the first start 4.1 repairs boxel records written under a wrong
@@ -171,16 +171,19 @@ on first run and is **your data** - never overwrite it on an update.
 | `shells.py` | 232 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover | — |
 | `procgen.py` | 689 | Name ↔ id64 ↔ boxel maths, sector registry, computed sector names, named sectors over a boxel, self test | `edts_pgnames` |
 | `deepspace.py` | 441 | Fuel model, tritium rings, carrier staging | — |
-| `overlay.py` | 385 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `overlay.py` | 434 | Cockpit overlay through EDMCModernOverlay (optional) | — |
 | `overlaywin.py` | 182 | The cockpit overlay in a window of the plugin's own (option, beta) | — |
 | `biopredict.py` | 206 | Genus prediction learned from your own samples | — |
-| `surfacenav.py` | 348 | Surface compass: parked SRV, open samples, known points | — |
+| `surfacenav.py` | 399 | Surface compass: parked SRV, open samples, known points, the ship flown off | — |
 | `miningstat.py` | 261 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
 | `groundmine.py` | 169 | Ground mining in the Rhino: the rig being collected, the Rhino's and the ship's hold, what still fits (overlay and FIS) | — |
 | `integrity.py` | 169 | File check at every start: every file of this version there and as released (`SHBOXSEARCH.manifest`) | — |
 | `SHBOXSEARCH.manifest` | | SHA-256 of every file of the release, for the file check | — |
+| `bodyvalue.py` | 157 | What a body's exploration data is worth - an estimate from the community formula | — |
+| `situation.py` | 478 | The overlay's situation column: the board and its short texts (warnings, landing card, system value, ring, boxel, route fuel, carrier, session) | — |
+| `cockpitinfo.py` | 507 | Feeds the situation column from the journal and Status.json, draws it every 5 s | `situation`, `bodyvalue` |
 | `biosig.py` | 97 | Open biological signals: one signal per genus, but Brain Trees can be several species on one body | — |
-| `journalscan.py` | 289 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay | — |
+| `journalscan.py` | 325 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay | — |
 | `edts_pgnames/` | | Sector names computed with EDTS's algorithm, hand-authored sector table (third-party, BSD 3-Clause, see its `SOURCE.md`) | — |
 | `regionmap/` | | Codex regions of the galaxy (third-party, MIT, see its `SOURCE.md`) | — |
 | `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
@@ -1698,7 +1701,47 @@ back when you return to the cockpit. Selecting a jump target happens in the
 galaxy map, so its briefing is held back and shown the moment you close the
 map, instead of covering the map's system panel.
 
+**Situation column (4.12).** In the corner across from the other blocks
+(left and right swap), a few lines that the game's own HUD does not give -
+each only while it matters, warnings first:
+
+```
+! NEUTRON STAR ahead - jet cones hurt
+RISK  interdiction - unsold ~48.2 M Cr
+      14 systems · 212 bodies · 61 first
+LANDING  2 a 2.55 g !
+         905 K ! · thin ammonia atmosphere
+BIO  Stratum 19.0 M · Bacterium 1.0 M
+SYSTEM  12/24 scanned · ~3.1 M Cr · 9 new
+*  1 ELW · 2 terraformable
+DSS  3 to map ~+9.8 M Cr · 3 first
+```
+
+* **star ahead** - into hyperspace towards a neutron star, white dwarf or
+  black hole.
+* **unsold data at stake** - while in danger, interdicted, overheating,
+  under attack or with the hull below 60 %: what you carry unsold (bodies,
+  first discoveries, species) and about what it is worth.
+* **landing card** - approaching a body: gravity (amber from 2 g, red from
+  3 g), temperature, atmosphere, the genera still open with the best price
+  you were paid for each, and what else was found there.
+* **system value** - after the honk, when all bodies are found and after a
+  map: what your scans are worth, the earth-likes, water and ammonia worlds,
+  terraformables, and what mapping the worthwhile ones adds. An estimate
+  from the formula players worked out from the game's payouts.
+* **ring** - dropping at a ring (or mapping it): its hotspots and what you
+  last sold each material for.
+* **boxel** - on arrival during a survey: how much of the boxel is known.
+* **route fuel** - when a route is plotted: where to scoop at the latest.
+* **carrier** - your carrier's jump: countdown, distance and tritium.
+* **session** - after a sale or on docking: `SOLD 4.0 M Cr - well done`
+  and what this session brought.
+
+What you were paid is read once from your journals at the start; nothing
+leaves your computer.
+
 *Preferences -> SHBOXSEARCH -> Cockpit overlay*: on/off, briefing on/off,
+the situation column's warnings, places and session tally each on/off,
 position (four corners). The preferences show whether an overlay plugin was
 found. Without one nothing happens. The overlay is a separate transparent
 window drawn by the overlay plugin - it only displays, nothing is sent to the
@@ -1882,10 +1925,13 @@ Gypseeum Brain Tree         903 m  < 13
 
 * **the parked SRV** - where you left it on foot, until you get back in
 * **the parked ship** - where it touched down, until it lifts off or is sent away.
-  The Rhino is dropped by a ship hovering just above the ground, without a
-  touchdown; the ship waits at the drop point, shown as *SHIP (hover)* -
-  last known, since sending a hovering ship away writes nothing. The Nomad
-  gives no such point: the ship flies along at some 2-3 km.
+  The Nomad gives no such point: the ship flies along at some 2-3 km.
+* **the ship flown off** (4.12) - `SHIP AWAY 12 min    flew off - recall it`.
+  An SRV dropped from a hovering ship (no touchdown before) leaves the ship
+  flying off at once - the journal writes nothing for that, so the plugin
+  knows it from the drop itself. A landed ship sent away (or leaving on its
+  own) says `dismissed`. The line goes when you dock the SRV in the recalled
+  ship, board it, or it lands again; flying the ship yourself it never shows.
 * **species not finished yet**, with the samples taken (a new Log restarts the
   count, as in the game)
 * **earlier finds on this body** - codex entries, settlements, screenshots;

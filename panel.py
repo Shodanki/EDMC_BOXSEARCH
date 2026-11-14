@@ -25,6 +25,7 @@ from .sysdb import CURRENT
 from .sysroute import shorten
 from .state import CFG, KIND_SHORT, RADIUS_CHOICES, ST, cfg_bool, cfg_int, cfg_set, logger
 from . import cockpit
+from . import cockpitinfo
 from . import fislaunch
 from . import miningwin
 from . import probewin
@@ -186,6 +187,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     # SHBOX FIS along with EDMC, when ticked in the settings
     _frame.after(fislaunch.FIS_AUTOSTART_DELAY_MS, fislaunch._fis_autostart)
     _frame.after(cockpit.OVERLAY_KEEP_MS, cockpit._overlay_keepalive)
+    cockpitinfo.tick_start()             # 4.12: the situation column
     return _frame
 
 

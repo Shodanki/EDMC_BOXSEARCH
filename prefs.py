@@ -226,6 +226,12 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> Optional[nb.F
     field(right, "right", "", nb.Checkbutton(
         right, text="mining: last rock, hold, rate, session, limpets (5 lines)",
         variable=_p["overlay_mining"]))
+    # 4.12: the situation column in the opposite corner (cockpitinfo)
+    for key, text in (("overlay_info_warn", "warnings: dangerous star ahead, unsold data at stake"),
+                      ("overlay_info_place", "places: landing card, system value, ring, boxel, route fuel, carrier"),
+                      ("overlay_info_session", "session tally after a sale or on docking")):
+        _p[key] = tk.IntVar(value=1 if cfg_bool(CFG[key], True) else 0)
+        field(right, "right", "", nb.Checkbutton(right, text=text, variable=_p[key]))
     field(right, "right", "Position",
           ttk.OptionMenu(right, _p["overlay_pos"], _p["overlay_pos"].get(),
                          *OVERLAY_POSITIONS))
@@ -361,6 +367,8 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["overlay_brief"], bool(_p["overlay_brief"].get()))
         cfg_set(CFG["overlay_nav"], bool(_p["overlay_nav"].get()))
         cfg_set(CFG["overlay_mining"], bool(_p["overlay_mining"].get()))
+        for key in ("overlay_info_warn", "overlay_info_place", "overlay_info_session"):
+            cfg_set(CFG[key], bool(_p[key].get()))
         if "fis_autostart" in _p:
             cfg_set(CFG["fis_autostart"], bool(_p["fis_autostart"].get()))
         cfg_set(CFG["overlay_pos"], _p["overlay_pos"].get())

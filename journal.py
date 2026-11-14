@@ -29,6 +29,7 @@ from .sysdb import CURRENT
 from .sysroute import calibrate_from_journal, leg_distance_ls
 from .state import CFG, POSITION_EVENTS, ST, cfg_bool, logger
 from . import cockpit
+from . import cockpitinfo
 from . import panel
 from . import planning
 from . import routewin
@@ -63,6 +64,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         handler = _HANDLERS.get(ev)
         if handler is not None:
             handler(ev, entry, cmdr, state)
+        cockpitinfo.journal(ev, entry)       # 4.12: the overlay's situation column
     except Exception:
         logger.exception("journal_entry(%s) failed", ev)
 
@@ -616,6 +618,7 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
     try:
         ST.mine.status(entry)                # target hotspot -> material
         ST.ground.status(entry)              # 4.12: the Rhino's load between events
+        cockpitinfo.dashboard(entry)         # 4.12: danger - unsold data at stake
         _mining_overlay()                    # rate and ages move on; at most every 5 s
     except Exception:
         logger.debug("mining overlay failed", exc_info=True)

@@ -1662,6 +1662,33 @@ class SystemDB:
                     d["bio"].append(w[4:])
         return sorted(out.values(), key=lambda d: d["ts"] or "", reverse=True)
 
+    def unsold_rows(self, fid: Optional[str]) -> List[sqlite3.Row]:
+        """4.12: the bodies this commander carries unsold data of (scan, map
+        or analysed species) - with the shared body row (class, terraform,
+        star type) and the commander's own first discovery / first map."""
+        if not fid:
+            return []
+        return self.cx.execute(
+            "SELECT c.sys_id64, c.body_id, c.scan_open, c.map_open, c.bio_open, "
+            "c.was_discovered, c.was_mapped, b.kind, b.planet_class, b.terraform, b.star_type, "
+            "CASE WHEN c.map_open=1 THEN 1 ELSE 0 END AS mapped, 1 AS scanned "
+            "FROM cmdr_bodies c LEFT JOIN bodies b ON b.sys_id64=c.sys_id64 AND b.body_id=c.body_id "
+            "WHERE c.fid=? AND (c.scan_open=1 OR c.map_open=1 OR "
+            "(c.bio_open IS NOT NULL AND c.bio_open NOT IN ('', '[]')))", (fid,)).fetchall()
+
+    def hotspots_of(self, sys_id64: int, body_name: str) -> List[sqlite3.Row]:
+        """4.12: the hotspots of one ring (most first)."""
+        return self.cx.execute("SELECT material, label, count FROM hotspots WHERE sys_id64=? AND "
+                               "body_name=? ORDER BY count DESC, material", (sys_id64, body_name)).fetchall()
+
+    def finds_of(self, sys_id64: int, body_id: int) -> List[sqlite3.Row]:
+        """4.12: what a body offers besides biology - geological, guardian,
+        thargoid, human signals, mining locations (signals table)."""
+        return self.cx.execute("SELECT kind, label, count FROM signals WHERE sys_id64=? AND body_id=? "
+                               "AND kind NOT LIKE 'genus:%' AND kind NOT LIKE 'codex:%' "
+                               "AND kind <> 'biological' ORDER BY count DESC, kind",
+                               (sys_id64, body_id)).fetchall()
+
     def is_visited(self, row: Any, fid: Optional[str] = PLAN) -> bool:
         """Has this commander (default: the main one) been in the system?"""
         if row is None:

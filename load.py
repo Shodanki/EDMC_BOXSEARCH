@@ -68,6 +68,7 @@ try:
     from .sysdb import SystemDB  # noqa: E402
     from .state import CFG, DB_FILE, ST, VERSION, _PLUGIN_DIR, cfg_bool, cfg_str, logger  # noqa: E402
     from . import cockpit  # noqa: E402
+    from . import cockpitinfo  # noqa: E402
     from . import maintenance  # noqa: E402
     from . import miningwin  # noqa: E402
     from . import planning  # noqa: E402
@@ -141,6 +142,7 @@ def plugin_start3(plugin_dir: str) -> str:
     # has no "last here" marker until the first jump of the session.
     uithread._run_async(survey._bootstrap_session, label="reading journals")
     uithread._run_async(maintenance._check_files, label="file check")   # 4.12
+    uithread._run_async(cockpitinfo.bootstrap, label="situation")       # 4.12: prices, session
     planning._request_route(delay=2.5)
     return "SHBOXSEARCH"
 

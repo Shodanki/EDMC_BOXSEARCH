@@ -31,7 +31,7 @@ import glob
 import json
 import os
 import time
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 if __package__:     # inside the plugin package (EDMC)
     from .procgen import star_pos
@@ -39,7 +39,7 @@ else:               # on its own: the FIS, plain imports
     from procgen import star_pos
 
 __all__ = ["journal_files", "newest_location", "last_body", "approached_bodies", "WorkMeter",
-           "replay_work", "replay_fuel", "read_events"]
+           "replay_work", "replay_fuel", "read_events", "read_events_matching"]
 
 LOCATION_EVENTS = ("FSDJump", "Location", "CarrierJump")
 BODY_EVENTS = ("ApproachBody", "SupercruiseExit", "Touchdown", "Liftoff", "SAAScanComplete")
@@ -75,6 +75,26 @@ def read_events(files: Iterable[str]) -> Iterator[Dict[str, Any]]:
                 for line in f:
                     line = line.strip()
                     if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(e, dict):
+                        yield e
+        except OSError:
+            continue
+
+
+def read_events_matching(files: Iterable[str], needles: Sequence[str]) -> Iterator[Dict[str, Any]]:
+    """4.12: the events of the files whose line holds one of the needles
+    (e.g. '"MarketSell"'), in order - only those lines are parsed, so every
+    journal can be read for a few event names."""
+    for fn in files:
+        try:
+            with open(fn, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if not any(n in line for n in needles):
                         continue
                     try:
                         e = json.loads(line)
