@@ -1591,7 +1591,11 @@ def _surface_rigs(out: Dict[str, Any], nav: Any, xy: Any, me_xy: Any) -> None:
 
 
 def _surface_vehicles(out: Dict[str, Any], nav: Any, xy: Any, me_xy: Any) -> None:
-    """Where the SRV is parked and the ship stands (or hovered)."""
+    """Where the SRV is parked and the ship stands - or that the ship has
+    flown off and must be recalled (4.12: ship_away)."""
+    away = nav.get("ship_away") if nav else None
+    if away:
+        out["ship_away"] = {"ts": away["ts"], "why": away["why"]}
     for key in ("parked", "ship"):
         v = nav[key] if nav else None
         if v is None:
@@ -1599,8 +1603,6 @@ def _surface_vehicles(out: Dict[str, Any], nav: Any, xy: Any, me_xy: Any) -> Non
         x, y = xy(v["lat"], v["lon"])
         item = {"x": round(x, 1), "y": round(y, 1), "ts": v["ts"],
                 "label": (v["detail"] or "SRV") if key == "parked" else "ship"}
-        if key == "ship" and isinstance(v, dict) and v.get("hover"):
-            item["hover"] = True     # dropped the Rhino in a hover - last known
         if me_xy is not None:
             _dist_bearing(item, x, y)
         out[key] = item

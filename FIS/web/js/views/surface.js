@@ -130,6 +130,14 @@ function niceStep(m) {
   return 10 * p;
 }
 
+function shipAway(a) {
+  const t0 = Date.parse(a.ts);
+  const min = isNaN(t0) ? null : Math.max(0, Math.floor((Date.now() - t0) / 60000));
+  const why = a.why === "dismissed" ? t("sent away") : t("flew off");
+  return el("div", { class: "sf-park c-amber" },
+    "▲ " + t("SHIP AWAY") + (min !== null ? " · " + t("{n} min ago", { n: Math.max(1, min) }) : "") + " · " + why + " – " + t("recall it"));
+}
+
 function vehicleLabel(key, v) {
   return key === "parked" ? (v.label || "SRV").toUpperCase() : t("SHIP");
 }
@@ -382,10 +390,11 @@ function render() {
     const v = data[key];
     if (!v) continue;
     const where = v.dist_m !== undefined ? fmt(v.dist_m, 0) + " m · " + fmt(v.bearing, 0) + "°" : t("position saved");
-    const what = key === "parked" ? t("{v} PARKED", { v: vehicleLabel(key, v) })
-      : v.hover ? t("SHIP HOVERING · last known") : t("SHIP LANDED");
+    const what = key === "parked" ? t("{v} PARKED", { v: vehicleLabel(key, v) }) : t("SHIP LANDED");
     info.append(el("div", { class: "sf-park " + colr }, (key === "parked" ? "◆ " : "▼ ") + what + "  " + where));
   }
+  // 4.12: dropped from a hover or sent away - the ship has flown off
+  if (data.here && data.ship_away && !(data.me && data.me.mode === "ship")) info.append(shipAway(data.ship_away));
   for (const b of data.bio) {
     if (b.done) { info.append(el("div", { class: "c-green small", text: "✔ " + t("{s} analysed", { s: b.species }) })); continue; }
     const n = b.samples !== undefined ? b.samples : b.points.length;

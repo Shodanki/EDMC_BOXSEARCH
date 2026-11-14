@@ -497,7 +497,7 @@ def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> N
         c = ST._nav_cache = (key, marks, r["sig_bio"] if r else None, genera, lost)
         _bio_resume(pos["body"], marks)
     lines = surfacenav.compass_lines(pos, c[1], radius, sig_bio=c[2], genera=c[3],
-                                     colours=overlay.COL, orbit=not low, lost=c[4])
+                                     colours=overlay.COL, orbit=not low, lost=c[4], now=now)
     if lines:
         ov.show_nav(lines, seconds=4)
 

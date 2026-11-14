@@ -8,6 +8,7 @@ Self test of surfacenav.py (moved from the module in 4.12, N7 - verbatim).
 
     python tests/surfacenav_selftest.py      (from the plugin folder)
 """
+import calendar
 import os
 import sys
 import time
@@ -107,34 +108,56 @@ def _selftest() -> None:
     marks.append({"ts": "6", "kind": "bio_log", "label": "Roseum Brain Tree",
                   "detail": "Brain Trees", "lat": 0.01, "lon": 0.0})
     assert body_state(marks)["species"][0]["samples"] == 1
-    # the Rhino: dropped from a hovering ship - no Touchdown, the ship stays
-    rh = [{"ts": "1", "kind": "srv_out", "label": "SRV Rhino", "detail": None,
+    # the Rhino dropped from a hovering ship (no Touchdown): the ship flies
+    # off at once and writes nothing - away until recalled (14.11.2026)
+    rh = [{"ts": "2026-11-14T15:12:08Z", "kind": "srv_out", "label": "SRV Rhino", "detail": None,
            "lat": -26.05, "lon": 143.60}]
-    s = body_state(rh)["ship"]
-    assert s and s["hover"] and s["lat"] == -26.05, s
-    lines = compass_lines({"lat": -26.06, "lon": 143.61, "heading": 0}, rh, 492617.0)
-    assert any(ln[0].startswith("SHIP (hover)") for ln in lines), lines
-    assert body_state(rh + [{"ts": "2", "kind": "srv_in", "label": "SRV Rhino",
-                             "detail": None, "lat": 0.0, "lon": 0.0}])["ship"] is None
-    # on foot from the Rhino and back into it: the ship still hovers
-    foot = rh + [{"ts": "2", "kind": "srv_parked", "label": "SRV", "detail": "SRV Rhino",
+    st = body_state(rh)
+    assert st["ship"] is None and st["ship_away"]["why"] == "hover", st
+    t_launch = calendar.timegm(time.strptime("2026-11-14T15:12:08Z", "%Y-%m-%dT%H:%M:%SZ"))
+    lines = compass_lines({"lat": -26.06, "lon": 143.61, "heading": 0}, rh, 492617.0, now=t_launch + 725)
+    away = [ln for ln, _c in lines if ln.startswith("SHIP AWAY")]
+    assert away == ["SHIP AWAY 12 min    flew off - recall it"], lines
+    assert len(away[0]) <= 44
+    assert not any("SHIP (hover)" in ln for ln, _c in lines), lines
+    # flying the ship yourself: it is not away, whatever an old visit left
+    aboard = compass_lines({"lat": -26.06, "lon": 143.61, "heading": 0, "mode": "ship"}, rh, 492617.0)
+    assert not any(ln.startswith("SHIP AWAY") for ln, _c in aboard), aboard
+    # docked back into the recalled ship: the ship is here again
+    back = rh + [{"ts": "2026-11-14T15:42:12Z", "kind": "srv_in", "label": "SRV Rhino",
+                  "detail": None, "lat": 0.0, "lon": 0.0}]
+    assert body_state(back)["ship"] is None and body_state(back)["ship_away"] is None
+    # on foot from the Rhino and back into it: the ship is still away
+    foot = rh + [{"ts": "2026-11-14T15:20:00Z", "kind": "srv_parked", "label": "SRV", "detail": "SRV Rhino",
                   "lat": -26.0, "lon": 143.7},
-                 {"ts": "3", "kind": "embark", "label": "SRV", "detail": None,
+                 {"ts": "2026-11-14T15:21:00Z", "kind": "embark", "label": "SRV", "detail": None,
                   "lat": -26.0, "lon": 143.7}]
-    assert body_state(foot)["ship"]["hover"]
-    # a Rhino out of a landed ship: the Touchdown stays the ship's point
-    td = [{"ts": "0", "kind": "touchdown", "label": "b", "detail": "ship", "lat": 1.0, "lon": 2.0}]
-    s = body_state(td + rh)["ship"]
-    assert s["kind"] == "touchdown" and not (isinstance(s, dict) and s.get("hover")), s
-    # the Nomad: the ship flies along - no point to show
-    assert body_state([{"ts": "1", "kind": "srv_out", "label": "Nomad", "detail": None,
-                        "lat": 1.0, "lon": 1.0}])["ship"] is None
-    # sent away / recalled: Liftoff or Touchdown without the player win
-    assert body_state(rh + [{"ts": "2", "kind": "liftoff", "label": "b", "detail": "auto",
-                             "lat": -26.05, "lon": 143.60}])["ship"] is None
-    s = body_state(rh + [{"ts": "2", "kind": "touchdown", "label": "b", "detail": "auto",
-                          "lat": -26.2, "lon": 143.7}])["ship"]
-    assert s["lat"] == -26.2 and s["kind"] == "touchdown", s
+    assert body_state(foot)["ship_away"]["why"] == "hover"
+    # a Rhino out of a landed ship: the Touchdown stays the ship's point, nothing away
+    td = [{"ts": "2026-11-14T15:00:00Z", "kind": "touchdown", "label": "b", "detail": "ship", "lat": 1.0, "lon": 2.0}]
+    st = body_state(td + rh)
+    assert st["ship"]["kind"] == "touchdown" and st["ship_away"] is None, st
+    # the Nomad: the ship flies along - no point to show, nothing to recall
+    st = body_state([{"ts": "1", "kind": "srv_out", "label": "Nomad", "detail": None,
+                      "lat": 1.0, "lon": 1.0}])
+    assert st["ship"] is None and st["ship_away"] is None
+    # a landed ship sent away (Liftoff without the player): away - recall it
+    gone = td + rh + [{"ts": "2026-11-14T15:13:00Z", "kind": "liftoff", "label": "b", "detail": "auto",
+                       "lat": 1.0, "lon": 2.0}]
+    st = body_state(gone)
+    assert st["ship"] is None and st["ship_away"]["why"] == "dismissed", st
+    assert any(ln.startswith("SHIP AWAY") and "dismissed - recall it" in ln
+               for ln, _c in compass_lines({"lat": 1.0, "lon": 2.01, "heading": 0}, gone, 492617.0)), gone
+    # you lift off yourself: aboard, nothing away
+    assert body_state(td + [{"ts": "2026-11-14T15:13:00Z", "kind": "liftoff", "label": "b", "detail": "ship",
+                             "lat": 1.0, "lon": 2.0}])["ship_away"] is None
+    # the recalled ship lands (Touchdown without the player): its new point
+    s = body_state(gone + [{"ts": "2026-11-14T15:30:00Z", "kind": "touchdown", "label": "b", "detail": "auto",
+                            "lat": -26.2, "lon": 143.7}])
+    assert s["ship"]["lat"] == -26.2 and s["ship"]["kind"] == "touchdown" and s["ship_away"] is None, s
+    # nothing else on the body: the away line alone still shows
+    only = compass_lines({"lat": 0.0, "lon": 0.0, "heading": 0}, rh, 492617.0)
+    assert only and only[0][0] == "NAV" and only[1][0].startswith("SHIP AWAY"), only
     # Rhino rigs: tonnes close in time and place are one rig; numbered per launch
 
     def iso(sec):

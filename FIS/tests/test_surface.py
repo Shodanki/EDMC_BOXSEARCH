@@ -75,7 +75,7 @@ class SurfaceTest(unittest.TestCase):
 
     def test_rhino_from_hovering_ship(self):
         # the Rhino is dropped by a ship hovering just above the ground: no
-        # Touchdown, the ship waits at the drop point - shown as last known
+        # Touchdown, and the ship flies off at once - away, recall it (4.12)
         cx = sqlite3.connect(self.path)
         cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:06:00Z',1,'Sys 1 a',"
                    "'srv_out','SRV Rhino',NULL,0,0.01)")
@@ -85,16 +85,17 @@ class SurfaceTest(unittest.TestCase):
                 "lon": 0.0337, "radius": 1000000.0, "heading": 90, "alt": 1, "flags": 1 << 26,
                 "flags2": 0}}
         s = self.model.build_surface(self.db, live)
-        self.assertTrue(s["ship"]["hover"])
-        self.assertEqual(round(s["ship"]["bearing"]), 270)
-        self.assertAlmostEqual(s["ship"]["dist_m"], 0.0237 * math.pi / 180 * 1e6, delta=3)
-        # back in the ship: nothing left to point at
+        self.assertNotIn("ship", s)
+        self.assertEqual(s["ship_away"], {"ts": "2026-11-05T10:06:00Z", "why": "hover"})
+        # back in the (recalled) ship: nothing left to point at
         cx = sqlite3.connect(self.path)
         cx.execute("INSERT INTO surface_marks VALUES ('2026-11-05T10:09:00Z',1,'Sys 1 a',"
                    "'srv_in','SRV Rhino',NULL,0,0.01)")
         cx.commit()
         cx.close()
-        self.assertNotIn("ship", self.model.build_surface(self.db, live))
+        s = self.model.build_surface(self.db, live)
+        self.assertNotIn("ship", s)
+        self.assertNotIn("ship_away", s)
 
     def test_rhino_rigs(self):
         # one "refined" mark per tonne; the view gets one numbered rig each

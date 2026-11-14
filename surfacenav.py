@@ -111,13 +111,16 @@ def body_state(marks: Iterable[Any], radius: Optional[float] = None) -> Dict[str
 
     parked   the SRV left standing (Disembark from the SRV, not yet re-entered)
     ship     the ship standing on the ground (Touchdown by the ship, not yet
-             lifted off or dismissed) - or, with "hover": True, hovering
-             where it dropped the Rhino: the Rhino is launched from a ship
-             that hovers just above the ground and stays there without a
-             Touchdown. The Nomad gives no such point - the ship follows it
-             at some 2-3 km - and a drop from a landed ship keeps the
-             Touchdown. Last known only: sending a hovering ship away
-             writes nothing.
+             lifted off or dismissed); a recalled ship that lands writes a
+             Touchdown of its own (PlayerControlled false). The Nomad gives
+             no such point - the ship follows it at some 2-3 km - and a drop
+             from a landed ship keeps the Touchdown.
+    ship_away  4.12: the ship has flown off and must be recalled - {"ts",
+             "why"}: "hover" when an SRV was dropped from a hovering ship
+             (it leaves at once and the journal writes nothing for that -
+             developer's journals of 14.11.2026), "dismissed" for a Liftoff
+             without the player (sent away, or it left on its own). Over
+             when you are back aboard (DockSRV, Embark) or it lands again.
     species  one entry per species: samples taken since its last Log (the
              game restarts the count on a new Log), positions, analysed
     sites    positioned finds worth returning to, close ones merged
@@ -130,8 +133,8 @@ def body_state(marks: Iterable[Any], radius: Optional[float] = None) -> Dict[str
     r = _BodyReplay(radius)
     for m in sorted(marks, key=lambda r: _g(r, "ts") or ""):
         r.feed(m)
-    return {"parked": r.parked, "ship": r.ship, "species": list(r.species.values()),
-            "sites": r.sites, "rigs": r.rigs}
+    return {"parked": r.parked, "ship": r.ship, "ship_away": r.ship_away,
+            "species": list(r.species.values()), "sites": r.sites, "rigs": r.rigs}
 
 
 class _BodyReplay:
@@ -141,6 +144,7 @@ class _BodyReplay:
         self.radius = radius
         self.parked: Any = None
         self.ship: Any = None
+        self.ship_away: Optional[Dict[str, Any]] = None
         self.rigs: List[Dict[str, Any]] = []
         self.outing = 0
         self.species: Dict[str, Dict[str, Any]] = {}
@@ -152,9 +156,8 @@ class _BodyReplay:
         lat, lon = _g(m, "lat"), _g(m, "lon")
         detail = _g(m, "detail")
         self._vehicles(m, kind, lat, lon, detail)
-        back_aboard = kind == "srv_in" or (kind == "embark" and _g(m, "label") != "SRV")
-        if back_aboard and isinstance(self.ship, dict) and self.ship.get("hover"):
-            self.ship = None             # back on board the hovering ship
+        if kind == "srv_in" or (kind == "embark" and _g(m, "label") != "SRV"):
+            self.ship_away = None        # back on board: the ship is here
         elif kind.startswith("bio_"):
             self._bio(m, kind, lat, lon, detail)
         if kind in SITE_KINDS and lat is not None:
@@ -170,8 +173,11 @@ class _BodyReplay:
             self.parked = None
         elif kind == "touchdown" and detail != "srv":
             self.ship = m if lat is not None else self.ship
+            self.ship_away = None        # landed - by you, or recalled
         elif kind == "liftoff" and detail != "srv":
             self.ship = None
+            # without the player: sent away or left on its own - recall it
+            self.ship_away = {"ts": _g(m, "ts"), "why": "dismissed"} if detail == "auto" else None
         elif kind == "refined" and lat is not None:
             self._rig(m, lat, lon)
         elif kind == "srv_out":
@@ -196,15 +202,17 @@ class _BodyReplay:
                          "type": (_g(m, "label") or "?").split("#")[0]})
 
     def _srv_out(self, m: Any, lat: Any, lon: Any) -> None:
-        """A vehicle launched: a new Rhino outing; the ship hovering or flying along."""
+        """A vehicle launched: a new Rhino outing; the ship flying along (Nomad),
+        or - dropped from a hover - flown off until recalled."""
         vehicle = (_g(m, "label") or "").lower()
         if "rhino" in vehicle:
             self.outing += 1
         if "nomad" in vehicle:
             self.ship = None             # the ship flies along with the Nomad
-        elif "rhino" in vehicle and self.ship is None and lat is not None:
-            self.ship = {"ts": _g(m, "ts"), "kind": "srv_out", "label": _g(m, "label"),
-                         "detail": "hover", "lat": lat, "lon": lon, "hover": True}
+        elif self.ship is None:
+            # no Touchdown before: dropped from a hovering ship, which leaves
+            # at once - nothing in the journal says so (14.11.2026)
+            self.ship_away = {"ts": _g(m, "ts"), "why": "hover"}
 
     def _bio(self, m: Any, kind: str, lat: Any, lon: Any, detail: Any) -> None:
         """A bio log, sample or analysis of one species."""
@@ -300,10 +308,20 @@ def head_line(label: str, done: int, open_n: int = 0, lost_n: int = 0,
     return base
 
 
+def away_line(away: Dict[str, Any], now: Optional[float], colour: str) -> Line:
+    """4.12: the ship has flown off - no point to steer to, a recall to make."""
+    t0 = _ts(away.get("ts"))
+    mins = int((now - t0) // 60) if now is not None and t0 > 1e9 and now >= t0 else None
+    since = (" %d min" % mins) if mins is not None else ""
+    why = "dismissed" if away.get("why") == "dismissed" else "flew off"
+    return ("%-19s %s" % ("SHIP AWAY%s" % since, "%s - recall it" % why), colour)
+
+
 def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
                   sig_bio: Optional[int] = None, genera: Sequence[str] = (),
                   colours: Optional[Dict[str, str]] = None, limit: int = 6,
-                  orbit: bool = False, lost: Sequence[str] = ()) -> List[Line]:
+                  orbit: bool = False, lost: Sequence[str] = (),
+                  now: Optional[float] = None) -> List[Line]:
     """
     The NAV block: one line per point, nearest first within its group -
     parked SRV, parked ship, unfinished species, species lost in a crash,
@@ -338,9 +356,9 @@ def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
                           float(p["lat"]), float(p["lon"]), c_warn)[1])
     if st["ship"] is not None:
         p = st["ship"]
-        hover = isinstance(p, dict) and p.get("hover")
-        rows.append(entry("SHIP (hover)" if hover else "SHIP", float(p["lat"]),
-                          float(p["lon"]), c_warn)[1])
+        rows.append(entry("SHIP", float(p["lat"]), float(p["lon"]), c_warn)[1])
+    elif st["ship_away"] is not None and pos.get("mode") != "ship":     # aboard: it is here
+        rows.append(away_line(st["ship_away"], now, c_warn))
     bio = []
     for s in summ["in_progress"]:
         if s["points"]:
