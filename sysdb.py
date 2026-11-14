@@ -1058,7 +1058,7 @@ class SystemDB:
         fid = self.view_fid(PLAN)
         if fid and out:
             # C1: the survey plans for the main commander - "visited" and
-            # "FSS complete" are his, the systems themselves are shared
+            # "FSS complete" are theirs, the systems themselves are shared
             mine = self.visited_by(fid)
             own = []
             for r in out:
@@ -1674,7 +1674,7 @@ class SystemDB:
 
     def explored(self, fid: str, id64: int) -> bool:
         """Has this commander explored the system - FSS complete or any body
-        scanned with his own scanner?"""
+        scanned with their own scanner?"""
         r = self.cmdr_system(fid, id64)
         if r is not None and r["fss_complete"]:
             return True
@@ -2413,7 +2413,7 @@ class SystemDB:
         Up to 4.7 every Docked at a fleet carrier and every CarrierJump moved
         "my carrier": docking at someone else's carrier (or riding along on
         it) overwrote the own carrier's position and callsign - and a
-        commander without a carrier got a stranger's carrier as his own.
+        commander without a carrier got a stranger's carrier as their own.
         The own carrier is known by its CarrierID (= MarketID) from
         CarrierLocation / CarrierStats, which the game writes for owners at
         every login. Without that ID nothing but CarrierLocation counts.
@@ -2997,7 +2997,7 @@ class SystemDB:
         }
 
     def _lifetime_of(self, fid: str) -> Dict[str, object]:
-        """lifetime() for one commander (C1): his visits, scans and finds;
+        """lifetime() for one commander (C1): their visits, scans and finds;
         boxels, absent names and spheres stay shared survey knowledge."""
         def q(s, *a):
             return self.cx.execute(s, a).fetchone()[0]

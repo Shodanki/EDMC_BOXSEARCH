@@ -153,7 +153,7 @@ class App:
 
     # ------------------------------------------------------------ routes
     def fid(self) -> Optional[str]:
-        """C1: the commander playing (journal archive), for his own exploration."""
+        """C1: the commander playing (journal archive), for their own exploration."""
         try:
             return self.archive.commander()[0]
         except Exception:

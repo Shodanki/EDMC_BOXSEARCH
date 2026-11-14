@@ -938,7 +938,7 @@ class Planner:
 # runs through boxels nobody has probed turns each hop into a fair chance of
 # an unknown system - without a single galaxy map search.
 #
-# The commander plots the route himself (one action, nothing automated); this
+# The commander plots the route themselves (one action, nothing automated); this
 # only picks a target worth plotting to.
 
 def _seg_dist(p, a, b) -> Tuple[float, float]:
