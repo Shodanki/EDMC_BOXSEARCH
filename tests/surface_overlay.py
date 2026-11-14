@@ -135,5 +135,27 @@ check(client.shown("nav") == [] and ST._nav_args is None, "away from the body: t
 frame.run()
 check(frame.timers == [], "and no timer left")
 
+print("on foot aboard the own carrier, parked beside a planet")
+# developer's journal 14.11.2026: Docked at a FleetCarrier, then Disembark
+# with OnPlanet true - and Status.json carries the planet's latitude
+ST.db.ingest_journal_event({"event": "Docked", "timestamp": "2027-01-15T09:00:00Z", "StationName": "V2L-07J",
+                            "StationType": "FleetCarrier", "StarSystem": "Test", "SystemAddress": 42,
+                            "MarketID": 3712967680})
+marks_before = len(ST.db.marks_of(42, "Test A 1"))
+ST.db.ingest_journal_event({"event": "Disembark", "timestamp": "2027-01-15T09:01:00Z", "SRV": False,
+                            "StarSystem": "Test", "SystemAddress": 42, "Body": "Test A 1", "BodyID": 5,
+                            "OnStation": False, "OnPlanet": True})
+check(len(ST.db.marks_of(42, "Test A 1")) == marks_before, "no 'on foot' mark on the planet for a walk in the hangar")
+client.sent.clear()
+FOOT = 1
+e = {"event": "Status", "timestamp": "2027-01-15T09:01:05Z", "Flags": 0, "Flags2": FOOT, "GuiFocus": 0,
+     "Latitude": 10.0, "Longitude": 20.0, "Altitude": 0.0, "BodyName": "Test A 1", "PlanetRadius": 1_500_000.0}
+load.dashboard_entry("Cmdr", False, e)
+check(client.shown("nav") == [] and not ST.overlay.mute_targets, "no compass, the route block stays")
+ST.db.ingest_journal_event({"event": "Undocked", "timestamp": "2027-01-15T09:10:00Z", "StationName": "V2L-07J",
+                            "StationType": "FleetCarrier", "MarketID": 3712967680})
+check(not ST.db.aboard_station(), "undocked: the surface counts again")
+check(ST.db.aboard_station(1 << 3), "on foot in a station (Flags2): not the surface either")
+
 print("surface overlay: %s" % ("all OK" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)

@@ -569,6 +569,7 @@ class SystemDB:
         self.path = path
         self.backup_path: Optional[str] = None
         self._dock_market_id: Optional[int] = None
+        self._dock_carrier = False      # 4.12: docked at a fleet carrier (no surface there)
         try:
             state = stored_state(path)
         except sqlite3.Error:
@@ -1876,11 +1877,11 @@ class SystemDB:
         fix (with mode) or None when not on/near a body.
         """
         lat, lon, body = st.get("Latitude"), st.get("Longitude"), st.get("BodyName")
-        if lat is None or lon is None or not body:
-            self._pos = None
-            return None
         flags = int(st.get("Flags") or 0)
         flags2 = int(st.get("Flags2") or 0)
+        if lat is None or lon is None or not body or self.aboard_station(flags2):
+            self._pos = None
+            return None
         mode = "foot" if flags2 & 1 else ("srv" if flags & (1 << 26) else "ship")
         self._pos = {"body": body, "lat": float(lat), "lon": float(lon),
                      "alt": st.get("Altitude"), "heading": st.get("Heading"),
@@ -1888,6 +1889,17 @@ class SystemDB:
                      "landed": bool(flags & 2), "t": now if now is not None else time.time(),
                      "gt": _epoch(st.get("timestamp"))}     # game time of the fix
         return self._pos
+
+    # Status.json Flags2: on foot in a station, its hangar or social space
+    STATION_FOOT = (1 << 3) | (1 << 13) | (1 << 14)
+
+    def aboard_station(self, flags2: int = 0) -> bool:
+        """4.12: aboard a carrier or station, not on the ground. Parked
+        beside a planet, the carrier makes the game write the planet's
+        latitude and longitude into Status.json, and Disembark says OnPlanet
+        (developer's journal 14.11.2026) - the compass and the surface
+        marks would take the hangar for the planet's surface."""
+        return self._dock_carrier or bool(flags2 & self.STATION_FOOT)
 
     def _fresh_pos(self, body: Optional[str], at: Optional[float] = None
                    ) -> Optional[Dict[str, Any]]:
@@ -1954,9 +1966,9 @@ class SystemDB:
         elif ev in ("DockSRV", "DockVessel"):
             self._mark(e, "srv_in", None, e.get("SRVType_Localised") or
                        e.get("VesselType_Localised") or "SRV")
-        elif ev == "Disembark" and e.get("OnPlanet"):
+        elif ev == "Disembark" and e.get("OnPlanet") and not self.aboard_station():
             self._mark_disembark(ev, e)
-        elif ev == "Embark" and e.get("OnPlanet"):
+        elif ev == "Embark" and e.get("OnPlanet") and not self.aboard_station():
             self._mark(e, "embark", e.get("Body"), "SRV" if e.get("SRV") else "ship")
         elif ev == "ScanOrganic":
             kind = {"Log": "bio_log", "Sample": "bio_sample",
@@ -2463,11 +2475,15 @@ class SystemDB:
         return False
 
     def _note_dock(self, ev: str, entry: dict) -> None:
-        """Remember where the commander is docked (for CarrierJump on foot)."""
+        """Remember where the commander is docked (for CarrierJump on foot),
+        and whether it is a fleet carrier (4.12: no surface while aboard)."""
         if ev == "Docked" or (ev == "Location" and entry.get("Docked")):
             self._dock_market_id = entry.get("MarketID")
-        elif ev in ("Undocked", "FSDJump", "Died", "LoadGame", "Shutdown"):
+            self._dock_carrier = entry.get("StationType") == "FleetCarrier"
+        elif ev in ("Undocked", "FSDJump", "Died", "LoadGame", "Shutdown") or (
+                ev == "Location" and not entry.get("Docked")):
             self._dock_market_id = None
+            self._dock_carrier = False
 
     def set_carrier(self, name: str, id64: Optional[int] = None,
                     coords: Optional[Sequence[float]] = None,
