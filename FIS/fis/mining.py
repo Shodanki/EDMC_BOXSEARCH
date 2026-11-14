@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .live import parse_ts
 
@@ -363,11 +363,58 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
                  now: Optional[float] = None, capi_path: Optional[str] = None) -> Dict[str, Any]:
     """The MINING view: the session, history, the hold, limpets, rings and what
     they paid."""
-    from . import fleet as fl
     now = time.time() if now is None else now
     evs = archive.events()
     hist = sessions(evs, now)
-    # the ship each session was flown in (last Loadout before it began)
+    _session_ships(hist, evs)
+    out: Dict[str, Any] = {"generated": now, "session": hist[-1] if hist else None,
+                           "sessions": list(reversed(hist[-30:]))}
+    # ---------------------------------------------------------- tritium -> carrier
+    car = archive.carrier()
+    month = now - 30 * 86400
+    to_carrier, deposited = _tritium_moved(evs, month)
+    trit: Dict[str, Any] = {"to_carrier": to_carrier, "deposited": deposited}
+    cargo = {}
+    if journal_dir:
+        from .shipview import _read_json
+        cargo = _read_json(os.path.join(journal_dir, "Cargo.json")) or {}
+    inv = cargo.get("Inventory") or [] if cargo.get("Vessel", "Ship") == "Ship" else []
+    trit["ship"] = sum(c.get("Count") or 0 for c in inv if (c.get("Name") or "").lower() == "tritium")
+    out["limpets"] = sum(c.get("Count") or 0 for c in inv if (c.get("Name") or "").lower() == "drones")
+    out["cargo_used"] = sum(c.get("Count") or 0 for c in inv)
+    if car:
+        _tritium_carrier(trit, car, out["session"], capi_path, now)
+    out["tritium"] = trit
+    # ---------------------------------------------------------- goods: mined, sold, against upkeep
+    goods = _mined_goods(evs, car, month, to_carrier)
+    out["goods"] = sorted(goods.values(), key=lambda g: (-g["refined"]))
+    rev30 = sum(g["revenue_30d"] for g in goods.values())
+    from . import capi
+    fup = (capi.load(capi_path, now) or {}).get("upkeep") or {}
+    upkeep = fup.get("per_week") or ((car or {}).get("upkeep") or {}).get("per_week")
+    out["income"] = {"revenue_30d": rev30, "per_week": round(rev30 / 30 * 7),
+                     "upkeep_per_week": upkeep,
+                     "covers_pct": round(100.0 * (rev30 / 30 * 7) / upkeep) if upkeep else None}
+    # ---------------------------------------------------------- where: hotspots near you
+    pos = (live.get("system") or {}).get("pos")
+    out["hotspots"] = hotspots_near(db, pos)
+    out["from"] = (live.get("system") or {}).get("name")
+    # L3: the nearby hotspots ranked by what YOU mined there per hour - in
+    # that ring, else in rings of its class, else in any ring
+    try:
+        out["hotspot_rank"] = _hotspot_rank(archive, db, out["hotspots"])
+    except Exception:
+        out["hotspot_rank"] = []
+    out["ships"] = _mining_ships(archive)
+    # ---------------------------------------------------------- limpet load per mining ship
+    rat = limpet_ratio(hist)
+    out["limpet_plan"] = {"ratio": rat, "default": DEFAULT_RATIO, "reserve": LIMPET_RESERVE,
+                          "ships": _limpet_plans(rat, out["ships"], out["limpets"])}
+    return out
+
+
+def _session_ships(hist: List[Dict[str, Any]], evs: List[Dict[str, Any]]) -> None:
+    """The ship each session was flown in (last Loadout before it began)."""
     loads = [(parse_ts(e.get("timestamp")) or 0, e) for e in evs if e["event"] == "Loadout"]
     for s in hist:
         lo = None
@@ -378,11 +425,10 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
         if lo:
             s["ship_type"] = (lo.get("Ship") or "").lower()
             s["ship_name"] = lo.get("ShipName")
-    out: Dict[str, Any] = {"generated": now, "session": hist[-1] if hist else None,
-                           "sessions": list(reversed(hist[-30:]))}
-    # ---------------------------------------------------------- tritium -> carrier
-    car = archive.carrier()
-    month = now - 30 * 86400
+
+
+def _tritium_moved(evs: List[Dict[str, Any]], month: float) -> Tuple[Dict[str, int], Dict[str, int]]:
+    """Tritium moved to a carrier (cargo transfers) and deposited into its tank."""
     to_carrier = {"30d": 0, "all": 0}
     deposited = {"30d": 0, "all": 0}
     for e in evs:
@@ -397,35 +443,34 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
             deposited["all"] += e.get("Amount") or 0
             if ts >= month:
                 deposited["30d"] += e.get("Amount") or 0
-    trit: Dict[str, Any] = {"to_carrier": to_carrier, "deposited": deposited}
-    cargo = {}
-    if journal_dir:
-        from .shipview import _read_json
-        cargo = _read_json(os.path.join(journal_dir, "Cargo.json")) or {}
-    inv = cargo.get("Inventory") or [] if cargo.get("Vessel", "Ship") == "Ship" else []
-    trit["ship"] = sum(c.get("Count") or 0 for c in inv if (c.get("Name") or "").lower() == "tritium")
-    out["limpets"] = sum(c.get("Count") or 0 for c in inv if (c.get("Name") or "").lower() == "drones")
-    out["cargo_used"] = sum(c.get("Count") or 0 for c in inv)
-    if car:
-        tank, load = int(car["fuel"] or 0), car["load"] or 0
-        per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank) or 1
-        from .shipview import hold_tritium
-        hold = hold_tritium(capi_path, now)
-        if hold:
-            trit["hold"] = hold
-            if hold["t"]:
-                trit["with_hold"] = fl.carrier_range(tank + hold["t"], max(0, load - hold["t"]))
-        trit.update({"tank": tank, "tank_max": fl.CARRIER_TANK, "to_full": max(0, fl.CARRIER_TANK - tank),
-                     "per_jump": per, "range": fl.carrier_range(tank, load),
-                     "with_ship": fl.carrier_range(min(fl.CARRIER_TANK, tank + trit["ship"]), load)
-                     if trit["ship"] else None})
-        s = out["session"]
-        if s and s["tritium"]:
-            trit["mined"] = {"t": s["tritium"], "active": s["active"], "jumps": round(s["tritium"] / per, 1),
-                             "ly": round(s["tritium"] / per * fl.CARRIER_MAX_JUMP, 0)}
-            s["carrier_jumps"] = trit["mined"]["jumps"]
-    out["tritium"] = trit
-    # ---------------------------------------------------------- goods: mined, sold, against upkeep
+    return to_carrier, deposited
+
+
+def _tritium_carrier(trit: Dict[str, Any], car: Dict[str, Any], s: Optional[Dict[str, Any]],
+                     capi_path: Optional[str], now: float) -> None:
+    """The carrier's tank, hold and range, and what the session mined in jumps."""
+    from . import fleet as fl
+    tank, load = int(car["fuel"] or 0), car["load"] or 0
+    per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank) or 1
+    from .shipview import hold_tritium
+    hold = hold_tritium(capi_path, now)
+    if hold:
+        trit["hold"] = hold
+        if hold["t"]:
+            trit["with_hold"] = fl.carrier_range(tank + hold["t"], max(0, load - hold["t"]))
+    trit.update({"tank": tank, "tank_max": fl.CARRIER_TANK, "to_full": max(0, fl.CARRIER_TANK - tank),
+                 "per_jump": per, "range": fl.carrier_range(tank, load),
+                 "with_ship": fl.carrier_range(min(fl.CARRIER_TANK, tank + trit["ship"]), load)
+                 if trit["ship"] else None})
+    if s and s["tritium"]:
+        trit["mined"] = {"t": s["tritium"], "active": s["active"], "jumps": round(s["tritium"] / per, 1),
+                         "ly": round(s["tritium"] / per * fl.CARRIER_MAX_JUMP, 0)}
+        s["carrier_jumps"] = trit["mined"]["jumps"]
+
+
+def _mined_goods(evs: List[Dict[str, Any]], car: Any, month: float,
+                 to_carrier: Dict[str, int]) -> Dict[str, Dict[str, Any]]:
+    """What was refined, sold (and for how much) or put into the own carrier."""
     goods: Dict[str, Dict[str, Any]] = {}
     for e in evs:
         if e["event"] == "MiningRefined":
@@ -452,43 +497,35 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
                 g["revenue_30d"] += e.get("TotalSale") or 0
     for g in goods.values():
         g["avg_price"] = round(g["revenue"] / g["sold"]) if g["sold"] else None
-    out["goods"] = sorted(goods.values(), key=lambda g: (-g["refined"]))
-    rev30 = sum(g["revenue_30d"] for g in goods.values())
-    from . import capi
-    fup = (capi.load(capi_path, now) or {}).get("upkeep") or {}
-    upkeep = fup.get("per_week") or ((car or {}).get("upkeep") or {}).get("per_week")
-    out["income"] = {"revenue_30d": rev30, "per_week": round(rev30 / 30 * 7),
-                     "upkeep_per_week": upkeep,
-                     "covers_pct": round(100.0 * (rev30 / 30 * 7) / upkeep) if upkeep else None}
-    # ---------------------------------------------------------- where: hotspots near you
-    pos = (live.get("system") or {}).get("pos")
-    out["hotspots"] = hotspots_near(db, pos)
-    out["from"] = (live.get("system") or {}).get("name")
-    # L3: the nearby hotspots ranked by what YOU mined there per hour - in
-    # that ring, else in rings of its class, else in any ring
-    try:
-        from . import learn, prospect
-        rates = learn.ring_rates(learn.runs_of(archive), learn.ring_classes(db))
-        cls_of = {}
-        for r in db.query("SELECT body_name, ring_class FROM hotspots"):
-            cls_of[r["body_name"]] = prospect.ring_class(r["ring_class"])
-        rc = learn.ring_classes(db)
-        ranked, seen = [], set()
-        for h in out["hotspots"][:RANK_NEAREST]:
-            if (h["ring"], h["key"]) in seen:          # the same hotspot written twice
-                continue
-            seen.add((h["ring"], h["key"]))
-            rate = learn.expected_rate(rates, h["ring"], cls_of.get(h["ring"]) or rc.get(h["ring"]), h["key"])
-            if rate:
-                h["rate"] = {k: rate.get(k) for k in ("t_h", "lo", "hi", "runs", "level", "thin")}
-                ranked.append(h)
-        order = {"ring": 0, "class": 1, "all": 2}
-        ranked.sort(key=lambda h: (-(h["rate"]["t_h"] or 0), order.get(h["rate"]["level"], 3),
-                                   h["ly"] if h["ly"] is not None else 1e9))
-        out["hotspot_rank"] = ranked[:RANK_TOP]
-    except Exception:
-        out["hotspot_rank"] = []
-    # ---------------------------------------------------------- mining ships
+    return goods
+
+
+def _hotspot_rank(archive: Any, db: Any, hotspots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """L3: the nearest hotspots ranked by what you mined per hour in that ring,
+    else in rings of its class, else in any ring."""
+    from . import learn, prospect
+    rates = learn.ring_rates(learn.runs_of(archive), learn.ring_classes(db))
+    cls_of = {}
+    for r in db.query("SELECT body_name, ring_class FROM hotspots"):
+        cls_of[r["body_name"]] = prospect.ring_class(r["ring_class"])
+    rc = learn.ring_classes(db)
+    ranked, seen = [], set()
+    for h in hotspots[:RANK_NEAREST]:
+        if (h["ring"], h["key"]) in seen:          # the same hotspot written twice
+            continue
+        seen.add((h["ring"], h["key"]))
+        rate = learn.expected_rate(rates, h["ring"], cls_of.get(h["ring"]) or rc.get(h["ring"]), h["key"])
+        if rate:
+            h["rate"] = {k: rate.get(k) for k in ("t_h", "lo", "hi", "runs", "level", "thin")}
+            ranked.append(h)
+    order = {"ring": 0, "class": 1, "all": 2}
+    ranked.sort(key=lambda h: (-(h["rate"]["t_h"] or 0), order.get(h["rate"]["level"], 3),
+                               h["ly"] if h["ly"] is not None else 1e9))
+    return ranked[:RANK_TOP]
+
+
+def _mining_ships(archive: Any) -> List[Dict[str, Any]]:
+    """---------------------------------------------------------- mining ships"""
     ships = []
     for s in archive.fleet()["ships"]:
         r = ((s.get("rating") or {}).get("roles") or {}).get("mining") or 0
@@ -498,9 +535,11 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
                           "cargo": s.get("cargo"), "rating": r, "location": s.get("location"),
                           "current": bool(s.get("current"))})
     ships.sort(key=lambda s: (-s["rating"], -(s["cargo"] or 0)))
-    out["ships"] = ships
-    # ---------------------------------------------------------- limpet load per mining ship
-    rat = limpet_ratio(hist)
+    return ships
+
+
+def _limpet_plans(rat: Dict[str, Any], ships: List[Dict[str, Any]], limpets: int) -> List[Dict[str, Any]]:
+    """Limpets to take per mining ship, from your own ratio for that ship type."""
     plans = []
     for s in ships:
         typ = (s.get("type_key") or "").lower()
@@ -509,8 +548,7 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
         p = dict(limpet_load(int(s["cargo"] or 0), r), name=s["name"] or s["type"], cargo=s["cargo"], ratio=r,
                  own=bool(rat["by_type"].get(typ)), current=s["current"])
         if s["current"]:
-            p["on_board"] = out["limpets"]
-            p["diff"] = p["limpets"] - out["limpets"]
+            p["on_board"] = limpets
+            p["diff"] = p["limpets"] - limpets
         plans.append(p)
-    out["limpet_plan"] = {"ratio": rat, "default": DEFAULT_RATIO, "reserve": LIMPET_RESERVE, "ships": plans}
-    return out
+    return plans

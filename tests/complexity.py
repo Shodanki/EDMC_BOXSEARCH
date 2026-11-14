@@ -35,11 +35,6 @@ LEGACY = {
     ("FIS/fis/galaxy.py", "build_galaxy"): 16,
     ("FIS/fis/learn.py", "learning_status"): 16,
     ("FIS/fis/materials.py", "stock"): 19,
-    ("FIS/fis/mining.py", "build_mining"): 37,
-    ("FIS/fis/science.py", "body_report"): 39,
-    ("FIS/fis/science.py", "system_report"): 34,
-    ("FIS/fis/shipview.py", "build_shipstatus"): 19,
-    ("FIS/fis/unsold.py", "build_unsold"): 24,
 }
 
 

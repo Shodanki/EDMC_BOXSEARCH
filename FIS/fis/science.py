@@ -77,7 +77,22 @@ def body_report(b: Dict[str, Any]) -> List[Dict[str, Any]]:
     flags = b.get("flags") or {}
     bio = b.get("bio") or {}
 
-    # ---- class
+    out += _body_class(b, star, g)
+    out += _body_record(b, flags)
+    if not star:
+        out += _body_surface(b, t, bio)
+    # ---- biology
+    sig, done = int(bio.get("signals") or 0), len(bio.get("species") or [])
+    out.extend(_biology(bio))
+    out += _body_resources(b)
+    out += _body_hazards(b, star, g, t)
+    out += _body_advice(b, star, flags, g, bio, sig, done)
+    return out
+
+
+def _body_class(b: Dict[str, Any], star: Any, g: Any) -> List[Dict[str, Any]]:
+    """---- class"""
+    out: List[Dict[str, Any]] = []
     if star:
         out.append(_f("class", "star", t=(star.get("type") or "?") + str(star.get("subclass") or ""),
                       lum=star.get("luminosity") or "", m=star.get("mass_sol"), age=star.get("age_my")))
@@ -88,7 +103,12 @@ def body_report(b: Dict[str, Any]) -> List[Dict[str, Any]]:
             out.append(_f("class", "orbits", p=b["parent"]))
         if b.get("terraform") == "Terraformable":
             out.append(_f("class", "terraformable", level="good"))
-    # ---- discovery record
+    return out
+
+
+def _body_record(b: Dict[str, Any], flags: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """---- discovery record"""
+    out: List[Dict[str, Any]] = []
     if flags.get("first"):
         out.append(_f("record", "first_discovery", level="good"))
     elif b.get("was_discovered") is True:
@@ -102,31 +122,35 @@ def body_report(b: Dict[str, Any]) -> List[Dict[str, Any]]:
         out.append(_f("record", "dss_efficient" if dss.get("efficient") else "dss_done",
                       level="good" if dss.get("efficient") else "info",
                       p=dss["probes"], target=dss.get("target")))
-    # ---- atmosphere and surface
-    if not star:
-        if b.get("atmosphere") or (b.get("atmo_type") and b.get("atmo_type") != "None"):
-            out.append(_f("atmosphere", "atmosphere", a=b.get("atmosphere") or b.get("atmo_type"),
-                          p=b.get("pressure_atm")))
-        else:
-            out.append(_f("atmosphere", "no_atmosphere"))
-        if t is not None:
-            out.append(_f("atmosphere", "temperature", k=t, c=round(t - 273.15)))
-        if b.get("tidal_lock"):
-            out.append(_f("atmosphere", "tidal_lock"))
-        elif b.get("rotation_d"):
-            out.append(_f("atmosphere", "rotation", d=b.get("rotation_d")))
-    # ---- geology
-    if not star:
-        if b.get("volcanism"):
-            out.append(_f("geology", "volcanism", v=b["volcanism"]))
-        elif b.get("kind") == "Planet" and b.get("landable"):
-            out.append(_f("geology", "no_volcanism"))
-        if bio.get("geo"):
-            out.append(_f("geology", "geo_signals", n=bio["geo"]))
-    # ---- biology
-    sig, done = int(bio.get("signals") or 0), len(bio.get("species") or [])
-    out.extend(_biology(bio))
-    # ---- resources
+    return out
+
+
+def _body_surface(b: Dict[str, Any], t: Any, bio: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """---- atmosphere and surface, ---- geology (not for a star)"""
+    out: List[Dict[str, Any]] = []
+    if b.get("atmosphere") or (b.get("atmo_type") and b.get("atmo_type") != "None"):
+        out.append(_f("atmosphere", "atmosphere", a=b.get("atmosphere") or b.get("atmo_type"),
+                      p=b.get("pressure_atm")))
+    else:
+        out.append(_f("atmosphere", "no_atmosphere"))
+    if t is not None:
+        out.append(_f("atmosphere", "temperature", k=t, c=round(t - 273.15)))
+    if b.get("tidal_lock"):
+        out.append(_f("atmosphere", "tidal_lock"))
+    elif b.get("rotation_d"):
+        out.append(_f("atmosphere", "rotation", d=b.get("rotation_d")))
+    if b.get("volcanism"):
+        out.append(_f("geology", "volcanism", v=b["volcanism"]))
+    elif b.get("kind") == "Planet" and b.get("landable"):
+        out.append(_f("geology", "no_volcanism"))
+    if bio.get("geo"):
+        out.append(_f("geology", "geo_signals", n=bio["geo"]))
+    return out
+
+
+def _body_resources(b: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """---- resources"""
+    out: List[Dict[str, Any]] = []
     mats = {k.lower(): v for k, v in (b.get("materials") or [])}
     rare = [m for m in RARE_RAW if m in mats]
     if rare:
@@ -142,7 +166,12 @@ def body_report(b: Dict[str, Any]) -> List[Dict[str, Any]]:
     if b.get("hotspots"):
         out.append(_f("resources", "hotspots", level="good",
                       h=", ".join("%s ×%s" % (h["material"], h["count"]) for h in b["hotspots"][:4])))
-    # ---- hazards
+    return out
+
+
+def _body_hazards(b: Dict[str, Any], star: Any, g: Any, t: Any) -> List[Dict[str, Any]]:
+    """---- hazards"""
+    out: List[Dict[str, Any]] = []
     if g is not None and g >= VERY_HIGH_G and b.get("landable"):
         out.append(_f("hazards", "gravity_very_high", level="danger", g=g))
     elif g is not None and g >= HIGH_G and b.get("landable"):
@@ -162,7 +191,13 @@ def body_report(b: Dict[str, Any]) -> List[Dict[str, Any]]:
             out.append(_f("hazards", "white_dwarf", level="danger"))
         elif st in ("H", "SupermassiveBlackHole"):
             out.append(_f("hazards", "black_hole", level="danger"))
-    # ---- advice
+    return out
+
+
+def _body_advice(b: Dict[str, Any], star: Any, flags: Dict[str, Any], g: Any, bio: Dict[str, Any],
+                 sig: int, done: int) -> List[Dict[str, Any]]:
+    """---- advice"""
+    out: List[Dict[str, Any]] = []
     if star:
         out.append(_f("advice", "scoopable" if star.get("scoopable") else "not_scoopable",
                       level="good" if star.get("scoopable") else "warn"))
@@ -233,7 +268,29 @@ def system_report(rows: List[Dict[str, Any]], sys_out: Dict[str, Any]) -> List[D
     geo = sum(int(r.get("sig_geo") or 0) for r in planets)
     if geo:
         out.append(_f("geology", "sys_geo", n=geo, p=sum(1 for r in planets if r.get("sig_geo"))))
-    # resources: rings, a complete premium jumponium set on a landable body
+    out += _sys_resources(planets, s)
+    out += _sys_notable(rows, planets, by, s)
+    out += _sys_hazards(stars, planets, s, name)
+    # what to do next here
+    if not sys_out.get("fss_complete"):
+        out.append(_f("advice", "sys_next_fss", level="warn"))
+    elif todo:
+        out.append(_f("advice", "sys_next_dss", n=len(todo), list=_lst([s(r) for r in todo]), level="warn"))
+    elif bio_sig > bio_done:
+        out.append(_f("advice", "sys_next_bio", n=bio_sig - bio_done, level="warn"))
+    else:
+        out.append(_f("advice", "sys_next_done", level="good"))
+    return out
+
+
+def _lst(xs: List[str]) -> str:
+    """At most six names, then an ellipsis."""
+    return ", ".join(xs[:6]) + (" …" if len(xs) > 6 else "")
+
+
+def _sys_resources(planets: List[Dict[str, Any]], s: Any) -> List[Dict[str, Any]]:
+    """Resources: rings, a complete premium jumponium set on a landable body."""
+    out: List[Dict[str, Any]] = []
     ringed = [r for r in planets if r.get("ring_classes")]
     if ringed:
         out.append(_f("resources", "sys_rings", n=len(ringed), list=", ".join(s(r) for r in ringed[:6])))
@@ -249,20 +306,49 @@ def system_report(rows: List[Dict[str, Any]], sys_out: Dict[str, Any]) -> List[D
             jp.append(s(r))
     if jp:
         out.append(_f("resources", "sys_jumponium", list=", ".join(jp[:6]), level="good"))
-    # notable orbits and bodies
+    return out
 
-    def lst(xs):
-        return ", ".join(xs[:6]) + (" …" if len(xs) > 6 else "")
+
+def _sys_notable(rows: List[Dict[str, Any]], planets: List[Dict[str, Any]], by: Dict[int, Dict[str, Any]],
+                 s: Any) -> List[Dict[str, Any]]:
+    """Notable orbits and bodies."""
+    out: List[Dict[str, Any]] = []
     ecc = [s(r) for r in planets if (r.get("ecc") or 0) >= ECC_HIGH]
     if ecc:
-        out.append(_f("notable", "sys_eccentric", list=lst(ecc)))
+        out.append(_f("notable", "sys_eccentric", list=_lst(ecc)))
     fast = [s(r) for r in planets if r.get("period") and 0 < abs(r["period"]) < ORBIT_FAST_S]
     if fast:
-        out.append(_f("notable", "sys_fast_orbit", list=lst(fast)))
+        out.append(_f("notable", "sys_fast_orbit", list=_lst(fast)))
     spin = [s(r) for r in planets
             if r.get("rotation") and abs(r["rotation"]) < ROTATION_FAST_S and not r.get("tidal_lock")]
     if spin:
-        out.append(_f("notable", "sys_fast_spin", list=lst(spin)))
+        out.append(_f("notable", "sys_fast_spin", list=_lst(spin)))
+    close = _close_orbits(planets, by, s)
+    if close:
+        out.append(_f("notable", "sys_close", list=_lst(close)))
+    kids: Dict[int, int] = {}
+    for r in planets:
+        if by.get(r.get("parent_id"), {}).get("kind") == "Planet":
+            kids[r["parent_id"]] = kids.get(r["parent_id"], 0) + 1
+    many = [s(by[k]) + " (" + str(n) + ")" for k, n in kids.items() if n >= MANY_MOONS]
+    if many:
+        out.append(_f("notable", "sys_many_moons", list=_lst(many)))
+    nested = [s(r) for r in planets
+              if by.get(r.get("parent_id"), {}).get("kind") == "Planet"
+              and by.get(by[r["parent_id"]].get("parent_id"), {}).get("kind") == "Planet"]
+    if nested:
+        out.append(_f("notable", "sys_nested", list=_lst(nested)))
+    atmo = [s(r) for r in planets if r.get("landable") and (r.get("atmosphere") or "").strip()]
+    if atmo:
+        out.append(_f("notable", "sys_landable_atmo", list=_lst(atmo)))
+    far = [s(r) for r in rows if r.get("kind") in ("Star", "Planet") and (r.get("arrival_ls") or 0) >= FAR_LS]
+    if far:
+        out.append(_f("notable", "sys_far", list=_lst(far), level="warn"))
+    return out
+
+
+def _close_orbits(planets: List[Dict[str, Any]], by: Dict[int, Dict[str, Any]], s: Any) -> List[str]:
+    """Moons whose periapsis comes within CLOSE_GAP_RADII of their planet's surface."""
     close = []
     for r in planets:
         p = by.get(r.get("parent_id"))
@@ -271,27 +357,13 @@ def system_report(rows: List[Dict[str, Any]], sys_out: Dict[str, Any]) -> List[D
         gap = r["sma"] * (1 - (r.get("ecc") or 0)) - p["radius"] - r["radius"]
         if gap < CLOSE_GAP_RADII * p["radius"]:
             close.append(s(r))
-    if close:
-        out.append(_f("notable", "sys_close", list=lst(close)))
-    kids: Dict[int, int] = {}
-    for r in planets:
-        if by.get(r.get("parent_id"), {}).get("kind") == "Planet":
-            kids[r["parent_id"]] = kids.get(r["parent_id"], 0) + 1
-    many = [s(by[k]) + " (" + str(n) + ")" for k, n in kids.items() if n >= MANY_MOONS]
-    if many:
-        out.append(_f("notable", "sys_many_moons", list=lst(many)))
-    nested = [s(r) for r in planets
-              if by.get(r.get("parent_id"), {}).get("kind") == "Planet"
-              and by.get(by[r["parent_id"]].get("parent_id"), {}).get("kind") == "Planet"]
-    if nested:
-        out.append(_f("notable", "sys_nested", list=lst(nested)))
-    atmo = [s(r) for r in planets if r.get("landable") and (r.get("atmosphere") or "").strip()]
-    if atmo:
-        out.append(_f("notable", "sys_landable_atmo", list=lst(atmo)))
-    far = [s(r) for r in rows if r.get("kind") in ("Star", "Planet") and (r.get("arrival_ls") or 0) >= FAR_LS]
-    if far:
-        out.append(_f("notable", "sys_far", list=lst(far), level="warn"))
-    # hazards: stars that hurt - and boost (B8)
+    return close
+
+
+def _sys_hazards(stars: List[Dict[str, Any]], planets: List[Dict[str, Any]], s: Any,
+                 name: str) -> List[Dict[str, Any]]:
+    """Hazards: stars that hurt - and boost (B8); heavy landable planets."""
+    out: List[Dict[str, Any]] = []
     for r in stars:
         k = STAR_HAZARD.get(r.get("star_type") or "")
         if not k and (r.get("star_type") or "").startswith("D"):
@@ -301,16 +373,7 @@ def system_report(rows: List[Dict[str, Any]], sys_out: Dict[str, Any]) -> List[D
     heavy = [s(r) + " " + format((r.get("gravity") or 0) / G, ".1f") + " g" for r in planets
              if r.get("landable") and (r.get("gravity") or 0) / G >= HIGH_G]
     if heavy:
-        out.append(_f("hazards", "sys_heavy", list=lst(heavy), level="warn"))
-    # what to do next here
-    if not sys_out.get("fss_complete"):
-        out.append(_f("advice", "sys_next_fss", level="warn"))
-    elif todo:
-        out.append(_f("advice", "sys_next_dss", n=len(todo), list=lst([s(r) for r in todo]), level="warn"))
-    elif bio_sig > bio_done:
-        out.append(_f("advice", "sys_next_bio", n=bio_sig - bio_done, level="warn"))
-    else:
-        out.append(_f("advice", "sys_next_done", level="good"))
+        out.append(_f("hazards", "sys_heavy", list=_lst(heavy), level="warn"))
     return out
 
 
