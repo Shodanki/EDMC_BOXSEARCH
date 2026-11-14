@@ -22,8 +22,10 @@ from .sysdb import CMDR_READY, LOSS_REPLAY
 from .state import CFG, ST, _PLUGIN_DIR, cfg_bool, cfg_int, get_masscodes, logger
 from . import panel
 from . import planning
+from . import integrity
 from . import procgen
 from . import routewin
+from . import uithread
 
 
 def _journal_dir() -> Optional[str]:
@@ -154,6 +156,20 @@ def _selftest() -> None:
     logger.info("selftest | database: %s", st)
     panel._set_status("self test: %s (details in log)"
                       % ("passed" if fails == 0 else "%d failures" % fails))
+
+
+def _check_files() -> None:
+    """4.12 (worker thread): every file of this version there and as released?
+    Problems go to the log, one line per file, and to the panel."""
+    res = integrity.check(_PLUGIN_DIR)
+    if res["ok"]:
+        logger.info("file check | %d files as released (%s)", res["files"], res["version"])
+        return
+    ST.files_problem = integrity.summary(res)
+    logger.error("file check | %s", ST.files_problem)
+    for line in integrity.details(res):
+        logger.error("file check |   %s", line)
+    uithread._ui(panel._refresh)
 
 
 def _import_json() -> None:

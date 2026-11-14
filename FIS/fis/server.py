@@ -883,9 +883,12 @@ class Handler(BaseHTTPRequestHandler):
         """Language and the addresses for other devices, never the token."""
         app = self.app
         # addresses for other devices, never the token (that stays on this PC)
+        from . import files
         return self._json({"language": app.cfg.language, "lan": app.cfg.lan,
                            "port": app.cfg.port,
-                           "lan_urls": setup.lan_urls(app.cfg.port, "") if app.cfg.lan else []})
+                           "lan_urls": setup.lan_urls(app.cfg.port, "") if app.cfg.lan else [],
+                           # 4.12: missing or damaged files (relative names only)
+                           "files": files.for_browser()})
 
     def _get_events(self, qs: Dict[str, Any]) -> None:
         """The live event stream (server-sent events)."""

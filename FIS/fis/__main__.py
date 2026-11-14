@@ -11,6 +11,13 @@ from . import python_problem
 if python_problem():
     sys.exit(python_problem())
 
-from .server import main  # noqa: E402  (needs 3.11: tomllib)
+from . import files  # noqa: E402
+
+files.startup_check()                 # 4.12: every file of this version there?
+try:
+    from .server import main  # noqa: E402  (needs 3.11: tomllib)
+except Exception as exc:              # a file of the FIS is missing or broken
+    files.cannot_start(exc)
+    sys.exit(1)
 
 sys.exit(main())

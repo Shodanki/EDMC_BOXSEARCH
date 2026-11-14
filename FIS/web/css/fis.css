@@ -268,6 +268,9 @@ body.combat-mode .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--red-rgb), .6);
 
 /* --- views ------------------------------------------------------------ */
 #views { position: relative; min-height: 0; padding: var(--gap) 8px; }
+/* 4.12: files of the plugin missing or damaged */
+.files-banner { padding: 6px 14px; background: var(--red); color: #000; font-weight: 600;
+                border-bottom: 2px solid #000; cursor: help; }
 .view { height: 100%; min-height: 0; }
 .view[hidden] { display: none !important; }
 

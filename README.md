@@ -120,6 +120,23 @@ journals* repeats that at any time and is safe to run as often as you like.
 Since 4.6 the plugin copies the database to `shboxsearch.sqlite.schema<N>-<time>.bak`
 before it changes the schema or repairs records (the last three are kept).
 
+**File check (4.12).** The release carries `SHBOXSEARCH.manifest`, the
+SHA-256 of every file of that version. At every EDMC start the plugin
+checks that all of them are there and as released (in the background;
+line endings do not count), and so does the FIS at every start of its own.
+When a file is missing or damaged:
+
+* the EDMC window shows a line `FILES: ... missing, ... changed or damaged`
+  (click: release page), and the EDMC log names every file;
+* when a file the plugin needs to start is gone, it still loads - with one
+  red line in the EDMC window instead of a traceback;
+* the FIS prints the files in its window (English and German) and shows a
+  red banner on every page.
+
+The remedy is always the same: copy the plugin folder from the release ZIP
+again. Your database, settings and the FIS's own files are not part of the
+check and are never touched by it.
+
 SHBOX FIS keeps running when EDMC is closed: after an update close its
 window (or end `python -m fis`) so it starts with the new files. Keep
 `FIS/fis.ini`, `FIS/favourites.json`, `FIS/lost_hidden.json` and
@@ -159,6 +176,8 @@ on first run and is **your data** - never overwrite it on an update.
 | `biopredict.py` | 206 | Genus prediction learned from your own samples | — |
 | `surfacenav.py` | 348 | Surface compass: parked SRV, open samples, known points | — |
 | `miningstat.py` | 261 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
+| `integrity.py` | 169 | File check at every start: every file of this version there and as released (`SHBOXSEARCH.manifest`) | — |
+| `SHBOXSEARCH.manifest` | | SHA-256 of every file of the release, for the file check | — |
 | `biosig.py` | 97 | Open biological signals: one signal per genus, but Brain Trees can be several species on one body | — |
 | `journalscan.py` | 289 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay | — |
 | `edts_pgnames/` | | Sector names computed with EDTS's algorithm, hand-authored sector table (third-party, BSD 3-Clause, see its `SOURCE.md`) | — |

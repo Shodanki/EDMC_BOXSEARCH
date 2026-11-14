@@ -83,7 +83,10 @@ The rules were checked against EDMC 6.1.2 on 13.11.2026, and again on 14.11.2026
   * the procgen self test (`python procgen.py`, also behind the *Self test* button);
   * `tests/*.py`;
   * `python -m unittest discover` in `FIS/`;
-  * flake8 and `tests/complexity.py`.
+  * flake8 and `tests/complexity.py`;
+  * `tests/manifest.py`: after any change to a shipped file run
+    `python tests/manifest.py --write` (and in the release commit, after the
+    version bump), so `SHBOXSEARCH.manifest` matches the files.
 
   A change the browser shows is also checked in a browser.
 * Python 3.13 is the interpreter EDMC ships (32-bit). Do not use language features newer than that.

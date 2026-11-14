@@ -401,6 +401,9 @@ class TestServer(_Base):
         self.assertEqual(st, 200)
         self.assertIn(js["language"], ("en", "de"))
         self.assertNotIn("token", js)
+        # 4.12: the file check for the banner - names only, never a path
+        self.assertIn("ok", js["files"])
+        self.assertNotIn(":\\", str(js["files"]))
 
     def test_404(self):
         for p in ("/api/body/%d/99" % fx.SYS_ID, "/api/nope", "/../fis/config.py"):

@@ -167,6 +167,12 @@ tests/             python -m unittest discover -s tests -t .  (not needed to run
 
 Settings beyond the questions (all optional) are listed in `fis.ini.example`.
 
+At every start the FIS checks the plugin's files against
+`SHBOXSEARCH.manifest` (4.12, `fis/files.py` with the plugin's
+`integrity.py`): what is missing or damaged is printed in the FIS window
+in English and German, and every page shows a red banner until the plugin
+folder is copied from the release ZIP again.
+
 ## Views
 
 | Key | View | What it shows |

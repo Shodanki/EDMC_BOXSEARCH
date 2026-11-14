@@ -66,6 +66,10 @@ jobs:
         run: |
           python -m pip install --quiet flake8==7.5.0   # pinned, as tested
           python -m flake8
+      - name: release manifest (every shipped file with its hash, see integrity.py)
+        run: python tests/manifest.py
+      - name: file check at start (missing or damaged files named, the plugin still loads)
+        run: python tests/integrity.py
       - name: docstrings (every module and public function says what it does)
         run: python tests/docstrings.py
       - name: complexity (EDMC's limit 15, every function of the plugin and the FIS)
