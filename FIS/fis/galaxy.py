@@ -250,20 +250,39 @@ def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
     out["stats"] = {"jumps": len(jumps), "ly": _r(sum(p["ly"] or 0 for p in jumps), 0),
                     "systems": len({p["name"] for p in path}),
                     "first": path[0]["t"] if path else None, "last": path[-1]["t"] if path else None}
-    sysl = live.get("system") or {}
-    pos = sysl.get("pos")
-    if pos:
-        out["you"] = {"name": sysl.get("name"), "id": sysl.get("id64"), "live": True,
-                      "x": _r(pos[0]), "y": _r(pos[1]), "z": _r(pos[2])}
-    else:
-        # FIS started before the game: the last system of the log is where we are
-        last = (path or flight_path(archive, None))[-1:]
-        out["you"] = ({"name": last[0]["name"], "id": last[0]["id64"], "live": False, "t": last[0]["t"],
-                       "x": last[0]["x"], "y": last[0]["y"], "z": last[0]["z"]} if last else None)
+    out["you"] = _you(live.get("system") or {}, path, archive)
     out["corridor"] = corridor(db, now)                 # H3 #2
     out["navroute"] = [{"name": h.get("name"), "x": _r(h["pos"][0]), "y": _r(h["pos"][1]),
                         "z": _r(h["pos"][2])} for h in live.get("navroute") or [] if h.get("pos")]
-    # survey spheres
+    _survey_layers(db, out, mc)
+    # known systems
+    rows = db.query("SELECT name, id64, x, y, z, quality, visited, fss_complete, sources FROM systems "
+                    "WHERE x IS NOT NULL") if db.has_table("systems") else []
+    rows = db.with_visits(rows)            # C1: visited as the main commander
+    regions = db.shell_regions()
+    out["systems"] = [{"n": r["name"], "id": r["id64"], "x": _r(r["x"]), "y": _r(r["y"]), "z": _r(r["z"]),
+                       "v": 1 if r["visited"] else 0, "f": 1 if r["fss_complete"] else 0,
+                       "u": 1 if (r["visited"] and _info_level(r, regions)[0] == "checked") else 0}
+                      for r in rows]
+    _regions(out)
+    out["finds"] = _finds(db)
+    return out
+
+
+def _you(sysl: Dict[str, Any], path: List[Dict[str, Any]], archive: fl.Archive) -> Optional[Dict[str, Any]]:
+    """Where you are: live, or the last system of the log (FIS started before the game)."""
+    pos = sysl.get("pos")
+    if pos:
+        return {"name": sysl.get("name"), "id": sysl.get("id64"), "live": True,
+                "x": _r(pos[0]), "y": _r(pos[1]), "z": _r(pos[2])}
+    # FIS started before the game: the last system of the log is where we are
+    last = (path or flight_path(archive, None))[-1:]
+    return ({"name": last[0]["name"], "id": last[0]["id64"], "live": False, "t": last[0]["t"],
+             "x": last[0]["x"], "y": last[0]["y"], "z": last[0]["z"]} if last else None)
+
+
+def _survey_layers(db: Database, out: Dict[str, Any], mc: Optional[int]) -> None:
+    """Survey spheres, the active one, and its boxels of one mass code."""
     s = db.survey() if db.has_table("survey") else None
     spheres = []
     for sp in (db.spheres() if db.has_table("spheres") else []):
@@ -284,32 +303,30 @@ def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
         out["boxel_size"] = _plugin().procgen.boxel_size(use)
     else:
         out["boxels"] = []
-    # known systems
-    rows = db.query("SELECT name, id64, x, y, z, quality, visited, fss_complete, sources FROM systems "
-                    "WHERE x IS NOT NULL") if db.has_table("systems") else []
-    rows = db.with_visits(rows)            # C1: visited as the main commander
-    regions = db.shell_regions()
-    out["systems"] = [{"n": r["name"], "id": r["id64"], "x": _r(r["x"]), "y": _r(r["y"]), "z": _r(r["z"]),
-                       "v": 1 if r["visited"] else 0, "f": 1 if r["fss_complete"] else 0,
-                       "u": 1 if (r["visited"] and _info_level(r, regions)[0] == "checked") else 0}
-                      for r in rows]
-    # 4.10: codex region per system ("r" = index into region_names)
+
+
+def _regions(out: Dict[str, Any]) -> None:
+    """4.10: codex region per system ("r" = index into region_names)."""
     rm = getattr(_plugin(), "regionmap", None)
-    if rm is not None:
-        out["region_names"] = rm.region_names()
-        for s in out["systems"]:
-            try:
-                reg = rm.find_region(s["x"], s["y"], s["z"])
-            except Exception:
-                reg = None
-            if reg:
-                s["r"] = reg[0]
-        y = out.get("you")
-        if y and y.get("x") is not None:
-            reg = rm.find_region(y["x"], y["y"], y["z"])
-            if reg:
-                y["r"] = reg[0]
-    # finds worth a symbol
+    if rm is None:
+        return
+    out["region_names"] = rm.region_names()
+    for s in out["systems"]:
+        try:
+            reg = rm.find_region(s["x"], s["y"], s["z"])
+        except Exception:
+            reg = None
+        if reg:
+            s["r"] = reg[0]
+    y = out.get("you")
+    if y and y.get("x") is not None:
+        reg = rm.find_region(y["x"], y["y"], y["z"])
+        if reg:
+            y["r"] = reg[0]
+
+
+def _finds(db: Database) -> List[Dict[str, Any]]:
+    """Finds worth a symbol: Brain Trees, Guardian and non-human sites."""
     finds: Dict[Any, Dict[str, Any]] = {}
     if db.has_table("signals"):
         for r in db.query("SELECT g.sys_id64, g.kind, s.name, s.x, s.y, s.z FROM signals g "
@@ -322,5 +339,4 @@ def build_galaxy(db: Database, archive: fl.Archive, live: Dict[str, Any],
             k = "brain" if "Brain" in r["kind"] else ("guardian" if "guardian" in r["kind"] else "nonhuman")
             if k not in f["kinds"]:
                 f["kinds"].append(k)
-    out["finds"] = list(finds.values())
-    return out
+    return list(finds.values())

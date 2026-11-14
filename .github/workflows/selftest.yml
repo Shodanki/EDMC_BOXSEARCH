@@ -68,7 +68,7 @@ jobs:
           python -m flake8
       - name: docstrings (every module and public function says what it does)
         run: python tests/docstrings.py
-      - name: complexity (EDMC's limit 15; listed older functions may not grow)
+      - name: complexity (EDMC's limit 15, every function of the plugin and the FIS)
         run: python tests/complexity.py
       - name: plain-python modules import without EDMC
         run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan, biosig, edts_pgnames, regionmap; assert procgen._edts is not None; assert regionmap.find_region(0, 0, 0)[1] == 'Inner Orion Spur'; print('imports ok')"
