@@ -60,7 +60,7 @@ class FilesTest(unittest.TestCase):
         self.assertFalse(res["ok"])
         text = "\n".join(lines)
         self.assertIn("1 missing", text)
-        self.assertIn("1 fehlen", text)
+        self.assertIn("fehlend: 1", text)
         self.assertIn("release ZIP", text)
         self.assertIn("Release-ZIP", text)
         self.assertIn("FIS/web/js/app.js", text)

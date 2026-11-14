@@ -59,13 +59,13 @@ def german(res: Dict[str, Any]) -> str:
     if res.get("ok"):
         return ""
     if not res.get("manifest"):
-        return "Dateiprüfung: SHBOXSEARCH.manifest oder integrity.py fehlt – " + REMEDY_DE
+        return "Dateiprüfung: SHBOXSEARCH.manifest oder integrity.py fehlt - " + REMEDY_DE
     bits = []
     if res.get("missing"):
-        bits.append("%d fehlen" % len(res["missing"]))
+        bits.append("fehlend: %d" % len(res["missing"]))
     if res.get("changed"):
-        bits.append("%d verändert oder beschädigt" % len(res["changed"]))
-    return "Dateien von %s: %s – %s" % (res.get("version") or "?", ", ".join(bits), REMEDY_DE)
+        bits.append("verändert oder beschädigt: %d" % len(res["changed"]))
+    return "Dateien von %s: %s - %s" % (res.get("version") or "?", ", ".join(bits), REMEDY_DE)
 
 
 def english(res: Dict[str, Any]) -> str:
