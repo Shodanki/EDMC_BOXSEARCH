@@ -34,8 +34,6 @@ LEGACY = {
     ("FIS/fis/fleet.py", "Archive.fleet"): 29,
     ("FIS/fis/galaxy.py", "build_galaxy"): 16,
     ("FIS/fis/learn.py", "learning_status"): 16,
-    ("FIS/fis/live.py", "LiveTracker.feed"): 53,
-    ("FIS/fis/live.py", "LiveTracker.feed_status"): 17,
     ("FIS/fis/materials.py", "stock"): 19,
     ("FIS/fis/mining.py", "build_mining"): 37,
     ("FIS/fis/model.py", "_build_surface"): 36,
@@ -46,8 +44,6 @@ LEGACY = {
     ("FIS/fis/model.py", "system_poi"): 23,
     ("FIS/fis/science.py", "body_report"): 39,
     ("FIS/fis/science.py", "system_report"): 34,
-    ("FIS/fis/server.py", "Handler._api"): 48,
-    ("FIS/fis/server.py", "Handler._post_lost_hidden"): 16,
     ("FIS/fis/shipview.py", "build_shipstatus"): 19,
     ("FIS/fis/unsold.py", "build_unsold"): 24,
 }

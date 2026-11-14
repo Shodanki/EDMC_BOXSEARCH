@@ -678,7 +678,6 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError
         except (ValueError, UnicodeDecodeError):
             return self._error(400, "bad request")
-        from . import losthidden
         app = self.app
         fid = app.archive.commander()[0]
         store = app.lost_hidden
@@ -688,29 +687,47 @@ class Handler(BaseHTTPRequestHandler):
             lost = app.db.lost_summary(fid)
         except Exception:
             lost = []
-        items: List[Tuple[int, Optional[str]]] = []
         if "cap" in body:
-            if body["cap"] not in losthidden.CAPS_LY or isinstance(body["cap"], bool):
-                return self._error(400, "bad cap")
-            pos = (app.live_state().get("system") or {}).get("pos")
-            if not pos:
-                return self._error(409, "position unknown")
-            vis, _ = losthidden.apply(lost, store.get(fid), pos)
-            items = [(s["id64"], None) for s in losthidden.beyond(vis, body["cap"])]
+            items = self._lost_beyond(body, lost, store.get(fid))
         else:
-            hide = body.get("hide")
-            if not isinstance(hide, list) or not hide or len(hide) > 50:
-                return self._error(400, "bad request")
-            for h in hide:
-                if not isinstance(h, dict) or not isinstance(h.get("id64"), int) \
-                        or isinstance(h.get("id64"), bool) or not losthidden.valid_what(h.get("what")):
-                    return self._error(400, "bad entry")
-                items.append((h["id64"], h.get("what")))
+            items = self._lost_listed(body)
+        if items is None:
+            return None                       # the error is sent
         try:
             n = store.hide(fid, items, lost)
         except ValueError as exc:
             return self._error(400, str(exc))
         return self._json({"hidden": n})
+
+    def _lost_beyond(self, body: Dict[str, Any], lost: Any, hidden: Any
+                     ) -> Optional[List[Tuple[int, Optional[str]]]]:
+        """{"cap": ly}: every listed system farther away; None after an error."""
+        from . import losthidden
+        if body["cap"] not in losthidden.CAPS_LY or isinstance(body["cap"], bool):
+            self._error(400, "bad cap")
+            return None
+        pos = (self.app.live_state().get("system") or {}).get("pos")
+        if not pos:
+            self._error(409, "position unknown")
+            return None
+        vis, _ = losthidden.apply(lost, hidden, pos)
+        return [(s["id64"], None) for s in losthidden.beyond(vis, body["cap"])]
+
+    def _lost_listed(self, body: Dict[str, Any]) -> Optional[List[Tuple[int, Optional[str]]]]:
+        """{"hide": [...]}: at most 50 entries, each checked; None after an error."""
+        from . import losthidden
+        items: List[Tuple[int, Optional[str]]] = []
+        hide = body.get("hide")
+        if not isinstance(hide, list) or not hide or len(hide) > 50:
+            self._error(400, "bad request")
+            return None
+        for h in hide:
+            if not isinstance(h, dict) or not isinstance(h.get("id64"), int) \
+                    or isinstance(h.get("id64"), bool) or not losthidden.valid_what(h.get("what")):
+                self._error(400, "bad entry")
+                return None
+            items.append((h["id64"], h.get("what")))
+        return items
 
     def _post_lookup(self, raw: bytes) -> None:
         """K5: one favourite's position at Spansh - on a click, cached 6 h."""
@@ -826,32 +843,12 @@ class Handler(BaseHTTPRequestHandler):
         return dict(bindings.read(), enabled=True, fire_group=st.get("fire_group"))
 
     def _api(self, path: str, qs: Dict[str, Any]) -> None:
+        """One GET of the JSON API: a fixed path from _GET_ROUTES, a system or a body."""
+        route = _GET_ROUTES.get(path)
+        if route is not None:
+            return route(self, qs)
         app = self.app
         m = app.model
-        if path == "/api/health":
-            return self._json(app.health())
-        if path == "/api/settings":
-            if not self._local():
-                return self._error(403, "settings only on the game PC")
-            return self._json(self._settings())
-        if path == "/api/settings/qr":
-            return self._settings_qr(qs)
-        if path == "/api/controls":
-            return self._json(self._controls())
-        if path == "/api/config":
-            # addresses for other devices, never the token (that stays on this PC)
-            return self._json({"language": app.cfg.language, "lan": app.cfg.lan,
-                               "port": app.cfg.port,
-                               "lan_urls": setup.lan_urls(app.cfg.port, "") if app.cfg.lan else []})
-        if path == "/api/events":
-            return self._sse()
-        if path == "/api/live":
-            return self._json(app.live_state())
-        if path == "/api/system/current":
-            id64 = app.current_id64()
-            if not id64:
-                return self._error(404, "no current system yet")
-            return self._json(app.system(id64))
         mm = _RE_SYS.match(path)
         if mm:
             return self._json(app.system(int(mm.group(1))))
@@ -861,131 +858,229 @@ class Handler(BaseHTTPRequestHandler):
             if out is None:
                 return self._error(404, "body not found")
             return self._json(out)
-        if path == "/api/briefing":
-            live = app.live_state()
-            out = m.build_briefing(app.db, live, fid=app.fid())
-            out["carriers_here"] = app.carriers_here(live)
-            # at the jump target when there is one (11.11.: a carrier left
-            # behind in the current system says nothing about the next one)
-            out["carriers_where"] = "target" if out.get("target") else "here"
-            return self._json(out)
-        if path == "/api/ship":
-            return self._json(m.build_ship(app.live_state()))
-        if path == "/api/vehicle":
-            live = app.live_state()
-            v = live.get("srv") or {}
-            full = v.get("tank_full")
-            if full and v.get("type"):              # V1b: a full tank after a refuel synthesis
-                app.vehicle_tanks.learn(v["type"], full.get("t"), v.get("name"),
-                                        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(full.get("ts") or 0)))
-            out = m.build_vehicle(live, tanks=app.vehicle_tanks.all())
-            try:                                  # V1c: recipes from your own Synthesis events
-                from . import synthesis
-                out["synthesis"] = synthesis.build_synthesis(app.archive)
-            except Exception:
-                out["synthesis"] = None
-            return self._json(out)
-        if path == "/api/surface":
-            sid = (qs.get("sys") or [None])[0]
-            body = (qs.get("body") or [None])[0]
-            out = m.build_surface(app.db, app.live_state(),
-                                  int(sid) if sid and sid.isdigit() else None, body or None)
-            if out.get("life"):
-                out["backpack"] = m.backpack(app.cfg.journal_dir)     # on foot (M5)
-            return self._json(out)
-        if path == "/api/atlas/kinds":
-            return self._json({"view": (qs.get("view") or ["signals"])[0],
-                               "kinds": m.build_atlas_kinds(app.db, (qs.get("view") or ["signals"])[0])})
-        if path == "/api/atlas":
-            view = (qs.get("view") or ["signals"])[0]
-            kind = (qs.get("kind") or [None])[0] or None
-            q = (qs.get("q") or [None])[0] or None
-            try:
-                limit = max(1, min(300, int((qs.get("limit") or ["60"])[0])))
-            except ValueError:
-                limit = 60
-            try:
-                max_ly = float((qs.get("max") or ["0"])[0]) or None
-            except ValueError:
-                max_ly = None
-            near = (app.live_state().get("system") or {}).get("pos")
-            return self._json(m.build_atlas(app.db, view, kind, near, limit, q, max_ly))
-        if path == "/api/shipstatus":
-            from . import shipview
-            live = app.live_state()
-            try:
-                live = dict(live, fuel_warning=m._fuel_state(live).warning() if live.get("ship") else None)
-            except Exception:
-                pass
-            return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
-                                                        lost_hidden=app.lost_hidden,
-                                                        unsold_limits=app.cfg.unsold))
-        if path == "/api/carrier":
-            from . import shipview
-            from . import capi
-            return self._json(shipview.build_carrier(app.archive, app.live_state(),
-                                                     journal_dir=app.cfg.journal_dir,
-                                                     capi_path=capi.path_for(app.cfg.plugin_dir)))
-        if path == "/api/carriers/known":
-            from . import carriers
-            return self._json(carriers.build_known(app.archive, app.favourites, app.live_state(), db=app.db))
-        if path == "/api/mining/live":
-            from . import mining
-            return self._json(mining.build_live(app.archive, app.live_state(), app.cfg.journal_dir))
-        if path == "/api/mining":
-            from . import mining
-            from . import capi
-            return self._json(mining.build_mining(app.archive, app.db, app.live_state(), app.cfg.journal_dir,
-                                                  capi_path=capi.path_for(app.cfg.plugin_dir)))
-        if path == "/api/statistics":
-            from . import stats
-            try:
-                days = float((qs.get("days") or ["0"])[0]) or None
-            except ValueError:
-                days = None
-            out = stats.build_statistics(app.archive, days)
-            try:
-                from . import learn
-                # L4: what the FIS has learnt from your own data so far
-                out["learning"] = learn.learning_status(app.archive, app.db)
-            except Exception:
-                out["learning"] = None
-            return self._json(out)
-        if path == "/api/galaxy":
-            from . import galaxy
-            try:
-                mc = int((qs.get("mc") or [""])[0])
-            except ValueError:
-                mc = None
-            try:
-                days = float((qs.get("days") or ["0"])[0]) or None
-            except ValueError:
-                days = None
-            live = app.live_state()
-            pos = tuple((live.get("system") or {}).get("pos") or ())
-            nav = len(live.get("navroute") or [])
-            app.archive.refresh()
-            sig = (app.db.mtime(), app.archive.rev, pos, nav, mc, days)
-            out = app.cached("galaxy:%s:%s" % (mc, days), sig,
-                             lambda: galaxy.build_galaxy(app.db, app.archive, live, mc, days))
-            return self._json(dict(out, fav_carriers=app.favourite_carriers_at()))
-        if path == "/api/survey/export":
-            # M14: the survey sphere as a file - CSV or JSON
-            fmt = "json" if (qs.get("format") or ["csv"])[0] == "json" else "csv"
-            res = m.survey_export(app.db, fmt)
-            day = time.strftime("%Y-%m-%d")
-            if fmt == "json":
-                body = json.dumps(res, ensure_ascii=False, indent=1, default=str).encode("utf-8")
-                ctype = "application/json; charset=utf-8"
-            else:
-                body = ("\ufeff" + res).encode("utf-8")   # BOM: Excel reads UTF-8 then
-                ctype = "text/csv; charset=utf-8"
-            return self._send(200, body, ctype, {
-                "Content-Disposition": 'attachment; filename="shbox-survey-%s.%s"' % (day, fmt)})
-        if path == "/api/survey":
-            return self._json(app.cached("survey", app.db.mtime(),
-                                         lambda: m.build_survey(app.db)))
         return self._error(404, "unknown endpoint")
+
+    def _get_health(self, qs: Dict[str, Any]) -> None:
+        """The FIS's state: version, uptime, database, journal, live reader."""
+        app = self.app
+        return self._json(app.health())
+
+    def _get_settings(self, qs: Dict[str, Any]) -> None:
+        """The settings page's values - only on the game PC."""
+        if not self._local():
+            return self._error(403, "settings only on the game PC")
+        return self._json(self._settings())
+
+    def _get_settings_qr(self, qs: Dict[str, Any]) -> None:
+        """The QR code for a device in the home network."""
+        return self._settings_qr(qs)
+
+    def _get_controls(self, qs: Dict[str, Any]) -> None:
+        """The key bindings for SHIP, when switched on."""
+        return self._json(self._controls())
+
+    def _get_config(self, qs: Dict[str, Any]) -> None:
+        """Language and the addresses for other devices, never the token."""
+        app = self.app
+        # addresses for other devices, never the token (that stays on this PC)
+        return self._json({"language": app.cfg.language, "lan": app.cfg.lan,
+                           "port": app.cfg.port,
+                           "lan_urls": setup.lan_urls(app.cfg.port, "") if app.cfg.lan else []})
+
+    def _get_events(self, qs: Dict[str, Any]) -> None:
+        """The live event stream (server-sent events)."""
+        return self._sse()
+
+    def _get_live(self, qs: Dict[str, Any]) -> None:
+        """The live state."""
+        app = self.app
+        return self._json(app.live_state())
+
+    def _get_system_current(self, qs: Dict[str, Any]) -> None:
+        """The SYSTEM record of the current system."""
+        app = self.app
+        id64 = app.current_id64()
+        if not id64:
+            return self._error(404, "no current system yet")
+        return self._json(app.system(id64))
+
+    def _get_briefing(self, qs: Dict[str, Any]) -> None:
+        """The BRIEFING of the jump target, with the carriers there."""
+        app = self.app
+        m = app.model
+        live = app.live_state()
+        out = m.build_briefing(app.db, live, fid=app.fid())
+        out["carriers_here"] = app.carriers_here(live)
+        # at the jump target when there is one (11.11.: a carrier left
+        # behind in the current system says nothing about the next one)
+        out["carriers_where"] = "target" if out.get("target") else "here"
+        return self._json(out)
+
+    def _get_ship(self, qs: Dict[str, Any]) -> None:
+        """The ship's state for the cockpit view."""
+        app = self.app
+        m = app.model
+        return self._json(m.build_ship(app.live_state()))
+
+    def _get_vehicle(self, qs: Dict[str, Any]) -> None:
+        """VEHICLE: the SRV's state, tank sizes learnt, synthesis recipes."""
+        app = self.app
+        m = app.model
+        live = app.live_state()
+        v = live.get("srv") or {}
+        full = v.get("tank_full")
+        if full and v.get("type"):              # V1b: a full tank after a refuel synthesis
+            app.vehicle_tanks.learn(v["type"], full.get("t"), v.get("name"),
+                                    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(full.get("ts") or 0)))
+        out = m.build_vehicle(live, tanks=app.vehicle_tanks.all())
+        try:                                  # V1c: recipes from your own Synthesis events
+            from . import synthesis
+            out["synthesis"] = synthesis.build_synthesis(app.archive)
+        except Exception:
+            out["synthesis"] = None
+        return self._json(out)
+
+    def _get_surface(self, qs: Dict[str, Any]) -> None:
+        """SURFACE of a body (or the current one); on foot with the backpack."""
+        app = self.app
+        m = app.model
+        sid = (qs.get("sys") or [None])[0]
+        body = (qs.get("body") or [None])[0]
+        out = m.build_surface(app.db, app.live_state(),
+                              int(sid) if sid and sid.isdigit() else None, body or None)
+        if out.get("life"):
+            out["backpack"] = m.backpack(app.cfg.journal_dir)     # on foot (M5)
+        return self._json(out)
+
+    def _get_atlas_kinds(self, qs: Dict[str, Any]) -> None:
+        """The kinds the ATLAS can list for a view."""
+        app = self.app
+        m = app.model
+        return self._json({"view": (qs.get("view") or ["signals"])[0],
+                           "kinds": m.build_atlas_kinds(app.db, (qs.get("view") or ["signals"])[0])})
+
+    def _get_atlas(self, qs: Dict[str, Any]) -> None:
+        """ATLAS: signals, materials, rings ... nearest first, filtered."""
+        app = self.app
+        m = app.model
+        view = (qs.get("view") or ["signals"])[0]
+        kind = (qs.get("kind") or [None])[0] or None
+        q = (qs.get("q") or [None])[0] or None
+        try:
+            limit = max(1, min(300, int((qs.get("limit") or ["60"])[0])))
+        except ValueError:
+            limit = 60
+        try:
+            max_ly = float((qs.get("max") or ["0"])[0]) or None
+        except ValueError:
+            max_ly = None
+        near = (app.live_state().get("system") or {}).get("pos")
+        return self._json(m.build_atlas(app.db, view, kind, near, limit, q, max_ly))
+
+    def _get_shipstatus(self, qs: Dict[str, Any]) -> None:
+        """SHIP: status, modules, fuel, data at risk, ships lost or hidden."""
+        app = self.app
+        m = app.model
+        from . import shipview
+        live = app.live_state()
+        try:
+            live = dict(live, fuel_warning=m._fuel_state(live).warning() if live.get("ship") else None)
+        except Exception:
+            pass
+        return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
+                                                    lost_hidden=app.lost_hidden,
+                                                    unsold_limits=app.cfg.unsold))
+
+    def _get_carrier(self, qs: Dict[str, Any]) -> None:
+        """CARRIER: the own carrier, its jumps and hold."""
+        app = self.app
+        from . import shipview
+        from . import capi
+        return self._json(shipview.build_carrier(app.archive, app.live_state(),
+                                                 journal_dir=app.cfg.journal_dir,
+                                                 capi_path=capi.path_for(app.cfg.plugin_dir)))
+
+    def _get_carriers_known(self, qs: Dict[str, Any]) -> None:
+        """KNOWN CARRIERS: favourites and carriers seen."""
+        app = self.app
+        from . import carriers
+        return self._json(carriers.build_known(app.archive, app.favourites, app.live_state(), db=app.db))
+
+    def _get_mining_live(self, qs: Dict[str, Any]) -> None:
+        """The mining session now."""
+        app = self.app
+        from . import mining
+        return self._json(mining.build_live(app.archive, app.live_state(), app.cfg.journal_dir))
+
+    def _get_mining(self, qs: Dict[str, Any]) -> None:
+        """MINING: sessions, hold, limpets, rings."""
+        app = self.app
+        from . import mining
+        from . import capi
+        return self._json(mining.build_mining(app.archive, app.db, app.live_state(), app.cfg.journal_dir,
+                                              capi_path=capi.path_for(app.cfg.plugin_dir)))
+
+    def _get_statistics(self, qs: Dict[str, Any]) -> None:
+        """STATISTICS, with what the FIS has learnt so far."""
+        app = self.app
+        from . import stats
+        try:
+            days = float((qs.get("days") or ["0"])[0]) or None
+        except ValueError:
+            days = None
+        out = stats.build_statistics(app.archive, days)
+        try:
+            from . import learn
+            # L4: what the FIS has learnt from your own data so far
+            out["learning"] = learn.learning_status(app.archive, app.db)
+        except Exception:
+            out["learning"] = None
+        return self._json(out)
+
+    def _get_galaxy(self, qs: Dict[str, Any]) -> None:
+        """GALAXY layers for a mass code and period (cached while nothing changes)."""
+        app = self.app
+        from . import galaxy
+        try:
+            mc = int((qs.get("mc") or [""])[0])
+        except ValueError:
+            mc = None
+        try:
+            days = float((qs.get("days") or ["0"])[0]) or None
+        except ValueError:
+            days = None
+        live = app.live_state()
+        pos = tuple((live.get("system") or {}).get("pos") or ())
+        nav = len(live.get("navroute") or [])
+        app.archive.refresh()
+        sig = (app.db.mtime(), app.archive.rev, pos, nav, mc, days)
+        out = app.cached("galaxy:%s:%s" % (mc, days), sig,
+                         lambda: galaxy.build_galaxy(app.db, app.archive, live, mc, days))
+        return self._json(dict(out, fav_carriers=app.favourite_carriers_at()))
+
+    def _get_survey_export(self, qs: Dict[str, Any]) -> None:
+        """The survey sphere as a CSV or JSON file."""
+        app = self.app
+        m = app.model
+        # M14: the survey sphere as a file - CSV or JSON
+        fmt = "json" if (qs.get("format") or ["csv"])[0] == "json" else "csv"
+        res = m.survey_export(app.db, fmt)
+        day = time.strftime("%Y-%m-%d")
+        if fmt == "json":
+            body = json.dumps(res, ensure_ascii=False, indent=1, default=str).encode("utf-8")
+            ctype = "application/json; charset=utf-8"
+        else:
+            body = ("\ufeff" + res).encode("utf-8")   # BOM: Excel reads UTF-8 then
+            ctype = "text/csv; charset=utf-8"
+        return self._send(200, body, ctype, {
+            "Content-Disposition": 'attachment; filename="shbox-survey-%s.%s"' % (day, fmt)})
+
+    def _get_survey(self, qs: Dict[str, Any]) -> None:
+        """The survey state (cached while the database does not change)."""
+        app = self.app
+        m = app.model
+        return self._json(app.cached("survey", app.db.mtime(),
+                                     lambda: m.build_survey(app.db)))
 
     PING_S = 15.0                            # quiet game: a ping at least this often
 
@@ -1066,6 +1161,34 @@ class Handler(BaseHTTPRequestHandler):
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
+
+
+# GET path -> its Handler method (4.12: was one chain of 48)
+_GET_ROUTES = {
+    "/api/health": Handler._get_health,
+    "/api/settings": Handler._get_settings,
+    "/api/settings/qr": Handler._get_settings_qr,
+    "/api/controls": Handler._get_controls,
+    "/api/config": Handler._get_config,
+    "/api/events": Handler._get_events,
+    "/api/live": Handler._get_live,
+    "/api/system/current": Handler._get_system_current,
+    "/api/briefing": Handler._get_briefing,
+    "/api/ship": Handler._get_ship,
+    "/api/vehicle": Handler._get_vehicle,
+    "/api/surface": Handler._get_surface,
+    "/api/atlas/kinds": Handler._get_atlas_kinds,
+    "/api/atlas": Handler._get_atlas,
+    "/api/shipstatus": Handler._get_shipstatus,
+    "/api/carrier": Handler._get_carrier,
+    "/api/carriers/known": Handler._get_carriers_known,
+    "/api/mining/live": Handler._get_mining_live,
+    "/api/mining": Handler._get_mining,
+    "/api/statistics": Handler._get_statistics,
+    "/api/galaxy": Handler._get_galaxy,
+    "/api/survey/export": Handler._get_survey_export,
+    "/api/survey": Handler._get_survey,
+}
 
 
 def make_server(app: App, host: Optional[str] = None, port: Optional[int] = None) -> ThreadingHTTPServer:
