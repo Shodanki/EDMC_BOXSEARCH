@@ -113,6 +113,8 @@ def _mining_event(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> None
         try:
             if ST.ground.feed(entry, journalscan.event_time(entry)):
                 _mining_overlay(force=True)
+            if ev == "LaunchSRV" and ST.ground.in_rhino:
+                _rhino_out()
         except Exception:
             logger.debug("ground mining failed", exc_info=True)
     if ev in miningstat.EVENTS or ev in miningstat.PLACE or ev == "Cargo":
@@ -123,6 +125,15 @@ def _mining_event(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> None
                 _mining_overlay(force=True)
         except Exception:
             logger.debug("mining overlay failed", exc_info=True)
+
+
+def _rhino_out() -> None:
+    """4.12: the Rhino is out - one log line with both holds; without the
+    ship's numbers (EDMC started mid-session) the journal is read again."""
+    g = ST.ground
+    logger.info("ground mining | Rhino out: ship %s of %s t", g.ship_cargo, g.ship_capacity)
+    if g.ship_cargo is None or not g.ship_capacity:
+        uithread._run_async(survey._bootstrap_ground, label="ground mining")
 
 
 def _supercruise_timing(ev: str, entry: Dict[str, Any]) -> None:

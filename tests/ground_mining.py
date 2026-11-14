@@ -142,6 +142,34 @@ survey._bootstrap_ground()
 check(ST.ground.in_rhino and ST.ground.rigs == [6, 12, 12, 12, 9] and ST.ground.ship_cargo == 22,
       "the trip so far read from the newest journal")
 
+print("the ship's hold known even when the panel is not up yet")
+docked = [(e, ts) for e, ts in evs if e["event"] != "LaunchSRV"][:2]       # Loadout + ship Cargo only
+with open(os.path.join(jdir, "Journal.2027-01-15T090000.01.log"), "w", encoding="utf-8") as fh:
+    for e, ts in docked:
+        fh.write(json.dumps(dict(e, timestamp=iso(ts + 3600))) + "\n")
+ST.ground = groundmine.GroundMine()
+uithread._ui = lambda fn: None                    # as while EDMC builds its window: dropped
+survey._bootstrap_ground()
+check((ST.ground.ship_cargo, ST.ground.ship_capacity) == (22, 128),
+      "taken over without the main-thread hand-over that drops calls before the panel exists")
+unknown = groundmine.GroundMine()
+unknown.feed({"event": "LaunchSRV", "SRVType": "mev_rhino"}, T0)
+check(any(t.startswith("SHIP   hold not known") for t, _c in unknown.lines(T0)),
+      "ship's hold unknown: the block says so instead of leaving the line out")
+ran = []
+uithread._run_async = lambda fn, label="": ran.append(fn)
+ST.ground = groundmine.GroundMine()
+journal._mining_event("LaunchSRV", {"event": "LaunchSRV", "SRVType": "mev_rhino", "timestamp": iso(T0)}, {})
+check(ran == [survey._bootstrap_ground], "Rhino out without the ship's numbers: the journal is read again")
+ran.clear()
+ST.ground.ship_capacity, ST.ground.ship_cargo = 128, 22
+journal._mining_event("LaunchSRV", {"event": "LaunchSRV", "SRVType": "mev_rhino", "timestamp": iso(T0)}, {})
+check(ran == [], "numbers known: nothing read again")
+ok_lines = ST.ground.lines(T0)
+check(any(t.startswith("SHIP   106 t free") for t, _c in ok_lines)
+      and [c for t, c in ok_lines if t.startswith("SHIP")][0] == [c for t, c in ok_lines if t.startswith("HOLD")][0],
+      "the SHIP line as bright as HOLD when it is not the limit")
+
 print("the FIS: the same numbers")
 sys.path.insert(0, os.path.join(ROOT, "FIS"))
 from fis import model, mining  # noqa: E402

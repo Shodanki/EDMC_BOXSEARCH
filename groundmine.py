@@ -158,8 +158,11 @@ class GroundMine:
                     c["warn"] if rhino_tight else c["data"]))
         if r["ship_free_after"] is not None:
             ship_tight = r["limit"] == "ship"
+            # as bright as HOLD: dimmed it was easy to miss beside the compass
             out.append(("SHIP   %d t free with the Rhino's %d t aboard" % (r["ship_free_after"], r["rhino_used"]),
-                        c["alert"] if ship_tight and r["short"] else c["warn"] if ship_tight else c["dim"]))
+                        c["alert"] if ship_tight and r["short"] else c["warn"] if ship_tight else c["data"]))
+        else:
+            out.append(("SHIP   hold not known yet - no Loadout / ship Cargo seen", c["dim"]))
         if r["short"]:
             out.append(("%s full - make room before the next rig" % ("SHIP" if r["limit"] == "ship" else "RHINO"),
                         c["alert"]))

@@ -125,27 +125,27 @@ def _bootstrap_session() -> None:
 
 
 def _bootstrap_ground() -> None:
-    """4.12 (worker): EDMC started while out in the Rhino - the trip so far
-    from the newest journal; handed to the main thread, which takes it only
-    when it has not seen a Rhino launch itself meanwhile."""
+    """4.12 (worker): the ship's hold and - when EDMC started while out in
+    the Rhino - the trip so far, from the newest journal. Taken over here,
+    under ST.lock, not through uithread._ui: that drops calls while the
+    panel is not built yet, and the ship's numbers were lost with them."""
     d = maintenance._journal_dir()
     files = journalscan.journal_files(d, last=1) if d else []
     if not files:
         return
     gm = groundmine.GroundMine().replay((e, journalscan.event_time(e)) for e in journalscan.read_events(files))
-
-    def adopt() -> None:
+    with ST.lock:
         cur = ST.ground
         if gm.in_rhino and not cur.in_rhino:
             ST.ground = gm
             logger.info("ground mining | out in the Rhino: %d rig(s), %s t aboard",
                         len(gm.rigs), gm.srv_cargo)
-        else:
-            if cur.ship_capacity is None:
-                cur.ship_capacity = gm.ship_capacity
-            if cur.ship_cargo is None:
-                cur.ship_cargo = gm.ship_cargo
-    uithread._ui(adopt)
+            return
+        if cur.ship_capacity is None:
+            cur.ship_capacity = gm.ship_capacity
+        if cur.ship_cargo is None:
+            cur.ship_cargo = gm.ship_cargo
+    logger.info("ground mining | ship hold from the journal: %s of %s t", gm.ship_cargo, gm.ship_capacity)
 
 
 def _bootstrap_last_body() -> None:
