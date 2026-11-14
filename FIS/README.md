@@ -125,6 +125,15 @@ many systems (100). **Defaults** puts the developer's values back. Systems
 you discovered first and species with the first-footfall bonus make the risk
 at least moderate whatever their value. Stored in `fis.ini` (`unsold_*`).
 
+### Surface map (PLANET)
+
+The map of the body you are on follows you while you drive or walk
+(**Follow**, on by default). Switched off, the ground stays still and your
+marker moves across it; dragging the map switches it off too. **Me**,
+**Ship** and **SRV** centre on you, the landed (or hovering) ship and the
+parked SRV - the last two appear only when their position is known.
+Double-click resets the view.
+
 ### Cockpit
 
 For extra screens on the game PC: the settings page has **COCKPIT** - a list

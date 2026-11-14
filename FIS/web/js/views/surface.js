@@ -14,6 +14,11 @@ import { t, N_ } from "../i18n.js";
 let root = null, cv = null, g = null, data = null, info = null, list = null;
 let view = { zoom: null, panX: 0, panY: 0 };
 let drag = null;
+// 4.12: follow you while you move (default), or keep the ground still;
+// focus buttons for you, the ship and the parked SRV
+let follow = (() => { try { return localStorage.getItem("fis.surface.follow") !== "0"; } catch (e) { return true; } })();
+let lastCenter = null;          // the centre of the previous answer (lat, lon, body)
+let btn = {};
 
 const COL = { ship: C.cyan, srv: C.amber, foot: C.green, grid: alpha("cyan", .10),
   dim: C.dim, violet: C.violet, red: C.red, text: C.text };
@@ -34,11 +39,20 @@ export function mount(r) {
   cv = el("canvas", { class: "sf-map" });
   info = el("div", { class: "sf-info" });
   list = el("div", { class: "sf-list scroll" });
-  wrap.append(cv, el("div", { class: "sf-side" }, info, list));
+  btn.follow = el("button", { onclick: () => setFollow(!follow), title: t("Keep the map centred on you while you move") });
+  btn.me = el("button", { onclick: () => focusOn(0, 0), text: t("Me"), title: t("Centre on your position") });
+  btn.ship = el("button", { onclick: () => focusVehicle("ship"), text: t("Ship"), title: t("Centre on the ship") });
+  btn.srv = el("button", { onclick: () => focusVehicle("parked"), text: t("SRV"), title: t("Centre on the parked SRV") });
+  const box = el("div", { class: "sf-mapbox" }, cv,
+    el("div", { class: "sf-bar" }, btn.follow, btn.me, btn.ship, btn.srv));
+  wrap.append(box, el("div", { class: "sf-side" }, info, list));
   root.append(frame(t("PLANET · SURFACE"), "", wrap, { cls: "sf-frame" }));
   g = cv.getContext("2d");
   cv.addEventListener("wheel", (e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.25 : 0.8); }, { passive: false });
-  cv.addEventListener("mousedown", (e) => { drag = { x: e.clientX, y: e.clientY, px: view.panX, py: view.panY }; });
+  cv.addEventListener("mousedown", (e) => {
+    drag = { x: e.clientX, y: e.clientY, px: view.panX, py: view.panY };
+    if (follow) setFollow(false, false);            // moving the map yourself: stop following
+  });
   window.addEventListener("mouseup", () => { drag = null; });
   window.addEventListener("mousemove", (e) => {
     if (!drag) return;
@@ -52,9 +66,53 @@ export function mount(r) {
 
 function zoomBy(f) { view.zoom = Math.max(0.002, Math.min(50, (view.zoom || 0.1) * f)); draw(); }
 
+function setFollow(on, recentre = true) {
+  follow = on;
+  try { localStorage.setItem("fis.surface.follow", on ? "1" : "0"); } catch (e) { /* private window */ }
+  if (on && recentre && data && data.me) { view.panX = 0; view.panY = 0; }
+  bar(); draw();
+}
+
+function focusOn(x, y) { view.panX = x; view.panY = y; draw(); }
+
+function focusVehicle(key) {
+  const v = data && data[key];
+  if (!v) return;
+  setFollow(false, false);                          // else the next update centres on you again
+  focusOn(v.x, v.y);
+}
+
+function bar() {
+  if (!btn.follow) return;
+  btn.follow.textContent = (follow ? "◉ " : "○ ") + t("Follow");
+  btn.follow.setAttribute("aria-pressed", follow ? "true" : "false");
+  btn.me.hidden = !(data && data.me);
+  btn.ship.hidden = !(data && data.ship);
+  btn.srv.hidden = !(data && data.parked);
+}
+
+// the map's metres are around your position of each answer: following, you
+// stay in the middle; not following, the view moves by what you moved, so
+// the ground stays still and your marker travels
+function recentre() {
+  const c = data && data.center;
+  if (!c || !data.radius_m) { lastCenter = null; return; }
+  if (lastCenter && lastCenter.body !== data.body) view = { zoom: null, panX: 0, panY: 0 };
+  else if (lastCenter && view.zoom && !follow) {
+    const dx = data.radius_m * Math.cos(lastCenter.lat * Math.PI / 180) *
+      ((((c.lon - lastCenter.lon) + 540) % 360) - 180) * Math.PI / 180;
+    const dy = data.radius_m * (c.lat - lastCenter.lat) * Math.PI / 180;
+    view.panX -= dx; view.panY -= dy;
+  }
+  if (follow && data.me && view.zoom) { view.panX = 0; view.panY = 0; }
+  lastCenter = { lat: c.lat, lon: c.lon, body: data.body };
+}
+
 export async function update(ctx, reason) {
   if (!root) return;
   try { data = await getJSON("/api/surface"); } catch (e) { data = null; }
+  recentre();
+  bar();
   render();
 }
 
@@ -92,6 +150,7 @@ function draw() {
     const span = Math.max(200, e.maxX - e.minX, e.maxY - e.minY) * 1.25;
     view.zoom = Math.min(W, H) / span;
     view.panX = (e.minX + e.maxX) / 2; view.panY = (e.minY + e.maxY) / 2;
+    if (follow && data.me) { view.panX = 0; view.panY = 0; }
   }
   const P = (x, y) => [W / 2 + (x - view.panX) * view.zoom, H / 2 - (y - view.panY) * view.zoom];
   // grid + scale

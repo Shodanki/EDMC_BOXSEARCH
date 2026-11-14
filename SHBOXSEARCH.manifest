@@ -1,6 +1,6 @@
 # SHBOXSEARCH 4.11.0 - SHA-256 of every file of this version (line endings as LF)
 ffeb7b49c0297bfbcda30d382aa23d85a5635419b5ae91929104da62aea08bdb  AI_TRANSPARENCY.md
-ee8161e7ed96bc6656b211a8ab98085d22e54e0a9dc664b665932ec0478a0593  FIS/README.md
+e4eefa344b8b0ee4d62a710b74ed9005d656230d24e2acceb66315431ac12d3b  FIS/README.md
 cbd6cfd3c24e38f8ca3147e6e64284c5b515f6b1da604d3409b9e9848552e3c2  FIS/fis.ini.example
 f828c1ee62a248f01392e4481fc1929ef0b60c06c75424933ecefc30e97ebb72  FIS/fis/__init__.py
 8f859af9b37149a53e8168caa4cb75cf843d1d1167fea88a7eb718f45e43803e  FIS/fis/__main__.py
@@ -38,13 +38,13 @@ c00ac308d3cabbea1e7a4d8c3cb8cbd4e912d18404b82c9001a2ada22b13ab69  FIS/fis/vendor
 9f4ed1dd201dcb92b1bc0d6e14f46c754bcff0ce48580c5d7e8ace8f6926c8ef  FIS/fis/vendor/qrcodegen.py
 164c4e010c4b1bc464951dbd95014f9b35e2981da9aaefe0063d7007dad2cec8  FIS/fis_settings.bat
 16ef564018c295f40f9112b9aeec574bf12bc229f756983a72236c6f39c122d9  FIS/start_fis.bat
-1f47a3f7644b9ab287c089fc03dda466638581117331dcd949ebebd67e038876  FIS/web/css/fis.css
+4c3b7a75e2697ddab86276662bf7d8c978f8f002fc3eb522166cf99191dd9ced  FIS/web/css/fis.css
 7383278606727493f849c721ec2ec24c49b3f1b68930d72d384038d20d0a98b4  FIS/web/icon.svg
 0ac7d921b3588b0603fc7a25183a219aeb442fbb18f2f4856f7309395e294d0e  FIS/web/index.html
 e86e6e79a5947ec84bf39ae3ad7c0f6c66e07d0af55fe0fb29d996023e35126d  FIS/web/js/api.js
 31fe9760caac23fcf99c6106ce48838bb402b0e22630bc8fd03142555709219b  FIS/web/js/app.js
 5ffb2f461a0c4eb44c4e0f356eeedca5d7a0634a75ba1657e7cc22d00e9e2d52  FIS/web/js/fullscreen.js
-29bdb1d89aec00e48f5dd6b72429d69546da627e2a5b3257268efc65029dec64  FIS/web/js/i18n.js
+bea056bc08d0e6d3db080ad1d4844746d7abba628f61c3f56926b9af8d7180fa  FIS/web/js/i18n.js
 86bce0a66756e1bc33f88754f6ce5d571183da8e4a0d396bf162173483a1e564  FIS/web/js/layout.js
 df42c888e35d9c43527a37423a38ff2e5d990cc86837022bf051ff00a47efe53  FIS/web/js/theme-boot.js
 43b5d469a5a7a10de6038f5286467c9581282b9d7793a8395ed5e7d979ddeb12  FIS/web/js/ui.js
@@ -62,7 +62,7 @@ c075d72b4045621448f03a8cc69bf456eac109ff9b88bc940df39fe75b3ef72a  FIS/web/js/vie
 3733ea1cb8507fe77f5faeda7eae5ae91b9bdedd9eb66e48837c6fc3e3605780  FIS/web/js/views/settings.js
 58ed8477decaaafe679fc7acbf874ebebaf06b01ecf64e2b136ec910d409e5fd  FIS/web/js/views/ship.js
 ece774e7b4f86cee8d18384377c99816a61874266d487d1fcdcc3c84c5ad6c9c  FIS/web/js/views/statistics.js
-1ce80f8621bade5e911939b4f336a2ac9b3051cb8811ae17e111e7fdccbaaf1f  FIS/web/js/views/surface.js
+43fa4abbabecdef459e9e58e0e41dbf6a5ab08eab1433083dc4081f8cbd51b96  FIS/web/js/views/surface.js
 ed5769ef9f711fbde3aa93894551a7ab60b63eed8c0b7ee806d305aec245b94f  FIS/web/js/views/tactical.js
 cde69e164bc8c07ec9e39246f5a9cbdd749c6efaeee5c08a4de259f1bad0e828  FIS/web/js/views/vehicle.js
 8a4b53e74f92f5a6988ef13a9f14ceffc9b1a28f15f1d03f516e14b0d6b210e2  FIS/web/manifest.webmanifest
