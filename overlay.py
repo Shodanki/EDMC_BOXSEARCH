@@ -298,6 +298,8 @@ class CockpitOverlay:
                 y += max(down, BRIEFING_GAP * lh // 2)
                 if group in ("nav", "mine"):
                     y += NAV_BELOW_BIO * lh        # room for the bio distance line
+                if group == "mine" and self._drawn.get("nav"):
+                    y += (self._drawn["nav"] + 1) * lh     # 4.12: below the compass (Rhino)
         return x, y
 
     def draw(self, group: str, lines: Sequence[Line], ttl: int) -> bool:

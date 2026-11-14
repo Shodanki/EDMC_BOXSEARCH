@@ -53,6 +53,10 @@ def plugin():
             except ImportError:
                 biosig = None
             try:
+                import groundmine  # type: ignore   # plugin 4.12+: Rhino and ship hold
+            except ImportError:
+                groundmine = None
+            try:
                 import regionmap  # type: ignore   # plugin 4.10+: codex regions
                 regionmap.region_names()           # load the map now, no bytecode
             except Exception:
@@ -69,6 +73,7 @@ def plugin():
         p.shells = shells
         p.regionmap = regionmap
         p.biosig = biosig
+        p.groundmine = groundmine
         _plugin = p
     return _plugin
 
@@ -1425,7 +1430,8 @@ def life_support(st: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def build_surface(db: Database, live: Optional[Dict[str, Any]],
-                  id64: Optional[int] = None, body: Optional[str] = None) -> Dict[str, Any]:
+                  id64: Optional[int] = None, body: Optional[str] = None,
+                  archive: Any = None) -> Dict[str, Any]:
     """The SURFACE view of a body: track, marks, samples; on foot with the life
     support."""
     out = _build_surface(db, live, id64, body)
@@ -1433,7 +1439,7 @@ def build_surface(db: Database, live: Optional[Dict[str, Any]],
     if life:
         out = dict(out, life=life, suit=(live or {}).get("suit"))
     from .mining import rhino_hold
-    rh = rhino_hold(live)
+    rh = rhino_hold(live, evs=archive.events() if archive is not None else None)
     if rh:
         out = dict(out, rhino=rh)
     return out

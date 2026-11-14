@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 # EDMC API
 from config import appname, config
 
+from . import groundmine
 from . import journalscan
 from . import miningstat
 from . import netgate
@@ -173,6 +174,7 @@ class State:
         self._nav_args: Optional[Tuple[Dict[str, Any], float, bool]] = None
         self._nav_timer = False
         self.mine = miningstat.MiningTracker()          # overlay mining block
+        self.ground = groundmine.GroundMine()           # 4.12: Rhino trip - rigs, Rhino and ship hold
         self._mine_shown = 0.0
         self._mine_drawn = False
         self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera, lost)

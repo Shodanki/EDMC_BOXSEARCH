@@ -176,6 +176,7 @@ on first run and is **your data** - never overwrite it on an update.
 | `biopredict.py` | 206 | Genus prediction learned from your own samples | — |
 | `surfacenav.py` | 348 | Surface compass: parked SRV, open samples, known points | — |
 | `miningstat.py` | 261 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
+| `groundmine.py` | 169 | Ground mining in the Rhino: the rig being collected, the Rhino's and the ship's hold, what still fits (overlay and FIS) | — |
 | `integrity.py` | 169 | File check at every start: every file of this version there and as released (`SHBOXSEARCH.manifest`) | — |
 | `SHBOXSEARCH.manifest` | | SHA-256 of every file of the release, for the file check | — |
 | `biosig.py` | 97 | Open biological signals: one signal per genus, but Brain Trees can be several species on one body | — |

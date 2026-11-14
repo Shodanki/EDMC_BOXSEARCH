@@ -950,7 +950,8 @@ class Handler(BaseHTTPRequestHandler):
         sid = (qs.get("sys") or [None])[0]
         body = (qs.get("body") or [None])[0]
         out = m.build_surface(app.db, app.live_state(),
-                              int(sid) if sid and sid.isdigit() else None, body or None)
+                              int(sid) if sid and sid.isdigit() else None, body or None,
+                              archive=app.archive)
         if out.get("life"):
             out["backpack"] = m.backpack(app.cfg.journal_dir)     # on foot (M5)
         return self._json(out)

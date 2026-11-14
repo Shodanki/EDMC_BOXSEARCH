@@ -18,6 +18,7 @@ import math
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import groundmine
 from . import journalscan
 from .boxelplan import K_BIO, K_DSS, K_NEW, K_SCAN, Target, bundled_probe_prefix, set_origin
 from .deepspace import best_staging, staging_lines
@@ -113,10 +114,38 @@ def _bootstrap_session() -> None:
     except Exception:
         logger.exception("last position bootstrap failed")
     try:
+        _bootstrap_ground()
+    except Exception:
+        logger.exception("ground mining bootstrap failed")
+    try:
         updater._check_for_update()
     except Exception:
         logger.exception("update check failed")
     uithread._ui(panel._refresh)
+
+
+def _bootstrap_ground() -> None:
+    """4.12 (worker): EDMC started while out in the Rhino - the trip so far
+    from the newest journal; handed to the main thread, which takes it only
+    when it has not seen a Rhino launch itself meanwhile."""
+    d = maintenance._journal_dir()
+    files = journalscan.journal_files(d, last=1) if d else []
+    if not files:
+        return
+    gm = groundmine.GroundMine().replay((e, journalscan.event_time(e)) for e in journalscan.read_events(files))
+
+    def adopt() -> None:
+        cur = ST.ground
+        if gm.in_rhino and not cur.in_rhino:
+            ST.ground = gm
+            logger.info("ground mining | out in the Rhino: %d rig(s), %s t aboard",
+                        len(gm.rigs), gm.srv_cargo)
+        else:
+            if cur.ship_capacity is None:
+                cur.ship_capacity = gm.ship_capacity
+            if cur.ship_cargo is None:
+                cur.ship_cargo = gm.ship_cargo
+    uithread._ui(adopt)
 
 
 def _bootstrap_last_body() -> None:

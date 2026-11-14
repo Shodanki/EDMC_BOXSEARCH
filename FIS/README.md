@@ -134,6 +134,14 @@ marker moves across it; dragging the map switches it off too. **Me**,
 parked SRV - the last two appear only when their position is known.
 Double-click resets the view.
 
+### Ground mining (Rhino)
+
+Out in the SRV Rhino, MINING and PLANET show the rig being collected, the
+Rhino's hold (72 t) and the ship's: when the Rhino docks its load goes
+into the ship, so what still fits is the smaller of the Rhino's free room
+and what the ship has free with the Rhino's load aboard. The cockpit
+overlay shows the same block below the compass.
+
 ### Cockpit
 
 For extra screens on the game PC: the settings page has **COCKPIT** - a list

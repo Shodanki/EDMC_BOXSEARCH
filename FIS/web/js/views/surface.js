@@ -10,6 +10,7 @@
 import { getJSON } from "../api.js";
 import { el, frame, fmt, C, alpha } from "../ui.js";
 import { t, N_ } from "../i18n.js";
+import { rhinoHold } from "./rhino.js";
 
 let root = null, cv = null, g = null, data = null, info = null, list = null;
 let view = { zoom: null, panX: 0, panY: 0 };
@@ -358,12 +359,6 @@ function compass(d) {
   return el("div", { class: "sf-compass-box", title: t("heading up · dots: earlier samples (green = far enough) · ring 1 km") }, c);
 }
 
-// out in the Rhino: hold and how many full rigs still fit (a rig goes in whole)
-function rhinoHold(h) {
-  return el("div", { class: "small " + (h.short ? "c-amber" : "c-dim"), text: h.short
-    ? t("Rhino hold {u}/{c} t · a full rig ({r} t) no longer fits - make room before collecting", { u: h.used, c: h.capacity, r: h.rig_t })
-    : t("Rhino hold {u}/{c} t · full rigs that still fit: {n} ({r} t each)", { u: h.used, c: h.capacity, n: h.rigs_fit, r: h.rig_t }) });
-}
 
 function render() {
   if (!root) return;

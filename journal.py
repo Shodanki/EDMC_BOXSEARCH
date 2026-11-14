@@ -18,6 +18,8 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from . import groundmine
+from . import journalscan
 from . import miningstat
 from . import overlay
 from . import surfacenav
@@ -105,7 +107,14 @@ def _before_ingest(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> boo
 
 
 def _mining_event(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> None:
-    """Mining: rock, hold, rate, session and limpets on the overlay."""
+    """Mining: rock, hold, rate, session and limpets on the overlay - and
+    since 4.12 the Rhino on the ground (groundmine)."""
+    if ev in groundmine.EVENTS:
+        try:
+            if ST.ground.feed(entry, journalscan.event_time(entry)):
+                _mining_overlay(force=True)
+        except Exception:
+            logger.debug("ground mining failed", exc_info=True)
     if ev in miningstat.EVENTS or ev in miningstat.PLACE or ev == "Cargo":
         try:
             cargo = state.get("Cargo") if isinstance(state, dict) else None
@@ -414,6 +423,8 @@ def _nav_keepalive() -> None:
         if time.time() - ST._nav_shown >= NAV_KEEP_MS / 1000.0:
             pos, radius, low = args
             _nav_overlay(pos, radius, time.time(), low)
+        if ST.ground.in_rhino:
+            _mining_overlay()                # the ground block: rig and holds stay too
     except Exception:
         logger.debug("nav keep-alive failed", exc_info=True)
     _nav_keep_start()
@@ -490,6 +501,9 @@ def _mining_overlay(force: bool = False) -> None:
     if ov is None or not ov.enabled or not cfg_bool(CFG["overlay_mining"], True):
         return
     now = time.time()
+    if ST.ground.in_rhino:
+        _ground_overlay(ov, now, force)
+        return
     if not ST.mine.active(now):
         if ST._mine_drawn:
             ov.clear("mine")
@@ -501,6 +515,16 @@ def _mining_overlay(force: bool = False) -> None:
         return
     ST._mine_shown = now
     if ov.show_mining(ST.mine.lines(now, overlay.COL), seconds=30):
+        ST._mine_drawn = True
+
+
+def _ground_overlay(ov: Any, now: float, force: bool) -> None:
+    """4.12: in the Rhino the mining block is the ground block - the rig being
+    collected, the Rhino's hold and what the ship takes (groundmine)."""
+    if not force and now - ST._mine_shown < MINE_EVERY_S:
+        return
+    ST._mine_shown = now
+    if ov.show_mining(ST.ground.lines(now, overlay.COL), seconds=30):
         ST._mine_drawn = True
 
 
@@ -580,6 +604,7 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
             logger.debug("overlay focus failed", exc_info=True)
     try:
         ST.mine.status(entry)                # target hotspot -> material
+        ST.ground.status(entry)              # 4.12: the Rhino's load between events
         _mining_overlay()                    # rate and ages move on; at most every 5 s
     except Exception:
         logger.debug("mining overlay failed", exc_info=True)

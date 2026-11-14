@@ -47,6 +47,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked",
           # surface vehicles: ground mining with the Rhino (M2)
           "LaunchSRV", "DockSRV", "LaunchVessel", "DockVessel",
+          # 4.12: the Rhino's and the ship's hold (groundmine)
+          "Cargo", "SRVDestroyed",
           "Statistics", "Rank", "Progress", "Reputation", "MarketSell", "CargoTransfer",
           # raw materials (jumponium)
           "Materials", "MaterialCollected", "MaterialDiscarded", "Synthesis", "EngineerCraft",

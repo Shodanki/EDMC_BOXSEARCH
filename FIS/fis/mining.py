@@ -68,7 +68,8 @@ RHINO_CAPACITY_T = 72   # the SRV Rhino's hold (Frontier)
 RIG_FULL_T = 12         # a full rig: 12 chunks since 4.4.1.1, one tonne each
 
 
-def rhino_hold(live: Optional[Dict[str, Any]], cargo: Optional[Dict[str, Any]] = None
+def rhino_hold(live: Optional[Dict[str, Any]], cargo: Optional[Dict[str, Any]] = None,
+               evs: Optional[List[Dict[str, Any]]] = None, now: Optional[float] = None
                ) -> Optional[Dict[str, Any]]:
     """
     Out in the Rhino: how full its hold is and how many full rigs still fit.
@@ -76,6 +77,11 @@ def rhino_hold(live: Optional[Dict[str, Any]], cargo: Optional[Dict[str, Any]] =
     commander has to throw cargo out first. Which rigs are out the game
     does not say (placing one writes nothing), so this counts full rigs
     that would fit. None when not in the Rhino.
+
+    4.12 with ``evs`` (the archive's events): also the ship - its hold
+    takes the Rhino's load when it docks - and what still fits of both,
+    the rig being collected (the plugin's groundmine, the same numbers as
+    the overlay).
     """
     live = live or {}
     if "rhino" not in (live.get("vehicle") or "").lower():
@@ -87,8 +93,47 @@ def rhino_hold(live: Optional[Dict[str, Any]], cargo: Optional[Dict[str, Any]] =
         return None
     used = int(round(float(used)))
     free = max(0, RHINO_CAPACITY_T - used)
-    return {"capacity": RHINO_CAPACITY_T, "used": used, "free": free, "rig_t": RIG_FULL_T,
-            "rigs_fit": free // RIG_FULL_T, "short": free < RIG_FULL_T}
+    out = {"capacity": RHINO_CAPACITY_T, "used": used, "free": free, "rig_t": RIG_FULL_T,
+           "rigs_fit": free // RIG_FULL_T, "short": free < RIG_FULL_T, "limit": "rhino"}
+    gm = _ground(evs, used)
+    if gm is not None:
+        r = gm.room()
+        out.update({k: r[k] for k in ("ship_capacity", "ship_cargo", "ship_free_after", "room",
+                                      "room_rigs", "limit", "short")})
+        out["rig"] = gm.rig(time.time() if now is None else now)
+    return out
+
+
+def _ground(evs: Optional[List[Dict[str, Any]]], srv_used: int) -> Any:
+    """The plugin's GroundMine fed with this game session's events (from the
+    Loadout before the last Rhino launch), the Rhino's load as measured now."""
+    if not evs:
+        return None
+    try:
+        from .model import plugin
+        mod = plugin().groundmine
+    except Exception:
+        return None
+    if mod is None:
+        return None
+    launch = next((i for i in range(len(evs) - 1, -1, -1) if evs[i]["event"] == "LaunchSRV"), None)
+    if launch is None:
+        return None
+    start = next((i for i in range(launch, -1, -1) if evs[i]["event"] == "Loadout"), launch)
+    gm = mod.GroundMine().replay((e, parse_ts(e.get("timestamp"))) for e in evs[start:])
+    gm.in_rhino, gm.srv_cargo = True, srv_used
+    return gm
+
+
+def _ship_inventory(evs: List[Dict[str, Any]]) -> Optional[Tuple[int, List[Dict[str, Any]]]]:
+    """In the SRV Cargo.json is the SRV's: the ship's load from the journal -
+    (count, inventory of the last ship Cargo event that listed one)."""
+    last = next((e for e in reversed(evs) if e["event"] == "Cargo" and e.get("Vessel") == "Ship"), None)
+    if last is None or last.get("Count") is None:
+        return None
+    inv = next((e.get("Inventory") for e in reversed(evs)
+                if e["event"] == "Cargo" and e.get("Vessel") == "Ship" and e.get("Inventory")), None) or []
+    return int(last["Count"]), list(inv)
 
 
 def _vehicle_name(e: Dict[str, Any]) -> str:
@@ -288,6 +333,11 @@ def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
         from .shipview import _read_json
         cargo = _read_json(os.path.join(journal_dir, "Cargo.json")) or {}
     inv = cargo.get("Inventory") or [] if cargo.get("Vessel", "Ship") == "Ship" else []
+    ship_count = None
+    if cargo.get("Vessel") == "SRV":            # 4.12: out in the SRV - the ship's from the journal
+        si = _ship_inventory(evs)
+        if si is not None:
+            ship_count, inv = si
     limpets = sum(c.get("Count") or 0 for c in inv if (c.get("Name") or "").lower() == "drones")
     goods = sorted(({"key": type_key(c.get("Name")),
                      "name": c.get("Name_Localised") or (c.get("Name") or "").capitalize(),
@@ -295,12 +345,15 @@ def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
                    key=lambda g: -g["count"])
     cap = int(lo.get("CargoCapacity") or 0)
     used = limpets + sum(g["count"] for g in goods)
+    if ship_count is not None and ship_count > used:   # inventory older than the count
+        goods.append({"key": "cargo", "name": "Cargo", "count": ship_count - used})
+        used = ship_count
     out: Dict[str, Any] = {"generated": now, "ship": lo.get("ShipName") or lo.get("Ship"), "capacity": cap,
                            "limpets": limpets, "goods": goods, "used": used,
                            "free": max(0, cap - used) if cap else None,
                            "target": _target_material(live),
                            "target_name": (((live.get("status") or {}).get("destination") or {}).get("name"))}
-    rh = rhino_hold(live, cargo)
+    rh = rhino_hold(live, cargo, evs=evs, now=now)
     if rh:
         out["rhino"] = rh
     if s:
