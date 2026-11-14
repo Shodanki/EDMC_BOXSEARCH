@@ -41,7 +41,7 @@ if __package__:     # inside the plugin package (EDMC)
     from .netgate import Gateway
     from .procgen import id64_matches_position
     from .shells import edsm_queries, in_shell
-else:               # on its own: the self test, the FIS
+else:               # on its own: the FIS, plain imports
     from netgate import Gateway
     from procgen import id64_matches_position
     from shells import edsm_queries, in_shell
@@ -780,55 +780,3 @@ class SourceManager:
             if i not in known_ids:
                 merged["#%d" % i] = r
         return list(merged.values()), used
-
-
-def _selftest() -> int:
-    """python sources.py - EDD name decoding, no files, no network."""
-    fails = 0
-
-    def check(ok: bool, what: str) -> None:
-        nonlocal fails
-        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
-        fails += 0 if ok else 1
-
-    E = EDDiscoverySource
-    cases = [
-        (0x1000140000007a62, "HIP", "HIP 31330"),        # values from EDDSystem.sqlite
-        (0x1000100000000956, "HR", "HR 2390"),
-        ((1 << 60) | (7 << 42) | (5 << 38) | 1846031, "EXO", "EXO 1846-031"),
-        ((1 << 60) | (6 << 42) | 4321, "HD", "HD 004321"),
-    ]
-    for nid, sec, want in cases:
-        got = E.decode_nameid(nid, sec)
-        check(got == want, "catalogue name %s (got %s)" % (want, got))
-    std = (1 << 61) | (19 << 38) | (8 << 33) | (10 << 28) | (1 << 24) | 1
-    check(E.decode_nameid(std, "Synuefe") == "Synuefe SH-J b1",
-          "procgen name still decoded")
-    check(E.decode_nameid(12345, "TYC") is None, "Names id is left to the Names table")
-    check(E.with_sector("TYC", "3996-1327-1") == "TYC 3996-1327-1"
-          and E.with_sector(E.NO_SECTOR, "15 Sagittarii") == "15 Sagittarii",
-          "Names entries get their sector, except NoSectorName")
-    # EDD freshness from its Register table (layout as in EDDSystem.sqlite)
-    import tempfile
-    with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "EDDSystem.sqlite")
-        cx = sqlite3.connect(path)
-        cx.execute("CREATE TABLE Register (ID TEXT PRIMARY KEY, ValueInt INTEGER,"
-                   " ValueDouble DOUBLE, ValueString TEXT, ValueBlob BLOB)")
-        cx.execute("INSERT INTO Register VALUES ('DBSource', NULL, NULL, 'SPANSH', NULL)")
-        cx.execute("INSERT INTO Register VALUES ('EDSMLastSystems', NULL, NULL,"
-                   " '11/09/2026 21:59:59', NULL)")
-        cx.commit()
-        cx.close()
-        e = EDDiscoverySource(path)
-        src, ts = e.freshness()
-        check(src == "SPANSH" and ts == 1794261599.0, "EDD source and last update read")
-        check(e.is_current("spansh", now=ts + 86400) and not e.is_current("edsm", now=ts + 86400),
-              "EDD one day old holds Spansh's data, not EDSM's")
-        check(not e.is_current("spansh", now=ts + 3 * 86400), "three days old: not current")
-    print("failures: %d" % fails)
-    return fails
-
-
-if __name__ == "__main__":
-    raise SystemExit(1 if _selftest() else 0)

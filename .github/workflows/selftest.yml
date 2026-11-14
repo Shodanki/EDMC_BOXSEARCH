@@ -23,25 +23,25 @@ jobs:
       - name: procgen self test
         run: python procgen.py
       - name: surface compass self test
-        run: python surfacenav.py
+        run: python tests/surfacenav_selftest.py
       - name: mining overlay self test
-        run: python miningstat.py
+        run: python tests/miningstat_selftest.py
       - name: cockpit overlay self test
-        run: python overlay.py
+        run: python tests/overlay_selftest.py
       - name: in-system route self test
-        run: python sysroute.py
+        run: python tests/sysroute_selftest.py
       - name: database backup self test
-        run: python sysdb.py
+        run: python tests/sysdb_selftest.py
       - name: network gateway self test (no network)
-        run: python netgate.py
+        run: python tests/netgate_selftest.py
       - name: EDDiscovery name decoding self test
-        run: python sources.py
+        run: python tests/sources_selftest.py
       - name: journal reading self test
-        run: python journalscan.py
+        run: python tests/journalscan_selftest.py
       - name: probe bundle prefix self test
-        run: python boxelplan.py
+        run: python tests/boxelplan_selftest.py
       - name: local-first shells self test
-        run: python shells.py
+        run: python tests/shells_selftest.py
       - name: local-first flow (the plugin against a fake galaxy, no network)
         run: python tests/localfirst_flow.py
       - name: plugin journal hooks (the plugin against a scripted session, no network)

@@ -133,34 +133,34 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 172 | EDMC entry point: start, stop, carrier data; hands the other hooks to the modules below | the plugin layer |
+| `load.py` | 179 | EDMC entry point: start, stop, carrier data; hands the other hooks to the modules below | the plugin layer |
 | `__init__.py` | 12 | Makes the folder a Python package (runs nothing) | — |
-| `state.py` | 282 | Version, settings keys, the shared state of the survey | the helpers below |
-| `uithread.py` | 93 | Worker threads, and their one way to the window (EDMC's threading rule) | `state`, `panel` |
-| `journal.py` | 571 | EDMC's journal and Status.json hooks: one handler per event | the plugin layer |
-| `planning.py` | 713 | Local-first data flow, online shells, EDD lookups, the plan | the plugin layer |
-| `survey.py` | 588 | Start and stop, targets, galaxy map checks, queues, work timings | the plugin layer |
-| `cockpit.py` | 356 | Briefing, route check, fuel-scoop plan, cockpit overlay | the plugin layer |
+| `state.py` | 273 | Version, settings keys, the shared state of the survey | the helpers below |
+| `uithread.py` | 114 | Worker threads, and their one way to the window (EDMC's threading rule) | `state`, `panel` |
+| `journal.py` | 568 | EDMC's journal and Status.json hooks: one handler per event | the plugin layer |
+| `planning.py` | 775 | Local-first data flow, online shells, EDD lookups, the plan | the plugin layer |
+| `survey.py` | 587 | Start and stop, targets, galaxy map checks, queues, work timings | the plugin layer |
+| `cockpit.py` | 370 | Briefing, route check, fuel-scoop plan, cockpit overlay | the plugin layer |
 | `panel.py` | 365 | The panel in EDMC's window | the plugin layer |
 | `routewin.py` | 793 | In-system route and its window with the system map | the plugin layer |
 | `statswin.py`, `probewin.py`, `miningwin.py` | 691 | The statistics, probe and mining/atlas windows | the plugin layer |
-| `prefs.py` | 371 | The plugin's page in EDMC's settings | the plugin layer |
-| `skin.py`, `updater.py`, `fislaunch.py`, `maintenance.py` | 693 | Window colours; update check; starting the FIS; journal import, export | the plugin layer |
-| `sysdb.py` | 3133 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
-| `sysroute.py` | 980 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
-| `boxelplan.py` | 999 | Sphere planner: gaps, probes, prospecting score, statistics, labels of named sectors | `procgen`, `sysdb` |
-| `sources.py` | 776 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
-| `netgate.py` | 474 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
-| `shells.py` | 321 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
-| `procgen.py` | 645 | Name ↔ id64 ↔ boxel maths, sector registry, computed sector names, named sectors over a boxel, self test | `edts_pgnames` |
+| `prefs.py` | 384 | The plugin's page in EDMC's settings | the plugin layer |
+| `skin.py`, `updater.py`, `fislaunch.py`, `maintenance.py` | 695 | Window colours; update check; starting the FIS; journal import, export | the plugin layer |
+| `sysdb.py` | 3047 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `sysroute.py` | 921 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
+| `boxelplan.py` | 958 | Sphere planner: gaps, probes, prospecting score, statistics, labels of named sectors | `procgen`, `sysdb` |
+| `sources.py` | 782 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
+| `netgate.py` | 300 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log | — |
+| `shells.py` | 232 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover | — |
+| `procgen.py` | 689 | Name ↔ id64 ↔ boxel maths, sector registry, computed sector names, named sectors over a boxel, self test | `edts_pgnames` |
 | `deepspace.py` | 441 | Fuel model, tritium rings, carrier staging | — |
-| `overlay.py` | 445 | Cockpit overlay through EDMCModernOverlay (optional) | — |
-| `overlaywin.py` | 160 | The cockpit overlay in a window of the plugin's own (option, beta) | — |
-| `biopredict.py` | 204 | Genus prediction learned from your own samples | — |
-| `surfacenav.py` | 493 | Surface compass: parked SRV, open samples, known points | — |
-| `miningstat.py` | 337 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
-| `biosig.py` | 95 | Open biological signals: one signal per genus, but Brain Trees can be several species on one body | — |
-| `journalscan.py` | 367 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay, self test | — |
+| `overlay.py` | 385 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `overlaywin.py` | 182 | The cockpit overlay in a window of the plugin's own (option, beta) | — |
+| `biopredict.py` | 206 | Genus prediction learned from your own samples | — |
+| `surfacenav.py` | 348 | Surface compass: parked SRV, open samples, known points | — |
+| `miningstat.py` | 261 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
+| `biosig.py` | 97 | Open biological signals: one signal per genus, but Brain Trees can be several species on one body | — |
+| `journalscan.py` | 289 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay | — |
 | `edts_pgnames/` | | Sector names computed with EDTS's algorithm, hand-authored sector table (third-party, BSD 3-Clause, see its `SOURCE.md`) | — |
 | `regionmap/` | | Codex regions of the galaxy (third-party, MIT, see its `SOURCE.md`) | — |
 | `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
@@ -171,7 +171,9 @@ from `sysdb.py` on are plain Python with no third-party dependencies and can
 be run and tested on its own. The plugin imports its modules relatively, as
 members of its own package, so no module name can clash with another
 plugin's.
-`python procgen.py` runs the maths self test and should print `failures: 0`.
+`python procgen.py` runs the maths self test and should print `failures: 0`
+(the *Self test* button in the settings runs the same); the other modules'
+self tests are in `tests/` (`python tests/sysdb_selftest.py` ...).
 
 ### Suggested `.gitignore`
 

@@ -80,7 +80,7 @@ The rules were checked against EDMC 6.1.2 on 13.11.2026. When EDMC releases a ne
 * **Readable for a reviewer:** a docstring for every hook, every module and every public function you add or change. Comments explain *why*, not what. Keep files and functions small; new features go into their own module.
 * **Splitting code without changing it:** a refactoring that only moves code is checked against the code before it - same tests, and where a window draws, the same widget calls with Tk replaced by a recorder.
 * **Tests:** every fix comes with a test that fails without it, and every CI step stays green:
-  * the module self tests;
+  * the procgen self test (`python procgen.py`, also behind the *Self test* button);
   * `tests/*.py`;
   * `python -m unittest discover` in `FIS/`;
   * flake8 and `tests/complexity.py`.
