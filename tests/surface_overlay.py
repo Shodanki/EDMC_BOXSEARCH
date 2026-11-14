@@ -20,7 +20,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import plugin_pkg  # noqa: E402
 load = plugin_pkg.import_plugin()
-from SHBOXSEARCH import journal, panel, state  # noqa: E402
+from SHBOXSEARCH import panel, state  # noqa: E402
 from SHBOXSEARCH.overlay import CockpitOverlay  # noqa: E402
 from SHBOXSEARCH.sysdb import SystemDB  # noqa: E402
 
