@@ -207,7 +207,18 @@ class WorkMeter:
     def feed(self, e: Dict[str, Any], ts: float) -> Optional[Tuple[str, float]]:
         """One event at time ts; returns ("dss" | "bio", seconds) when one was timed."""
         v = e.get("event")
-        out: Optional[Tuple[str, float]] = None
+        self._track_place(v, e, ts)
+        if v in ("ApproachBody", "SupercruiseExit"):
+            if e.get("Body"):
+                self._arrive[e["Body"]] = ts
+        elif v == "SAAScanComplete":
+            return self._time_dss(e, ts)
+        elif v == "ScanOrganic":
+            return self._time_bio(e, ts)
+        return None
+
+    def _track_place(self, v: Any, e: Dict[str, Any], ts: float) -> None:
+        """Where we are (system, body) and the supercruise legs between bodies."""
         if v in LOCATION_EVENTS:
             self._here = {"sys": e.get("SystemAddress"), "body": None}
             self._sc_from = None
@@ -228,30 +239,34 @@ class WorkMeter:
                 self._here = {"sys": e["SystemAddress"], "body": e["Body"]}
         elif v in ("Shutdown", "LoadGame", "Died", "Resurrect"):
             self._sc_from = None
-        if v in ("ApproachBody", "SupercruiseExit"):
-            if e.get("Body"):
-                self._arrive[e["Body"]] = ts
-        elif v == "SAAScanComplete":
-            t0 = self._arrive.pop(e.get("BodyName"), None)
-            prev = self._last_saa.get(e.get("SystemAddress"))
-            if t0 and 10 < ts - t0 < 1800:
-                out = ("dss", ts - t0)
-            elif prev and 20 < ts - prev < 1800:
-                out = ("dss", ts - prev)
-            self._last_saa[e.get("SystemAddress")] = ts
-            if out:
-                self.dss.append(out[1])
-        elif v == "ScanOrganic":
-            key = (e.get("SystemAddress"), e.get("Body"), e.get("Species"))
-            kind = e.get("ScanType")
-            if kind in ("Log", "Sample"):
-                self._blog.setdefault(key, ts)
-            elif kind == "Analyse":
-                t0 = self._blog.pop(key, None)
-                if t0 and 20 < ts - t0 < 3600:
-                    out = ("bio", ts - t0)
-                    self.bio.append(out[1])
+
+    def _time_dss(self, e: Dict[str, Any], ts: float) -> Optional[Tuple[str, float]]:
+        """A surface scan: from the arrival at the body, else from the mapping before."""
+        out: Optional[Tuple[str, float]] = None
+        t0 = self._arrive.pop(e.get("BodyName"), None)
+        prev = self._last_saa.get(e.get("SystemAddress"))
+        if t0 and 10 < ts - t0 < 1800:
+            out = ("dss", ts - t0)
+        elif prev and 20 < ts - prev < 1800:
+            out = ("dss", ts - prev)
+        self._last_saa[e.get("SystemAddress")] = ts
+        if out:
+            self.dss.append(out[1])
         return out
+
+    def _time_bio(self, e: Dict[str, Any], ts: float) -> Optional[Tuple[str, float]]:
+        """A sample: from its first Log (or Sample) to its Analyse."""
+        key = (e.get("SystemAddress"), e.get("Body"), e.get("Species"))
+        kind = e.get("ScanType")
+        if kind in ("Log", "Sample"):
+            self._blog.setdefault(key, ts)
+        elif kind == "Analyse":
+            t0 = self._blog.pop(key, None)
+            if t0 and 20 < ts - t0 < 3600:
+                out = ("bio", ts - t0)
+                self.bio.append(out[1])
+                return out
+        return None
 
 
 def replay_work(files: Iterable[str]) -> WorkMeter:

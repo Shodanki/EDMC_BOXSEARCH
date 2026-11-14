@@ -293,6 +293,14 @@ def resolve_positions(bodies: Dict[int, Body]) -> None:
       arrival distance placed on one axis - crude, but it keeps such a body in
       the route instead of dropping it at the origin.
     """
+    _resolve_orbits(bodies)
+    _shift_to_arrival(bodies)
+    _trust_arrival(bodies)
+
+
+def _resolve_orbits(bodies: Dict[int, Body]) -> None:
+    """Absolute positions from parent-relative orbits; a body without its
+    parent sits at its arrival distance on one axis."""
     done: Dict[int, Tuple[float, float, float]] = {}
 
     def resolve(bid: int, depth: int = 0) -> Tuple[float, float, float]:
@@ -320,7 +328,9 @@ def resolve_positions(bodies: Dict[int, Body]) -> None:
         if b.pos is None:
             b.pos = (b.arrival_ls or 0.0, 0.0, 0.0)
 
-    # --- shift the origin onto the arrival star ---------------------------
+
+def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
+    """--- shift the origin onto the arrival star."""
     anchor = None
     for b in bodies.values():
         if b.arrival_ls is not None and b.arrival_ls <= 0.01 and b.kind == "Star":
@@ -337,7 +347,9 @@ def resolve_positions(bodies: Dict[int, Body]) -> None:
             if b.pos:
                 b.pos = (b.pos[0] - ox, b.pos[1] - oy, b.pos[2] - oz)
 
-    # --- final sanity pass against the journal's own arrival distance -----
+
+def _trust_arrival(bodies: Dict[int, Body]) -> None:
+    """--- final sanity pass against the journal's own arrival distance."""
     for b in bodies.values():
         if not b.pos or b.arrival_ls is None or b.arrival_ls <= 1.0:
             continue
@@ -686,14 +698,7 @@ def plan_route(system: str, bodies: Dict[int, Body],
     """
     resolve_positions(bodies)
 
-    if filters:
-        targets = [b for b in bodies.values() if body_matches(b, filters)]
-    else:
-        targets = [b for b in bodies.values()
-                   if (b.has_work if only_work else b.kind in ("Planet", "Star"))]
-    targets = [b for b in targets if not is_secondary_star(b)]
-    if skip_arrival:
-        targets = [b for b in targets if not is_arrival_star(b)]
+    targets = _route_targets(bodies, only_work, filters, skip_arrival)
     skipped = len(bodies) - len(targets)
     if not targets:
         return SystemRoute(system, [], skipped, model)
@@ -714,18 +719,42 @@ def plan_route(system: str, bodies: Dict[int, Body],
                 sum(b.pos[2] for b in g) / n)
 
     pts = [gpos(g) for g in groups]
+    order = _two_opt(_nearest_neighbour(pts, start), pts, start, model)
+    return SystemRoute(system, _route_stops(order, groups, start, model), skipped, model)
 
-    # --- nearest neighbour --------------------------------------------------
+
+def _route_targets(bodies: Dict[int, Body], only_work: bool, filters: Optional[Sequence[str]],
+                   skip_arrival: bool) -> List[Body]:
+    """The bodies the route visits: by filters, else those with work (or
+    every planet and star); no secondary star, the arrival star on request."""
+    if filters:
+        targets = [b for b in bodies.values() if body_matches(b, filters)]
+    else:
+        targets = [b for b in bodies.values()
+                   if (b.has_work if only_work else b.kind in ("Planet", "Star"))]
+    targets = [b for b in targets if not is_secondary_star(b)]
+    if skip_arrival:
+        targets = [b for b in targets if not is_arrival_star(b)]
+    return targets
+
+
+def _nearest_neighbour(pts: List[Tuple[float, float, float]], start: Sequence[float]) -> List[int]:
+    """--- nearest neighbour: a first tour from start."""
     order: List[int] = []
-    left = set(range(len(groups)))
+    left = set(range(len(pts)))
     cur = tuple(start)
     while left:
         j = min(left, key=lambda i: _dist(cur, pts[i]))
         order.append(j)
         left.discard(j)
         cur = pts[j]
+    return order
 
-    # --- 2-opt --------------------------------------------------------------
+
+def _two_opt(order: List[int], pts: List[Tuple[float, float, float]], start: Sequence[float],
+             model: CostModel) -> List[int]:
+    """--- 2-opt: reverse stretches of the tour while that makes it cheaper
+    (at most 40 rounds)."""
     def tour_cost(o: List[int]) -> float:
         c = 0.0
         prev = tuple(start)
@@ -750,8 +779,12 @@ def plan_route(system: str, bodies: Dict[int, Body],
                         break
                 if improved:
                     break
+    return order
 
-    # --- expand clusters and cost the legs ---------------------------------
+
+def _route_stops(order: List[int], groups: List[List[Body]], start: Sequence[float],
+                 model: CostModel) -> List[Stop]:
+    """--- expand clusters and cost the legs."""
     stops: List[Stop] = []
     cur = tuple(start)
     cum = 0.0
@@ -770,7 +803,7 @@ def plan_route(system: str, bodies: Dict[int, Body],
                               is_moon=is_moon(b), work_s=work_s))
             last_group = grp
             cur = b.pos
-    return SystemRoute(system, stops, skipped, model)
+    return stops
 
 
 # ---------------------------------------------------------------------------

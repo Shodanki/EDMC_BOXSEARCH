@@ -50,12 +50,6 @@ LEGACY = {
     ("FIS/fis/server.py", "Handler._post_lost_hidden"): 16,
     ("FIS/fis/shipview.py", "build_shipstatus"): 19,
     ("FIS/fis/unsold.py", "build_unsold"): 24,
-    ("boxelplan.py", "Planner.build"): 43,
-    ("journalscan.py", "WorkMeter.feed"): 19,
-    ("overlay.py", "briefing_lines"): 16,
-    ("surfacenav.py", "body_state"): 19,
-    ("sysroute.py", "plan_route"): 18,
-    ("sysroute.py", "resolve_positions"): 22,
 }
 
 

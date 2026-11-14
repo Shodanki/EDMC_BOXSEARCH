@@ -103,6 +103,40 @@ def targets_lines(route: Any, done: Iterable[int], limit: int = 3) -> List[Line]
     return out
 
 
+def _star_line(sc: str, scoop: Optional[bool]) -> Line:
+    """STAR line of the briefing: class, and whether a fuel scoop works."""
+    return ("STAR  %s%s" % (sc, "  scoopable" if scoop else
+                            ("  NOT scoopable" if scoop is False else "")),
+            COL["data"] if scoop or scoop is None else COL["warn"])
+
+
+def _known_lines(info: Dict[str, Any]) -> List[Line]:
+    """What the databases know of the place (shells.info_level)."""
+    src = info.get("known_sources")
+    level = info.get("level")
+    if src:
+        return [("KNOWN  %s" % ", ".join(src), COL["dim"])]
+    if level == "inhabited":
+        return [("INHABITED - known to the databases", COL["dim"])]
+    if level == "unchecked":
+        # I1: nobody was asked about this place - never claim "no database"
+        return [("NOT CHECKED - outside our data frame", COL["dim"])]
+    if level == "checked" or (level is None and src is not None):
+        out = [("IN NO DATABASE - first discovery likely", COL["new"])]
+        if info.get("checked_by"):
+            out.append(("checked: %s" % ", ".join(info["checked_by"]), COL["dim"]))
+        return out
+    return []
+
+
+def _lost_line(lost: Dict[str, Any]) -> Line:
+    """Visited, yes - but what you did there went down with the ship."""
+    bits = [b for b in ("%d scan" % lost["scan"] if lost.get("scan") else "",
+                        "%d map" % lost["map"] if lost.get("map") else "",
+                        "%d bio" % len(lost["bio"]) if lost.get("bio") else "") if b]
+    return (("LOST IN CRASH  %s - redo" % ", ".join(bits))[:44], COL["alert"])
+
+
 def briefing_lines(info: Dict[str, Any]) -> List[Line]:
     """
     BRIEFING block. info keys (all optional):
@@ -121,35 +155,16 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
     out: List[Line] = [(head[:44], COL["head"])]
     sc = info.get("star_class")
     if sc:
-        scoop = info.get("scoopable")
-        out.append(("STAR  %s%s" % (sc, "  scoopable" if scoop else
-                                    ("  NOT scoopable" if scoop is False else "")),
-                    COL["data"] if scoop or scoop is None else COL["warn"]))
+        out.append(_star_line(sc, info.get("scoopable")))
     if info.get("region"):
         # 4.10: codex region (klightspeed's region map)
         out.append((("REGION  %s" % info["region"])[:44], COL["dim"]))
-    src = info.get("known_sources")
-    level = info.get("level")
-    if src:
-        out.append(("KNOWN  %s" % ", ".join(src), COL["dim"]))
-    elif level == "inhabited":
-        out.append(("INHABITED - known to the databases", COL["dim"]))
-    elif level == "unchecked":
-        # I1: nobody was asked about this place - never claim "no database"
-        out.append(("NOT CHECKED - outside our data frame", COL["dim"]))
-    elif level == "checked" or (level is None and src is not None):
-        out.append(("IN NO DATABASE - first discovery likely", COL["new"]))
-        if info.get("checked_by"):
-            out.append(("checked: %s" % ", ".join(info["checked_by"]), COL["dim"]))
+    out += _known_lines(info)
     if info.get("visited"):
         out.append(("visited before", COL["dim"]))
     lost = info.get("lost")
     if lost:
-        # visited, yes - but what you did there went down with the ship
-        bits = [b for b in ("%d scan" % lost["scan"] if lost.get("scan") else "",
-                            "%d map" % lost["map"] if lost.get("map") else "",
-                            "%d bio" % len(lost["bio"]) if lost.get("bio") else "") if b]
-        out.append((("LOST IN CRASH  %s - redo" % ", ".join(bits))[:44], COL["alert"]))
+        out.append(_lost_line(lost))
     if info.get("also_by"):
         # C1: another commander on this PC has been there - your own
         # exploration is still open, the knowledge is shared

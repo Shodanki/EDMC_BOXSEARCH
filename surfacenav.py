@@ -127,70 +127,100 @@ def body_state(marks: Iterable[Any], radius: Optional[float] = None) -> Dict[str
              Tonnes more than RIG_GAP_S apart, or (with the body radius)
              more than RIG_SPREAD_M apart, are another rig.
     """
-    parked = ship = None
-    rigs: List[Dict[str, Any]] = []
-    outing = 0
-    species: Dict[str, Dict[str, Any]] = {}
-    sites: List[Dict[str, Any]] = []
+    r = _BodyReplay(radius)
     for m in sorted(marks, key=lambda r: _g(r, "ts") or ""):
+        r.feed(m)
+    return {"parked": r.parked, "ship": r.ship, "species": list(r.species.values()),
+            "sites": r.sites, "rigs": r.rigs}
+
+
+class _BodyReplay:
+    """body_state's replay: the marks of one body fed in time order."""
+
+    def __init__(self, radius: Optional[float]) -> None:
+        self.radius = radius
+        self.parked: Any = None
+        self.ship: Any = None
+        self.rigs: List[Dict[str, Any]] = []
+        self.outing = 0
+        self.species: Dict[str, Dict[str, Any]] = {}
+        self.sites: List[Dict[str, Any]] = []
+
+    def feed(self, m: Any) -> None:
+        """One mark."""
         kind = _g(m, "kind") or ""
         lat, lon = _g(m, "lat"), _g(m, "lon")
         detail = _g(m, "detail")
-        if kind == "srv_parked":
-            parked = m if lat is not None else parked
-        elif kind == "srv_in" or (kind == "embark" and _g(m, "label") == "SRV"):
-            parked = None
-        elif kind == "touchdown" and detail != "srv":
-            ship = m if lat is not None else ship
-        elif kind == "liftoff" and detail != "srv":
-            ship = None
-        elif kind == "refined" and lat is not None:
-            t = _ts(_g(m, "ts"))
-            last = rigs[-1] if rigs else None
-            same = (last is not None and last["outing"] == outing
-                    and t - last["last_t"] <= RIG_GAP_S
-                    and (not radius or surface_distance_m(last["lat"], last["lon"], float(lat),
-                                                          float(lon), radius) <= RIG_SPREAD_M))
-            if same:
-                last["tonnes"] += 1
-                last["last_t"] = t
-            else:
-                n = sum(1 for r in rigs if r["outing"] == outing) + 1
-                rigs.append({"n": n, "outing": outing, "lat": float(lat), "lon": float(lon),
-                             "ts": _g(m, "ts"), "last_t": t, "tonnes": 1,
-                             "type": (_g(m, "label") or "?").split("#")[0]})
-        elif kind == "srv_out":
-            vehicle = (_g(m, "label") or "").lower()
-            if "rhino" in vehicle:
-                outing += 1
-            if "nomad" in vehicle:
-                ship = None              # the ship flies along with the Nomad
-            elif "rhino" in vehicle and ship is None and lat is not None:
-                ship = {"ts": _g(m, "ts"), "kind": "srv_out", "label": _g(m, "label"),
-                        "detail": "hover", "lat": lat, "lon": lon, "hover": True}
+        self._vehicles(m, kind, lat, lon, detail)
         back_aboard = kind == "srv_in" or (kind == "embark" and _g(m, "label") != "SRV")
-        if back_aboard and isinstance(ship, dict) and ship.get("hover"):
-            ship = None                  # back on board the hovering ship
+        if back_aboard and isinstance(self.ship, dict) and self.ship.get("hover"):
+            self.ship = None             # back on board the hovering ship
         elif kind.startswith("bio_"):
-            name = _g(m, "label") or "?"
-            s = species.get(name)
-            if kind == "bio_log" or s is None:
-                s = species[name] = {"species": name, "genus": detail, "samples": 0,
-                                     "points": [], "analysed": False, "last": None}
-            if kind in ("bio_log", "bio_sample"):
-                s["samples"] = min(3, s["samples"] + 1)
-                if lat is not None:
-                    s["points"].append((float(lat), float(lon)))
-                s["last"] = _g(m, "ts")
-            elif kind == "bio_analyse":
-                s["analysed"] = True
-                s["samples"] = 3
+            self._bio(m, kind, lat, lon, detail)
         if kind in SITE_KINDS and lat is not None:
-            sites.append({"kind": kind, "label": _g(m, "label") or kind,
-                          "detail": detail, "lat": float(lat), "lon": float(lon),
-                          "ts": _g(m, "ts")})
-    return {"parked": parked, "ship": ship, "species": list(species.values()),
-            "sites": sites, "rigs": rigs}
+            self.sites.append({"kind": kind, "label": _g(m, "label") or kind,
+                               "detail": detail, "lat": float(lat), "lon": float(lon),
+                               "ts": _g(m, "ts")})
+
+    def _vehicles(self, m: Any, kind: str, lat: Any, lon: Any, detail: Any) -> None:
+        """Parked SRV, ship on the ground or hovering, mining rigs."""
+        if kind == "srv_parked":
+            self.parked = m if lat is not None else self.parked
+        elif kind == "srv_in" or (kind == "embark" and _g(m, "label") == "SRV"):
+            self.parked = None
+        elif kind == "touchdown" and detail != "srv":
+            self.ship = m if lat is not None else self.ship
+        elif kind == "liftoff" and detail != "srv":
+            self.ship = None
+        elif kind == "refined" and lat is not None:
+            self._rig(m, lat, lon)
+        elif kind == "srv_out":
+            self._srv_out(m, lat, lon)
+
+    def _rig(self, m: Any, lat: Any, lon: Any) -> None:
+        """One refined tonne: the same rig, or a new one."""
+        rigs, outing, radius = self.rigs, self.outing, self.radius
+        t = _ts(_g(m, "ts"))
+        last = rigs[-1] if rigs else None
+        same = (last is not None and last["outing"] == outing
+                and t - last["last_t"] <= RIG_GAP_S
+                and (not radius or surface_distance_m(last["lat"], last["lon"], float(lat),
+                                                      float(lon), radius) <= RIG_SPREAD_M))
+        if same:
+            last["tonnes"] += 1
+            last["last_t"] = t
+        else:
+            n = sum(1 for r in rigs if r["outing"] == outing) + 1
+            rigs.append({"n": n, "outing": outing, "lat": float(lat), "lon": float(lon),
+                         "ts": _g(m, "ts"), "last_t": t, "tonnes": 1,
+                         "type": (_g(m, "label") or "?").split("#")[0]})
+
+    def _srv_out(self, m: Any, lat: Any, lon: Any) -> None:
+        """A vehicle launched: a new Rhino outing; the ship hovering or flying along."""
+        vehicle = (_g(m, "label") or "").lower()
+        if "rhino" in vehicle:
+            self.outing += 1
+        if "nomad" in vehicle:
+            self.ship = None             # the ship flies along with the Nomad
+        elif "rhino" in vehicle and self.ship is None and lat is not None:
+            self.ship = {"ts": _g(m, "ts"), "kind": "srv_out", "label": _g(m, "label"),
+                         "detail": "hover", "lat": lat, "lon": lon, "hover": True}
+
+    def _bio(self, m: Any, kind: str, lat: Any, lon: Any, detail: Any) -> None:
+        """A bio log, sample or analysis of one species."""
+        name = _g(m, "label") or "?"
+        s = self.species.get(name)
+        if kind == "bio_log" or s is None:
+            s = self.species[name] = {"species": name, "genus": detail, "samples": 0,
+                                      "points": [], "analysed": False, "last": None}
+        if kind in ("bio_log", "bio_sample"):
+            s["samples"] = min(3, s["samples"] + 1)
+            if lat is not None:
+                s["points"].append((float(lat), float(lon)))
+            s["last"] = _g(m, "ts")
+        elif kind == "bio_analyse":
+            s["analysed"] = True
+            s["samples"] = 3
 
 
 RIG_GAP_S = 8.0       # one rig's tonnes come 1-2 s apart (11 t in some 13 s)
