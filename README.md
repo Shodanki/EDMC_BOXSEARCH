@@ -2029,15 +2029,15 @@ event - the overlay shows five lines:
 
 ```
 ROCK  Tritium 18.3 % | low | GOOD
-HOLD  59 t ore | 141 t free | 122 limpets
-RATE  336 t/h | full in ~25 min
-SESSION  59 t Tritium | 36 min
+HOLD  122 limpets | 59 t ore | 141 t free
+RATE  336 t/h | 0.40 limpets/t
+SESSION  59 t Tritium | 36 min | full ~25 min
 LIMPETS  last ~189 t OK
 ```
 
-In a ring the SESSION line becomes `HOTSPOT  Tritium Hotspot targeted - HUD
-compass | 59 t in 36 min`, or an amber reminder when the hotspot is not your
-target: then the game's own HUD compass points to the hotspot's centre, which
+In a ring the SESSION line becomes `HOTSPOT  Tritium Hotspot targeted | 59 t
+in 36 min | full ~25 min`, or an amber `HOTSPOT  not targeted (nav panel)`
+when the hotspot is not your target: then the game's own HUD compass points to the hotspot's centre, which
 keeps you oriented in the field. The game reports no position inside a ring
 (no latitude, longitude or heading in `Status.json`, no coordinates for a
 hotspot), so the plugin cannot draw a map or a compass of its own there.
@@ -2048,13 +2048,19 @@ ten minutes after the last mining event.
   (the hotspot you target, else what you refine most), its content, and a
   verdict against the best rock of this session (GOOD / FAIR / MOVE ON);
   a motherlode is named
-* **HOLD** - ore and limpets on board, free space
-* **RATE** - tonnes refined in the last ten minutes, per hour, and when the
-  hold is full at that pace (the game writes nothing about the refinery's
-  bins, only each finished tonne)
+* **HOLD** - limpets and ore on board, free space
+* **RATE** - tonnes refined in the last ten minutes, per hour, and the
+  limpets this session uses per tonne (the game writes nothing about the
+  refinery's bins, only each finished tonne)
+* **SESSION / HOTSPOT** - refined so far, how long, and when the hold is
+  full at this pace (4.12)
 * **LIMPETS** - how many tonnes your limpets last at the rate this session
   uses them; amber when that is less than the room left (every limpet
-  launched leaves the hold, so its tonne is free for ore again)
+  launched leaves the hold, so its tonne is free for ore again). Once the
+  free space is down to a quarter, limpets beyond what the rest needs (and
+  five for one more rock) are named: `LIMPETS  ~25 spare - eject them for
+  ~25 t more ore` - in the 15.11.2026 session the hold was full with 43
+  limpets aboard (4.12)
 
 Switch it off under "mining" in the settings.
 

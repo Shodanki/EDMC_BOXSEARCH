@@ -65,13 +65,29 @@ def _selftest() -> int:
     # undocked again: the next limpet starts a new session from zero
     m.feed({"timestamp": "2026-11-06T10:05:00Z", "event": "LaunchDrone", "Type": "Prospector"})
     fresh = sum(m.refined.values()) == 0 and m.limpets_used == 1
+    # 15.11.2026: the hold full with 43 limpets aboard - with the hold filling
+    # up, the limpets more than it still needs are named
+    full = MiningTracker()
+    full.feed({"event": "Loadout", "CargoCapacity": 322, "Modules": [{"Item": "hpt_mininglaser_fixed_small"}]})
+    full.feed({"timestamp": t0 % 1, "event": "LaunchDrone", "Type": "Prospector"})
+    for i in range(11):                       # 12 limpets for 30 t: 0.40 per tonne, as on 15.11.
+        full.feed({"timestamp": t0 % 2, "event": "LaunchDrone", "Type": "Collection"})
+    for i in range(30):
+        full.feed({"timestamp": "2026-11-06T09:%02d:%02dZ" % (1 + i // 30, 10 + i), "event": "MiningRefined",
+                   "Type": "$tritium_name;", "Type_Localised": "Tritium"})
+    full.feed({"timestamp": t0 % 3, "event": "Cargo"}, cargo={"drones": 60, "tritium": 240})
+    spare_line = full.lines(now)[-1][0]
+    full.feed({"timestamp": t0 % 3, "event": "Cargo"}, cargo={"drones": 25, "tritium": 120})
+    early_line = full.lines(now)[-1][0]
     fails = 0
     checks = [
         (len(lines) == 5, "five lines"),
         (lines[0][0].startswith("ROCK  Tritium 31.5 %") and "GOOD" in lines[0][0], "rock line"),
-        ("HOLD  10 t ore | 192 t free | 120 limpets" == lines[1][0], "hold line: " + lines[1][0]),
-        (lines[2][0].startswith("RATE  60 t/h"), "rate line: " + lines[2][0]),
-        (lines[3][0].startswith("SESSION  10 t Tritium"), "session line"),
+        ("HOLD  120 limpets | 10 t ore | 192 t free" == lines[1][0], "hold line: " + lines[1][0]),
+        (lines[2][0] == "RATE  60 t/h | 0.40 limpets/t", "rate line: " + lines[2][0]),
+        (lines[3][0].startswith("SESSION  10 t Tritium") and "| full ~" in lines[3][0], "session line: " + lines[3][0]),
+        (spare_line == "LIMPETS  ~40 spare - eject them for ~40 t more ore", "spare limpets: " + spare_line),
+        (early_line.startswith("LIMPETS  last ~"), "plenty of room: no spare advice yet: " + early_line),
         (targeted == "tritium", "target from hotspot"),
         (was_active, "active"),
         (not docked_active, "docking ends the session"),
