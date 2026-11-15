@@ -323,7 +323,8 @@ def _refresh_route_line() -> None:
         if _lbl_route:
             _lbl_route.grid()
     elif cfg_bool(CFG["show_route"], True) and ST.cur_id64:
-        _v_route.set("in-system: nothing to fly here")
+        # 4.12: a route without stops is a finished system (no full tour wanted)
+        _v_route.set("in-system: all done here" if ST.route is not None else "in-system: nothing to fly here")
         if _lbl_route:
             _lbl_route.grid()
     else:

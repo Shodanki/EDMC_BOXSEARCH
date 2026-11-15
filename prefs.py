@@ -191,7 +191,8 @@ def _tab_windows(r: _Rows) -> None:
     r.head("Windows")
     r.check("route_top", "route_top", True, "keep windows on top")
     r.check("route_map", "route_map", True, "draw the system map")
-    r.check("route_all", "route_all", False, "route every body")
+    r.check("route_all", "route_all", False, "route every body, always")
+    r.check("route_done_tour", "route_done_tour", True, "nothing left in a system: show the full tour anyway")
     r.check("route_arrival", "route_arrival", True, "start the route at the arrival star")
     _p["map_size"] = tk.StringVar(value=cfg_str(CFG["map_size"], "medium"))
     r.field("Map size", ttk.OptionMenu(r.f, _p["map_size"], _p["map_size"].get(), "small", "medium", "large"))
@@ -277,6 +278,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["carrier_start"], bool(_p["carrier_start"].get()))
         cfg_set(CFG["show_route"], bool(_p["show_route"].get()))
         cfg_set(CFG["route_all"], bool(_p["route_all"].get()))
+        cfg_set(CFG["route_done_tour"], bool(_p["route_done_tour"].get()))
         cfg_set(CFG["route_arrival"], bool(_p["route_arrival"].get()))
         if "main_cmdr" in _p:
             cfg_set(CFG["main_cmdr"], _p["main_cmdr_map"].get(_p["main_cmdr"].get(), ""))

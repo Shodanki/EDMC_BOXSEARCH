@@ -68,6 +68,7 @@ CFG = {
     "show_stats": "%s_show_stats" % PLUGIN_NAME,
     "show_route": "%s_show_route" % PLUGIN_NAME,
     "route_all": "%s_route_all" % PLUGIN_NAME,
+    "route_done_tour": "%s_route_done_tour" % PLUGIN_NAME,   # 4.12: nothing left - the full tour?
     "route_arrival": "%s_route_arrival" % PLUGIN_NAME,
     "route_top": "%s_route_top" % PLUGIN_NAME,
     "route_map": "%s_route_map" % PLUGIN_NAME,

@@ -289,8 +289,11 @@ commander when several fly on this PC.
 blocks (route targets, briefing, surface compass, mining) and the situation
 column (warnings, places, session tally).
 
-**Windows** — on top, system map, route every body, start at the arrival
-star, map size; the panel's route line, fuel and queue counters, jump range.
+**Windows** — on top, system map, route every body (always), whether a
+finished system still gets the full tour (on by default; off: no route
+where nothing is left, the panel says *all done here*), start at the
+arrival star, map size; the panel's route line, fuel and queue counters,
+jump range.
 
 **FIS** — start, open in the browser, start together with EDMC.
 
