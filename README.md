@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.10.1
+# SHBOXSEARCH v4.12.0
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -14,14 +14,17 @@ tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
 folder of this plugin. See [FIS/README.md](FIS/README.md) - with
 screenshots (demo data).
-**New in 4.10:** fewer galaxy map searches for every system no database
-knows. Sector names are computed, so boxels in sectors nobody visited are
-planned too, and hand-authored sectors (NGC 2232, Col 70 ...) under their
-own names. Catalogue stars fill their number in a boxel, *list ends at*
-takes the end of the galaxy map's list, and candidates EDDiscovery already
-knows leave the queue - in the developer's sphere 1 902 probes became 856.
-The briefing and the FIS name the codex region - see
-[What changed in 4.10](#what-changed-in-410).
+**New in 4.12:** a situation column in the cockpit overlay - a dangerous
+star ahead, unsold data at stake, a landing card, what the system is worth,
+your carrier's countdown and a session tally after a sale. Ground mining in
+the Rhino shows what still fits in the Rhino and in the ship, and the
+compass tells you when the ship has flown off. The cockpit overlay can draw
+into a window of the plugin's own (beta, Windows) - no extra plugin needed. Probe candidates
+EDSM knows by name become flight targets; the FIS finds carriers near you
+and shows your key bindings, both on request. Brain Trees with several
+species per signal and belt clusters in the FSS count are no longer
+miscounted, and the surface compass, mining block and bio distance are
+back on the overlay - see [What changed in 4.12](#what-changed-in-412).
 
 **Licence:** [Mozilla Public License 2.0](LICENSE) since 4.7 - use, change and
 share it freely; whoever passes on a changed file of this project keeps that
@@ -1458,6 +1461,7 @@ what changed in each release from 4.1 on.
 | 4.10.0 | sector names computed (EDTS) and hand-authored sectors planned under their own names; codex region in the briefing and the FIS (region map); galaxy map list: catalogue stars fill their number, *list ends at* replaces *boxel done*; probe candidates looked up in EDDiscovery by id64 |
 | 4.10.1 | fixes: worker threads reach the window only through EDMC's one allowed call; FIS: BRIEFING comes to the front only for a jump target, reads only for this PC's own address, only the plugin's keys from EDMC's settings; EDMC's User-Agent; flake8 by EDMC's rules; the 4.0 helper scripts removed |
 | 4.11.0 | load.py split into modules, relative imports, EDMC's complexity limit kept (journal handling 69 -> 7); FIS: your own limits for unsold data; EDMC closes after the plugin's work; settings through EDMC 5's API; FIS: Python found by itself, no error details to the browser, damaged positions skipped |
+| 4.12.0 | overlay situation column (star ahead, data at stake, landing card, system value, ring, boxel, route fuel, carrier countdown, session tally); ground mining: Rhino and ship hold; ship flown off - recall it; the hovering ship waits, SHIP AWAY from 2.3 km; surface compass stays on the ground, not on foot aboard the carrier; FIS PLANET follows you; settings on tabs; a finished system can get no route; mining overlay: limpets, full in, spare limpets; cockpit overlay in a window of its own (beta); file check at every start; probe names EDSM knows become flight targets; FIS: carriers near you (Spansh, on a click), your key bindings in SHIP; fixes: surface compass, mining block, bio distance and the self test button work again (broken since 4.11), Brain Trees - one signal, several species, belt clusters no longer fill up the FSS count; every function within EDMC's complexity limit, documented, self tests out of the download |
 
 ## Fixed since v3.0.8
 
@@ -2581,6 +2585,125 @@ copy **all `.py` files and `__init__.py`** and the `FIS` folder (keep
 `FIS/lost_hidden.json`, `FIS/vehicle_tanks.json`). Simplest: unpack the ZIP
 over the old folder - it carries none of your files. No database change, no
 replay. Close the FIS window once so it starts with the new files.
+
+## What changed in 4.12
+* **The overlay's situation column.** In the corner across from the other
+  blocks, a few lines the game's own HUD does not give - each only while it
+  matters, warnings first: a neutron star, white dwarf or black hole ahead;
+  your unsold data at stake (value, first discoveries, species) while in
+  danger, interdicted, overheating, under attack or with a low hull; on
+  approach a landing card - gravity, temperature, atmosphere, the open
+  genera by the best price you were paid, other finds; after the honk the
+  system's value and what mapping adds; a ring's hotspots with your last
+  price; the boxel on arrival; fuel along a plotted route; your carrier's
+  jump countdown with distance and tritium; and after a sale or on docking
+  *SOLD 4.0 M Cr - well done* with the session's tally. Warnings, places
+  and the tally can each be switched off in the settings.
+* **Settings on tabs.** The plugin's settings page had grown taller than a
+  1080p screen; it now has tabs - Survey, Data, Overlay, Windows, FIS,
+  Maintenance - and fits easily.
+* **Fix: no compass on foot aboard your carrier.** Parked beside a planet,
+  the carrier makes the game report the planet's position; walking in the
+  hangar brought up the surface compass and left an "on foot" mark on the
+  planet. Not any more.
+* **Ground mining in the Rhino.** The overlay's mining block and the FIS
+  show the rig being collected, what still fits in the Rhino (72 t) and -
+  just as important - what the ship can still take once the Rhino's load
+  is aboard, and which of the two is the limit.
+* **The hovering ship, and when it has flown off.** A ship that dropped
+  the Rhino in a hover waits there until the SRV is some 2.3 km away, then
+  leaves - the journal writes nothing for either. The compass shows
+  *SHIP (hover)* with the distance, red from 1.8 km, and from 2.3 km
+  *SHIP AWAY 12 min - flew off, recall it* (and *dismissed* for a landed
+  ship sent away) until you are aboard again; FIS PLANET the same.
+* **A finished system can get no route.** Windows: with "show the full tour
+  anyway" off, a system with nothing left gets no route; the panel says
+  *all done here*.
+* **Mining overlay.** HOLD reads limpets | ore | free, RATE shows your
+  limpets per tonne, the session (or hotspot) line says when the hold is
+  full, and with the hold filling up it names the limpets you will not
+  need - eject them for more ore.
+
+* **The cockpit overlay in a window of its own (beta).** Until now the
+  overlay needed the plugin EDMCModernOverlay. *Preferences -> Cockpit
+  overlay -> Draw with* now offers **own window (beta)** (Windows only):
+  the same blocks - briefing, next targets, surface compass, bio distance,
+  mining - in a transparent window of the plugin's own. It stays on top,
+  lets every click through to the game, never takes the focus and hides
+  while the game is not the window in front. The game has to run in a
+  borderless window (an exclusive full screen covers every window,
+  ModernOverlay's too). EDMCModernOverlay stays the default.
+* **Probe names EDSM knows become flight targets.** A probe candidate
+  neither the plugin nor EDDiscovery knows is asked at EDSM by its exact
+  name - in bundles of up to 40, at most 10 requests a day out of the 50,
+  each name at most every 14 days, all through the daily cap and the
+  offline switch. A name EDSM knows without coordinates becomes a flight
+  target at the centre of its boxel; "EDSM does not know it" never marks a
+  system as absent.
+* **FIS: carriers near you.** CARRIER -> KNOWN CARRIERS has *find carriers
+  near me*: one Spansh search on your click for the 15 nearest fleet
+  carriers within 100 ly, with services, docking access and when they were
+  last reported. ☆ makes one a favourite. Answers are kept 24 hours per
+  50-ly cell; offline mode or no known position sends nothing.
+* **FIS: your key bindings in SHIP (off by default).** On the settings page
+  *Show my key bindings in SHIP* adds a CONTROLS frame - the keys for
+  ship, SRV and on foot, read from the game's active binding preset, plus
+  the fire group from Status.json. Only while it is switched on does the
+  FIS read the game's `Options\Bindings` folder, and only reads it. What a
+  fire group holds is not in any file the game writes, so it is not shown.
+* **Fix: on the ground the compass stays.** In the SRV the compass to the
+  ship and the SRV ran out after 4 s when you stood still (Status.json
+  writes nothing then) and came back only when a side panel was opened. It
+  is now redrawn every 2 s while you are near the body; the route block
+  steps aside on the ground (landed, SRV, on foot) and returns on lift-off.
+* **FIS: the surface map follows you.** PLANET keeps you in the middle
+  while you drive (Follow; off: the ground stays still). Me, Ship and SRV
+  centre on you, the ship and the parked SRV.
+* **Fix: surface compass, mining block and bio distance are back.** Since
+  4.11 the plugin is a package; six imports inside functions still asked
+  for plugin modules by their plain names and found nothing in EDMC. The
+  overlay's surface compass, its mining block, the bio sample distance and
+  the "analysed" line stayed away, and the *Self test* button in the
+  settings failed - quietly, the error went to the debug log only. A test
+  now reads every module and fails on such an import.
+* **Fix: Brain Trees - one signal, several species.** The game reports one
+  biological signal for Brain Trees, but a body can hold up to three Brain
+  Tree species, each one sampled and paid on its own. A body with one
+  species analysed read "done" while the others were still there. Now
+  every species the codex saw on the body and nobody has analysed counts
+  as open - in the panel, ATLAS, SYSTEM and PLANET INFO. Brain Trees can be
+  sampled, so the FIS no longer lists them as codex only.
+* **Fix: belt clusters no longer fill up the FSS count.** The game counts
+  stars and planets only; belt clusters come as scans too and were counted
+  as bodies. A system with a planet still missing could read "FSS 11/10",
+  drop out of the unfinished systems, and a scan target in the flight plan
+  was ticked off too early. The FIS counted right already.
+
+* **File check at every start.** The release carries a list of its files
+  with their checksums. EDMC and the FIS check them at every start; a
+  missing or damaged file is named (EDMC window and log, FIS window and a
+  banner on every page, English and German) with the remedy: copy the
+  plugin folder from the release ZIP again. When a file the plugin needs to
+  start is gone, it still loads with one red line instead of a traceback.
+* **Tidier inside, for the EDMC plugin browser.** Every function of the
+  plugin and the FIS now keeps EDMC's complexity limit (15) - the 35 older
+  ones above it were split up, each checked against the old code on real
+  journals (the same database rows, routes, plans and FIS answers before
+  and after). Every module and public function says what it does. The
+  helper modules' self tests moved out of the download into `tests/`
+  (netgate, sysdb, surfacenav ... are up to 300 lines shorter); procgen
+  keeps its own, because the *Self test* button runs it.
+
+**Updating to 4.12.0:** new files `overlaywin.py`, `biosig.py`,
+`groundmine.py`, `integrity.py`, `bodyvalue.py`, `situation.py`,
+`cockpitinfo.py`, `SHBOXSEARCH.manifest`, `FIS/fis/bindings.py`,
+`FIS/fis/files.py` and `FIS/web/js/views/rhino.js`. Close EDMC, then copy all `.py` files and
+`__init__.py` and the `FIS` folder (keep `shboxsearch.sqlite`,
+`FIS/fis.ini`, `FIS/favourites.json`, `FIS/lost_hidden.json`,
+`FIS/vehicle_tanks.json`). Simplest: unpack the ZIP over the old folder -
+it carries none of your files. One new table (EDSM name lookups) is
+created by itself; no journal replay. Close the FIS window once so it
+starts with the new files.
 
 ---
 

@@ -139,5 +139,11 @@ with open(os.path.join(ROOT, "FIS", "fis", "__init__.py"), encoding="utf-8") as 
 same = plugin_v == fis_v and re.fullmatch(r"\d+\.\d+\.\d+", plugin_v) is not None
 fails += 0 if same else 1
 print("  [%s] plugin %s and FIS %s: the same SemVer version" % ("OK" if same else "FAIL", plugin_v, fis_v))
+# the README's title names the version too (it stood at v4.10.1 through 4.11)
+with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
+    title = fh.readline().strip()
+titled = title == "# SHBOXSEARCH v%s" % plugin_v
+fails += 0 if titled else 1
+print("  [%s] README title '%s' names v%s" % ("OK" if titled else "FAIL", title, plugin_v))
 print("package import: %s" % ("all OK" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)

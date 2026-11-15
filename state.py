@@ -39,7 +39,7 @@ from .sysroute import ALL_FILTERS, DEFAULT_MODEL, F_OUTSTANDING
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-VERSION = "4.11.0"
+VERSION = "4.12.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 for _mod in (_sysdb_mod, _sources_mod, netgate, _overlay_mod):
