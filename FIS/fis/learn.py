@@ -254,33 +254,12 @@ def learning_status(archive: Any, db: Any) -> Dict[str, Any]:
     ring class and material (L3), rigs per planet class, the bio model.
     """
     from . import prospect
-    from .model import _ring_prospects, plugin
+    from .model import plugin
     out: Dict[str, Any] = {"min_rocks": prospect.MIN_ROCKS, "thin_runs": THIN_RUNS,
                            "thin_rigs": THIN_RIGS, "thin_genus": THIN_GENUS}
     # rocks per ring class + hotspot
-    rocks = []
     try:
-        pros = _ring_prospects(archive)
-        ring_hs: Dict[str, Tuple[str, List[str]]] = {}
-        names = {}
-        rc = ring_classes(db)
-        for h in db.query("SELECT body_name, material, label, ring_class FROM hotspots"):
-            cls0 = prospect.ring_class(h["ring_class"]) or rc.get(h["body_name"], "")
-            cls, keys = ring_hs.get(h["body_name"], (cls0, []))
-            k = prospect._key(h["material"])
-            if k not in keys:
-                keys.append(k)
-            names[k] = h["label"] or h["material"]
-            ring_hs[h["body_name"]] = (cls, keys)
-        for ring in pros:
-            if ring not in ring_hs and rc.get(ring):
-                ring_hs[ring] = (rc[ring], [])
-        for (cls, hs), p in prospect.expectations(pros, ring_hs).items():
-            if cls == "*" or not cls:
-                continue
-            rocks.append({"cls": cls, "hotspot": None if hs == "*" else names.get(hs, hs),
-                          "rocks": p["rocks"], "rings": len(p["rings"]),
-                          "thin": p["rocks"] < prospect.MIN_ROCKS})
+        rocks = _rock_counts(archive, db)
     except Exception:
         rocks = []
     rocks.sort(key=lambda r: (r["cls"], r["hotspot"] is not None, -r["rocks"]))
@@ -315,3 +294,32 @@ def learning_status(archive: Any, db: Any) -> Dict[str, Any]:
                    "rigs": sum(1 for r in out["rigs"] if r["thin"]),
                    "genera": sum(1 for g in bio["genera"] if g["thin"])}
     return out
+
+
+def _rock_counts(archive: Any, db: Any) -> List[Dict[str, Any]]:
+    """Prospected rocks per ring class and hotspot (L1/L2), and whether thin."""
+    from . import prospect
+    from .model import _ring_prospects
+    rocks = []
+    pros = _ring_prospects(archive)
+    ring_hs: Dict[str, Tuple[str, List[str]]] = {}
+    names = {}
+    rc = ring_classes(db)
+    for h in db.query("SELECT body_name, material, label, ring_class FROM hotspots"):
+        cls0 = prospect.ring_class(h["ring_class"]) or rc.get(h["body_name"], "")
+        cls, keys = ring_hs.get(h["body_name"], (cls0, []))
+        k = prospect._key(h["material"])
+        if k not in keys:
+            keys.append(k)
+        names[k] = h["label"] or h["material"]
+        ring_hs[h["body_name"]] = (cls, keys)
+    for ring in pros:
+        if ring not in ring_hs and rc.get(ring):
+            ring_hs[ring] = (rc[ring], [])
+    for (cls, hs), p in prospect.expectations(pros, ring_hs).items():
+        if cls == "*" or not cls:
+            continue
+        rocks.append({"cls": cls, "hotspot": None if hs == "*" else names.get(hs, hs),
+                      "rocks": p["rocks"], "rings": len(p["rings"]),
+                      "thin": p["rocks"] < prospect.MIN_ROCKS})
+    return rocks

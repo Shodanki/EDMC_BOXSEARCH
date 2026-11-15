@@ -11,6 +11,7 @@
 import { getJSON } from "../api.js";
 import { el, frame, fmt, withPopout, C } from "../ui.js";
 import { t, N_ } from "../i18n.js";
+import { rhinoHold } from "./rhino.js";
 
 const CONTENT = { low: N_("low"), medium: N_("medium"), high: N_("high") };
 const VERDICT = { good: N_("good rock"), fair: N_("fair"), poor: N_("poor - move on") };
@@ -73,12 +74,6 @@ function render() {
 // marked) and the refining of the last 10 minutes (one tick per tonne - the
 // game writes nothing about the refinery's bins, only each finished tonne)
 const GOOD_COL = [C.green, C.amber, C.violet, C.blue, "#E8A06A"];
-// out in the Rhino: hold and how many full rigs still fit (a rig goes in whole)
-function rhinoHold(h) {
-  return el("div", { class: "small " + (h.short ? "c-amber" : "c-dim"), text: h.short
-    ? t("Rhino hold {u}/{c} t · a full rig ({r} t) no longer fits - make room before collecting", { u: h.used, c: h.capacity, r: h.rig_t })
-    : t("Rhino hold {u}/{c} t · full rigs that still fit: {n} ({r} t each)", { u: h.used, c: h.capacity, n: h.rigs_fit, r: h.rig_t }) });
-}
 
 function liveStatus() {
   const L = live;

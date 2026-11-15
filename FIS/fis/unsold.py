@@ -40,7 +40,7 @@ their own on the FIS settings page (fis.ini, section [fis], unsold_*).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .live import parse_ts
 
@@ -63,69 +63,40 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
     lim = dict(DEFAULT_LIMITS, **(limits or {}))
     warn_cr, warn_systems = lim["sell_mcr"] * 1_000_000, lim["sell_systems"]
     risk_moderate, risk_high = lim["moderate_mcr"] * 1_000_000, lim["high_mcr"] * 1_000_000
-    bio: List[Dict[str, Any]] = []
-    scanned: Dict[str, Set[Any]] = {}             # system -> bodies scanned, not sold yet
-    mapped: Dict[str, Set[Any]] = {}              # system -> bodies mapped, not sold yet
-    sold_scan: Dict[str, Set[Any]] = {}           # system -> bodies whose scan was sold
-    sold_map: Dict[str, Set[Any]] = {}            # system -> bodies whose map was sold
-    names: Dict[Any, str] = {}                    # SystemAddress -> name (jumps, honks)
-    last_sale: Dict[str, Optional[float]] = {"bio": None, "exploration": None}
-    lost: Optional[Dict[str, Any]] = None
-    first_sys: Set[str] = set()                   # discovered first by you, not sold yet
-    no_foot: Set[Any] = set()                     # (address, body name): nobody walked there
-    first_foot: Set[Any] = set()                  # (address, body id): your first footfall
+    u = _Unsold()
     for e in events:
         ev = e.get("event")
-        ts = parse_ts(e.get("timestamp"))
-        if ev in ("FSDJump", "Location", "CarrierJump") and e.get("SystemAddress") is not None:
-            names[e["SystemAddress"]] = e.get("StarSystem")
-        elif ev == "ScanOrganic" and e.get("ScanType") == "Analyse":
-            sp = e.get("Species_Localised") or e.get("Species") or "?"
-            bio.append({"species": sp, "variant": e.get("Variant_Localised") or e.get("Variant"),
-                        "ts": ts, "system": names.get(e.get("SystemAddress")),
-                        "footfall": (e.get("SystemAddress"), e.get("Body")) in first_foot})
-        elif ev == "Disembark" and e.get("OnPlanet") and (e.get("SystemAddress"), e.get("Body")) in no_foot:
-            first_foot.add((e.get("SystemAddress"), e.get("BodyID")))
-        elif ev == "SellOrganicData":
-            for b in e.get("BioData") or []:
-                sp = b.get("Species_Localised") or b.get("Species")
-                for i, x in enumerate(bio):
-                    if x["species"] == sp:
-                        del bio[i]
-                        break
-            last_sale["bio"] = ts
-        elif ev == "FSSDiscoveryScan":
-            nm = e.get("SystemName") or names.get(e.get("SystemAddress"))
-            if e.get("SystemAddress") is not None and nm:
-                names[e["SystemAddress"]] = nm
-        elif ev == "Scan" and e.get("ScanType") != "NavBeaconDetail":
-            nm = e.get("StarSystem") or names.get(e.get("SystemAddress"))
-            body = e.get("BodyID") if e.get("BodyID") is not None else e.get("BodyName")
-            if nm and body is not None and body not in sold_scan.get(nm, ()):
-                scanned.setdefault(nm, set()).add(body)
-                if e.get("WasDiscovered") is False and not e.get("DistanceFromArrivalLS"):
-                    first_sys.add(nm)             # the arrival star was undiscovered
-            if e.get("WasFootfalled") is False and e.get("Landable"):
-                no_foot.add((e.get("SystemAddress"), e.get("BodyName")))
-        elif ev == "SAAScanComplete":
-            nm = names.get(e.get("SystemAddress"))
-            body = e.get("BodyID") if e.get("BodyID") is not None else e.get("BodyName")
-            if nm and body is not None and body not in sold_map.get(nm, ()):
-                mapped.setdefault(nm, set()).add(body)
-        elif ev in ("MultiSellExplorationData", "SellExplorationData"):
-            sold = [d.get("SystemName") for d in e.get("Discovered") or []] or (e.get("Systems") or [])
-            for nm in sold:
-                sold_scan.setdefault(nm, set()).update(scanned.pop(nm, ()))
-                sold_map.setdefault(nm, set()).update(mapped.pop(nm, ()))
-                first_sys.discard(nm)
-            last_sale["exploration"] = ts
-        elif ev == "Died":
-            n_sys = len(set(scanned) | set(mapped))
-            if bio or n_sys:
-                lost = {"ts": ts, "bio": len(bio), "systems": n_sys}
-            # the data is gone, not sold: those bodies can be scanned again
-            bio, scanned, mapped = [], {}, {}
-            first_sys = set()
+        handler = _UNSOLD.get(ev)
+        if handler is not None:
+            handler(u, ev, e, parse_ts(e.get("timestamp")))
+    bio, scanned, mapped, first_sys = u.bio, u.scanned, u.mapped, u.first_sys
+    items, total, priced, unknown = _priced(bio, values)
+    systems = set(scanned) | set(mapped)
+    advice = None
+    if total >= warn_cr or len(systems) >= warn_systems:
+        advice = "sell"
+    ff_bio = sum(1 for x in bio if x["footfall"])
+    first_sys &= systems
+    risk = ("high" if total >= risk_high else
+            "moderate" if total >= risk_moderate or first_sys or ff_bio else "low")
+    return {"bio": {"count": len(bio), "value": total, "priced": priced, "unknown": unknown,
+                    "first": sum(1 for x in bio if x["footfall"]), "items": items[-12:],
+                    "since": u.last_sale["bio"]},
+            "exploration": {"systems": len(systems),
+                            "mapped": sum(len(v) for v in mapped.values()),
+                            "bodies": sum(len(v) for v in scanned.values()),
+                            "since": u.last_sale["exploration"]},
+            "lost_last": u.lost, "advice": advice,
+            "warn_cr": warn_cr, "warn_systems": warn_systems,
+            # what a loss would cost and what is irreplaceable
+            "risk": risk, "first_systems": len(first_sys), "footfall_bio": ff_bio,
+            "risk_cr": {"moderate": risk_moderate, "high": risk_high}}
+
+
+def _priced(bio: List[Dict[str, Any]], values: Dict[str, Dict[str, int]]
+            ) -> Tuple[List[Dict[str, Any]], int, int, int]:
+    """Each unsold species with its value (first footfall bonus included):
+    (items, total, how many priced, how many without a known price)."""
     priced, unknown = 0, 0
     total = 0
     items = []
@@ -139,23 +110,107 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
         else:
             unknown += 1
         items.append(dict(x, value=val))
-    systems = set(scanned) | set(mapped)
-    advice = None
-    if total >= warn_cr or len(systems) >= warn_systems:
-        advice = "sell"
-    ff_bio = sum(1 for x in bio if x["footfall"])
-    first_sys &= systems
-    risk = ("high" if total >= risk_high else
-            "moderate" if total >= risk_moderate or first_sys or ff_bio else "low")
-    return {"bio": {"count": len(bio), "value": total, "priced": priced, "unknown": unknown,
-                    "first": sum(1 for x in bio if x["footfall"]), "items": items[-12:],
-                    "since": last_sale["bio"]},
-            "exploration": {"systems": len(systems),
-                            "mapped": sum(len(v) for v in mapped.values()),
-                            "bodies": sum(len(v) for v in scanned.values()),
-                            "since": last_sale["exploration"]},
-            "lost_last": lost, "advice": advice,
-            "warn_cr": warn_cr, "warn_systems": warn_systems,
-            # what a loss would cost and what is irreplaceable
-            "risk": risk, "first_systems": len(first_sys), "footfall_bio": ff_bio,
-            "risk_cr": {"moderate": risk_moderate, "high": risk_high}}
+    return items, total, priced, unknown
+
+
+class _Unsold:
+    """build_unsold's replay of the journal: what is carried unsold."""
+
+    def __init__(self) -> None:
+        self.bio: List[Dict[str, Any]] = []
+        self.scanned: Dict[str, Set[Any]] = {}        # system -> bodies scanned, not sold yet
+        self.mapped: Dict[str, Set[Any]] = {}         # system -> bodies mapped, not sold yet
+        self.sold_scan: Dict[str, Set[Any]] = {}      # system -> bodies whose scan was sold
+        self.sold_map: Dict[str, Set[Any]] = {}       # system -> bodies whose map was sold
+        self.names: Dict[Any, str] = {}               # SystemAddress -> name (jumps, honks)
+        self.last_sale: Dict[str, Optional[float]] = {"bio": None, "exploration": None}
+        self.lost: Optional[Dict[str, Any]] = None
+        self.first_sys: Set[str] = set()              # discovered first by you, not sold yet
+        self.no_foot: Set[Any] = set()                # (address, body name): nobody walked there
+        self.first_foot: Set[Any] = set()             # (address, body id): your first footfall
+
+    def arrival(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """A system's name by its address."""
+        if e.get("SystemAddress") is not None:
+            self.names[e["SystemAddress"]] = e.get("StarSystem")
+
+    def organic(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """A species analysed: carried until sold."""
+        if e.get("ScanType") == "Analyse":
+            sp = e.get("Species_Localised") or e.get("Species") or "?"
+            self.bio.append({"species": sp, "variant": e.get("Variant_Localised") or e.get("Variant"),
+                             "ts": ts, "system": self.names.get(e.get("SystemAddress")),
+                             "footfall": (e.get("SystemAddress"), e.get("Body")) in self.first_foot})
+
+    def disembark(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """On foot where nobody walked before: your first footfall."""
+        if e.get("OnPlanet") and (e.get("SystemAddress"), e.get("Body")) in self.no_foot:
+            self.first_foot.add((e.get("SystemAddress"), e.get("BodyID")))
+
+    def sold_bio(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """Organic data sold: those species are no longer carried."""
+        bio = self.bio
+        for b in e.get("BioData") or []:
+            sp = b.get("Species_Localised") or b.get("Species")
+            for i, x in enumerate(bio):
+                if x["species"] == sp:
+                    del bio[i]
+                    break
+        self.last_sale["bio"] = ts
+
+    def discovery(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """The honk names the system."""
+        nm = e.get("SystemName") or self.names.get(e.get("SystemAddress"))
+        if e.get("SystemAddress") is not None and nm:
+            self.names[e["SystemAddress"]] = nm
+
+    def scan(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """A body scanned (not by a nav beacon): carried until sold."""
+        if e.get("ScanType") == "NavBeaconDetail":
+            return
+        nm = e.get("StarSystem") or self.names.get(e.get("SystemAddress"))
+        body = e.get("BodyID") if e.get("BodyID") is not None else e.get("BodyName")
+        if nm and body is not None and body not in self.sold_scan.get(nm, ()):
+            self.scanned.setdefault(nm, set()).add(body)
+            if e.get("WasDiscovered") is False and not e.get("DistanceFromArrivalLS"):
+                self.first_sys.add(nm)             # the arrival star was undiscovered
+        if e.get("WasFootfalled") is False and e.get("Landable"):
+            self.no_foot.add((e.get("SystemAddress"), e.get("BodyName")))
+
+    def mapping(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """A body mapped: carried until sold."""
+        nm = self.names.get(e.get("SystemAddress"))
+        body = e.get("BodyID") if e.get("BodyID") is not None else e.get("BodyName")
+        if nm and body is not None and body not in self.sold_map.get(nm, ()):
+            self.mapped.setdefault(nm, set()).add(body)
+
+    def sold_data(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """Exploration data sold, by system."""
+        sold = [d.get("SystemName") for d in e.get("Discovered") or []] or (e.get("Systems") or [])
+        for nm in sold:
+            self.sold_scan.setdefault(nm, set()).update(self.scanned.pop(nm, ()))
+            self.sold_map.setdefault(nm, set()).update(self.mapped.pop(nm, ()))
+            self.first_sys.discard(nm)
+        self.last_sale["exploration"] = ts
+
+    def died(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """The data is gone, not sold: those bodies can be scanned again."""
+        n_sys = len(set(self.scanned) | set(self.mapped))
+        if self.bio or n_sys:
+            self.lost = {"ts": ts, "bio": len(self.bio), "systems": n_sys}
+        self.bio, self.scanned, self.mapped = [], {}, {}
+        self.first_sys = set()
+
+
+# journal event -> its _Unsold handler (4.12)
+_UNSOLD = {
+    "FSDJump": _Unsold.arrival, "Location": _Unsold.arrival, "CarrierJump": _Unsold.arrival,
+    "ScanOrganic": _Unsold.organic,
+    "Disembark": _Unsold.disembark,
+    "SellOrganicData": _Unsold.sold_bio,
+    "FSSDiscoveryScan": _Unsold.discovery,
+    "Scan": _Unsold.scan,
+    "SAAScanComplete": _Unsold.mapping,
+    "MultiSellExplorationData": _Unsold.sold_data, "SellExplorationData": _Unsold.sold_data,
+    "Died": _Unsold.died,
+}

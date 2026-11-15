@@ -111,8 +111,26 @@ if (SOLO) {
   ctl.append(fullscreen.button(), layout.picker("lay-pick"), langs, full);
   document.body.append(ctl);
 }
+// 4.12: files of the plugin missing or not as released - a banner on top
+function filesBanner(f) {
+  if (!f || f.ok) return;
+  const bits = [];
+  if (f.n_missing) bits.push(t("{n} missing", { n: f.n_missing }));
+  if (f.n_changed) bits.push(t("{n} changed or damaged", { n: f.n_changed }));
+  const head = f.manifest === false
+    ? t("File check: SHBOXSEARCH.manifest or integrity.py is missing.")
+    : t("Files of {v}: {what}.", { v: f.version || "?", what: bits.join(", ") });
+  const b = el("div", { id: "files-banner", class: "files-banner", role: "alert" });
+  b.append(el("strong", {}, head + " "),
+    t("Copy the plugin folder from the release ZIP again - your database and settings are separate files and stay."));
+  const names = [...(f.missing || []), ...(f.changed || [])];
+  if (names.length) b.title = names.join(" · ");
+  document.body.prepend(b);
+}
+
 // home network: show where other devices find the page (never the token)
 getJSON("/api/config").then((c) => {
+  if (c) filesBanner(c.files);
   if (!c || !c.lan || !c.lan_urls || !c.lan_urls.length) return;
   const f = document.getElementById("foot-lan");
   f.textContent = t("Home network: {u}", { u: c.lan_urls[0] });

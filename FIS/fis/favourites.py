@@ -45,6 +45,8 @@ def _fid(fid: Optional[str]) -> str:
 
 
 class FavouriteStore:
+    """The favourite carriers in FIS/favourites.json: read again when the file
+    changes, written atomically, one writer at a time."""
     def __init__(self, path: str) -> None:
         self.path = path
         self._lock = threading.Lock()

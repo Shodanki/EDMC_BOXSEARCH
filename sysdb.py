@@ -37,7 +37,7 @@ import os
 import shutil
 import sqlite3
 import time
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 if __package__:     # inside the plugin package (EDMC)
     from .procgen import (SectorRegistry, boxel_index_of_coords,
@@ -45,12 +45,14 @@ if __package__:     # inside the plugin package (EDMC)
                           id64_of_slot, id64_slot, make_name, parse_boxel_key,
                           parse_name, star_pos)
     from .shells import INHABITED, inhabited_event
-else:               # on its own: the self test, the FIS
+    from .biosig import open_bio
+else:               # on its own: the FIS, plain imports
     from procgen import (SectorRegistry, boxel_index_of_coords,
                          boxel_labels, computed_sector_index, decode_id64,
                          id64_of_slot, id64_slot, make_name, parse_boxel_key,
                          parse_name, star_pos)
     from shells import INHABITED, inhabited_event
+    from biosig import open_bio
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +276,13 @@ CREATE TABLE IF NOT EXISTS fetched_shells (
 );
 CREATE INDEX IF NOT EXISTS fetched_shells_svc ON fetched_shells(service, expires_at);
 
+-- 4.12 (H3 #5): probe names asked at EDSM by name, and until when that counts.
+-- A name EDSM did not know is NOT absent - it is only not asked again soon.
+CREATE TABLE IF NOT EXISTS edsm_names (
+    name       TEXT PRIMARY KEY,
+    expires_at REAL NOT NULL
+);
+
 -- 4.8 (C1): more than one commander on one PC. What is KNOWN about a system
 -- or body (positions, bodies, signals, rings, hotspots, finds) stays shared in
 -- the tables above; what each commander EXPLORED (visited, FSS, scanned,
@@ -354,6 +363,11 @@ def _epoch(stamp: Optional[str]) -> Optional[float]:
         return None
 
 
+def _in_body_count(r: Any) -> bool:
+    """Counts toward the game's BodyCount: not a belt cluster, not a barycentre."""
+    return r["kind"] != "BaryCentre" and "Belt Cluster" not in (r["name"] or "")
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -393,6 +407,8 @@ def stored_state(path: str) -> Optional[Tuple[int, Set[str]]]:
 
 
 def needs_migration(state: Optional[Tuple[int, Set[str]]]) -> bool:
+    """True when a stored database is older than SCHEMA_VERSION or misses a
+    repair (then it is backed up first); False for a new file."""
     if state is None:
         return False
     version, done = state
@@ -433,6 +449,119 @@ def backup_database(path: str, tag: str, keep: int = BACKUP_KEEP) -> str:
     return dst_path
 
 
+def _js(v: Any) -> Optional[str]:
+    """Compact JSON, or None for an empty value."""
+    return json.dumps(v, separators=(",", ":")) if v else None
+
+
+def _pct(lst: Any, key: str = "Name") -> Any:
+    """A journal list of {Name, Percent} as {name: percent}; a dict stays."""
+    if not lst:
+        return None
+    if isinstance(lst, dict):
+        return lst
+    return {d.get(key): d.get("Percent") for d in lst
+            if isinstance(d, dict) and d.get(key)}
+
+
+def _flag(entry: dict, key: str) -> Optional[int]:
+    """1 / 0 for a journal flag that is there, None when the event has none."""
+    return (1 if entry.get(key) else 0) if key in entry else None
+
+
+def _scan_physics(entry: dict) -> Dict[str, Any]:
+    """The physical data of a Scan event, as body columns."""
+    rings = entry.get("Rings") or []
+    ring_list = [{"name": r.get("Name"),
+                  "cls": (r.get("RingClass") or "").replace("eRingClass_", ""),
+                  "mass": r.get("MassMT"),
+                  "inner": r.get("InnerRad"), "outer": r.get("OuterRad")}
+                 for r in rings]
+    return dict(
+        radius=entry.get("Radius"),
+        mass_em=entry.get("MassEM"),
+        gravity=entry.get("SurfaceGravity"),
+        temp_k=entry.get("SurfaceTemperature"),
+        pressure=entry.get("SurfacePressure"),
+        atmosphere=entry.get("Atmosphere") or None,
+        atmo_type=entry.get("AtmosphereType") or None,
+        atmo_comp=_js(_pct(entry.get("AtmosphereComposition"))),
+        volcanism=entry.get("Volcanism") or None,
+        composition=_js(entry.get("Composition")),
+        materials=_js(_pct(entry.get("Materials"))),
+        tidal_lock=_flag(entry, "TidalLock"),
+        axial_tilt=entry.get("AxialTilt"),
+        rotation=entry.get("RotationPeriod"),
+        was_footfalled=_flag(entry, "WasFootfalled"),
+        rings_json=_js(ring_list),
+        reserve=entry.get("ReserveLevel"),
+        stellar_mass=entry.get("StellarMass"),
+        abs_mag=entry.get("AbsoluteMagnitude"),
+        age_my=entry.get("Age_MY"),
+        luminosity=entry.get("Luminosity"),
+        subclass=entry.get("Subclass"),
+    )
+
+
+def _scan_kind(ev: str, entry: dict) -> str:
+    """Star, Planet, BaryCentre or Other (belt clusters)."""
+    if entry.get("StarType"):
+        return "Star"
+    if entry.get("PlanetClass") is not None:
+        return "Planet"
+    return "BaryCentre" if ev == "ScanBaryCentre" else "Other"
+
+
+def _scan_parent(entry: dict) -> Optional[int]:
+    """The body id of the nearest parent in a Scan's Parents list."""
+    for pr in (entry.get("Parents") or []):
+        if isinstance(pr, dict) and pr:
+            return list(pr.values())[0]
+    return None
+
+
+def _scan_orbit(ev: str, entry: dict) -> Dict[str, Any]:
+    """What a Scan says about the body's place, orbit, class and discovery,
+    as body columns."""
+    rings = entry.get("Rings") or []
+    ring_cls = ",".join(sorted({r.get("RingClass") for r in rings
+                                if r.get("RingClass")})) or None
+    ring_mass = sum(float(r.get("MassMT") or 0.0)
+                    for r in rings
+                    if r.get("RingClass") == "eRingClass_Icy")
+    return dict(
+        scan_ts=_epoch(entry.get("timestamp")),
+        ring_classes=ring_cls,
+        ring_mass=ring_mass or None,
+        star_type=entry.get("StarType"),
+        arrival_ls=entry.get("DistanceFromArrivalLS"),
+        parent_id=_scan_parent(entry),
+        sma=entry.get("SemiMajorAxis"),
+        ecc=entry.get("Eccentricity"),
+        inc=entry.get("OrbitalInclination"),
+        peri=entry.get("Periapsis"),
+        node=entry.get("AscendingNode"),
+        mean_anom=entry.get("MeanAnomaly"),
+        period=entry.get("OrbitalPeriod"),
+        name=entry.get("BodyName"), kind=_scan_kind(ev, entry),
+        planet_class=entry.get("PlanetClass"),
+        terraform=entry.get("TerraformState"),
+        landable=1 if entry.get("Landable") else 0,
+        was_discovered=_flag(entry, "WasDiscovered"),
+        was_mapped=_flag(entry, "WasMapped"),
+        # a nav beacon hands over every body's data: the data
+        # counts, but it is not your scan (no discovery, no
+        # exploration data) - an own scan stays an own scan
+        scanned=None if entry.get("ScanType") == "NavBeaconDetail" else 1)
+
+
+def _discovery_flags(entry: dict) -> Dict[str, Optional[int]]:
+    """Was the body discovered, mapped, walked on before you (None: not said)."""
+    return dict(was_discovered=_flag(entry, "WasDiscovered"),
+                was_mapped=_flag(entry, "WasMapped"),
+                was_footfalled=_flag(entry, "WasFootfalled"))
+
+
 class SystemDB:
     """All writes are idempotent and commit-safe."""
 
@@ -440,6 +569,7 @@ class SystemDB:
         self.path = path
         self.backup_path: Optional[str] = None
         self._dock_market_id: Optional[int] = None
+        self._dock_carrier = False      # 4.12: docked at a fleet carrier (no surface there)
         try:
             state = stored_state(path)
         except sqlite3.Error:
@@ -491,6 +621,11 @@ class SystemDB:
 
     def _migrate(self) -> None:
         """Add columns introduced after the first release, in place."""
+        self._migrate_columns()
+        self._migrate_repairs()
+
+    def _migrate_columns(self) -> None:
+        """Columns added after the first release, in place."""
         have = {r[1] for r in self.cx.execute("PRAGMA table_info(systems)")}
         if "sources" not in have:
             self.cx.execute("ALTER TABLE systems ADD COLUMN sources TEXT")
@@ -545,38 +680,37 @@ class SystemDB:
             if col not in bchave:
                 self.cx.execute("ALTER TABLE cmdr_bodies ADD COLUMN %s %s" % (col, typ))
         self.cx.commit()
-        if not self.get_meta("fix_phantoms"):
-            try:
-                n = self.repair_phantoms()
-                logger.info("database repair (destination phantoms): %d removed", n)
-            except Exception:
-                logger.exception("database repair (destination phantoms) failed")
-        if not self.get_meta("fix_marks45"):
-            try:
-                res = self.repair_marks45()
-                logger.info("database repair (SRV parked / vehicle landings): %s", res)
-            except Exception:
-                logger.exception("database repair (surface marks) failed")
+
+    def _migrate_repairs(self) -> None:
+        """The one-time repairs, each once (a meta key marks it done)."""
+        self._repair_once("fix_phantoms", self.repair_phantoms,
+                          "database repair (destination phantoms): %d removed",
+                          "database repair (destination phantoms) failed")
+        self._repair_once("fix_marks45", self.repair_marks45,
+                          "database repair (SRV parked / vehicle landings): %s",
+                          "database repair (surface marks) failed")
         if not self.get_meta("fix_lost_ticks") and self.get_meta(LOSS_REPLAY):
-            try:
-                n = self.repair_lost_ticks()
-                logger.info("database repair (route ticks of data lost in a crash): %d cleared", n)
-            except Exception:
-                logger.exception("database repair (lost route ticks) failed")
+            self._repair_once("fix_lost_ticks", self.repair_lost_ticks,
+                              "database repair (route ticks of data lost in a crash): %d cleared",
+                              "database repair (lost route ticks) failed")
         elif not self.get_meta("fix_lost_ticks"):
             self.set_meta("fix_lost_ticks", _now())     # nothing lost recorded yet
-        if not self.get_meta("fix_n1zero"):
-            try:
-                res = self.repair_n1zero()
-                logger.info("database repair (n1=0 naming rule): %s", res)
-            except Exception:
-                logger.exception("database repair (n1=0 naming rule) failed")
-        if not self.get_meta("fix_boxel_end410"):
-            try:
-                res = self.repair_boxel_ends()
-                logger.info("database repair (boxel ends below a known system): %s", res)
-            except Exception:
-                logger.exception("database repair (boxel ends) failed")
+        self._repair_once("fix_n1zero", self.repair_n1zero,
+                          "database repair (n1=0 naming rule): %s",
+                          "database repair (n1=0 naming rule) failed")
+        self._repair_once("fix_boxel_end410", self.repair_boxel_ends,
+                          "database repair (boxel ends below a known system): %s",
+                          "database repair (boxel ends) failed")
+
+    def _repair_once(self, key: str, repair: Callable[[], Any], done: str, failed: str) -> None:
+        """Run one repair unless meta key says it ran; the repair sets the key."""
+        if self.get_meta(key):
+            return
+        try:
+            res = repair()
+            logger.info(done, res)
+        except Exception:
+            logger.exception(failed)
 
     def repair_boxel_ends(self) -> Dict[str, int]:
         """
@@ -675,6 +809,7 @@ class SystemDB:
 
     # ------------------------------------------------------------------ util
     def close(self) -> None:
+        """Commit and close the connection; errors on the way out are ignored."""
         try:
             self.cx.commit()
             self.cx.close()
@@ -682,10 +817,12 @@ class SystemDB:
             pass
 
     def get_meta(self, k: str, default: Optional[str] = None) -> Optional[str]:
+        """One value from the key/value table meta, or default."""
         r = self.cx.execute("SELECT v FROM meta WHERE k=?", (k,)).fetchone()
         return r["v"] if r else default
 
     def set_meta(self, k: str, v: str) -> None:
+        """Store one value in meta (as text) and commit."""
         self.cx.execute("INSERT OR REPLACE INTO meta(k,v) VALUES (?,?)", (k, str(v)))
         self.cx.commit()
 
@@ -701,9 +838,14 @@ class SystemDB:
             self.cx.commit()
         return len(rows)
 
-    def external_calls_since(self, since: float,
-                             service: Optional[str] = None) -> int:
-        if service:
+    def external_calls_since(self, since: float, service: Optional[str] = None,
+                             endpoint: Optional[str] = None) -> int:
+        """Requests in the call log since an epoch time - of one service and,
+        when given, one endpoint label."""
+        if service and endpoint:
+            r = self.cx.execute("SELECT COUNT(*) FROM external_calls "
+                                "WHERE ts>=? AND service=? AND endpoint=?", (since, service, endpoint))
+        elif service:
             r = self.cx.execute("SELECT COUNT(*) FROM external_calls "
                                 "WHERE ts>=? AND service=?", (since, service))
         else:
@@ -712,6 +854,7 @@ class SystemDB:
         return int(r.fetchone()[0])
 
     def prune_external_calls(self, days: int = CALL_LOG_DAYS) -> int:
+        """Delete call-log entries older than days; returns how many went."""
         n = self.cx.execute("DELETE FROM external_calls WHERE ts<?",
                             (time.time() - days * 86400.0,)).rowcount
         self.cx.commit()
@@ -721,12 +864,28 @@ class SystemDB:
     def record_shell(self, service: str, center: Sequence[float], r_min: float,
                      r_max: float, systems: int, ttl_s: float,
                      now: Optional[float] = None) -> None:
+        """Remember that service delivered the shell r_min..r_max around center
+        (local first: not asked again before ttl_s has passed)."""
         now = time.time() if now is None else now
         self.cx.execute(
             "INSERT INTO fetched_shells(service, cx, cy, cz, r_min, r_max,"
             " fetched_at, expires_at, systems) VALUES (?,?,?,?,?,?,?,?,?)",
             (service, float(center[0]), float(center[1]), float(center[2]),
              float(r_min), float(r_max), now, now + float(ttl_s), int(systems)))
+        self.cx.commit()
+
+    def edsm_names_asked(self, now: Optional[float] = None) -> Set[str]:
+        """H3 #5: the probe names asked at EDSM whose answer still counts."""
+        now = time.time() if now is None else now
+        return {r["name"] for r in self.cx.execute(
+            "SELECT name FROM edsm_names WHERE expires_at > ?", (now,))}
+
+    def edsm_names_mark(self, names: Sequence[str], ttl_s: float,
+                        now: Optional[float] = None) -> None:
+        """H3 #5: these names were asked at EDSM - not again for ttl_s."""
+        now = time.time() if now is None else now
+        self.cx.executemany("INSERT OR REPLACE INTO edsm_names(name, expires_at) VALUES (?,?)",
+                            [(n, now + float(ttl_s)) for n in names if n])
         self.cx.commit()
 
     def valid_shells(self, service: str, now: Optional[float] = None
@@ -752,6 +911,8 @@ class SystemDB:
 
     def learn_sector(self, name: str, id64: Optional[int] = None,
                      coords: Optional[Sequence[float]] = None) -> None:
+        """Teach the sector registry where a named system's sector lies, from
+        its id64 or its coordinates; a newly placed sector is stored."""
         p = parse_name(name)
         if p is None:
             return
@@ -874,13 +1035,18 @@ class SystemDB:
         return 1
 
     def system_by_id64(self, id64: int) -> Optional[sqlite3.Row]:
+        """The systems row with this id64, or None."""
         return self.cx.execute("SELECT * FROM systems WHERE id64=?", (id64,)).fetchone()
 
     def system(self, name: str) -> Optional[sqlite3.Row]:
+        """The systems row with this exact name, or None."""
         return self.cx.execute("SELECT * FROM systems WHERE name=?", (name,)).fetchone()
 
     def sphere(self, center: Sequence[float], radius: float,
                min_quality: int = 0) -> List[sqlite3.Row]:
+        """Systems with coordinates inside the sphere, of at least min_quality;
+        visited and FSS state are the main commander's (the survey plans for
+        them)."""
         cx0, cy0, cz0 = center
         rows = self.cx.execute(
             "SELECT * FROM systems WHERE quality>=? AND x BETWEEN ? AND ? "
@@ -893,7 +1059,7 @@ class SystemDB:
         fid = self.view_fid(PLAN)
         if fid and out:
             # C1: the survey plans for the main commander - "visited" and
-            # "FSS complete" are his, the systems themselves are shared
+            # "FSS complete" are theirs, the systems themselves are shared
             mine = self.visited_by(fid)
             own = []
             for r in out:
@@ -929,10 +1095,12 @@ class SystemDB:
         return closes
 
     def unmark_absent(self, name: str) -> None:
+        """Take a name off the absent list (it was found after all)."""
         self.cx.execute("DELETE FROM absent WHERE name=?", (name.strip(),))
         self.cx.commit()
 
     def absent_set(self) -> Set[str]:
+        """Every name the galaxy map said does not exist."""
         return {r[0] for r in self.cx.execute("SELECT name FROM absent")}
 
     # ------------------------------------------------------------------ boxel
@@ -1059,6 +1227,7 @@ class SystemDB:
         return end
 
     def boxel_end(self, key: str) -> Optional[int]:
+        """The end of a boxel's list (n2_end, from 'list ends at'), or None."""
         r = self.cx.execute("SELECT n2_end FROM boxels WHERE key=?", (key,)).fetchone()
         return r["n2_end"] if r else None
 
@@ -1144,19 +1313,23 @@ class SystemDB:
             s = dict(s) if s is not None else None
             if s is not None:
                 s["fss_complete"] = own["fss_complete"] if own else 0
-        scanned = sum(1 for r in rows if r["scanned"])
+        # the game's BodyCount holds stars and planets only: belt clusters
+        # and barycentres are scanned too, but must not fill the count up
+        scanned = sum(1 for r in rows if r["scanned"] and _in_body_count(r))
         mapped = sum(1 for r in rows if r["mapped"])
         dss_open, bio_open, valuable = [], [], []
         bio_signals_open = 0
+        seen = self.codex_species(id64)
         for r in rows:
             worth = (r["sig_bio"] or 0) > 0 or (r["planet_class"] in VALUABLE_CLASSES) \
                 or (r["terraform"] or "") == "Terraformable"
             if r["kind"] == "Planet" and worth and not r["mapped"]:
                 dss_open.append(r["name"] or "Body %d" % r["body_id"])
             # M1: open = signals minus species analysed - a body with three
-            # signals and one species done is still open (it used to count
-            # as done as soon as one species was analysed)
-            left = (r["sig_bio"] or 0) - (r["organics"] or 0)
+            # signals and one species done is still open. 4.11.1 (biosig):
+            # Brain Trees report one signal for several species; each one
+            # the codex saw and that is not analysed counts as open
+            left = self._bio_left(r, seen.get(r["body_id"], ()))
             if left > 0:
                 bio_open.append(r["name"] or "Body %d" % r["body_id"])
                 bio_signals_open += left
@@ -1327,93 +1500,117 @@ class SystemDB:
         body stays.
         """
         a, ts = entry.get("SystemAddress"), entry.get("timestamp")
-        if ev == "Scan" and a and entry.get("BodyID") is not None \
-                and entry.get("ScanType") != "NavBeaconDetail":
-            bid = entry["BodyID"]
-            self._cmdr_body(a, bid)
-            self.cx.execute("UPDATE cmdr_bodies SET scan_open=1 WHERE fid=? AND sys_id64=? AND "
-                            "body_id=? AND scan_sold=0", (self.fid, a, bid))
-            self._done_again(a, bid, "scan")
+        if ev == "Scan" and a and entry.get("BodyID") is not None and entry.get("ScanType") != "NavBeaconDetail":
+            self._carry_scan(ev, entry, a, ts)
         elif ev == "SAAScanComplete" and a and entry.get("BodyID") is not None:
-            bid = entry["BodyID"]
-            self._cmdr_body(a, bid)
-            self.cx.execute("UPDATE cmdr_bodies SET map_open=1 WHERE fid=? AND sys_id64=? AND "
-                            "body_id=? AND map_sold=0", (self.fid, a, bid))
-            self._done_again(a, bid, "map")
-        elif ev == "ScanOrganic" and entry.get("ScanType") == "Analyse" and a \
-                and entry.get("Body") is not None:
-            sp = entry.get("Species_Localised") or entry.get("Species")
-            bid = entry["Body"]
-            if not sp:
+            self._carry_map(ev, entry, a, ts)
+        elif ev == "ScanOrganic" and entry.get("ScanType") == "Analyse" and a and entry.get("Body") is not None:
+            if not self._carry_bio(ev, entry, a, ts):
                 return
-            self._cmdr_body(a, bid)
-            r = self.cx.execute("SELECT bio_open FROM cmdr_bodies WHERE fid=? AND sys_id64=? AND "
-                                "body_id=?", (self.fid, a, bid)).fetchone()
-            open_ = self._lost_list(r["bio_open"] if r else None)
-            if sp not in open_:
-                open_.append(sp)
-            self.cx.execute("UPDATE cmdr_bodies SET bio_open=? WHERE fid=? AND sys_id64=? AND "
-                            "body_id=?", (json.dumps(open_), self.fid, a, bid))
-            self._done_again(a, bid, "bio:" + sp)
         elif ev in ("SellExplorationData", "MultiSellExplorationData"):
-            names = [d.get("SystemName") for d in entry.get("Discovered") or []] \
-                or list(entry.get("Systems") or [])
-            for nm in names:
-                row = self.system(nm) if nm else None
-                if row is None or not row["id64"]:
-                    continue
-                self.cx.execute("UPDATE cmdr_bodies SET scan_sold=MAX(scan_sold,scan_open), "
-                                "map_sold=MAX(map_sold,map_open), scan_open=0, map_open=0 "
-                                "WHERE fid=? AND sys_id64=?", (self.fid, row["id64"]))
+            self._carry_sold_data(ev, entry, a, ts)
         elif ev == "SellOrganicData":
-            for b in entry.get("BioData") or []:
-                sp = b.get("Species_Localised") or b.get("Species")
-                if not sp:
-                    continue
-                r = self.cx.execute("SELECT rowid, bio_open FROM cmdr_bodies WHERE fid=? AND "
-                                    "bio_open LIKE ? ORDER BY rowid LIMIT 1",
-                                    (self.fid, '%' + json.dumps(sp) + '%')).fetchone()
-                if r is not None:
-                    left = [x for x in self._lost_list(r["bio_open"]) if x != sp]
-                    self.cx.execute("UPDATE cmdr_bodies SET bio_open=? WHERE rowid=?",
-                                    (json.dumps(left) if left else None, r["rowid"]))
+            self._carry_sold_bio(ev, entry, a, ts)
         elif ev == "Died":
-            rows = self.cx.execute(
-                "SELECT rowid, * FROM cmdr_bodies WHERE fid=? AND (scan_open=1 OR map_open=1 "
-                "OR bio_open IS NOT NULL)", (self.fid,)).fetchall()
-            systems = set()
-            for r in rows:
-                lost = self._lost_list(r["lost_what"])
-                sets = {"scan_open": 0, "map_open": 0, "bio_open": None, "lost_ts": ts}
-                if r["scan_open"]:
-                    sets["scanned"] = 0
-                    lost.append("scan")
-                if r["map_open"]:
-                    sets["mapped"] = 0
-                    lost.append("map")
-                gone = self._lost_list(r["bio_open"])
-                if gone:
-                    species = [x for x in self._lost_list(r["bio_species"])
-                               if isinstance(x, dict) and x.get("species") not in gone]
-                    sets["bio_species"] = json.dumps(species) if species else None
-                    sets["organics"] = len(species)
-                    lost += ["bio:" + g for g in gone]
-                if not (r["scan_open"] or r["map_open"] or gone):
-                    continue
-                sets["lost_what"] = json.dumps(sorted(set(lost)))
-                self.cx.execute("UPDATE cmdr_bodies SET %s WHERE rowid=?"
-                                % ",".join("%s=?" % k for k in sets),
-                                list(sets.values()) + [r["rowid"]])
-                if r["scan_open"]:
-                    systems.add(r["sys_id64"])
-            for sa in systems:
-                self.cx.execute("UPDATE cmdr_systems SET fss_complete=0, lost_ts=? WHERE fid=? "
-                                "AND sys_id64=?", (ts, self.fid, sa))
-            # the route ticks of that work went down with it
-            self._clear_lost_ticks(ts, " AND c.fid=? AND c.lost_ts=?", (self.fid, ts))
-            if rows:
-                logger.info("ship lost: %d bodies with unsold data reset for %s", len(rows), self.fid)
+            self._carry_died(ev, entry, a, ts)
         self.cx.commit()
+
+    def _carry_scan(self, ev: str, entry: dict, a: Any, ts: Any) -> None:
+        """A scan is open (unsold) until the system's data is sold."""
+        bid = entry["BodyID"]
+        self._cmdr_body(a, bid)
+        self.cx.execute("UPDATE cmdr_bodies SET scan_open=1 WHERE fid=? AND sys_id64=? AND "
+                        "body_id=? AND scan_sold=0", (self.fid, a, bid))
+        self._done_again(a, bid, "scan")
+
+    def _carry_map(self, ev: str, entry: dict, a: Any, ts: Any) -> None:
+        """A map is open (unsold) until the system's data is sold."""
+        bid = entry["BodyID"]
+        self._cmdr_body(a, bid)
+        self.cx.execute("UPDATE cmdr_bodies SET map_open=1 WHERE fid=? AND sys_id64=? AND "
+                        "body_id=? AND map_sold=0", (self.fid, a, bid))
+        self._done_again(a, bid, "map")
+
+    def _carry_bio(self, ev: str, entry: dict, a: Any, ts: Any) -> bool:
+        """An analysed species is open (unsold) until it is sold. False: no species named."""
+        sp = entry.get("Species_Localised") or entry.get("Species")
+        bid = entry["Body"]
+        if not sp:
+            return False
+        self._cmdr_body(a, bid)
+        r = self.cx.execute("SELECT bio_open FROM cmdr_bodies WHERE fid=? AND sys_id64=? AND "
+                            "body_id=?", (self.fid, a, bid)).fetchone()
+        open_ = self._lost_list(r["bio_open"] if r else None)
+        if sp not in open_:
+            open_.append(sp)
+        self.cx.execute("UPDATE cmdr_bodies SET bio_open=? WHERE fid=? AND sys_id64=? AND "
+                        "body_id=?", (json.dumps(open_), self.fid, a, bid))
+        self._done_again(a, bid, "bio:" + sp)
+        return True
+
+    def _carry_sold_data(self, ev: str, entry: dict, a: Any, ts: Any) -> None:
+        """Exploration data sold: the scans and maps of these systems are no longer at risk."""
+        names = [d.get("SystemName") for d in entry.get("Discovered") or []] \
+            or list(entry.get("Systems") or [])
+        for nm in names:
+            row = self.system(nm) if nm else None
+            if row is None or not row["id64"]:
+                continue
+            self.cx.execute("UPDATE cmdr_bodies SET scan_sold=MAX(scan_sold,scan_open), "
+                            "map_sold=MAX(map_sold,map_open), scan_open=0, map_open=0 "
+                            "WHERE fid=? AND sys_id64=?", (self.fid, row["id64"]))
+
+    def _carry_sold_bio(self, ev: str, entry: dict, a: Any, ts: Any) -> None:
+        """Organic data sold: those species are no longer at risk."""
+        for b in entry.get("BioData") or []:
+            sp = b.get("Species_Localised") or b.get("Species")
+            if not sp:
+                continue
+            r = self.cx.execute("SELECT rowid, bio_open FROM cmdr_bodies WHERE fid=? AND "
+                                "bio_open LIKE ? ORDER BY rowid LIMIT 1",
+                                (self.fid, '%' + json.dumps(sp) + '%')).fetchone()
+            if r is not None:
+                left = [x for x in self._lost_list(r["bio_open"]) if x != sp]
+                self.cx.execute("UPDATE cmdr_bodies SET bio_open=? WHERE rowid=?",
+                                (json.dumps(left) if left else None, r["rowid"]))
+
+    def _carry_died(self, ev: str, entry: dict, a: Any, ts: Any) -> None:
+        """Died: every open scan, map and species of this commander is undone and marked lost."""
+        rows = self.cx.execute(
+            "SELECT rowid, * FROM cmdr_bodies WHERE fid=? AND (scan_open=1 OR map_open=1 "
+            "OR bio_open IS NOT NULL)", (self.fid,)).fetchall()
+        systems = set()
+        for r in rows:
+            lost = self._lost_list(r["lost_what"])
+            sets = {"scan_open": 0, "map_open": 0, "bio_open": None, "lost_ts": ts}
+            if r["scan_open"]:
+                sets["scanned"] = 0
+                lost.append("scan")
+            if r["map_open"]:
+                sets["mapped"] = 0
+                lost.append("map")
+            gone = self._lost_list(r["bio_open"])
+            if gone:
+                species = [x for x in self._lost_list(r["bio_species"])
+                           if isinstance(x, dict) and x.get("species") not in gone]
+                sets["bio_species"] = json.dumps(species) if species else None
+                sets["organics"] = len(species)
+                lost += ["bio:" + g for g in gone]
+            if not (r["scan_open"] or r["map_open"] or gone):
+                continue
+            sets["lost_what"] = json.dumps(sorted(set(lost)))
+            self.cx.execute("UPDATE cmdr_bodies SET %s WHERE rowid=?"
+                            % ",".join("%s=?" % k for k in sets),
+                            list(sets.values()) + [r["rowid"]])
+            if r["scan_open"]:
+                systems.add(r["sys_id64"])
+        for sa in systems:
+            self.cx.execute("UPDATE cmdr_systems SET fss_complete=0, lost_ts=? WHERE fid=? "
+                            "AND sys_id64=?", (ts, self.fid, sa))
+        # the route ticks of that work went down with it
+        self._clear_lost_ticks(ts, " AND c.fid=? AND c.lost_ts=?", (self.fid, ts))
+        if rows:
+            logger.info("ship lost: %d bodies with unsold data reset for %s", len(rows), self.fid)
 
     def _clear_lost_ticks(self, before: Optional[str], where: str = "", args: Sequence[Any] = ()) -> int:
         """Route ticks set before a crash belong to work that is gone - the
@@ -1466,6 +1663,33 @@ class SystemDB:
                     d["bio"].append(w[4:])
         return sorted(out.values(), key=lambda d: d["ts"] or "", reverse=True)
 
+    def unsold_rows(self, fid: Optional[str]) -> List[sqlite3.Row]:
+        """4.12: the bodies this commander carries unsold data of (scan, map
+        or analysed species) - with the shared body row (class, terraform,
+        star type) and the commander's own first discovery / first map."""
+        if not fid:
+            return []
+        return self.cx.execute(
+            "SELECT c.sys_id64, c.body_id, c.scan_open, c.map_open, c.bio_open, "
+            "c.was_discovered, c.was_mapped, b.kind, b.planet_class, b.terraform, b.star_type, "
+            "CASE WHEN c.map_open=1 THEN 1 ELSE 0 END AS mapped, 1 AS scanned "
+            "FROM cmdr_bodies c LEFT JOIN bodies b ON b.sys_id64=c.sys_id64 AND b.body_id=c.body_id "
+            "WHERE c.fid=? AND (c.scan_open=1 OR c.map_open=1 OR "
+            "(c.bio_open IS NOT NULL AND c.bio_open NOT IN ('', '[]')))", (fid,)).fetchall()
+
+    def hotspots_of(self, sys_id64: int, body_name: str) -> List[sqlite3.Row]:
+        """4.12: the hotspots of one ring (most first)."""
+        return self.cx.execute("SELECT material, label, count FROM hotspots WHERE sys_id64=? AND "
+                               "body_name=? ORDER BY count DESC, material", (sys_id64, body_name)).fetchall()
+
+    def finds_of(self, sys_id64: int, body_id: int) -> List[sqlite3.Row]:
+        """4.12: what a body offers besides biology - geological, guardian,
+        thargoid, human signals, mining locations (signals table)."""
+        return self.cx.execute("SELECT kind, label, count FROM signals WHERE sys_id64=? AND body_id=? "
+                               "AND kind NOT LIKE 'genus:%' AND kind NOT LIKE 'codex:%' "
+                               "AND kind <> 'biological' ORDER BY count DESC, kind",
+                               (sys_id64, body_id)).fetchall()
+
     def is_visited(self, row: Any, fid: Optional[str] = PLAN) -> bool:
         """Has this commander (default: the main one) been in the system?"""
         if row is None:
@@ -1478,7 +1702,7 @@ class SystemDB:
 
     def explored(self, fid: str, id64: int) -> bool:
         """Has this commander explored the system - FSS complete or any body
-        scanned with his own scanner?"""
+        scanned with their own scanner?"""
         r = self.cmdr_system(fid, id64)
         if r is not None and r["fss_complete"]:
             return True
@@ -1527,8 +1751,31 @@ class SystemDB:
         return int(r["start_body"]), r["start_name"]
 
     def cmdr_system(self, fid: str, id64: int) -> Optional[sqlite3.Row]:
+        """One commander's row for a system (visited, FSS complete), or None."""
         return self.cx.execute("SELECT * FROM cmdr_systems WHERE fid=? AND sys_id64=?",
                                (fid, id64)).fetchone()
+
+    def codex_species(self, sys_id64: int) -> Dict[int, List[str]]:
+        """body id -> the organics its codex entries named (Brain Trees are
+        kept per body as signals "codex:<species>")."""
+        out: Dict[int, List[str]] = {}
+        for r in self.cx.execute("SELECT body_id, label FROM signals WHERE sys_id64=? "
+                                 "AND kind LIKE 'codex:%' AND body_id >= 0", (sys_id64,)):
+            out.setdefault(r["body_id"], []).append(r["label"])
+        return out
+
+    @staticmethod
+    def _bio_left(r: Any, seen: Iterable[str]) -> int:
+        """Biological signals still to sample on one body (biosig.open_bio)."""
+        try:
+            analysed = json.loads(r["bio_species"]) if r["bio_species"] else []
+        except (ValueError, TypeError, KeyError, IndexError):
+            analysed = []
+        if not analysed and r["organics"]:
+            # an old row without the species list: the count as before
+            return max(0, (r["sig_bio"] or 0) - (r["organics"] or 0))
+        genera = [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()]
+        return open_bio(r["sig_bio"] or 0, genera, analysed, seen)["open"]
 
     def bodies_for(self, sys_id64: int, fid: Optional[str]) -> List[Any]:
         """The bodies of a system as one commander explored them: the shared
@@ -1588,6 +1835,7 @@ class SystemDB:
         return use
 
     def commander_name(self, fid: Optional[str]) -> Optional[str]:
+        """The commander name stored for a Frontier ID, or None."""
         if not fid:
             return None
         r = self.cx.execute("SELECT name FROM commanders WHERE fid=?", (fid,)).fetchone()
@@ -1629,11 +1877,11 @@ class SystemDB:
         fix (with mode) or None when not on/near a body.
         """
         lat, lon, body = st.get("Latitude"), st.get("Longitude"), st.get("BodyName")
-        if lat is None or lon is None or not body:
-            self._pos = None
-            return None
         flags = int(st.get("Flags") or 0)
         flags2 = int(st.get("Flags2") or 0)
+        if lat is None or lon is None or not body or self.aboard_station(flags2):
+            self._pos = None
+            return None
         mode = "foot" if flags2 & 1 else ("srv" if flags & (1 << 26) else "ship")
         self._pos = {"body": body, "lat": float(lat), "lon": float(lon),
                      "alt": st.get("Altitude"), "heading": st.get("Heading"),
@@ -1641,6 +1889,17 @@ class SystemDB:
                      "landed": bool(flags & 2), "t": now if now is not None else time.time(),
                      "gt": _epoch(st.get("timestamp"))}     # game time of the fix
         return self._pos
+
+    # Status.json Flags2: on foot in a station, its hangar or social space
+    STATION_FOOT = (1 << 3) | (1 << 13) | (1 << 14)
+
+    def aboard_station(self, flags2: int = 0) -> bool:
+        """4.12: aboard a carrier or station, not on the ground. Parked
+        beside a planet, the carrier makes the game write the planet's
+        latitude and longitude into Status.json, and Disembark says OnPlanet
+        (developer's journal 14.11.2026) - the compass and the surface
+        marks would take the hangar for the planet's surface."""
+        return self._dock_carrier or bool(flags2 & self.STATION_FOOT)
 
     def _fresh_pos(self, body: Optional[str], at: Optional[float] = None
                    ) -> Optional[Dict[str, Any]]:
@@ -1660,6 +1919,8 @@ class SystemDB:
         return p
 
     def add_track_point(self, sys_id64: int, pos: Dict[str, Any], ts: float) -> None:
+        """Store one point of the surface track (position, altitude, heading,
+        mode); the same time twice is ignored."""
         self.cx.execute(
             "INSERT OR IGNORE INTO surface_track(sys_id64,body_name,ts,lat,lon,alt,"
             "heading,mode) VALUES (?,?,?,?,?,?,?,?)",
@@ -1696,15 +1957,7 @@ class SystemDB:
     def _surface_event(self, ev: str, e: dict) -> None:
         """Turn surface journal events into marks."""
         if ev in ("Touchdown", "Liftoff"):
-            # who landed: the flying Nomad writes Touchdown/Liftoff too, and a
-            # ship sent away or called back does it without the player
-            if e.get("PlayerControlled") is False:
-                who = "auto"
-            else:
-                p = self._fresh_pos(e.get("Body"), _epoch(e.get("timestamp")))
-                who = ("srv" if p["mode"] == "srv" else "ship") if p else None
-            self._mark(e, ev.lower(), e.get("Body"), e.get("Body") or "", detail=who,
-                       lat=e.get("Latitude"), lon=e.get("Longitude"))
+            self._mark_landing(ev, e)
         elif ev in ("LaunchSRV", "LaunchVessel"):
             # LaunchVessel: the Nomad (flying SRV), dropped from a ship in flight
             self._vehicle = (e.get("SRVType_Localised") or e.get("VesselType_Localised")
@@ -1713,14 +1966,9 @@ class SystemDB:
         elif ev in ("DockSRV", "DockVessel"):
             self._mark(e, "srv_in", None, e.get("SRVType_Localised") or
                        e.get("VesselType_Localised") or "SRV")
-        elif ev == "Disembark" and e.get("OnPlanet"):
-            if e.get("SRV"):
-                # the vehicle stays here - the point to walk back to
-                self._mark(e, "srv_parked", e.get("Body"), "SRV",
-                           detail=self._vehicle or "SRV")
-            else:
-                self._mark(e, "disembark", e.get("Body"), "on foot")
-        elif ev == "Embark" and e.get("OnPlanet"):
+        elif ev == "Disembark" and e.get("OnPlanet") and not self.aboard_station():
+            self._mark_disembark(ev, e)
+        elif ev == "Embark" and e.get("OnPlanet") and not self.aboard_station():
             self._mark(e, "embark", e.get("Body"), "SRV" if e.get("SRV") else "ship")
         elif ev == "ScanOrganic":
             kind = {"Log": "bio_log", "Sample": "bio_sample",
@@ -1750,6 +1998,27 @@ class SystemDB:
         elif ev == "Screenshot" and e.get("Latitude") is not None:
             self._mark(e, "screenshot", e.get("Body"), e.get("Filename") or "",
                        lat=e.get("Latitude"), lon=e.get("Longitude"))
+
+    def _mark_landing(self, ev: str, e: dict) -> None:
+        """Touchdown or Liftoff, and who landed: ship, SRV or an automatic flight."""
+        # who landed: the flying Nomad writes Touchdown/Liftoff too, and a
+        # ship sent away or called back does it without the player
+        if e.get("PlayerControlled") is False:
+            who = "auto"
+        else:
+            p = self._fresh_pos(e.get("Body"), _epoch(e.get("timestamp")))
+            who = ("srv" if p["mode"] == "srv" else "ship") if p else None
+        self._mark(e, ev.lower(), e.get("Body"), e.get("Body") or "", detail=who,
+                   lat=e.get("Latitude"), lon=e.get("Longitude"))
+
+    def _mark_disembark(self, ev: str, e: dict) -> None:
+        """Out on a planet: on foot from the ship, or the SRV parked."""
+        if e.get("SRV"):
+            # the vehicle stays here - the point to walk back to
+            self._mark(e, "srv_parked", e.get("Body"), "SRV",
+                       detail=self._vehicle or "SRV")
+        else:
+            self._mark(e, "disembark", e.get("Body"), "on foot")
 
     def _rig_refined(self, e: dict) -> None:
         """
@@ -1793,12 +2062,21 @@ class SystemDB:
             " UNION ALL SELECT sys_id64, body_name, datetime(ts,'unixepoch') FROM surface_track)"
             " GROUP BY sys_id64, body_name ORDER BY last DESC").fetchall()
 
+    def mark_ship_gone(self, sys_id64: int, body: str, ts: str, lat: float, lon: float) -> bool:
+        """4.12: the hovering ship has flown off - the SRV went too far from
+        it (surfacenav.hover_gone). No journal event says so; the plugin
+        marks the moment where it happened."""
+        return self._mark({"SystemAddress": sys_id64, "timestamp": ts}, "ship_gone", body, "hover",
+                          lat=lat, lon=lon)
+
     def marks_of(self, sys_id64: int, body_name: str) -> List[sqlite3.Row]:
+        """The surface marks of a body (samples, SRV, finds), oldest first."""
         return self.cx.execute(
             "SELECT * FROM surface_marks WHERE sys_id64=? AND body_name=? ORDER BY ts",
             (sys_id64, body_name)).fetchall()
 
     def track_of(self, sys_id64: int, body_name: str) -> List[sqlite3.Row]:
+        """The surface track of a body, oldest first."""
         return self.cx.execute(
             "SELECT * FROM surface_track WHERE sys_id64=? AND body_name=? ORDER BY ts",
             (sys_id64, body_name)).fetchall()
@@ -1817,312 +2095,242 @@ class SystemDB:
             self._surface_event(ev, entry)
         except Exception:
             logger.debug("surface mark failed for %s", ev, exc_info=True)
-        try:
-            if inhabited_event(entry):
-                n += self.mark_inhabited(entry.get("StarSystem"), entry.get("SystemAddress"))
-            if ev in ("FSDJump", "Location", "CarrierJump"):
-                pos = star_pos(entry.get("StarPos"))
-                if entry.get("StarSystem") and pos:
-                    self.upsert(entry["StarSystem"], pos[0], pos[1], pos[2],
-                                id64=entry.get("SystemAddress"), quality=Q_JOURNAL,
-                                source="journal", visited=True)
-                    self._cmdr_arrival(ev, entry)
-                    self._cmdr_system(entry.get("SystemAddress"), entry.get("timestamp"))
-                    n += 1
-                # CarrierJump is caught here, so the carrier branch below only
-                # ever saw CarrierLocation: riding along on the own carrier
-                # left it in the old system until the next login.
-                if ev == "CarrierJump" and self._own_carrier_event(ev, entry):
-                    self.set_carrier(entry.get("StarSystem"), entry.get("SystemAddress"),
-                                     tuple(pos[:3]) if pos and len(pos) >= 3 else None)
-
-            elif ev == "FSDTarget":
-                nm = entry.get("Name") or entry.get("StarSystem")
-                self.upsert(nm, id64=entry.get("SystemAddress"), quality=Q_CONFIRMED,
-                            source="fsdtarget", star_class=entry.get("StarClass"))
-                n += 1
-
-            elif ev == "StartJump" and entry.get("JumpType") == "Hyperspace":
-                nm = entry.get("StarSystem")
-                if nm:
-                    self.upsert(nm, id64=entry.get("SystemAddress"),
-                                quality=Q_CONFIRMED, source="startjump",
-                                star_class=entry.get("StarClass"))
-                    n += 1
-
-            elif ev in ("NavRoute", "Route"):
-                for hop in entry.get("Route") or []:
-                    pos = star_pos(hop.get("StarPos"))
-                    if hop.get("StarSystem") and pos:
-                        self.upsert(hop["StarSystem"], pos[0], pos[1], pos[2],
-                                    id64=hop.get("SystemAddress"), quality=Q_JOURNAL,
-                                    source="navroute", star_class=hop.get("StarClass"),
-                                    commit=False)
-                        n += 1
-                self.cx.commit()
-
-            elif ev == "FSSDiscoveryScan":
-                a = entry.get("SystemAddress")
-                self.upsert(entry.get("SystemName"), id64=a, quality=Q_CONFIRMED,
-                            source="fss")
-                self.cx.execute(
-                    "UPDATE systems SET body_count=?, nonbody_count=?, updated=? WHERE id64=?",
-                    (entry.get("BodyCount"), entry.get("NonBodyCount"), _now(), a))
-                self.cx.commit()
-                n += 1
-
-            elif ev == "FSSAllBodiesFound":
-                a = entry.get("SystemAddress")
-                self.upsert(entry.get("SystemName"), id64=a, quality=Q_CONFIRMED,
-                            source="fss")
-                self.cx.execute(
-                    "UPDATE systems SET body_count=?, fss_complete=1, updated=? WHERE id64=?",
-                    (entry.get("Count"), _now(), a))
-                self._cmdr_system(a, fss=True)
-                self.cx.commit()
-                n += 1
-
-            elif ev in ("Scan", "ScanBaryCentre"):
-                a = entry.get("SystemAddress")
-                if a:
-                    self.upsert(entry.get("StarSystem"), id64=a, quality=Q_CONFIRMED,
-                                source="scan")
-                    kind = ("Star" if entry.get("StarType") else
-                            "Planet" if entry.get("PlanetClass") is not None else
-                            "BaryCentre" if ev == "ScanBaryCentre" else "Other")
-                    parent = None
-                    for pr in (entry.get("Parents") or []):
-                        if isinstance(pr, dict) and pr:
-                            parent = list(pr.values())[0]
-                            break
-                    rings = entry.get("Rings") or []
-                    ring_cls = ",".join(sorted({r.get("RingClass") for r in rings
-                                                if r.get("RingClass")})) or None
-                    ring_mass = sum(float(r.get("MassMT") or 0.0)
-                                    for r in rings
-                                    if r.get("RingClass") == "eRingClass_Icy")
-
-                    def _js(v):
-                        return json.dumps(v, separators=(",", ":")) if v else None
-
-                    def _pct(lst, key="Name"):
-                        if not lst:
-                            return None
-                        if isinstance(lst, dict):
-                            return lst
-                        return {d.get(key): d.get("Percent") for d in lst
-                                if isinstance(d, dict) and d.get(key)}
-
-                    ring_list = [{"name": r.get("Name"),
-                                  "cls": (r.get("RingClass") or "").replace("eRingClass_", ""),
-                                  "mass": r.get("MassMT"),
-                                  "inner": r.get("InnerRad"), "outer": r.get("OuterRad")}
-                                 for r in rings]
-                    phys = dict(
-                        radius=entry.get("Radius"),
-                        mass_em=entry.get("MassEM"),
-                        gravity=entry.get("SurfaceGravity"),
-                        temp_k=entry.get("SurfaceTemperature"),
-                        pressure=entry.get("SurfacePressure"),
-                        atmosphere=entry.get("Atmosphere") or None,
-                        atmo_type=entry.get("AtmosphereType") or None,
-                        atmo_comp=_js(_pct(entry.get("AtmosphereComposition"))),
-                        volcanism=entry.get("Volcanism") or None,
-                        composition=_js(entry.get("Composition")),
-                        materials=_js(_pct(entry.get("Materials"))),
-                        tidal_lock=(1 if entry.get("TidalLock") else 0)
-                        if "TidalLock" in entry else None,
-                        axial_tilt=entry.get("AxialTilt"),
-                        rotation=entry.get("RotationPeriod"),
-                        was_footfalled=(1 if entry.get("WasFootfalled") else 0)
-                        if "WasFootfalled" in entry else None,
-                        rings_json=_js(ring_list),
-                        reserve=entry.get("ReserveLevel"),
-                        stellar_mass=entry.get("StellarMass"),
-                        abs_mag=entry.get("AbsoluteMagnitude"),
-                        age_my=entry.get("Age_MY"),
-                        luminosity=entry.get("Luminosity"),
-                        subclass=entry.get("Subclass"),
-                    )
-                    self._body_upsert(
-                        a, entry.get("BodyID"), **phys)
-                    self._body_upsert(
-                        a, entry.get("BodyID"),
-                        scan_ts=_epoch(entry.get("timestamp")),
-                        ring_classes=ring_cls,
-                        ring_mass=ring_mass or None,
-                        star_type=entry.get("StarType"),
-                        arrival_ls=entry.get("DistanceFromArrivalLS"),
-                        parent_id=parent,
-                        sma=entry.get("SemiMajorAxis"),
-                        ecc=entry.get("Eccentricity"),
-                        inc=entry.get("OrbitalInclination"),
-                        peri=entry.get("Periapsis"),
-                        node=entry.get("AscendingNode"),
-                        mean_anom=entry.get("MeanAnomaly"),
-                        period=entry.get("OrbitalPeriod"),
-                        name=entry.get("BodyName"), kind=kind,
-                        planet_class=entry.get("PlanetClass"),
-                        terraform=entry.get("TerraformState"),
-                        landable=1 if entry.get("Landable") else 0,
-                        was_discovered=(1 if entry.get("WasDiscovered") else 0)
-                        if "WasDiscovered" in entry else None,
-                        was_mapped=(1 if entry.get("WasMapped") else 0)
-                        if "WasMapped" in entry else None,
-                        # a nav beacon hands over every body's data: the data
-                        # counts, but it is not your scan (no discovery, no
-                        # exploration data) - an own scan stays an own scan
-                        scanned=None if entry.get("ScanType") == "NavBeaconDetail" else 1)
-                    self._link_parents(a, entry.get("Parents"))
-                    if entry.get("ScanType") != "NavBeaconDetail" and ev == "Scan":
-                        self._cmdr_body(
-                            a, entry.get("BodyID"), scanned=1,
-                            was_discovered=(1 if entry.get("WasDiscovered") else 0)
-                            if "WasDiscovered" in entry else None,
-                            was_mapped=(1 if entry.get("WasMapped") else 0)
-                            if "WasMapped" in entry else None,
-                            was_footfalled=(1 if entry.get("WasFootfalled") else 0)
-                            if "WasFootfalled" in entry else None)
-                        self.cx.commit()
-                    n += 1
-
-            elif ev == "SAAScanComplete":
-                a = entry.get("SystemAddress")
-                if a:
-                    self._body_upsert(a, entry.get("BodyID"),
-                                      name=entry.get("BodyName"), mapped=1)
-                    self._cmdr_body(a, entry.get("BodyID"), mapped=1)
-                    self.cx.commit()
-                    n += 1
-
-            elif ev in ("SAASignalsFound", "FSSBodySignals"):
-                a = entry.get("SystemAddress")
-                if a:
-                    self._store_hotspots(a, entry)
-                    self._store_signals(a, entry)
-                    bio = geo = 0
-                    for sig in entry.get("Signals") or []:
-                        t = (sig.get("Type") or "")
-                        c = sig.get("Count", 0)
-                        if "Biological" in t:
-                            bio += c
-                        elif "Geological" in t:
-                            geo += c
-                    gen = ",".join(g.get("Genus_Localised") or g.get("Genus", "")
-                                   for g in entry.get("Genuses") or []) or None
-                    self._body_upsert(a, entry.get("BodyID"),
-                                      name=entry.get("BodyName"),
-                                      sig_bio=bio or None, sig_geo=geo or None,
-                                      genuses=gen)
-                    n += 1
-
-            elif ev == "ScanOrganic":
-                a = entry.get("SystemAddress")
-                bid = entry.get("Body")
-                if a and bid is not None and entry.get("ScanType") == "Analyse":
-                    cur = self.cx.execute(
-                        "SELECT organics, bio_species FROM bodies "
-                        "WHERE sys_id64=? AND body_id=?", (a, bid)).fetchone()
-                    species = []
-                    try:
-                        species = json.loads(cur["bio_species"]) if cur and \
-                            cur["bio_species"] else []
-                    except ValueError:
-                        species = []
-                    sp = (entry.get("Species_Localised") or entry.get("Species"))
-                    if sp:
-                        if sp not in [s.get("species") for s in species]:
-                            species.append({
-                                "species": sp,
-                                "genus": entry.get("Genus_Localised") or entry.get("Genus"),
-                                "variant": entry.get("Variant_Localised")
-                                or entry.get("Variant"),
-                                "ts": entry.get("timestamp")})
-                        # one per distinct species - replaying the same journal
-                        # (first import, route bootstrap) must not count twice
-                        organics = len(species)
-                    else:
-                        organics = (cur["organics"] if cur else 0) + 1
-                    self._body_upsert(a, bid, organics=organics,
-                                      bio_species=json.dumps(species) if species
-                                      else None)
-                    self._cmdr_species(a, bid, entry, sp)
-                    n += 1
-
-            elif ev == "CarrierLocation" and self._own_carrier_event(ev, entry):
-                nm = entry.get("StarSystem")
-                pos = star_pos(entry.get("StarPos"))
-                a = entry.get("SystemAddress")
-                if nm:
-                    if pos:
-                        self.upsert(nm, pos[0], pos[1], pos[2], id64=a,
-                                    quality=Q_JOURNAL, source="carrier",
-                                    visited=(ev == "CarrierJump"))
-                    else:
-                        self.upsert(nm, id64=a, quality=Q_CONFIRMED, source="carrier")
-                    self.set_carrier(nm, a, pos)
-                    n += 1
-
-            elif ev == "CarrierStats" and entry.get("CarrierType", "FleetCarrier") == "FleetCarrier":
-                if entry.get("CarrierID"):
-                    self.set_meta("carrier_market_id", entry["CarrierID"])
-                self.set_meta("carrier_callsign", entry.get("Callsign") or "")
-                self.set_meta("carrier_name", entry.get("Name") or "")
-
-            elif (ev == "Docked" and entry.get("StationType") == "FleetCarrier"
-                  and self._own_carrier_event(ev, entry)):
-                nm = entry.get("StarSystem")
-                if nm:
-                    self.set_carrier(nm, entry.get("SystemAddress"),
-                                     callsign=entry.get("StationName"))
-                    n += 1
-
-            elif ev in ("SellExplorationData", "MultiSellExplorationData"):
-                disc = entry.get("Discovered") or []
-                base = int(entry.get("BaseValue") or 0)
-                bonus = int(entry.get("Bonus") or 0)
-                total = int(entry.get("TotalEarnings") or (base + bonus))
-                bodies = sum(int(d.get("NumBodies") or 0) for d in disc)
-                self.cx.execute(
-                    "INSERT OR REPLACE INTO earnings(ts,kind,base,bonus,total,"
-                    "systems,bodies,detail) VALUES (?,?,?,?,?,?,?,?)",
-                    (entry.get("timestamp"), "exploration", base, bonus, total,
-                     len(disc) or len(entry.get("Systems") or []), bodies, None))
-                self.cx.commit()
-                n += 1
-
-            elif ev == "SellOrganicData":
-                bio = entry.get("BioData") or []
-                base = sum(int(b.get("Value") or 0) for b in bio)
-                bonus = sum(int(b.get("Bonus") or 0) for b in bio)
-                top = max(bio, key=lambda b: int(b.get("Value") or 0)) if bio else {}
-                self.cx.execute(
-                    "INSERT OR REPLACE INTO earnings(ts,kind,base,bonus,total,"
-                    "systems,bodies,detail) VALUES (?,?,?,?,?,?,?,?)",
-                    (entry.get("timestamp"), "organic", base, bonus, base + bonus,
-                     0, len(bio),
-                     top.get("Species_Localised") or top.get("Species")))
-                self.cx.commit()
-                n += 1
-
-            elif ev == "CodexEntry":
-                self.upsert(entry.get("System"), id64=entry.get("SystemAddress"),
-                            quality=Q_CONFIRMED, source="codex")
-                self._store_codex(entry)
-                n += 1
-
-            elif ev == "FSSSignalDiscovered":
-                if self._store_fss_signal(entry):
-                    n += 1
-
-            elif ev == "MaterialCollected":
-                if self._store_material(entry):
-                    n += 1
-            if self.fid and ev in LOSS_EVENTS:
-                self._cmdr_carried(ev, entry)
-        except Exception:
-            raise
+        if inhabited_event(entry):
+            n += self.mark_inhabited(entry.get("StarSystem"), entry.get("SystemAddress"))
+        handler = _INGEST.get(ev)
+        if handler is not None:
+            n += handler(self, ev, entry)
+        if self.fid and ev in LOSS_EVENTS:
+            self._cmdr_carried(ev, entry)
         return n
+
+    # one handler per journal event (4.12: was one chain of 56); each returns
+    # the number of records it touched
+    def _ing_arrival(self, ev: str, entry: dict) -> int:
+        n = 0
+        pos = star_pos(entry.get("StarPos"))
+        if entry.get("StarSystem") and pos:
+            self.upsert(entry["StarSystem"], pos[0], pos[1], pos[2],
+                        id64=entry.get("SystemAddress"), quality=Q_JOURNAL,
+                        source="journal", visited=True)
+            self._cmdr_arrival(ev, entry)
+            self._cmdr_system(entry.get("SystemAddress"), entry.get("timestamp"))
+            n += 1
+        # CarrierJump is caught here, so the carrier branch below only
+        # ever saw CarrierLocation: riding along on the own carrier
+        # left it in the old system until the next login.
+        if ev == "CarrierJump" and self._own_carrier_event(ev, entry):
+            self.set_carrier(entry.get("StarSystem"), entry.get("SystemAddress"),
+                             tuple(pos[:3]) if pos and len(pos) >= 3 else None)
+        return n
+
+    def _ing_fsd_target(self, ev: str, entry: dict) -> int:
+        nm = entry.get("Name") or entry.get("StarSystem")
+        self.upsert(nm, id64=entry.get("SystemAddress"), quality=Q_CONFIRMED,
+                    source="fsdtarget", star_class=entry.get("StarClass"))
+        return 1
+
+    def _ing_start_jump(self, ev: str, entry: dict) -> int:
+        if entry.get("JumpType") != "Hyperspace":
+            return 0
+        nm = entry.get("StarSystem")
+        if not nm:
+            return 0
+        self.upsert(nm, id64=entry.get("SystemAddress"),
+                    quality=Q_CONFIRMED, source="startjump",
+                    star_class=entry.get("StarClass"))
+        return 1
+
+    def _ing_navroute(self, ev: str, entry: dict) -> int:
+        n = 0
+        for hop in entry.get("Route") or []:
+            pos = star_pos(hop.get("StarPos"))
+            if hop.get("StarSystem") and pos:
+                self.upsert(hop["StarSystem"], pos[0], pos[1], pos[2],
+                            id64=hop.get("SystemAddress"), quality=Q_JOURNAL,
+                            source="navroute", star_class=hop.get("StarClass"),
+                            commit=False)
+                n += 1
+        self.cx.commit()
+        return n
+
+    def _ing_fss_discovery(self, ev: str, entry: dict) -> int:
+        a = entry.get("SystemAddress")
+        self.upsert(entry.get("SystemName"), id64=a, quality=Q_CONFIRMED,
+                    source="fss")
+        self.cx.execute(
+            "UPDATE systems SET body_count=?, nonbody_count=?, updated=? WHERE id64=?",
+            (entry.get("BodyCount"), entry.get("NonBodyCount"), _now(), a))
+        self.cx.commit()
+        return 1
+
+    def _ing_fss_all_found(self, ev: str, entry: dict) -> int:
+        a = entry.get("SystemAddress")
+        self.upsert(entry.get("SystemName"), id64=a, quality=Q_CONFIRMED,
+                    source="fss")
+        self.cx.execute(
+            "UPDATE systems SET body_count=?, fss_complete=1, updated=? WHERE id64=?",
+            (entry.get("Count"), _now(), a))
+        self._cmdr_system(a, fss=True)
+        self.cx.commit()
+        return 1
+
+    def _ing_scan(self, ev: str, entry: dict) -> int:
+        a = entry.get("SystemAddress")
+        if not a:
+            return 0
+        self.upsert(entry.get("StarSystem"), id64=a, quality=Q_CONFIRMED,
+                    source="scan")
+        self._body_upsert(a, entry.get("BodyID"), **_scan_physics(entry))
+        self._body_upsert(a, entry.get("BodyID"), **_scan_orbit(ev, entry))
+        self._link_parents(a, entry.get("Parents"))
+        if entry.get("ScanType") != "NavBeaconDetail" and ev == "Scan":
+            self._cmdr_body(a, entry.get("BodyID"), scanned=1, **_discovery_flags(entry))
+            self.cx.commit()
+        return 1
+
+    def _ing_saa_complete(self, ev: str, entry: dict) -> int:
+        a = entry.get("SystemAddress")
+        if not a:
+            return 0
+        self._body_upsert(a, entry.get("BodyID"),
+                          name=entry.get("BodyName"), mapped=1)
+        self._cmdr_body(a, entry.get("BodyID"), mapped=1)
+        self.cx.commit()
+        return 1
+
+    def _ing_body_signals(self, ev: str, entry: dict) -> int:
+        a = entry.get("SystemAddress")
+        if not a:
+            return 0
+        self._store_hotspots(a, entry)
+        self._store_signals(a, entry)
+        bio = geo = 0
+        for sig in entry.get("Signals") or []:
+            t = (sig.get("Type") or "")
+            c = sig.get("Count", 0)
+            if "Biological" in t:
+                bio += c
+            elif "Geological" in t:
+                geo += c
+        gen = ",".join(g.get("Genus_Localised") or g.get("Genus", "")
+                       for g in entry.get("Genuses") or []) or None
+        self._body_upsert(a, entry.get("BodyID"),
+                          name=entry.get("BodyName"),
+                          sig_bio=bio or None, sig_geo=geo or None,
+                          genuses=gen)
+        return 1
+
+    def _ing_scan_organic(self, ev: str, entry: dict) -> int:
+        a = entry.get("SystemAddress")
+        bid = entry.get("Body")
+        if not (a and bid is not None and entry.get("ScanType") == "Analyse"):
+            return 0
+        cur = self.cx.execute(
+            "SELECT organics, bio_species FROM bodies "
+            "WHERE sys_id64=? AND body_id=?", (a, bid)).fetchone()
+        species = []
+        try:
+            species = json.loads(cur["bio_species"]) if cur and \
+                cur["bio_species"] else []
+        except ValueError:
+            species = []
+        sp = (entry.get("Species_Localised") or entry.get("Species"))
+        if sp:
+            if sp not in [s.get("species") for s in species]:
+                species.append({
+                    "species": sp,
+                    "genus": entry.get("Genus_Localised") or entry.get("Genus"),
+                    "variant": entry.get("Variant_Localised")
+                    or entry.get("Variant"),
+                    "ts": entry.get("timestamp")})
+            # one per distinct species - replaying the same journal
+            # (first import, route bootstrap) must not count twice
+            organics = len(species)
+        else:
+            organics = (cur["organics"] if cur else 0) + 1
+        self._body_upsert(a, bid, organics=organics,
+                          bio_species=json.dumps(species) if species
+                          else None)
+        self._cmdr_species(a, bid, entry, sp)
+        return 1
+
+    def _ing_carrier_location(self, ev: str, entry: dict) -> int:
+        if not self._own_carrier_event(ev, entry):
+            return 0
+        nm = entry.get("StarSystem")
+        pos = star_pos(entry.get("StarPos"))
+        a = entry.get("SystemAddress")
+        if not nm:
+            return 0
+        if pos:
+            self.upsert(nm, pos[0], pos[1], pos[2], id64=a,
+                        quality=Q_JOURNAL, source="carrier",
+                        visited=(ev == "CarrierJump"))
+        else:
+            self.upsert(nm, id64=a, quality=Q_CONFIRMED, source="carrier")
+        self.set_carrier(nm, a, pos)
+        return 1
+
+    def _ing_carrier_stats(self, ev: str, entry: dict) -> int:
+        if entry.get("CarrierType", "FleetCarrier") != "FleetCarrier":
+            return 0
+        if entry.get("CarrierID"):
+            self.set_meta("carrier_market_id", entry["CarrierID"])
+        self.set_meta("carrier_callsign", entry.get("Callsign") or "")
+        self.set_meta("carrier_name", entry.get("Name") or "")
+        return 0
+
+    def _ing_docked(self, ev: str, entry: dict) -> int:
+        if not (entry.get("StationType") == "FleetCarrier"
+                and self._own_carrier_event(ev, entry)):
+            return 0
+        nm = entry.get("StarSystem")
+        if not nm:
+            return 0
+        self.set_carrier(nm, entry.get("SystemAddress"),
+                         callsign=entry.get("StationName"))
+        return 1
+
+    def _ing_sell_exploration(self, ev: str, entry: dict) -> int:
+        disc = entry.get("Discovered") or []
+        base = int(entry.get("BaseValue") or 0)
+        bonus = int(entry.get("Bonus") or 0)
+        total = int(entry.get("TotalEarnings") or (base + bonus))
+        bodies = sum(int(d.get("NumBodies") or 0) for d in disc)
+        self.cx.execute(
+            "INSERT OR REPLACE INTO earnings(ts,kind,base,bonus,total,"
+            "systems,bodies,detail) VALUES (?,?,?,?,?,?,?,?)",
+            (entry.get("timestamp"), "exploration", base, bonus, total,
+             len(disc) or len(entry.get("Systems") or []), bodies, None))
+        self.cx.commit()
+        return 1
+
+    def _ing_sell_organic(self, ev: str, entry: dict) -> int:
+        bio = entry.get("BioData") or []
+        base = sum(int(b.get("Value") or 0) for b in bio)
+        bonus = sum(int(b.get("Bonus") or 0) for b in bio)
+        top = max(bio, key=lambda b: int(b.get("Value") or 0)) if bio else {}
+        self.cx.execute(
+            "INSERT OR REPLACE INTO earnings(ts,kind,base,bonus,total,"
+            "systems,bodies,detail) VALUES (?,?,?,?,?,?,?,?)",
+            (entry.get("timestamp"), "organic", base, bonus, base + bonus,
+             0, len(bio),
+             top.get("Species_Localised") or top.get("Species")))
+        self.cx.commit()
+        return 1
+
+    def _ing_codex(self, ev: str, entry: dict) -> int:
+        self.upsert(entry.get("System"), id64=entry.get("SystemAddress"),
+                    quality=Q_CONFIRMED, source="codex")
+        self._store_codex(entry)
+        return 1
+
+    def _ing_fss_signal(self, ev: str, entry: dict) -> int:
+        return 1 if self._store_fss_signal(entry) else 0
+
+    def _ing_material(self, ev: str, entry: dict) -> int:
+        return 1 if self._store_material(entry) else 0
 
     def ingest_status_destination(self, dest: dict) -> Optional[str]:
         """
@@ -2213,6 +2421,8 @@ class SystemDB:
         return len(rows)
 
     def ingest_external(self, systems: Iterable[dict], source: str) -> int:
+        """Store systems from a catalogue (EDSM, Spansh, EDDiscovery) at
+        external quality; returns how many were new or improved."""
         n = 0
         for s in systems:
             if self.upsert(s.get("name"), s.get("x"), s.get("y"), s.get("z"),
@@ -2226,6 +2436,8 @@ class SystemDB:
     def save_survey(self, active: bool, start_system: Optional[str],
                     center: Optional[Sequence[float]], radius: float,
                     masscodes: Sequence[int]) -> None:
+        """Store the running survey (start, centre, radius, mass codes); the
+        first start time is kept."""
         c = tuple(center) if center else (None, None, None)
         self.cx.execute(
             "INSERT OR REPLACE INTO survey(id,active,start_system,cx,cy,cz,radius,"
@@ -2236,6 +2448,7 @@ class SystemDB:
         self.cx.commit()
 
     def load_survey(self) -> Optional[sqlite3.Row]:
+        """The stored survey row, or None."""
         return self.cx.execute("SELECT * FROM survey WHERE id=1").fetchone()
 
     # --------------------------------------------------------------- carrier
@@ -2246,7 +2459,7 @@ class SystemDB:
         Up to 4.7 every Docked at a fleet carrier and every CarrierJump moved
         "my carrier": docking at someone else's carrier (or riding along on
         it) overwrote the own carrier's position and callsign - and a
-        commander without a carrier got a stranger's carrier as his own.
+        commander without a carrier got a stranger's carrier as their own.
         The own carrier is known by its CarrierID (= MarketID) from
         CarrierLocation / CarrierStats, which the game writes for owners at
         every login. Without that ID nothing but CarrierLocation counts.
@@ -2269,11 +2482,15 @@ class SystemDB:
         return False
 
     def _note_dock(self, ev: str, entry: dict) -> None:
-        """Remember where the commander is docked (for CarrierJump on foot)."""
+        """Remember where the commander is docked (for CarrierJump on foot),
+        and whether it is a fleet carrier (4.12: no surface while aboard)."""
         if ev == "Docked" or (ev == "Location" and entry.get("Docked")):
             self._dock_market_id = entry.get("MarketID")
-        elif ev in ("Undocked", "FSDJump", "Died", "LoadGame", "Shutdown"):
+            self._dock_carrier = entry.get("StationType") == "FleetCarrier"
+        elif ev in ("Undocked", "FSDJump", "Died", "LoadGame", "Shutdown") or (
+                ev == "Location" and not entry.get("Docked")):
             self._dock_market_id = None
+            self._dock_carrier = False
 
     def set_carrier(self, name: str, id64: Optional[int] = None,
                     coords: Optional[Sequence[float]] = None,
@@ -2303,6 +2520,8 @@ class SystemDB:
         self.set_meta("carrier_updated", _now())
 
     def get_carrier(self) -> Optional[Dict[str, object]]:
+        """The own carrier from meta: system, coordinates (from the systems
+        table if not stored), id64, callsign, name, last update - or None."""
         nm = self.get_meta("carrier_system")
         if not nm:
             return None
@@ -2342,10 +2561,12 @@ class SystemDB:
         return c.lastrowid
 
     def close_sphere(self, sphere_id: int) -> None:
+        """Mark a survey sphere as closed now."""
         self.cx.execute("UPDATE spheres SET closed=? WHERE id=?", (_now(), sphere_id))
         self.cx.commit()
 
     def list_spheres(self) -> List[sqlite3.Row]:
+        """All survey spheres, oldest first."""
         return self.cx.execute("SELECT * FROM spheres ORDER BY id").fetchall()
 
     @staticmethod
@@ -2406,11 +2627,13 @@ class SystemDB:
         self.cx.commit()
 
     def route_done_of(self, sys_id64: int) -> Set[int]:
+        """Body ids of a system that the in-system route marked as done."""
         return {r[0] for r in self.cx.execute(
             "SELECT body_id FROM bodies WHERE sys_id64=? AND route_done=1",
             (sys_id64,))}
 
     def clear_route_done(self, sys_id64: int) -> int:
+        """Reset the route's done marks of a system; returns how many."""
         cur = self.cx.execute(
             "UPDATE bodies SET route_done=0, route_done_ts=NULL "
             "WHERE sys_id64=? AND route_done=1", (sys_id64,))
@@ -2536,6 +2759,8 @@ class SystemDB:
     # Guardian material "guardian_..." / "ancient...".
     @staticmethod
     def site_from_material(mat: str) -> Optional[Tuple[str, str]]:
+        """A surface site the journal never reports, from what was picked up
+        there: (key, label) for Thargoid or Guardian material, else None."""
         m = (mat or "").lower()
         if m.startswith(("unknown", "tg_")):
             return "site:nonhuman", "Non-human site (from pickup)"
@@ -2573,6 +2798,8 @@ class SystemDB:
         return out
 
     def material_kinds(self) -> List[Dict[str, object]]:
+        """Every material found, with label, category, how many places and the
+        total collected - for the atlas."""
         out = []
         for r in self.cx.execute(
                 "SELECT material, MAX(label) label, MAX(category) category, "
@@ -2710,6 +2937,7 @@ class SystemDB:
         return out[:limit]
 
     def bodies_of(self, sys_id64: int) -> List[sqlite3.Row]:
+        """The shared body rows of a system (no commander view)."""
         return self.cx.execute("SELECT * FROM bodies WHERE sys_id64=?",
                                (sys_id64,)).fetchall()
 
@@ -2819,7 +3047,7 @@ class SystemDB:
         }
 
     def _lifetime_of(self, fid: str) -> Dict[str, object]:
-        """lifetime() for one commander (C1): his visits, scans and finds;
+        """lifetime() for one commander (C1): their visits, scans and finds;
         boxels, absent names and spheres stay shared survey knowledge."""
         def q(s, *a):
             return self.cx.execute(s, a).fetchone()[0]
@@ -2854,6 +3082,8 @@ class SystemDB:
         }
 
     def stats(self) -> Dict[str, int]:
+        """Counts for the log and the self test: systems by quality, visited,
+        bodies, mapped and more."""
         def q(s, *a):
             return self.cx.execute(s, a).fetchone()[0]
         return {
@@ -2873,6 +3103,8 @@ class SystemDB:
 
     # -------------------------------------------------------------- migration
     def import_neareststars(self, path: str) -> Tuple[int, int]:
+        """Import the old plugin's neareststars.json at external quality;
+        returns (imported, skipped)."""
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         rows = data.get("Nearest", []) if isinstance(data, dict) else []
@@ -2893,6 +3125,8 @@ class SystemDB:
         return ok, skipped
 
     def import_survey_state(self, path: str) -> Tuple[int, int]:
+        """Import the old plugin's survey_state.json (pending, all and visited
+        systems); returns (systems, visited)."""
         with open(path, "r", encoding="utf-8") as f:
             st = json.load(f)
         ok = 0
@@ -2988,282 +3222,30 @@ class SystemDB:
         return res
 
 
-def _selftest() -> int:
-    """Backup before migration: new file no backup, current file no backup,
-    old schema or missing repair -> one backup, only the newest kept."""
-    import tempfile
-    fails = 0
-
-    def check(ok: bool, what: str) -> None:
-        nonlocal fails
-        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
-        fails += 0 if ok else 1
-
-    with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "shboxsearch.sqlite")
-        baks = lambda: glob.glob(glob.escape(path) + ".*.bak")   # noqa: E731
-        db = SystemDB(path)
-        check(db.backup_path is None, "new database: no backup")
-        db.close()
-        db = SystemDB(path)
-        check(db.backup_path is None and not baks(), "current database: no backup")
-        db.cx.execute("UPDATE meta SET v='2' WHERE k='schema'")
-        db.cx.commit()
-        db.close()
-        db = SystemDB(path)
-        check(db.backup_path is not None and len(baks()) == 1,
-              "older schema: one backup")
-        old = sqlite3.connect(db.backup_path)
-        check(old.execute("SELECT v FROM meta WHERE k='schema'").fetchone()[0] == "2",
-              "backup holds the state before the migration")
-        old.close()
-        check(stored_state(path) == (SCHEMA_VERSION, set(REPAIRS)),
-              "migrated database is current")
-        db.cx.execute("DELETE FROM meta WHERE k='fix_n1zero'")
-        db.cx.commit()
-        db.close()
-        db = SystemDB(path)
-        check(db.backup_path is not None and "fix_n1zero" in stored_state(path)[1],
-              "pending repair: backup, then repair runs")
-        db.close()
-        for _ in range(4):
-            backup_database(path, "test")
-        check(len(baks()) == BACKUP_KEEP, "only the newest %d backups kept" % BACKUP_KEEP)
-        db = SystemDB(path)
-        now = time.time()
-        db.log_external_calls([(now - 40 * 86400, "edsm", "sphere", 200, True, 50),
-                               (now, "edsm", "sphere", 429, False, 30),
-                               (now, "spansh", "search", 200, True, 900)])
-        check(db.external_calls_since(now - 60) == 2
-              and db.external_calls_since(now - 60, "edsm") == 1,
-              "call log counts per service")
-        check(db.prune_external_calls() == 1 and db.external_calls_since(0) == 2,
-              "call log keeps %d days" % CALL_LOG_DAYS)
-        db.record_shell("edsm", (1, 2, 3), 0, 25, 40, 5 * 86400, now=now)
-        db.record_shell("edsm", (1, 2, 3), 25, 50, 90, 10, now=now - 86400)
-        db.record_shell("spansh", (1, 2, 3), 0, 25, 41, 9 * 86400, now=now)
-        check(db.valid_shells("edsm", now) == [(1.0, 2.0, 3.0, 0.0, 25.0)]
-              and len(db.valid_shells("spansh", now)) == 1,
-              "fetched shells: valid ones per service, expired ones not")
-        db.close()
-        legacy = os.path.join(d, "legacy.sqlite")
-        cx = sqlite3.connect(legacy)
-        cx.execute("CREATE TABLE systems (name TEXT)")
-        cx.commit()
-        cx.close()
-        check(stored_state(legacy) == (0, set()), "database without meta = schema 0")
-        db = SystemDB(os.path.join(d, "carrier.sqlite"))
-        db.ingest_journal_event({"event": "Docked", "StationType": "FleetCarrier",
-                                 "StationName": "ZZZ-001", "MarketID": 1001,
-                                 "StarSystem": "Test Alpha", "SystemAddress": 11})
-        check(db.get_carrier() is None, "docking at a stranger's carrier: no own carrier")
-        db.ingest_journal_event({"event": "CarrierLocation", "CarrierType": "FleetCarrier",
-                                 "CarrierID": 2002, "StarSystem": "Test Home",
-                                 "SystemAddress": 22})
-        db.ingest_journal_event({"event": "CarrierStats", "CarrierID": 2002,
-                                 "Callsign": "OWN-002", "Name": "TEST OWN"})
-        db.ingest_journal_event({"event": "Docked", "StationType": "FleetCarrier",
-                                 "StationName": "ZZZ-001", "MarketID": 1001,
-                                 "StarSystem": "Test Alpha", "SystemAddress": 11})
-        db.ingest_journal_event({"event": "Disembark", "OnStation": True})
-        db.ingest_journal_event({"event": "CarrierJump", "OnFoot": True, "Docked": False,
-                                 "StarSystem": "Test Beta", "SystemAddress": 33,
-                                 "StarPos": [1.0, 2.0, 3.0]})
-        c = db.get_carrier()
-        check(c and c["system"] == "Test Home" and c["callsign"] == "OWN-002",
-              "stranger's carrier (docked, jump on foot) leaves the own carrier alone")
-        db.ingest_journal_event({"event": "Undocked"})
-        db.ingest_journal_event({"event": "Docked", "StationType": "FleetCarrier",
-                                 "StationName": "OWN-002", "MarketID": 2002,
-                                 "StarSystem": "Test Home", "SystemAddress": 22})
-        db.ingest_journal_event({"event": "CarrierJump", "OnFoot": True, "Docked": False,
-                                 "StarSystem": "Test Gamma", "SystemAddress": 44,
-                                 "StarPos": [4.0, 5.0, 6.0]})
-        check(db.get_carrier()["system"] == "Test Gamma", "own carrier jump while aboard counts")
-        db.ingest_journal_event({"event": "FSDJump", "StarSystem": "Test Town",
-                                 "SystemAddress": 55, "StarPos": [7.0, 8.0, 9.0],
-                                 "Population": 4200, "Factions": [{"Name": "F"}]})
-        db.ingest_journal_event({"event": "FSDJump", "StarSystem": "Test Void",
-                                 "SystemAddress": 66, "StarPos": [9.0, 8.0, 7.0],
-                                 "Population": 0})
-        db.ingest_journal_event({"event": "Docked", "StationType": "Coriolis",
-                                 "StationName": "Port", "MarketID": 77,
-                                 "StarSystem": "Test Port", "SystemAddress": 77})
-        src = lambda nm: set(((db.system(nm) or {"sources": ""})["sources"] or "").split(","))  # noqa: E731
-        check(INHABITED in src("Test Town") and INHABITED not in src("Test Void")
-              and INHABITED in src("Test Port") and INHABITED not in src("Test Alpha"),
-              "I1: population/factions/station marks 'inhabited', empty system and carrier not")
-        check(db.system("Test Town")["quality"] == Q_JOURNAL and db.system("Test Town")["x"] == 7.0,
-              "I1: marking keeps the journal position")
-        nb = {"event": "Scan", "ScanType": "NavBeaconDetail", "StarSystem": "Test Town",
-              "SystemAddress": 55, "BodyName": "Test Town 1", "BodyID": 1,
-              "PlanetClass": "Rocky body", "DistanceFromArrivalLS": 10.0,
-              "WasDiscovered": True, "WasMapped": False}
-        db.ingest_journal_event(nb)
-        own = dict(nb, ScanType="Detailed", BodyName="Test Town 2", BodyID=2)
-        db.ingest_journal_event(own)
-        db.ingest_journal_event(dict(own, ScanType="NavBeaconDetail"))
-        b = {r["body_id"]: r for r in db.bodies_of(55)}
-        check(b[1]["planet_class"] == "Rocky body" and b[1]["was_discovered"] == 1
-              and not b[1]["scanned"] and b[2]["scanned"] == 1,
-              "NavBeaconDetail: body data stored, not counted as your scan (an own scan stays)")
-        db.close()
-        n_cmdr = _selftest_cmdr(d, check)
-        fails += n_cmdr
-    print("failures: %d" % fails)
-    return fails
-
-
-def _selftest_cmdr(d: str, check) -> int:
-    """C1: exploration per commander, knowledge shared, main commander,
-    and an upgraded database falls back to the shared view until replayed."""
-    db = SystemDB(os.path.join(d, "cmdr.sqlite"))
-    check(db.cmdr_ready(), "C1: a new database is per-commander from the start")
-    ev = db.ingest_journal_event
-    ev({"event": "Commander", "FID": "F1", "Name": "Main", "timestamp": "2026-01-01T10:00:00Z"})
-    ev({"event": "LoadGame", "FID": "F1", "Commander": "Main", "timestamp": "2026-01-01T10:00:01Z"})
-    ev({"event": "CarrierStats", "CarrierID": 9, "Callsign": "OWN-009", "Name": "C"})
-    ev({"event": "FSDJump", "StarSystem": "Cm Alpha", "SystemAddress": 501,
-        "StarPos": [1.0, 0.0, 0.0], "timestamp": "2026-01-01T10:01:00Z"})
-    scan = {"event": "Scan", "ScanType": "Detailed", "StarSystem": "Cm Alpha",
-            "SystemAddress": 501, "BodyName": "Cm Alpha 1", "BodyID": 1,
-            "PlanetClass": "Water world", "DistanceFromArrivalLS": 10.0,
-            "WasDiscovered": False, "WasMapped": False}
-    ev(scan)
-    ev({"event": "SAAScanComplete", "SystemAddress": 501, "BodyID": 1, "BodyName": "Cm Alpha 1"})
-    ev({"event": "FSSBodySignals", "SystemAddress": 501, "BodyID": 1, "BodyName": "Cm Alpha 1",
-        "Signals": [{"Type": "$SAA_SignalType_Biological;", "Count": 2}]})
-    ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 501, "Body": 1,
-        "Species_Localised": "Bacterium Aurasus", "Genus_Localised": "Bacterium",
-        "timestamp": "2026-01-01T10:20:00Z"})
-    ev({"event": "FSSAllBodiesFound", "SystemName": "Cm Alpha", "SystemAddress": 501, "Count": 1})
-    for i in range(3):
-        ev({"event": "LoadGame", "FID": "F2", "Commander": "Second",
-            "timestamp": "2026-01-0%dT10:00:00Z" % (i + 2)})
-    ev({"event": "Location", "StarSystem": "Cm Alpha", "SystemAddress": 501,
-        "StarPos": [1.0, 0.0, 0.0], "timestamp": "2026-01-05T10:00:00Z"})
-    check(db.fid == "F2" and db.commander_name("F1") == "Main", "C1: FID follows LoadGame")
-    p2 = db.system_progress(501, CURRENT)
-    p1 = db.system_progress(501, "F1")
-    check(p1["mapped"] == 1 and p1["fss_complete"] and p1["bio_signals_open"] == 1
-          and p1["new_discoveries"] == 1, "C1: the first commander's own state")
-    check(p2["scanned"] == 0 and p2["mapped"] == 0 and not p2["fss_complete"]
-          and p2["dss_open"] == ["Cm Alpha 1"] and p2["bio_open"] == ["Cm Alpha 1"]
-          and p2["bio_signals_open"] == 2,
-          "C1: the second commander still has the work (FSS, DSS, both bio signals)")
-    rows = {r["body_id"]: r for r in db.bodies_for(501, "F2")}
-    check(rows[1]["planet_class"] == "Water world" and rows[1]["sig_bio"] == 2,
-          "C1: knowledge (class, signals) is shared")
-    check(len(db.bio_training_rows()) == 1, "C1: the bio model learns from every commander")
-    check(db.suggest_main() == "F1", "C1: suggestion = the commander with a carrier (not most logins)")
-    db.cx.execute("UPDATE commanders SET carrier=0")
-    check(db.suggest_main() == "F2", "C1: without a carrier the one with most sessions")
-    check(db.set_main_commander("F1") == "F1" and db.get_meta("main_fid") == "F1",
-          "C1: the main commander is stored for the FIS")
-    sp = db.sphere((0.0, 0.0, 0.0), 5.0)
-    check(len(sp) == 1 and sp[0]["visited"] == 1 and sp[0]["fss_complete"] == 1,
-          "C1: the survey sphere plans for the main commander")
-    lt = db.lifetime()
-    check(lt["commander"] == "Main" and lt["first_discoveries"] == 1 and lt["bio_sampled"] == 1
-          and lt["also"] == [("Second", 1)], "C1: statistics of the main commander, 'also by'")
-    check(db.explorers(501, but="F1") == ["Second"], "C1: also explored by")
-    jd = os.path.join(d, "journals")
-    os.makedirs(jd)
-    for i, (fid, nm, sa) in enumerate((("F7", "Seven", 701), ("F8", "Eight", 702))):
-        with open(os.path.join(jd, "Journal.2026-01-0%dT100000.01.log" % (i + 1)), "w",
-                  encoding="utf-8") as fh:
-            for e in ({"event": "Fileheader"},
-                      {"event": "Commander", "FID": fid, "Name": nm,
-                       "timestamp": "2026-01-0%dT10:00:00Z" % (i + 1)},
-                      {"event": "FSDJump", "StarSystem": "Cm R%d" % i, "SystemAddress": sa,
-                       "StarPos": [5.0, 5.0, float(i)], "timestamp": "2026-01-0%dT10:05:00Z" % (i + 1)}):
-                fh.write(json.dumps(e) + "\n")
-    db.set_commander("F9", "Live")
-    db.import_journals(jd)
-    check(db.fid == "F9" and db.explorers(701) == ["Seven"] and db.explorers(702) == ["Eight"],
-          "C1: a replay files each journal under its own commander, the live one stays")
-    # R3: Second rides along on a carrier into Cm Beta (never explored)
-    db.set_commander("F2", "Second")
-    ev({"event": "CarrierJump", "Docked": True, "StationType": "FleetCarrier",
-        "StarSystem": "Cm Beta", "SystemAddress": 502, "StarPos": [2.0, 0.0, 0.0],
-        "Body": "Cm Beta 3", "BodyID": 7, "BodyType": "Planet",
-        "timestamp": "2026-01-06T10:00:00Z"})
-    check(db.route_start("F2", 502) == (7, "Cm Beta 3"), "R3: carrier jump into an unexplored system")
-    ev(dict(scan, StarSystem="Cm Beta", SystemAddress=502, BodyName="Cm Beta 3", BodyID=7,
-            timestamp="2026-01-06T10:05:00Z"))
-    ev({"event": "CarrierJump", "Docked": True, "StationType": "FleetCarrier",
-        "StarSystem": "Cm Beta", "SystemAddress": 502, "StarPos": [2.0, 0.0, 0.0],
-        "Body": "Cm Beta 3", "BodyID": 7, "BodyType": "Planet",
-        "timestamp": "2026-01-06T10:00:00Z"})
-    check(db.route_start("F2", 502) == (7, "Cm Beta 3"), "R3: a replay keeps the decision")
-    ev({"event": "Location", "Docked": True, "StationType": "FleetCarrier",
-        "StarSystem": "Cm Beta", "SystemAddress": 502, "StarPos": [2.0, 0.0, 0.0],
-        "Body": "Cm Beta 3", "BodyID": 7, "timestamp": "2026-01-07T10:00:00Z"})
-    check(db.route_start("F2", 502) is None, "R3: explored meanwhile -> later routes at the main star")
-    ev({"event": "Location", "Docked": True, "StationType": "FleetCarrier",
-        "StarSystem": "Cm Gamma", "SystemAddress": 503, "StarPos": [3.0, 0.0, 0.0],
-        "Body": "Cm Gamma 1", "BodyID": 4, "timestamp": "2026-01-08T10:00:00Z"})
-    check(db.route_start("F2", 503) == (4, "Cm Gamma 1"), "R3: loading docked at a carrier, unexplored")
-    ev({"event": "FSDJump", "StarSystem": "Cm Gamma", "SystemAddress": 503,
-        "StarPos": [3.0, 0.0, 0.0], "timestamp": "2026-01-09T10:00:00Z"})
-    check(db.route_start("F2", 503) is None, "R3: arriving by FSD -> main star")
-    check(db.route_start("F1", 502) is None, "R3: per commander")
-    db.cx.execute("DELETE FROM meta WHERE k=?", (CMDR_READY,))
-    check(db.system_progress(501, CURRENT)["mapped"] == 1,
-          "C1: not replayed yet -> shared view (anyone)")
-    # crash: F1 scans Cm Delta 1 (sold), Cm Delta 2 and a species (not sold) - then dies
-    db.set_commander("F1", "Main")
-    ev({"event": "FSDJump", "StarSystem": "Cm Delta", "SystemAddress": 504,
-        "StarPos": [4.0, 0.0, 0.0], "timestamp": "2026-02-01T10:00:00Z"})
-    for bid in (1, 2):
-        ev(dict(scan, StarSystem="Cm Delta", SystemAddress=504, BodyName="Cm Delta %d" % bid,
-                BodyID=bid, timestamp="2026-02-01T10:0%d:00Z" % bid))
-    ev({"event": "MultiSellExplorationData", "Discovered": [{"SystemName": "Cm Delta"}],
-        "timestamp": "2026-02-01T10:05:00Z"})
-    ev({"event": "SAAScanComplete", "SystemAddress": 504, "BodyID": 2, "BodyName": "Cm Delta 2"})
-    ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 504, "Body": 2,
-        "Species_Localised": "Stratum Tectonicas", "timestamp": "2026-02-01T10:20:00Z"})
-    ev({"event": "Scan", "ScanType": "Detailed", "StarSystem": "Cm Delta", "SystemAddress": 504,
-        "BodyName": "Cm Delta 3", "BodyID": 3, "PlanetClass": "Icy body",
-        "timestamp": "2026-02-01T10:21:00Z"})
-    db.set_route_done(504, 2, True)
-    db.cx.execute("UPDATE bodies SET route_done_ts='2026-02-01T10:25:00Z' WHERE sys_id64=504")
-    ev({"event": "Died", "timestamp": "2026-02-01T10:30:00Z"})
-    check(db.route_done_of(504) == set(), "crash: route ticks of the lost work are cleared")
-    b = {r["body_id"]: r for r in db.bodies_for(504, "F1")}
-    check(b[1]["scanned"] == 1 and not b[1]["lost_what"], "crash: sold data stays")
-    check(b[2]["scanned"] == 1 and b[2]["mapped"] == 0 and b[2]["organics"] == 0
-          and json.loads(b[2]["lost_what"]) == ["bio:Stratum Tectonicas", "map"],
-          "crash: unsold map and species undone and marked lost (sold scan stays)")
-    check(b[3]["scanned"] == 0 and json.loads(b[3]["lost_what"]) == ["scan"],
-          "crash: unsold scan undone and marked lost")
-    lost = {d["name"]: d for d in db.lost_summary("F1")}
-    check(lost["Cm Delta"]["bio"] == ["Stratum Tectonicas"] and lost["Cm Delta"]["scan"] == 1
-          and "Cm Alpha" in lost,              # scanned there earlier, never sold
-          "crash: lost summary per system")
-    check(db.lost_of_body("F1", 504, 2) == ["bio:Stratum Tectonicas", "map"]
-          and db.lost_of_body("F1", 504, 1) == [] and db.lost_of_body(None, 504, 2) == []
-          and db.lost_of_body("F2", 504, 2) == [],
-          "crash: lost marks of one body, for that commander only")
-    check(db.bio_training_rows() and any("Tectonicas" in (r["bio_species"] or "")
-                                         for r in db.bio_training_rows()),
-          "crash: the shared knowledge (bio model) keeps what was found")
-    ev({"event": "SAAScanComplete", "SystemAddress": 504, "BodyID": 2, "BodyName": "Cm Delta 2"})
-    ev({"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 504, "Body": 2,
-        "Species_Localised": "Stratum Tectonicas", "timestamp": "2026-02-02T10:20:00Z"})
-    b = {r["body_id"]: r for r in db.bodies_for(504, "F1")}
-    check(not b[2]["lost_what"] and b[2]["mapped"] == 1, "crash: redone -> no longer marked")
-    db.cx.execute("UPDATE meta SET v='4' WHERE k='schema'")
-    db.cx.commit()
-    db.close()
-    db = SystemDB(os.path.join(d, "cmdr.sqlite"))
-    check(db.backup_path is not None and not db.cmdr_ready()
-          and db.cx.execute("SELECT COUNT(*) FROM cmdr_bodies").fetchone()[0] >= 1,
-          "C1: schema 4 -> 5 makes a backup, keeps the data, waits for the replay")
-    db.close()
-    return 0
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.WARNING)
-    raise SystemExit(1 if _selftest() else 0)
+# journal event -> its handler in SystemDB (4.12)
+_INGEST = {
+    "FSDJump": SystemDB._ing_arrival,
+    "Location": SystemDB._ing_arrival,
+    "CarrierJump": SystemDB._ing_arrival,
+    "FSDTarget": SystemDB._ing_fsd_target,
+    "StartJump": SystemDB._ing_start_jump,
+    "NavRoute": SystemDB._ing_navroute,
+    "Route": SystemDB._ing_navroute,
+    "FSSDiscoveryScan": SystemDB._ing_fss_discovery,
+    "FSSAllBodiesFound": SystemDB._ing_fss_all_found,
+    "Scan": SystemDB._ing_scan,
+    "ScanBaryCentre": SystemDB._ing_scan,
+    "SAAScanComplete": SystemDB._ing_saa_complete,
+    "SAASignalsFound": SystemDB._ing_body_signals,
+    "FSSBodySignals": SystemDB._ing_body_signals,
+    "ScanOrganic": SystemDB._ing_scan_organic,
+    "CarrierLocation": SystemDB._ing_carrier_location,
+    "CarrierStats": SystemDB._ing_carrier_stats,
+    "Docked": SystemDB._ing_docked,
+    "SellExplorationData": SystemDB._ing_sell_exploration,
+    "MultiSellExplorationData": SystemDB._ing_sell_exploration,
+    "SellOrganicData": SystemDB._ing_sell_organic,
+    "CodexEntry": SystemDB._ing_codex,
+    "FSSSignalDiscovered": SystemDB._ing_fss_signal,
+    "MaterialCollected": SystemDB._ing_material,
+}

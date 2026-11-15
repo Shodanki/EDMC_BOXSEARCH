@@ -16,7 +16,7 @@ three places:
 
 A change that breaks one of them is not merged.
 
-The rules were checked against EDMC 6.1.2 on 13.11.2026. When EDMC releases a new version (pre-releases included), read its changelog and PLUGINS.md again. Then update this file and the plugin in time.
+The rules were checked against EDMC 6.1.2 on 13.11.2026, and again on 14.11.2026 against the pre-release 6.1.3-beta3 (ship data and bug fixes; PLUGINS.md unchanged since 21.01.2026). When EDMC releases a new version (pre-releases included), read its changelog and PLUGINS.md again. Then update this file and the plugin in time.
 
 ## 1. The game and the community services
 
@@ -55,7 +55,7 @@ The rules were checked against EDMC 6.1.2 on 13.11.2026. When EDMC releases a ne
 
 * The release ZIP holds only what the plugin and the FIS run with. Tests, CI, development scripts, logs and the dotfiles are `export-ignore` (see `.gitattributes`). A new file that is not needed at run time gets the same treatment. Code that is no longer used is removed; git history is the archive.
 * No new Python package without a reason. EDMC's bundled standard library plus `requests` is the plugin's world; the FIS needs the standard library only. Third-party code is shipped only when it is needed, unchanged where possible, with its own licence (see below).
-* Files are read only where they belong: the plugin folder, the journal folder, EDDiscovery's database (read only) and, for the FIS, the plugin's own `shboxsearch_*` keys in EDMC's settings file. Nothing else on the PC is touched.
+* Files are read only where they belong: the plugin folder, the journal folder, EDDiscovery's database (read only) and, for the FIS, the plugin's own `shboxsearch_*` keys in EDMC's settings file and - only while the commander has the controls view switched on (off by default) - the game's key bindings (`Options\Bindings`, read only, never written). Nothing else on the PC is touched.
 * **The FIS:**
   * By default it serves this PC only: it binds to 127.0.0.1 and accepts only a localhost Host.
   * The home-network mode is the user's choice. In that mode every request needs the access token.
@@ -76,14 +76,17 @@ The rules were checked against EDMC 6.1.2 on 13.11.2026. When EDMC releases a ne
 ## 5. Code standards
 
 * **PEP 8** as EDMC checks it: `python -m flake8` with the project's `.flake8` (120 characters, third-party files excluded). CI runs it. New code adds no finding.
-* **Complexity:** EDMC's limit is 15 (`--max-complexity 15 --select C901`). Every new function keeps it; the older functions above it (helper modules and the FIS, listed in `tests/complexity.py`) may not get more complex, and leave the list once they are split. CI enforces both.
-* **Readable for a reviewer:** a docstring for every hook, every module and every public function you add or change. Comments explain *why*, not what. Keep files and functions small; new features go into their own module.
+* **Complexity:** EDMC's limit is 15 (`--max-complexity 15 --select C901`). Every function of the plugin and the FIS keeps it (since 4.12 without exception); the project's `.flake8` sets the same limit and `tests/complexity.py` checks it too. CI enforces both.
+* **Readable for a reviewer:** a docstring for every hook, every module and every public function and class (`tests/docstrings.py` checks the plugin and the FIS). Comments explain *why*, not what. Keep files and functions small; new features go into their own module.
 * **Splitting code without changing it:** a refactoring that only moves code is checked against the code before it - same tests, and where a window draws, the same widget calls with Tk replaced by a recorder.
 * **Tests:** every fix comes with a test that fails without it, and every CI step stays green:
-  * the module self tests;
+  * the procgen self test (`python procgen.py`, also behind the *Self test* button);
   * `tests/*.py`;
   * `python -m unittest discover` in `FIS/`;
-  * flake8 and `tests/complexity.py`.
+  * flake8 and `tests/complexity.py`;
+  * `tests/manifest.py`: after any change to a shipped file run
+    `python tests/manifest.py --write` (and in the release commit, after the
+    version bump), so `SHBOXSEARCH.manifest` matches the files.
 
   A change the browser shows is also checked in a browser.
 * Python 3.13 is the interpreter EDMC ships (32-bit). Do not use language features newer than that.

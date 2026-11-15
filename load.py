@@ -53,25 +53,40 @@ import json  # noqa: E402
 import time  # noqa: E402
 from typing import Any, Optional  # noqa: E402
 
-from .boxelplan import Planner  # noqa: E402
-from .overlay import CockpitOverlay  # noqa: E402
-from .sources import SourceManager  # noqa: E402
-from .sysdb import SystemDB  # noqa: E402
-from .state import CFG, DB_FILE, ST, VERSION, _PLUGIN_DIR, cfg_bool, cfg_str, logger  # noqa: E402
-from . import cockpit  # noqa: E402
-from . import maintenance  # noqa: E402
-from . import miningwin  # noqa: E402
-from . import planning  # noqa: E402
-from . import probewin  # noqa: E402
-from . import routewin  # noqa: E402
-from . import statswin  # noqa: E402
-from . import survey  # noqa: E402
-from . import uithread  # noqa: E402
+# 4.12: before the plugin imports its own modules, whether they are all
+# there - when one is missing or broken, EDMC gets a plugin that says so
+# (integrity.BrokenPlugin) instead of a traceback
+try:
+    from . import integrity  # noqa: E402
+except Exception:  # noqa: BLE001 - the check itself is missing: start as before
+    integrity = None  # type: ignore[assignment]
+_LOAD_ERROR: Optional[BaseException] = None
+try:
+    from .boxelplan import Planner  # noqa: E402
+    from .overlay import CockpitOverlay  # noqa: E402
+    from .sources import SourceManager  # noqa: E402
+    from .sysdb import SystemDB  # noqa: E402
+    from .state import CFG, DB_FILE, ST, VERSION, _PLUGIN_DIR, cfg_bool, cfg_str, logger  # noqa: E402
+    from . import cockpit  # noqa: E402
+    from . import cockpitinfo  # noqa: E402
+    from . import maintenance  # noqa: E402
+    from . import miningwin  # noqa: E402
+    from . import planning  # noqa: E402
+    from . import probewin  # noqa: E402
+    from . import routewin  # noqa: E402
+    from . import statswin  # noqa: E402
+    from . import survey  # noqa: E402
+    from . import uithread  # noqa: E402
 
-# EDMC hooks implemented in their own modules
-from .journal import dashboard_entry, journal_entry  # noqa: E402,F401
-from .panel import plugin_app  # noqa: E402,F401
-from .prefs import plugin_prefs, prefs_changed  # noqa: E402,F401
+    # EDMC hooks implemented in their own modules
+    from .journal import dashboard_entry, journal_entry  # noqa: E402,F401
+    from .panel import plugin_app  # noqa: E402,F401
+    from .prefs import plugin_prefs, prefs_changed  # noqa: E402,F401
+except Exception as exc:  # noqa: BLE001 - a file of the plugin is missing or broken
+    if integrity is None:
+        raise
+    _LOAD_ERROR = exc
+    _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 # ============================================================================
@@ -126,6 +141,8 @@ def plugin_start3(plugin_dir: str) -> str:
     # we last were. Without them the panel shows "fuel: unknown" and the map
     # has no "last here" marker until the first jump of the session.
     uithread._run_async(survey._bootstrap_session, label="reading journals")
+    uithread._run_async(maintenance._check_files, label="file check")   # 4.12
+    uithread._run_async(cockpitinfo.bootstrap, label="situation")       # 4.12: prices, session
     planning._request_route(delay=2.5)
     return "SHBOXSEARCH"
 
@@ -161,6 +178,8 @@ def plugin_stop() -> None:
     ov = getattr(ST, "overlay", None)
     if ov is not None:
         ov.clear()
+        if hasattr(ov.client, "close"):
+            ov.client.close()                  # D3: the own overlay window
     routewin._route_window_close()
     statswin._stats_window_close()
     probewin._probe_window_close()
@@ -175,3 +194,14 @@ def plugin_stop() -> None:
         if ST.db:
             ST.db.close()
     logger.info("SHBOXSEARCH stopped")
+
+
+if _LOAD_ERROR is not None:
+    # 4.12: one line in EDMC's window and the files in the log - no hooks
+    # that would need the modules that failed
+    _BROKEN = integrity.BrokenPlugin(os.path.dirname(os.path.abspath(__file__)), _LOAD_ERROR)
+    plugin_start3 = _BROKEN.plugin_start3  # noqa: F811
+    plugin_app = _BROKEN.plugin_app  # noqa: F811
+    plugin_stop = _BROKEN.plugin_stop  # noqa: F811
+    for _hook in ("journal_entry", "dashboard_entry", "plugin_prefs", "prefs_changed", "capi_fleetcarrier"):
+        globals().pop(_hook, None)

@@ -25,6 +25,7 @@ from .sysdb import CURRENT
 from .sysroute import shorten
 from .state import CFG, KIND_SHORT, RADIUS_CHOICES, ST, cfg_bool, cfg_int, cfg_set, logger
 from . import cockpit
+from . import cockpitinfo
 from . import fislaunch
 from . import miningwin
 from . import probewin
@@ -56,6 +57,8 @@ _v_route: Optional[tk.StringVar] = None
 _v_fuel: Optional[tk.StringVar] = None
 _v_update: Optional[tk.StringVar] = None
 _lbl_update = None
+_v_files: Optional[tk.StringVar] = None
+_lbl_files = None
 _lbl_fuel = None
 _lbl_queue = None
 _lbl_route = None
@@ -85,7 +88,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     global _btn_start, _radius_var
     global _btn_stats, _lbl_stats, _v_stats, _carrier_var
     global _btn_next, _v_route, _lbl_route, _btn_route
-    global _v_fuel, _lbl_queue, _lbl_fuel, _v_update, _lbl_update
+    global _v_fuel, _lbl_queue, _lbl_fuel, _v_update, _lbl_update, _v_files, _lbl_files
 
     _frame = tk.Frame(parent)
     _frame.columnconfigure(1, weight=1)
@@ -170,11 +173,21 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     _lbl_update.bind("<Button-1>", lambda e: updater._open_release_page())
     _lbl_update.grid_remove()
 
+    # 4.12: only when files of the plugin are missing or not as released
+    # (integrity.py) - clicking opens the release page for the ZIP
+    _v_files = tk.StringVar(value="")
+    _lbl_files = tk.Label(_frame, textvariable=_v_files, anchor=tk.W, justify=tk.LEFT,
+                          cursor="hand2", wraplength=360)
+    _lbl_files.grid(row=11, column=0, columnspan=2, sticky=tk.EW)
+    _lbl_files.bind("<Button-1>", lambda e: updater._open_release_page())
+    _lbl_files.grid_remove()
+
     _refresh()
     theme.update(_frame)
     # SHBOX FIS along with EDMC, when ticked in the settings
     _frame.after(fislaunch.FIS_AUTOSTART_DELAY_MS, fislaunch._fis_autostart)
     _frame.after(cockpit.OVERLAY_KEEP_MS, cockpit._overlay_keepalive)
+    cockpitinfo.tick_start()             # 4.12: the situation column
     return _frame
 
 
@@ -310,7 +323,8 @@ def _refresh_route_line() -> None:
         if _lbl_route:
             _lbl_route.grid()
     elif cfg_bool(CFG["show_route"], True) and ST.cur_id64:
-        _v_route.set("in-system: nothing to fly here")
+        # 4.12: a route without stops is a finished system (no full tour wanted)
+        _v_route.set("in-system: all done here" if ST.route is not None else "in-system: nothing to fly here")
         if _lbl_route:
             _lbl_route.grid()
     else:
@@ -331,6 +345,10 @@ def _refresh_optional_lines() -> None:
         else:
             _v_update.set("")
             _lbl_update.grid_remove()
+
+    if _v_files is not None and _lbl_files is not None:
+        _v_files.set(("FILES: " + ST.files_problem) if ST.files_problem else "")
+        (_lbl_files.grid() if ST.files_problem else _lbl_files.grid_remove())
 
     if _lbl_queue is not None:
         (_lbl_queue.grid() if cfg_bool(CFG["panel_queue"], False)

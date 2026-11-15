@@ -42,7 +42,7 @@ if __package__:     # inside the plugin package (EDMC)
                           boxel_size, boxel_prefix, boxels_in_sphere,
                           ha_regions_near, id64_of_slot, make_name, parse_name)
     from .sysdb import SystemDB
-else:               # on its own: the self test, the FIS
+else:               # on its own: the FIS, plain imports
     from procgen import (MASSCODES, boxel_center, boxel_index_of_coords,
                          boxel_key_of, boxel_labels,
                          boxel_size, boxel_prefix, boxels_in_sphere,
@@ -85,6 +85,9 @@ LABEL = {
 
 
 class Target:
+    """One entry of a work queue: a system to fly to, check in the galaxy map
+    or survey, with its kind, distance, boxel and position (exact or
+    estimated)."""
     __slots__ = ("name", "kind", "dist", "dist_origin", "mc", "boxel_key", "n2",
                  "x", "y", "z", "uncertainty", "detail", "id64", "score")
 
@@ -105,6 +108,8 @@ class Target:
 
     @property
     def is_speculative(self) -> bool:
+        """True for targets only the galaxy map can confirm (gap, probe, empty
+        boxel), not known systems."""
         return self.kind in (K_GAP, K_PROBE, K_EMPTY)
 
     def __repr__(self):  # pragma: no cover
@@ -232,6 +237,7 @@ class ProspectCalibration:
 
     @staticmethod
     def band(raw: float) -> int:
+        """The score band of a formula score (SCORE_BANDS)."""
         return sum(1 for e in SCORE_BANDS if raw >= e)
 
     @staticmethod
@@ -239,6 +245,8 @@ class ProspectCalibration:
         return max(0.0, min(raw / 5.0, 1.0))
 
     def add(self, mc: int, raw: float, hit: bool) -> None:
+        """Count one outcome - the boxel held a system (hit) or not - for its
+        mass code and band, and for all mass codes."""
         b = self.band(raw)
         for k in ((mc, b), ("*", b)):
             c = self.cells.setdefault(k, [0, 0])
@@ -249,12 +257,17 @@ class ProspectCalibration:
         self.sum_p0 += self._p0(raw)
 
     def outcomes(self) -> int:
+        """How many outcomes were counted."""
         return self.n
 
     def active(self) -> bool:
+        """True once there are LEARN_MIN_HITS hits: before that the formula
+        score stays as it is."""
         return self.hits >= LEARN_MIN_HITS
 
     def score(self, mc: int, raw: float) -> float:
+        """The formula score read against the own outcomes (see the class
+        docstring); unchanged while not active."""
         if not self.active():
             return raw
         f = self.sum_p0 / self.n
@@ -283,7 +296,156 @@ class ProspectCalibration:
         return out
 
 
+class _Context:
+    """What Planner.build reads from the database once per plan."""
+    __slots__ = ("absent", "known_rows", "known_names", "visited", "boxel_n2", "slots",
+                 "pmap", "observed", "ha_near", "client_boxels", "db_boxels")
+
+
+class _Plan:
+    """What Planner.build collects: targets, counts and the boxel tallies."""
+
+    def __init__(self) -> None:
+        self.targets: List[Target] = []
+        self.counts = {k: 0 for k in PRIORITY}
+        self.boxel_total = 0
+        self.boxel_unknown = 0
+        self.boxel_closed = 0
+        self.boxel_open = 0
+        self.boxel_untested = 0
+        # Sample for the estimate: ONLY boxels we have probed to the end.
+        # Boxels that merely appear in a database are a biased sample - they
+        # are in there precisely because somebody found a system in them.
+        self.probed: Dict[int, List[int]] = {}
+        self.sectors_missing: Set[Tuple[int, int, int]] = set()
+        self.raw_score: Dict[str, Tuple[int, float]] = {}
+        self.calib = ProspectCalibration()
+
+
+class _Boxel:
+    """One physical boxel in a plan: its labels, their keys, what is known."""
+
+    def __init__(self, mc: int, gidx: Sequence[int], labels: List[Tuple[str, Tuple[int, int, int]]],
+                 cx: _Context) -> None:
+        self.mc, self.gidx, self.labels, self.cx = mc, gidx, labels, cx
+        self.keys = [boxel_key_of(s, mc, b) for s, b in labels]
+        self.key = self.keys[0]
+        self.known: Set[int] = set()
+        self.also = ("also named: " + ", ".join(boxel_prefix(k) for k in self.keys[1:])
+                     ) if len(self.keys) > 1 else ""
+
+    def variant(self, n2: int) -> Tuple[Optional[str], str, bool]:
+        """(name to probe, its boxel key, already known) - the
+        first label whose name is neither known nor marked
+        'not there'; None when every label was ruled out."""
+        for (s, b), k in zip(self.labels, self.keys):
+            nm = make_name(s, self.mc, b, n2)
+            if nm in self.cx.known_names:
+                return None, k, True
+        for (s, b), k in zip(self.labels, self.keys):
+            nm = make_name(s, self.mc, b, n2)
+            if nm not in self.cx.absent:
+                return nm, k, False
+        return None, self.key, False
+
+
+Label = Tuple[str, Tuple[int, int, int]]          # (sector, boxel index in it)
+
+
+def _observed_labels(near_rows: Sequence[Any]) -> Dict[Tuple[int, Tuple[int, int, int]], List[Label]]:
+    """Names a physical boxel was really seen under (4.10): where the
+    surface of a hand-authored sector cuts a boxel, its systems carry
+    either label; a name some source or the journal gave with a
+    position is proof, so it is tried first."""
+    observed: Dict[Tuple[int, Tuple[int, int, int]], List[Label]] = {}
+    for r in near_rows:
+        p = parse_name(r["name"])
+        if p is None or r["x"] is None:
+            continue
+        g = boxel_index_of_coords(r["x"], r["y"], r["z"], p.mc)
+        lab = (p.sector, tuple(p.boxel))
+        lst = observed.setdefault((p.mc, g), [])
+        if lab not in lst:
+            lst.append(lab)
+    return observed
+
+
+def _proof_boxels(known_rows: Sequence[Any]) -> Tuple[Set[str], Set[str]]:
+    """Boxels the game client proved a system in, and boxels some
+    database knows - a hit counts only where no database knew it."""
+    client_boxels: Set[str] = set()
+    db_boxels: Set[str] = set()
+    for r in known_rows:
+        p = parse_name(r["name"])
+        if p is None:
+            continue
+        src = {v for v in (r["sources"] or "").split(",") if v}
+        if src & NOT_CLIENT:
+            db_boxels.add(p.boxel_key)
+        elif src & CLIENT_SOURCES:
+            client_boxels.add(p.boxel_key)
+    return client_boxels, db_boxels
+
+
+def _gaps_and_probes(acc: _Plan, b: _Boxel, bdist: float, bcenter: Tuple[float, float, float],
+                     list_end: Optional[int], closed: bool, probe_depth: int) -> None:
+    """The gap targets below the highest known number (or the list end) and,
+    in a boxel not closed, probe targets above it."""
+    mc, gidx = b.mc, b.gidx
+    top = max(b.known) if b.known else -1
+    upper = max(top, list_end - 1) if list_end is not None else top
+    for n2 in range(0, upper + 1):
+        if n2 in b.known:
+            continue
+        nm, k, _ = b.variant(n2)
+        if nm is None:
+            continue
+        acc.targets.append(Target(nm, K_GAP, bdist, mc, k, n2, bcenter, detail=b.also,
+                                  id64=id64_of_slot(mc, gidx, n2)))
+        acc.counts[K_GAP] += 1
+
+    if not closed:
+        for d in range(1, probe_depth + 1):
+            nm, k, _ = b.variant(top + d)
+            if nm is None:
+                continue
+            acc.targets.append(Target(nm, K_PROBE, bdist, mc, k, top + d, bcenter,
+                                      detail=b.also,
+                                      id64=id64_of_slot(mc, gidx, top + d)))
+            acc.counts[K_PROBE] += 1
+
+
+def _queues(targets: List[Target], boxel_score: Dict[str, float]
+            ) -> Tuple[List[Target], List[Target], List[Target]]:
+    """The flight, probe and check queues of a sorted target list."""
+    flight = [t for t in targets if t.kind in FLIGHT_KINDS]
+    # Probes are grouped per boxel: one galaxy map search shows the whole
+    # boxel at once, so working boxel by boxel is far cheaper than hopping
+    # between them in pure distance order.
+    probe = [t for t in targets if t.kind in PROBE_KINDS]
+    boxel_rank: Dict[str, float] = {}
+    for t in probe:
+        k = t.boxel_key or t.name
+        if k not in boxel_rank or t.dist_origin < boxel_rank[k]:
+            boxel_rank[k] = t.dist_origin
+    # Effective cost per expected find: distance discounted by how
+    # promising the neighbourhood is. A boxel twice as far but three times
+    # as likely wins.
+
+    def cost(key: str) -> float:
+        return boxel_rank.get(key, 0.0) / (1.0 + boxel_score.get(key, 0.0))
+
+    probe.sort(key=lambda t: (cost(t.boxel_key or t.name),
+                              t.boxel_key or "", t.n2 if t.n2 is not None else 0))
+    for t in probe:
+        t.score = boxel_score.get(t.boxel_key or "", 0.0)
+    check = [t for t in targets if t.kind == K_CHECK]
+    return flight, probe, check
+
+
 class Planner:
+    """Plans a survey sphere from the database: boxel gaps, probes, known
+    systems to visit and to survey, sorted into the work queues."""
     def __init__(self, db: SystemDB):
         self.db = db
 
@@ -300,251 +462,179 @@ class Planner:
         """
 
         center = tuple(center)
-        absent = self.db.absent_set()
-        known_rows = self.db.sphere(center, radius)
-        known_names = {r["name"] for r in known_rows}
-        visited = {r["name"] for r in known_rows if r["visited"]}
-        boxel_n2 = self.db.boxel_n2_map()
-        # 4.10: slots filled under any name (a catalogue star is n2 = 0 of
-        # its boxel just the same), by physical boxel, from every id64
-        slots = self.db.slot_map()
-        # neighbourhood reaches one boxel beyond the sphere
-        margin = radius + boxel_size(max(masscodes) if masscodes else 0) * 2
-        near_rows = self.db.sphere(center, margin)
-        pmap = ProspectMap(near_rows, masscodes)
-        # Names a physical boxel was really seen under (4.10): where the
-        # surface of a hand-authored sector cuts a boxel, its systems carry
-        # either label; a name some source or the journal gave with a
-        # position is proof, so it is tried first.
-        observed: Dict[Tuple[int, Tuple[int, int, int]], List[Tuple[str, Tuple[int, int, int]]]] = {}
-        for r in near_rows:
-            p = parse_name(r["name"])
-            if p is None or r["x"] is None:
-                continue
-            g = boxel_index_of_coords(r["x"], r["y"], r["z"], p.mc)
-            lab = (p.sector, tuple(p.boxel))
-            lst = observed.setdefault((p.mc, g), [])
-            if lab not in lst:
-                lst.append(lab)
-        ha_near = ha_regions_near(center, margin)
-        boxel_score: Dict[str, float] = {}
-        raw_score: Dict[str, Tuple[int, float]] = {}
-        calib = ProspectCalibration()
-        # boxels the game client proved a system in, and boxels some
-        # database knows - a hit counts only where no database knew it
-        client_boxels: Set[str] = set()
-        db_boxels: Set[str] = set()
-        for r in known_rows:
-            p = parse_name(r["name"])
-            if p is None:
-                continue
-            src = {v for v in (r["sources"] or "").split(",") if v}
-            if src & NOT_CLIENT:
-                db_boxels.add(p.boxel_key)
-            elif src & CLIENT_SOURCES:
-                client_boxels.add(p.boxel_key)
-
-        targets: List[Target] = []
-        counts = {k: 0 for k in PRIORITY}
-        boxel_total = 0
-        boxel_unknown = 0
-        boxel_closed = 0
-        boxel_open = 0
-        boxel_untested = 0
-        # Sample for the estimate: ONLY boxels we have probed to the end.
-        # Boxels that merely appear in a database are a biased sample - they
-        # are in there precisely because somebody found a system in them.
-        probed: Dict[int, List[int]] = {}
-        sectors_missing: Set[Tuple[int, int, int]] = set()
-
-        # --- 1. known but unvisited systems ---------------------------------
-        for r in known_rows:
-            if r["visited"] or r["name"].startswith("#"):
-                continue
-            d = math.dist((r["x"], r["y"], r["z"]), center)
-            p = parse_name(r["name"])
-            kind = K_NEW
-            targets.append(Target(r["name"], kind, d,
-                                  mc=p.mc if p else None,
-                                  boxel_key=p.boxel_key if p else None,
-                                  n2=p.n2 if p else None,
-                                  pos=(r["x"], r["y"], r["z"]),
-                                  id64=r["id64"]))
-            counts[kind] += 1
+        cx = self._context(center, radius, masscodes)
+        acc = _Plan()
+        self._known_targets(cx, acc, center)
 
         # --- 2./3./4. boxel analysis ----------------------------------------
         for mc in masscodes:
-            per_sector = 128 >> mc
             for gidx in boxels_in_sphere(mc, center, radius):
-                boxel_total += 1
-                # every label this physical boxel can carry: computed
-                # (procedural sector, hand-authored spheres cutting it) and
-                # seen; a seen label goes first
-                labels = boxel_labels(gidx, mc, self.db.sectors.resolve, ha_near)
-                seen = observed.get((mc, tuple(gidx)), [])
-                labels = ([lab for lab in seen if lab in labels]
-                          + [lab for lab in seen if lab not in labels]
-                          + [lab for lab in labels if lab not in seen])
-                if not labels:
-                    sectors_missing.add(tuple(g // per_sector for g in gidx))
-                    continue
-                keys = [boxel_key_of(s, mc, b) for s, b in labels]
-                bcenter = boxel_center(gidx, mc)
-                bdist = math.dist(bcenter, center)
-                key = keys[0]
-                # the system number n2 is shared by all labels of a boxel
-                known: Set[int] = set(slots.get((mc, tuple(gidx)), set()))
-                for k in keys:
-                    known |= boxel_n2.get(k, set())
-                also = ("also named: " + ", ".join(boxel_prefix(k) for k in keys[1:])
-                        ) if len(keys) > 1 else ""
-
-                def variant(n2: int) -> Tuple[Optional[str], str, bool]:
-                    """(name to probe, its boxel key, already known) - the
-                    first label whose name is neither known nor marked
-                    'not there'; None when every label was ruled out."""
-                    for (s, b), k in zip(labels, keys):
-                        nm = make_name(s, mc, b, n2)
-                        if nm in known_names:
-                            return None, k, True
-                    for (s, b), k in zip(labels, keys):
-                        nm = make_name(s, mc, b, n2)
-                        if nm not in absent:
-                            return nm, k, False
-                    return None, key, False
-
-                raw = pmap.score(mc, gidx)
-                for k in keys:
-                    raw_score[k] = (mc, raw)
-                probe0, key0, _ = variant(0)
-                if any(k in client_boxels for k in keys) and not any(k in db_boxels for k in keys):
-                    calib.add(mc, raw, True)
-                elif not known and probe0 is None:
-                    calib.add(mc, raw, False)
-
-                # closed only when every label's list was seen to its end -
-                # and an end at or below a system that exists is no end (an
-                # old "not there" on a catalogue star's slot, 4.10)
-                ends = [self.db.boxel_end(k) for k in keys]
-                top_known = max(known) if known else -1
-                closed = all(e is not None and e > top_known for e in ends)
-                # the galaxy map's list end ("list ends at"): every slot below
-                # it exists - the ones nobody knows yet are certain gaps
-                list_end = max([e for e in ends if e is not None and e > top_known],
-                               default=None)
-                if closed:
-                    boxel_closed += 1
-                    probed.setdefault(mc, []).append(len(known))
-                elif known:
-                    boxel_open += 1
-                else:
-                    boxel_untested += 1
-
-                if not known and not list_end:          # None, or empty (end 0)
-                    boxel_unknown += 1
-                    if include_empty and probe0 is not None:
-                        targets.append(Target(probe0, K_EMPTY, bdist, mc, key0, 0, bcenter,
-                                              detail=also,
-                                              id64=id64_of_slot(mc, gidx, 0)))
-                        counts[K_EMPTY] += 1
-                    continue
-
-                top = max(known) if known else -1
-                upper = max(top, list_end - 1) if list_end is not None else top
-                for n2 in range(0, upper + 1):
-                    if n2 in known:
-                        continue
-                    nm, k, _ = variant(n2)
-                    if nm is None:
-                        continue
-                    targets.append(Target(nm, K_GAP, bdist, mc, k, n2, bcenter, detail=also,
-                                          id64=id64_of_slot(mc, gidx, n2)))
-                    counts[K_GAP] += 1
-
-                if not closed:
-                    for d in range(1, probe_depth + 1):
-                        nm, k, _ = variant(top + d)
-                        if nm is None:
-                            continue
-                        targets.append(Target(nm, K_PROBE, bdist, mc, k, top + d, bcenter,
-                                              detail=also,
-                                              id64=id64_of_slot(mc, gidx, top + d)))
-                        counts[K_PROBE] += 1
+                self._boxel(cx, acc, mc, gidx, center, probe_depth, include_empty)
 
         # --- 5. outstanding work in systems already visited -----------------
         if include_tasks:
-            for t in self.db.unfinished_systems(center, radius):
-                sc, bc = t["fss"]
-                if bc and sc < bc:
-                    targets.append(Target(t["name"], K_SCAN, t["dist"],
-                                          detail="%d/%d bodies" % (sc, bc),
-                                          id64=t["id64"]))
-                    counts[K_SCAN] += 1
-                if t["dss"]:
-                    targets.append(Target(t["name"], K_DSS, t["dist"],
-                                          detail="%d bodies: %s" % (
-                                              len(t["dss"]), ", ".join(t["dss"][:3])),
-                                          id64=t["id64"]))
-                    counts[K_DSS] += 1
-                if t["bio"]:
-                    targets.append(Target(t["name"], K_BIO, t["dist"],
-                                          detail="%d bodies: %s" % (
-                                              len(t["bio"]), ", ".join(t["bio"][:3])),
-                                          id64=t["id64"]))
-                    counts[K_BIO] += 1
+            self._task_targets(acc, center, radius)
 
-        for key, (mc, raw) in raw_score.items():
-            boxel_score[key] = calib.score(mc, raw)
+        boxel_score: Dict[str, float] = {}
+        for key, (mc, raw) in acc.raw_score.items():
+            boxel_score[key] = acc.calib.score(mc, raw)
 
+        targets = acc.targets
         set_origin(targets, origin if origin is not None else center)
         targets.sort(key=lambda t: (int(t.dist_origin // 5), PRIORITY[t.kind],
                                     t.dist_origin, t.n2 if t.n2 is not None else 0))
         if len(targets) > limit:
             targets = targets[:limit]
-
-        flight = [t for t in targets if t.kind in FLIGHT_KINDS]
-        # Probes are grouped per boxel: one galaxy map search shows the whole
-        # boxel at once, so working boxel by boxel is far cheaper than hopping
-        # between them in pure distance order.
-        probe = [t for t in targets if t.kind in PROBE_KINDS]
-        boxel_rank: Dict[str, float] = {}
-        for t in probe:
-            k = t.boxel_key or t.name
-            if k not in boxel_rank or t.dist_origin < boxel_rank[k]:
-                boxel_rank[k] = t.dist_origin
-        # Effective cost per expected find: distance discounted by how
-        # promising the neighbourhood is. A boxel twice as far but three times
-        # as likely wins.
-
-        def cost(key: str) -> float:
-            return boxel_rank.get(key, 0.0) / (1.0 + boxel_score.get(key, 0.0))
-
-        probe.sort(key=lambda t: (cost(t.boxel_key or t.name),
-                                  t.boxel_key or "", t.n2 if t.n2 is not None else 0))
-        for t in probe:
-            t.score = boxel_score.get(t.boxel_key or "", 0.0)
-        check = [t for t in targets if t.kind == K_CHECK]
+        flight, probe, check = _queues(targets, boxel_score)
 
         return {
             "center": center, "radius": radius,
             "targets": targets,
             "flight": flight, "probe": probe, "check": check,
-            "counts": counts,
-            "known": len(known_rows),
-            "visited": len(visited),
-            "boxel_total": boxel_total,
-            "boxel_unexplored": boxel_unknown,
-            "boxel_closed": boxel_closed,
-            "boxel_open": boxel_open,
-            "boxel_untested": boxel_untested,
-            "probed_sample": probed,
+            "counts": acc.counts,
+            "known": len(cx.known_rows),
+            "visited": len(cx.visited),
+            "boxel_total": acc.boxel_total,
+            "boxel_unexplored": acc.boxel_unknown,
+            "boxel_closed": acc.boxel_closed,
+            "boxel_open": acc.boxel_open,
+            "boxel_untested": acc.boxel_untested,
+            "probed_sample": acc.probed,
             "boxel_score": boxel_score,
-            "prospect_learning": calib.summary(),
-            "prospect_outcomes": calib.outcomes(),
-            "prospect_active": calib.active(),
+            "prospect_learning": acc.calib.summary(),
+            "prospect_outcomes": acc.calib.outcomes(),
+            "prospect_active": acc.calib.active(),
             "masscodes": list(masscodes),
-            "sectors_missing": sorted(sectors_missing),
+            "sectors_missing": sorted(acc.sectors_missing),
         }
+
+    def _context(self, center: Tuple[float, ...], radius: float,
+                 masscodes: Sequence[int]) -> "_Context":
+        """What the plan reads from the database once: known systems, names
+        marked absent, filled slots, the neighbourhood and its labels."""
+        cx = _Context()
+        cx.absent = self.db.absent_set()
+        cx.known_rows = self.db.sphere(center, radius)
+        cx.known_names = {r["name"] for r in cx.known_rows}
+        cx.visited = {r["name"] for r in cx.known_rows if r["visited"]}
+        cx.boxel_n2 = self.db.boxel_n2_map()
+        # 4.10: slots filled under any name (a catalogue star is n2 = 0 of
+        # its boxel just the same), by physical boxel, from every id64
+        cx.slots = self.db.slot_map()
+        # neighbourhood reaches one boxel beyond the sphere
+        margin = radius + boxel_size(max(masscodes) if masscodes else 0) * 2
+        near_rows = self.db.sphere(center, margin)
+        cx.pmap = ProspectMap(near_rows, masscodes)
+        cx.observed = _observed_labels(near_rows)
+        cx.ha_near = ha_regions_near(center, margin)
+        cx.client_boxels, cx.db_boxels = _proof_boxels(cx.known_rows)
+        return cx
+
+    @staticmethod
+    def _known_targets(cx: "_Context", acc: "_Plan", center: Tuple[float, ...]) -> None:
+        """--- 1. known but unvisited systems."""
+        for r in cx.known_rows:
+            if r["visited"] or r["name"].startswith("#"):
+                continue
+            d = math.dist((r["x"], r["y"], r["z"]), center)
+            p = parse_name(r["name"])
+            kind = K_NEW
+            acc.targets.append(Target(r["name"], kind, d,
+                                      mc=p.mc if p else None,
+                                      boxel_key=p.boxel_key if p else None,
+                                      n2=p.n2 if p else None,
+                                      pos=(r["x"], r["y"], r["z"]),
+                                      id64=r["id64"]))
+            acc.counts[kind] += 1
+
+    def _boxel(self, cx: "_Context", acc: "_Plan", mc: int, gidx: Sequence[int],
+               center: Tuple[float, ...], probe_depth: int, include_empty: bool) -> None:
+        """One physical boxel: its labels, what is known in it, whether it is
+        closed - and its empty-boxel, gap and probe targets."""
+        acc.boxel_total += 1
+        per_sector = 128 >> mc
+        # every label this physical boxel can carry: computed
+        # (procedural sector, hand-authored spheres cutting it) and
+        # seen; a seen label goes first
+        labels = boxel_labels(gidx, mc, self.db.sectors.resolve, cx.ha_near)
+        seen = cx.observed.get((mc, tuple(gidx)), [])
+        labels = ([lab for lab in seen if lab in labels]
+                  + [lab for lab in seen if lab not in labels]
+                  + [lab for lab in labels if lab not in seen])
+        if not labels:
+            acc.sectors_missing.add(tuple(g // per_sector for g in gidx))
+            return
+        b = _Boxel(mc, gidx, labels, cx)
+        b.known = set(cx.slots.get((mc, tuple(gidx)), set()))
+        # the system number n2 is shared by all labels of a boxel
+        for k in b.keys:
+            b.known |= cx.boxel_n2.get(k, set())
+        bcenter = boxel_center(gidx, mc)
+        bdist = math.dist(bcenter, center)
+
+        raw = cx.pmap.score(mc, gidx)
+        for k in b.keys:
+            acc.raw_score[k] = (mc, raw)
+        probe0, key0, _ = b.variant(0)
+        if any(k in cx.client_boxels for k in b.keys) and not any(k in cx.db_boxels for k in b.keys):
+            acc.calib.add(mc, raw, True)
+        elif not b.known and probe0 is None:
+            acc.calib.add(mc, raw, False)
+
+        closed, list_end = self._boxel_end(b)
+        if closed:
+            acc.boxel_closed += 1
+            acc.probed.setdefault(mc, []).append(len(b.known))
+        elif b.known:
+            acc.boxel_open += 1
+        else:
+            acc.boxel_untested += 1
+
+        if not b.known and not list_end:          # None, or empty (end 0)
+            acc.boxel_unknown += 1
+            if include_empty and probe0 is not None:
+                acc.targets.append(Target(probe0, K_EMPTY, bdist, mc, key0, 0, bcenter,
+                                          detail=b.also,
+                                          id64=id64_of_slot(mc, gidx, 0)))
+                acc.counts[K_EMPTY] += 1
+            return
+        _gaps_and_probes(acc, b, bdist, bcenter, list_end, closed, probe_depth)
+
+    def _boxel_end(self, b: "_Boxel") -> Tuple[bool, Optional[int]]:
+        """(closed, list end) of a boxel."""
+        # closed only when every label's list was seen to its end -
+        # and an end at or below a system that exists is no end (an
+        # old "not there" on a catalogue star's slot, 4.10)
+        ends = [self.db.boxel_end(k) for k in b.keys]
+        top_known = max(b.known) if b.known else -1
+        closed = all(e is not None and e > top_known for e in ends)
+        # the galaxy map's list end ("list ends at"): every slot below
+        # it exists - the ones nobody knows yet are certain gaps
+        list_end = max([e for e in ends if e is not None and e > top_known],
+                       default=None)
+        return closed, list_end
+
+    def _task_targets(self, acc: "_Plan", center: Tuple[float, ...], radius: float) -> None:
+        """--- 5. outstanding work in systems already visited."""
+        for t in self.db.unfinished_systems(center, radius):
+            sc, bc = t["fss"]
+            if bc and sc < bc:
+                acc.targets.append(Target(t["name"], K_SCAN, t["dist"],
+                                          detail="%d/%d bodies" % (sc, bc),
+                                          id64=t["id64"]))
+                acc.counts[K_SCAN] += 1
+            if t["dss"]:
+                acc.targets.append(Target(t["name"], K_DSS, t["dist"],
+                                          detail="%d bodies: %s" % (
+                                              len(t["dss"]), ", ".join(t["dss"][:3])),
+                                          id64=t["id64"]))
+                acc.counts[K_DSS] += 1
+            if t["bio"]:
+                acc.targets.append(Target(t["name"], K_BIO, t["dist"],
+                                          detail="%d bodies: %s" % (
+                                              len(t["bio"]), ", ".join(t["bio"][:3])),
+                                          id64=t["id64"]))
+                acc.counts[K_BIO] += 1
 
     # ------------------------------------------------------------- statistics
     def statistics(self, plan: Dict[str, object]) -> Dict[str, object]:
@@ -778,6 +868,8 @@ class Planner:
     # ----------------------------------------------------------------- output
     @staticmethod
     def summary(plan: Dict[str, object]) -> str:
+        """The plan as text for the log: sphere, known systems, boxels, the
+        queues."""
         c = plan["counts"]
         L = []
         L.append("sphere r=%.0f ly around (%.2f, %.2f, %.2f)"
@@ -817,6 +909,8 @@ class Planner:
 
     @staticmethod
     def export_csv(plan: Dict[str, object], path: str) -> int:
+        """Write the plan's targets to a CSV file (semicolons); returns how
+        many rows."""
         import csv
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f, delimiter=";")
@@ -844,7 +938,7 @@ class Planner:
 # runs through boxels nobody has probed turns each hop into a fair chance of
 # an unknown system - without a single galaxy map search.
 #
-# The commander plots the route himself (one action, nothing automated); this
+# The commander plots the route themselves (one action, nothing automated); this
 # only picks a target worth plotting to.
 
 def _seg_dist(p, a, b) -> Tuple[float, float]:
@@ -887,66 +981,6 @@ def bundled_probe_prefix(probe: Sequence["Target"], n: int = 5) -> Tuple[str, Li
     if len(bundle) == 1:
         return boxel_prefix(keys[0]), bundle
     return group, bundle
-
-
-def _selftest() -> int:
-    """python boxelplan.py - the probe bundle prefix."""
-    fails = 0
-
-    def check(ok: bool, what: str) -> None:
-        nonlocal fails
-        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
-        fails += 0 if ok else 1
-
-    class T:
-        def __init__(self, key):
-            self.boxel_key = key
-
-    q = [T("Synuefe VA-I b2"), T("Synuefe VA-I b2"), T("Synuefe VA-I b3"),
-         T("Synuefe XV-C d"), T("Synuefe VA-I b17")]
-    p, b = bundled_probe_prefix(q)
-    check(p == "Synuefe VA-I b" and b == ["Synuefe VA-I b2", "Synuefe VA-I b3",
-                                          "Synuefe VA-I b17"],
-          "same sector, letters and mass code: one prefix for three boxels")
-    p, b = bundled_probe_prefix([T("Col 285 Sector AB-C d12"), T("Col 285 Sector AB-C d13"),
-                                 T("Col 285 Sector ZZ-Y d4")])
-    check(p == "Col 285 Sector AB-C d" and len(b) == 2,
-          "sector of several words stays whole; other letter group left out")
-    p, b = bundled_probe_prefix([T("Synuefe XV-C d"), T("Synuefe VA-I b2")])
-    check(p == "Synuefe XV-C d" and b == ["Synuefe XV-C d"],
-          "nothing to bundle: the single boxel's own prefix")
-    # H3 #7: calibration on own probe outcomes
-    c = ProspectCalibration()
-    check(c.score(0, 2.5) == 2.5 and c.score(1, 6.0) == 6.0,
-          "no outcomes: the formula itself")
-    for _ in range(70):
-        c.add(0, 2.5, False)
-    check(not c.active() and c.score(0, 2.5) == 2.5,
-          "misses alone (as in the real survey, 0 of 131) change nothing")
-    for _ in range(40):
-        c.add(0, 3.5, False)                       # band 3 never paid in mass code a
-    for _ in range(10):
-        c.add(0, 0.5, True)                        # band 0 always did
-    check(c.active() and c.score(0, 0.5) > c.score(0, 3.5),
-          "measured outcomes turn the order round: %.2f vs %.2f"
-          % (c.score(0, 0.5), c.score(0, 3.5)))
-    check(abs(c.score(0, 1.5) - 1.5) < 1e-9,
-          "a band without outcomes keeps its formula score")
-    check(c.score(0, 3.5) < c.score(2, 3.5) < 3.5,
-          "a mass code without outcomes leans on all mass codes, less strongly")
-    sm = {x["band"]: x for x in c.summary()}
-    check(sm[3]["n"] == 40 and sm[3]["hits"] == 0 and not sm[3]["thin"]
-          and sm[0]["thin"] and sm[0]["rate"] == 1.0 and sm[1]["n"] == 0,
-          "summary per band with thin marker")
-    lo, hi = _wilson(0, 40)
-    check(lo == 0.0 and 0.05 < hi < 0.1, "Wilson range of 0 of 40: 0-%.0f%%" % (100 * hi))
-    check(ProspectCalibration.band(0.99) == 0 and ProspectCalibration.band(4.0) == 4,
-          "band edges")
-    p, b = bundled_probe_prefix([T("Synuefe VA-I b2"), T("Synuefe VA-I b3")], n=1)
-    check(p == "Synuefe VA-I b2-" and len(b) == 1, "n=1: just the next boxel")
-    check(bundled_probe_prefix([]) == ("", []), "empty queue")
-    print("failures: %d" % fails)
-    return fails
 
 
 def corridor_targets(origin: Sequence[float], candidates: Sequence[Dict[str, object]],
@@ -1016,7 +1050,3 @@ def _angle(o, a, b) -> float:
     nb = math.sqrt(sum(v * v for v in vb)) or 1.0
     cos = max(-1.0, min(1.0, sum(va[i] * vb[i] for i in range(3)) / (na * nb)))
     return math.degrees(math.acos(cos))
-
-
-if __name__ == "__main__":
-    raise SystemExit(1 if _selftest() else 0)

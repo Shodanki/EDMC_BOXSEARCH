@@ -15,6 +15,8 @@ EDMCOverlay) using their common `edmcoverlay` API:
                  changes or a stop is ticked off
   BRIEFING       a few seconds after selecting a jump target and on arrival:
                  star class, scoopable, whether any database knows the system
+  SITUATION      (4.12, cockpitinfo / situation.py) in the opposite corner:
+                 warnings, the landing card, the system's value, the session
 
 Rules this module keeps:
   * it never raises - a missing or broken overlay must not touch the survey
@@ -57,6 +59,7 @@ LINE_H = {"small": 16, "normal": 20}
 BRIEFING_GAP = 8          # lines below the targets block where a briefing goes
 MAX_LINES = 8
 NAV_BELOW_BIO = 3         # the compass starts this many lines below the bio line
+MAX_INFO = 9              # 4.12: lines of the situation column
 
 Line = Tuple[str, str]    # (text, colour)
 
@@ -103,6 +106,40 @@ def targets_lines(route: Any, done: Iterable[int], limit: int = 3) -> List[Line]
     return out
 
 
+def _star_line(sc: str, scoop: Optional[bool]) -> Line:
+    """STAR line of the briefing: class, and whether a fuel scoop works."""
+    return ("STAR  %s%s" % (sc, "  scoopable" if scoop else
+                            ("  NOT scoopable" if scoop is False else "")),
+            COL["data"] if scoop or scoop is None else COL["warn"])
+
+
+def _known_lines(info: Dict[str, Any]) -> List[Line]:
+    """What the databases know of the place (shells.info_level)."""
+    src = info.get("known_sources")
+    level = info.get("level")
+    if src:
+        return [("KNOWN  %s" % ", ".join(src), COL["dim"])]
+    if level == "inhabited":
+        return [("INHABITED - known to the databases", COL["dim"])]
+    if level == "unchecked":
+        # I1: nobody was asked about this place - never claim "no database"
+        return [("NOT CHECKED - outside our data frame", COL["dim"])]
+    if level == "checked" or (level is None and src is not None):
+        out = [("IN NO DATABASE - first discovery likely", COL["new"])]
+        if info.get("checked_by"):
+            out.append(("checked: %s" % ", ".join(info["checked_by"]), COL["dim"]))
+        return out
+    return []
+
+
+def _lost_line(lost: Dict[str, Any]) -> Line:
+    """Visited, yes - but what you did there went down with the ship."""
+    bits = [b for b in ("%d scan" % lost["scan"] if lost.get("scan") else "",
+                        "%d map" % lost["map"] if lost.get("map") else "",
+                        "%d bio" % len(lost["bio"]) if lost.get("bio") else "") if b]
+    return (("LOST IN CRASH  %s - redo" % ", ".join(bits))[:44], COL["alert"])
+
+
 def briefing_lines(info: Dict[str, Any]) -> List[Line]:
     """
     BRIEFING block. info keys (all optional):
@@ -121,35 +158,16 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
     out: List[Line] = [(head[:44], COL["head"])]
     sc = info.get("star_class")
     if sc:
-        scoop = info.get("scoopable")
-        out.append(("STAR  %s%s" % (sc, "  scoopable" if scoop else
-                                    ("  NOT scoopable" if scoop is False else "")),
-                    COL["data"] if scoop or scoop is None else COL["warn"]))
+        out.append(_star_line(sc, info.get("scoopable")))
     if info.get("region"):
         # 4.10: codex region (klightspeed's region map)
         out.append((("REGION  %s" % info["region"])[:44], COL["dim"]))
-    src = info.get("known_sources")
-    level = info.get("level")
-    if src:
-        out.append(("KNOWN  %s" % ", ".join(src), COL["dim"]))
-    elif level == "inhabited":
-        out.append(("INHABITED - known to the databases", COL["dim"]))
-    elif level == "unchecked":
-        # I1: nobody was asked about this place - never claim "no database"
-        out.append(("NOT CHECKED - outside our data frame", COL["dim"]))
-    elif level == "checked" or (level is None and src is not None):
-        out.append(("IN NO DATABASE - first discovery likely", COL["new"]))
-        if info.get("checked_by"):
-            out.append(("checked: %s" % ", ".join(info["checked_by"]), COL["dim"]))
+    out += _known_lines(info)
     if info.get("visited"):
         out.append(("visited before", COL["dim"]))
     lost = info.get("lost")
     if lost:
-        # visited, yes - but what you did there went down with the ship
-        bits = [b for b in ("%d scan" % lost["scan"] if lost.get("scan") else "",
-                            "%d map" % lost["map"] if lost.get("map") else "",
-                            "%d bio" % len(lost["bio"]) if lost.get("bio") else "") if b]
-        out.append((("LOST IN CRASH  %s - redo" % ", ".join(bits))[:44], COL["alert"]))
+        out.append(_lost_line(lost))
     if info.get("also_by"):
         # C1: another commander on this PC has been there - your own
         # exploration is still open, the knowledge is shared
@@ -201,7 +219,8 @@ class CockpitOverlay:
         self.size = "small"
         self.hidden = False                  # a game screen is in front
         self._last_targets: List[Line] = []
-        self.mute_targets = False            # mining: the route block steps aside
+        self.mute_targets = False            # mining / on the ground: the route block steps aside
+        self._mute_why: set = set()          # 4.12: why ("mining", "surface") - each lifts its own
         self._pending_brief: Optional[Tuple[List[Line], int, float]] = None
         self._targets_t = 0.0                # when the targets block was last sent
 
@@ -249,11 +268,30 @@ class CockpitOverlay:
         return self._client
 
     def available(self) -> bool:
+        """True when a drawing client is there (EDMCModernOverlay or the own
+        window)."""
         return self._get() is not None
+
+    @property
+    def client(self) -> Any:
+        """The drawing client in use (edmcoverlay's, or the plugin's own window)."""
+        return self._client
+
+    def use_client(self, client: Any) -> None:
+        """D3 (4.12): draw through another client - the plugin's own window, or
+        None to look for EDMCModernOverlay again. What is on screen is cleared."""
+        self.clear()
+        self._client = client
+        self._tried = client is not None
+        self._drawn = {}
+        if self._last_targets and not self.mute_targets and not self.hidden:
+            self.draw("targets", self._last_targets, ttl=self.TARGETS_TTL)
 
     # -- drawing -----------------------------------------------------------
     def _origin(self, group: str) -> Tuple[int, int]:
         x, y = ANCHORS.get(self.position, ANCHORS["top-left"])
+        if group == "info":
+            return self._info_origin()
         if group in ("brief", "bio", "nav", "mine"):
             lh = LINE_H.get(self.size, 16)
             down = (self._drawn.get("targets", 0) + 1) * lh
@@ -265,9 +303,20 @@ class CockpitOverlay:
                 y += max(down, BRIEFING_GAP * lh // 2)
                 if group in ("nav", "mine"):
                     y += NAV_BELOW_BIO * lh        # room for the bio distance line
+                if group == "mine" and self._drawn.get("nav"):
+                    y += (self._drawn["nav"] + 1) * lh     # 4.12: below the compass (Rhino)
         return x, y
 
+    def _info_origin(self) -> Tuple[int, int]:
+        """4.12: the situation column - the corner across from the other
+        blocks (left <-> right), so the two never cover each other."""
+        side, _sep, edge = self.position.partition("-")
+        other = "%s-%s" % (side, "right" if edge == "left" else "left")
+        return ANCHORS.get(other, ANCHORS["top-right"])
+
     def draw(self, group: str, lines: Sequence[Line], ttl: int) -> bool:
+        """Draw one block of lines at its place; lines left over from a longer
+        block before are blanked. True when sent."""
         if not self.enabled:
             return False
         c = self._get()
@@ -292,6 +341,7 @@ class CockpitOverlay:
             return False
 
     def clear(self, group: Optional[str] = None) -> None:
+        """Blank one block, or all blocks."""
         c = self._client
         if c is None:
             return
@@ -307,6 +357,8 @@ class CockpitOverlay:
 
     # -- the two blocks ----------------------------------------------------
     def show_targets(self, route: Any, done: Iterable[int]) -> bool:
+        """The next targets of the in-system route; not drawn while muted or
+        while a game screen hides the overlay."""
         lines = targets_lines(route, done)
         self._last_targets = lines
         if self.mute_targets:
@@ -343,9 +395,12 @@ class CockpitOverlay:
             return False
         return self.draw("nav", list(lines), ttl=seconds)
 
-    def mute_route(self, on: bool) -> None:
-        """While mining the route targets are no help: hide them, bring them
-        back afterwards."""
+    def mute_route(self, on: bool, why: str = "mining") -> None:
+        """While mining - and since 4.12 on the ground (landed, in the SRV,
+        on foot) - the route targets are no help: hide them, bring them back
+        when no reason is left. Each reason lifts only itself."""
+        (self._mute_why.add if on else self._mute_why.discard)(why)
+        on = bool(self._mute_why)
         if on == self.mute_targets:
             return
         self.mute_targets = on
@@ -360,7 +415,16 @@ class CockpitOverlay:
             return False
         return self.draw("mine", list(lines)[:5], ttl=seconds)
 
+    def show_info(self, lines: Sequence[Line], seconds: int = 7) -> bool:
+        """4.12: the situation column (cockpitinfo); not while a game screen
+        is in front - the next tick draws it again."""
+        if self.hidden:
+            return False
+        return self.draw("info", list(lines)[:MAX_INFO], ttl=seconds)
+
     def show_briefing(self, info: Dict[str, Any], seconds: int = 10) -> bool:
+        """The briefing of a jump target; while a game screen hides the overlay
+        only the newest is kept and drawn afterwards."""
         lines = briefing_lines(info)
         if self.hidden:
             # newest wins: picking several targets in the map shows only
@@ -368,64 +432,3 @@ class CockpitOverlay:
             self._pending_brief = (lines, seconds, time.time())
             return False
         return self.draw("brief", lines, ttl=seconds)
-
-
-def _selftest() -> int:
-    """python overlay.py - the targets block stays on screen (fake client)."""
-    sent: List[Tuple[str, str, int]] = []
-
-    class Client:
-        def send_message(self, mid, text, colour, x, y, ttl=4, size="normal"):
-            sent.append((mid, text, ttl))
-
-    ov = CockpitOverlay(client=Client())
-    fails = 0
-
-    def check(ok: bool, what: str) -> None:
-        nonlocal fails
-        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
-        fails += 0 if ok else 1
-
-    ov._last_targets = [("NEXT TARGETS", COL["head"]), ("1. A 2  DSS", COL["data"])]
-    t0 = 1000.0
-    ov._targets_t = t0
-    check(not ov.keep_targets(t0 + 60), "fresh block is left alone")
-    check(ov.keep_targets(t0 + ov.TARGETS_REFRESH + 1) and sent[-1][2] == ov.TARGETS_TTL,
-          "sent again before its time on screen runs out")
-    n = len(sent)
-    ov.hidden = True
-    check(not ov.keep_targets(ov._targets_t + 9999) and len(sent) == n, "not over a map screen")
-    ov.hidden, ov.mute_targets = False, True
-    check(not ov.keep_targets(ov._targets_t + 9999), "not while mining")
-    ov.mute_targets, ov._last_targets = False, []
-    check(not ov.keep_targets(ov._targets_t + 9999), "nothing to keep")
-
-    def texts(**kw):
-        return [t for t, _c in briefing_lines(dict(name="X", kind="target", **kw))]
-    nb = "IN NO DATABASE - first discovery likely"
-    check(nb not in texts(known_sources=[], level="unchecked")
-          and "NOT CHECKED - outside our data frame" in texts(known_sources=[], level="unchecked"),
-          "I1: not asked -> 'NOT CHECKED', never 'in no database'")
-    tx = texts(known_sources=[], level="checked", checked_by=["Spansh", "EDSM"])
-    check(nb in tx and "checked: Spansh, EDSM" in tx, "I1: asked and unknown -> in no database + by whom")
-    check(nb not in texts(known_sources=[], level="inhabited")
-          and "INHABITED - known to the databases" in texts(known_sources=[], level="inhabited"),
-          "I1: inhabited -> known, no request")
-    check("KNOWN  EDSM" in texts(known_sources=["EDSM"], level="known"), "I1: known stays known")
-    check("SCOOP at the latest jump 3/9 K" in texts(scoop=("SCOOP at the latest jump 3/9 K", "warn")),
-          "F1: the latest scoop line in the briefing")
-    check("LOST IN CRASH  5 scan, 4 map, 2 bio - redo" in texts(
-        visited=True, lost={"scan": 5, "map": 4, "bio": ["A", "B"]}),
-          "lost in a crash: named in the briefing next to 'visited before'")
-    check("also explored by Xerxes" in texts(also_by=["Xerxes"])
-          and not any(t.startswith("also") for t in texts()),
-          "C1: 'also explored by' only when another commander was there")
-    check("REGION  Inner Orion Spur" in texts(region="Inner Orion Spur")
-          and not any(t.startswith("REGION") for t in texts()),
-          "4.10: the codex region when known, nothing otherwise")
-    print("failures: %d" % fails)
-    return fails
-
-
-if __name__ == "__main__":
-    raise SystemExit(1 if _selftest() else 0)

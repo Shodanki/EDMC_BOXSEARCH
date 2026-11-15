@@ -30,6 +30,8 @@ LegLookup = Callable[[int, Optional[int], Optional[str]], Optional[float]]
 
 
 class Measurements:
+    """Work timings measured in the journals: DSS and bio durations,
+    supercruise legs (arrival distance, seconds)."""
     def __init__(self) -> None:
         self.dss: List[float] = []
         self.bio: List[float] = []
@@ -38,6 +40,7 @@ class Measurements:
         self.files = 0
 
     def as_dict(self) -> Dict[str, Any]:
+        """How many of each were measured, and from how many events and files."""
         return {"dss": len(self.dss), "bio": len(self.bio), "sc": len(self.sc),
                 "events": self.events, "files": self.files}
 
@@ -60,65 +63,97 @@ def measure(events: Iterable[Dict[str, Any]], leg: Optional[LegLookup] = None,
       first legs 190-270 s almost independent of distance).
     """
     m = m or Measurements()
-    arrive: Dict[str, float] = {}
-    blog: Dict[Tuple, float] = {}
-    last_saa: Dict[Any, float] = {}
-    here: Dict[str, Any] = {"sys": None, "body": None}
-    sc_from: Optional[Tuple[Any, str, float]] = None
+    meter = _Meter(m, leg)
     for e in events:
         ts = parse_ts(e.get("timestamp"))
         if ts is None:
             continue
         m.events += 1
-        v = e.get("event")
-        if v in ("ApproachBody", "SupercruiseExit") and e.get("Body"):
-            arrive[e["Body"]] = ts
-        if v in ("FSDJump", "CarrierJump", "Location"):
-            here = {"sys": e.get("SystemAddress"), "body": None}
-            sc_from = None
-        elif v == "SupercruiseEntry":
-            sc_from = (here["sys"], here["body"], ts) if here["sys"] and here["body"] else None
-        elif v == "SupercruiseExit":
-            body = e.get("Body")
-            if (sc_from and body and body != sc_from[1] and leg is not None
-                    and e.get("SystemAddress") == sc_from[0] and 5 < ts - sc_from[2] < 3600):
-                d = leg(int(sc_from[0]), sc_from[1], body, sc_from[2])
-                if d and d > 1.0:
-                    m.sc.append((float(d), ts - sc_from[2]))
-            sc_from = None
-            if body and e.get("SystemAddress"):
-                here = {"sys": e["SystemAddress"], "body": body}
-        elif v in ("Touchdown", "Liftoff") and e.get("Body"):
-            here = {"sys": e.get("SystemAddress") or here["sys"], "body": e["Body"]}
-        elif v in ("Shutdown", "LoadGame", "Died", "Resurrect"):
-            sc_from = None
-        if v == "SAAScanComplete":
-            t0 = arrive.pop(e.get("BodyName"), None)
-            prev = last_saa.get(e.get("SystemAddress"))
-            if t0 and 10 < ts - t0 < 1800:
-                m.dss.append(ts - t0)
-            elif prev and 20 < ts - prev < 1800:
-                m.dss.append(ts - prev)
-            last_saa[e.get("SystemAddress")] = ts
-        elif v == "ScanOrganic":
-            key = (e.get("SystemAddress"), e.get("Body"), e.get("Species"))
-            kind = e.get("ScanType")
-            if kind in ("Log", "Sample"):
-                blog.setdefault(key, ts)
-            elif kind == "Analyse":
-                t0 = blog.pop(key, None)
-                if t0 and 20 < ts - t0 < 3600:
-                    m.bio.append(ts - t0)
+        meter.feed(e, ts)
     return m
 
 
+class _Meter:
+    """measure()'s state while it reads the events."""
+
+    def __init__(self, m: Measurements, leg: Optional[LegLookup]) -> None:
+        self.m, self.leg = m, leg
+        self.arrive: Dict[str, float] = {}
+        self.blog: Dict[Tuple, float] = {}
+        self.last_saa: Dict[Any, float] = {}
+        self.here: Dict[str, Any] = {"sys": None, "body": None}
+        self.sc_from: Optional[Tuple[Any, str, float]] = None
+
+    def feed(self, e: Dict[str, Any], ts: float) -> None:
+        """One event with a time."""
+        v = e.get("event")
+        if v in ("ApproachBody", "SupercruiseExit") and e.get("Body"):
+            self.arrive[e["Body"]] = ts
+        self._place(v, e, ts)
+        if v == "SAAScanComplete":
+            self._dss(e, ts)
+        elif v == "ScanOrganic":
+            self._bio(e, ts)
+
+    def _place(self, v: Any, e: Dict[str, Any], ts: float) -> None:
+        """Where we are, and the supercruise legs between two bodies."""
+        here = self.here
+        if v in ("FSDJump", "CarrierJump", "Location"):
+            self.here = {"sys": e.get("SystemAddress"), "body": None}
+            self.sc_from = None
+        elif v == "SupercruiseEntry":
+            self.sc_from = (here["sys"], here["body"], ts) if here["sys"] and here["body"] else None
+        elif v == "SupercruiseExit":
+            self._sc_leg(e, ts)
+        elif v in ("Touchdown", "Liftoff") and e.get("Body"):
+            self.here = {"sys": e.get("SystemAddress") or here["sys"], "body": e["Body"]}
+        elif v in ("Shutdown", "LoadGame", "Died", "Resurrect"):
+            self.sc_from = None
+
+    def _sc_leg(self, e: Dict[str, Any], ts: float) -> None:
+        """Out of supercruise: a leg from the last body to this one, timed."""
+        body = e.get("Body")
+        sc_from, leg = self.sc_from, self.leg
+        if (sc_from and body and body != sc_from[1] and leg is not None
+                and e.get("SystemAddress") == sc_from[0] and 5 < ts - sc_from[2] < 3600):
+            d = leg(int(sc_from[0]), sc_from[1], body, sc_from[2])
+            if d and d > 1.0:
+                self.m.sc.append((float(d), ts - sc_from[2]))
+        self.sc_from = None
+        if body and e.get("SystemAddress"):
+            self.here = {"sys": e["SystemAddress"], "body": body}
+
+    def _dss(self, e: Dict[str, Any], ts: float) -> None:
+        """A surface scan: from the arrival at the body, else from the mapping before."""
+        t0 = self.arrive.pop(e.get("BodyName"), None)
+        prev = self.last_saa.get(e.get("SystemAddress"))
+        if t0 and 10 < ts - t0 < 1800:
+            self.m.dss.append(ts - t0)
+        elif prev and 20 < ts - prev < 1800:
+            self.m.dss.append(ts - prev)
+        self.last_saa[e.get("SystemAddress")] = ts
+
+    def _bio(self, e: Dict[str, Any], ts: float) -> None:
+        """A sample: from its first Log (or Sample) to its Analyse."""
+        key = (e.get("SystemAddress"), e.get("Body"), e.get("Species"))
+        kind = e.get("ScanType")
+        if kind in ("Log", "Sample"):
+            self.blog.setdefault(key, ts)
+        elif kind == "Analyse":
+            t0 = self.blog.pop(key, None)
+            if t0 and 20 < ts - t0 < 3600:
+                self.m.bio.append(ts - t0)
+
+
 def journal_files(journal_dir: str, limit: int = 30) -> List[str]:
+    """The newest journal files (at most limit), oldest first."""
     files = glob.glob(os.path.join(journal_dir, "Journal.*.log")) + \
         glob.glob(os.path.join(journal_dir, "Journal_*.log"))
     return sorted(files)[-limit:]
 
 
 def read_events(paths: Iterable[str]) -> Iterable[Dict[str, Any]]:
+    """Every journal event of the files, in order; broken lines are skipped."""
     for fn in paths:
         try:
             with open(fn, "r", encoding="utf-8", errors="replace") as f:
@@ -174,6 +209,8 @@ class Calibrator:
             return None
 
     def run_once(self) -> Any:
+        """Measure the newest journals once and fit the route's cost model and
+        body order model from them; returns the model."""
         paths = journal_files(self.journal_dir, self.files)
         sig = self._signature(paths)
         m = Measurements()

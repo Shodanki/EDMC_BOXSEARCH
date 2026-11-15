@@ -27,7 +27,7 @@ PLUGIN_MODULES = ["load", "state", "uithread", "panel", "planning", "cockpit", "
                   "survey", "updater", "fislaunch", "statswin", "journal", "probewin", "miningwin",
                   "prefs", "maintenance", "procgen", "sysdb", "sources", "netgate", "shells",
                   "deepspace", "sysroute", "boxelplan", "overlay", "biopredict", "surfacenav",
-                  "miningstat", "journalscan", "regionmap", "edts_pgnames"]
+                  "miningstat", "journalscan", "biosig", "overlaywin", "integrity", "groundmine", "regionmap", "edts_pgnames"]
 HOOKS = ["plugin_start3", "plugin_stop", "plugin_app", "plugin_prefs", "prefs_changed",
          "journal_entry", "dashboard_entry", "capi_fleetcarrier"]
 
@@ -91,6 +91,43 @@ def run(name, script):
         print("        " + ln)
 
 
+def absolute_sibling_imports():
+    """Every import of a plugin module by its plain name, outside the
+    "if __package__: ... else:" fallback that runs only without a package.
+    In EDMC such an import finds nothing (the plugin folder is not on
+    sys.path) - or another plugin's module of the same name. 4.12: imports
+    inside functions had come along unchanged when load.py was split."""
+    import ast
+    names = set(PLUGIN_MODULES)
+    found = []
+    for m in PLUGIN_MODULES:
+        path = os.path.join(ROOT, m + ".py")
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        fallback = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == "__package__":
+                fallback.update(id(x) for e in n.orelse for x in ast.walk(e))
+        for n in ast.walk(tree):
+            if id(n) in fallback:
+                continue
+            if isinstance(n, ast.Import):
+                hit = [a.name for a in n.names if a.name.split(".")[0] in names]
+            elif isinstance(n, ast.ImportFrom) and not n.level:
+                hit = [n.module] if (n.module or "").split(".")[0] in names else []
+            else:
+                hit = []
+            found += ["%s.py:%d %s" % (m, n.lineno, h) for h in hit]
+    return found
+
+
+bad = absolute_sibling_imports()
+fails += 1 if bad else 0
+print("  [%s] no plugin module imported by its plain name" % ("FAIL" if bad else "OK"))
+for b in bad:
+    print("        " + b)
 run("EDMC's normal import: <folder>.load as a package", NORMAL)
 run("EDMC's fallback: load.py by path registers its own package", FALLBACK)
 
@@ -102,5 +139,11 @@ with open(os.path.join(ROOT, "FIS", "fis", "__init__.py"), encoding="utf-8") as 
 same = plugin_v == fis_v and re.fullmatch(r"\d+\.\d+\.\d+", plugin_v) is not None
 fails += 0 if same else 1
 print("  [%s] plugin %s and FIS %s: the same SemVer version" % ("OK" if same else "FAIL", plugin_v, fis_v))
+# the README's title names the version too (it stood at v4.10.1 through 4.11)
+with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
+    title = fh.readline().strip()
+titled = title == "# SHBOXSEARCH v%s" % plugin_v
+fails += 0 if titled else 1
+print("  [%s] README title '%s' names v%s" % ("OK" if titled else "FAIL", title, plugin_v))
 print("package import: %s" % ("all OK" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)

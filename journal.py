@@ -18,7 +18,10 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from . import groundmine
+from . import journalscan
 from . import miningstat
+from . import overlay
 from . import surfacenav
 from .biopredict import COLONY_RANGE_M, surface_distance_m
 from .procgen import star_pos
@@ -26,6 +29,7 @@ from .sysdb import CURRENT
 from .sysroute import calibrate_from_journal, leg_distance_ls
 from .state import CFG, POSITION_EVENTS, ST, cfg_bool, logger
 from . import cockpit
+from . import cockpitinfo
 from . import panel
 from . import planning
 from . import routewin
@@ -60,6 +64,7 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
         handler = _HANDLERS.get(ev)
         if handler is not None:
             handler(ev, entry, cmdr, state)
+        cockpitinfo.journal(ev, entry)       # 4.12: the overlay's situation column
     except Exception:
         logger.exception("journal_entry(%s) failed", ev)
 
@@ -104,7 +109,16 @@ def _before_ingest(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> boo
 
 
 def _mining_event(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> None:
-    """Mining: rock, hold, rate, session and limpets on the overlay."""
+    """Mining: rock, hold, rate, session and limpets on the overlay - and
+    since 4.12 the Rhino on the ground (groundmine)."""
+    if ev in groundmine.EVENTS:
+        try:
+            if ST.ground.feed(entry, journalscan.event_time(entry)):
+                _mining_overlay(force=True)
+            if ev == "LaunchSRV" and ST.ground.in_rhino:
+                _rhino_out()
+        except Exception:
+            logger.debug("ground mining failed", exc_info=True)
     if ev in miningstat.EVENTS or ev in miningstat.PLACE or ev == "Cargo":
         try:
             cargo = state.get("Cargo") if isinstance(state, dict) else None
@@ -113,6 +127,15 @@ def _mining_event(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> None
                 _mining_overlay(force=True)
         except Exception:
             logger.debug("mining overlay failed", exc_info=True)
+
+
+def _rhino_out() -> None:
+    """4.12: the Rhino is out - one log line with both holds; without the
+    ship's numbers (EDMC started mid-session) the journal is read again."""
+    g = ST.ground
+    logger.info("ground mining | Rhino out: ship %s of %s t", g.ship_cargo, g.ship_capacity)
+    if g.ship_cargo is None or not g.ship_capacity:
+        uithread._run_async(survey._bootstrap_ground, label="ground mining")
 
 
 def _supercruise_timing(ev: str, entry: Dict[str, Any]) -> None:
@@ -363,11 +386,13 @@ def _surface_status(entry: Dict[str, Any]) -> None:
         pos = ST.db.note_status(entry)
     if not pos or not ST.cur_id64:
         ST.last_track = None
+        _surface_left()
         return
     radius = float(pos.get("radius") or 0.0)
     alt = pos.get("alt")
     low = pos["landed"] or pos["mode"] != "ship" or (alt is not None and alt < TRACK_MAX_ALT)
     now = time.time()
+    _surface_route(pos["landed"] or pos["mode"] != "ship")
     if low and radius > 0:
         last = ST.last_track
         moved = (surface_distance_m(last["lat"], last["lon"], pos["lat"], pos["lon"], radius)
@@ -379,6 +404,61 @@ def _surface_status(entry: Dict[str, Any]) -> None:
             ST.last_track = dict(pos, t=now)
     _nav_overlay(pos, radius, now, low)
     _bio_distance_line(pos, radius, now)
+    # 4.12: Status.json is quiet while you stand still - the compass is
+    # redrawn from the last fix so it does not run out (it showed only
+    # when a side panel was opened, which writes Status.json)
+    ST._nav_args = (pos, radius, low) if low and radius > 0 else None
+    if ST._nav_args:
+        _nav_keep_start()
+
+
+NAV_KEEP_MS = 2000        # compass redraw while near a body and Status.json is quiet
+
+
+def _nav_keep_start() -> None:
+    """Start the compass redraw (main thread; one timer at a time)."""
+    if ST._nav_timer or panel._frame is None:
+        return
+    ST._nav_timer = True
+    try:
+        panel._frame.after(NAV_KEEP_MS, _nav_keepalive)
+    except Exception:                         # EDMC is closing
+        ST._nav_timer = False
+
+
+def _nav_keepalive() -> None:
+    """Every NAV_KEEP_MS while near a body: the compass from the last fix."""
+    ST._nav_timer = False
+    args = ST._nav_args
+    if not args:
+        return
+    try:
+        if time.time() - ST._nav_shown >= NAV_KEEP_MS / 1000.0:
+            pos, radius, low = args
+            _nav_overlay(pos, radius, time.time(), low)
+        if ST.ground.in_rhino:
+            _mining_overlay()                # the ground block: rig and holds stay too
+    except Exception:
+        logger.debug("nav keep-alive failed", exc_info=True)
+    _nav_keep_start()
+
+
+def _surface_route(on_ground: bool) -> None:
+    """4.12: landed, in the SRV or on foot the route block steps aside -
+    the compass is what counts there; back when you lift off."""
+    ov = getattr(ST, "overlay", None)
+    if ov is not None:
+        ov.mute_route(on_ground, "surface")
+
+
+def _surface_left() -> None:
+    """Away from the body: no compass to keep, the route block back."""
+    if ST._nav_args is not None:
+        ST._nav_args = None
+        ov = getattr(ST, "overlay", None)
+        if ov is not None:
+            ov.clear("nav")
+    _surface_route(False)
 
 
 NAV_EVERY_S = 1.0         # compass refresh while a position is reported
@@ -418,9 +498,17 @@ def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> N
         genera = [g for g in ((r["genuses"] if r else None) or "").split(",") if g]
         c = ST._nav_cache = (key, marks, r["sig_bio"] if r else None, genera, lost)
         _bio_resume(pos["body"], marks)
-    from overlay import COL
+    if surfacenav.hover_gone(c[1], pos, radius):
+        # 4.12: the SRV went too far - the hovering ship has flown off now
+        with ST.lock:
+            # game time of the fix (journal time), the PC clock only without one
+            ST.db.mark_ship_gone(ST.cur_id64, pos["body"],
+                                 time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(pos.get("gt") or now)),
+                                 pos["lat"], pos["lon"])
+        logger.info("surface | the hovering ship has flown off (SRV over %.0f m away) - recall it",
+                    surfacenav.SHIP_LEAVE_M)
     lines = surfacenav.compass_lines(pos, c[1], radius, sig_bio=c[2], genera=c[3],
-                                     colours=COL, orbit=not low, lost=c[4])
+                                     colours=overlay.COL, orbit=not low, lost=c[4], now=now)
     if lines:
         ov.show_nav(lines, seconds=4)
 
@@ -435,6 +523,9 @@ def _mining_overlay(force: bool = False) -> None:
     if ov is None or not ov.enabled or not cfg_bool(CFG["overlay_mining"], True):
         return
     now = time.time()
+    if ST.ground.in_rhino:
+        _ground_overlay(ov, now, force)
+        return
     if not ST.mine.active(now):
         if ST._mine_drawn:
             ov.clear("mine")
@@ -445,8 +536,17 @@ def _mining_overlay(force: bool = False) -> None:
     if not force and now - ST._mine_shown < MINE_EVERY_S:
         return
     ST._mine_shown = now
-    from overlay import COL
-    if ov.show_mining(ST.mine.lines(now, COL), seconds=30):
+    if ov.show_mining(ST.mine.lines(now, overlay.COL), seconds=30):
+        ST._mine_drawn = True
+
+
+def _ground_overlay(ov: Any, now: float, force: bool) -> None:
+    """4.12: in the Rhino the mining block is the ground block - the rig being
+    collected, the Rhino's hold and what the ship takes (groundmine)."""
+    if not force and now - ST._mine_shown < MINE_EVERY_S:
+        return
+    ST._mine_shown = now
+    if ov.show_mining(ST.ground.lines(now, overlay.COL), seconds=30):
         ST._mine_drawn = True
 
 
@@ -474,16 +574,15 @@ def _bio_distance_line(pos: Dict[str, Any], radius: float, now: float) -> None:
     near = min(surface_distance_m(la, lo, pos["lat"], pos["lon"], radius)
                for la, lo in b["points"])
     ok = rng is not None and near >= rng
-    from overlay import COL
     head = "BIO > %s  %d/3" % ((b["species"] or "?")[:30], len(b["points"]) + 1)
     if rng is None:
-        line = ("%.0f m from nearest sample (range unknown)" % near, COL["dim"])
+        line = ("%.0f m from nearest sample (range unknown)" % near, overlay.COL["dim"])
     else:
         line = ("%.0f m / %d m  %s" % (near, rng, "OK - sample here" if ok else "too close"),
-                COL["data"] if ok else COL["warn"])
+                overlay.COL["data"] if ok else overlay.COL["warn"])
     ov = getattr(ST, "overlay", None)
     if ov is not None and ov.enabled:
-        ov.show_bio([(head, COL["head"]), line], seconds=6)
+        ov.show_bio([(head, overlay.COL["head"]), line], seconds=6)
 
 
 def _bio_event(entry: Dict[str, Any]) -> None:
@@ -497,8 +596,7 @@ def _bio_event(entry: Dict[str, Any]) -> None:
         ST.bio_active = None
         ov = getattr(ST, "overlay", None)
         if ov is not None:
-            from overlay import COL
-            ov.show_bio([("BIO > %s analysed" % (species or "?")[:30], COL["data"])],
+            ov.show_bio([("BIO > %s analysed" % (species or "?")[:30], overlay.COL["data"])],
                         seconds=6)
         return
     if kind not in ("Log", "Sample") or not pos:
@@ -528,6 +626,8 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
             logger.debug("overlay focus failed", exc_info=True)
     try:
         ST.mine.status(entry)                # target hotspot -> material
+        ST.ground.status(entry)              # 4.12: the Rhino's load between events
+        cockpitinfo.dashboard(entry)         # 4.12: danger - unsold data at stake
         _mining_overlay()                    # rate and ages move on; at most every 5 s
     except Exception:
         logger.debug("mining overlay failed", exc_info=True)

@@ -14,6 +14,7 @@ checkout.
 
     import plugin_pkg
     load = plugin_pkg.import_plugin()          # EDMC modules stubbed first
+    plugin_pkg.package()                       # or: only the package, no EDMC
     from SHBOXSEARCH import planning, panel
     plugin_pkg.use_settings(cfg)               # EDMC config reads/writes cfg
 """
@@ -42,14 +43,20 @@ def stub_edmc(tk: bool = True) -> None:
                 sys.modules[m] = mock.MagicMock()
 
 
-def import_plugin(stub: bool = True):
-    """Register the checkout as package SHBOXSEARCH and import its load.py."""
-    if stub:
-        stub_edmc()
+def package() -> None:
+    """Register the checkout as package SHBOXSEARCH, without EDMC and without
+    load.py - enough for the plain-Python modules (procgen, sysdb ...)."""
     if PKG not in sys.modules:
         spec = importlib.machinery.ModuleSpec(PKG, None, is_package=True)
         spec.submodule_search_locations = [ROOT]
         sys.modules[PKG] = importlib.util.module_from_spec(spec)
+
+
+def import_plugin(stub: bool = True):
+    """Register the checkout as package SHBOXSEARCH and import its load.py."""
+    if stub:
+        stub_edmc()
+    package()
     return importlib.import_module(PKG + ".load")
 
 

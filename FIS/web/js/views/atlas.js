@@ -109,6 +109,8 @@ function where(it) {
   if (state.view === "bio") {
     const parts = [];
     if (it.missing && it.missing.length) parts.push(t("to find: {g}", { g: it.missing.join(", ") }));
+    // 4.11.1: seen in the codex, not sampled (Brain Trees: one signal, several species)
+    if (it.open_species && it.open_species.length) parts.push(t("to sample: {g}", { g: it.open_species.join(", ") }));
     if (it.species && it.species.length) parts.push("✔ " + it.species.join(", "));
     if (it.codex_only && it.codex_only.length) parts.push(t("codex only: {g}", { g: it.codex_only.join(", ") }));
     return parts.join(" · ");

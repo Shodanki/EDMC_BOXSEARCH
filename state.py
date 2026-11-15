@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 # EDMC API
 from config import appname, config
 
+from . import groundmine
 from . import journalscan
 from . import miningstat
 from . import netgate
@@ -38,7 +39,7 @@ from .sysroute import ALL_FILTERS, DEFAULT_MODEL, F_OUTSTANDING
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-VERSION = "4.11.0"
+VERSION = "4.12.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 for _mod in (_sysdb_mod, _sources_mod, netgate, _overlay_mod):
@@ -67,6 +68,7 @@ CFG = {
     "show_stats": "%s_show_stats" % PLUGIN_NAME,
     "show_route": "%s_show_route" % PLUGIN_NAME,
     "route_all": "%s_route_all" % PLUGIN_NAME,
+    "route_done_tour": "%s_route_done_tour" % PLUGIN_NAME,   # 4.12: nothing left - the full tour?
     "route_arrival": "%s_route_arrival" % PLUGIN_NAME,
     "route_top": "%s_route_top" % PLUGIN_NAME,
     "route_map": "%s_route_map" % PLUGIN_NAME,
@@ -88,6 +90,11 @@ CFG = {
     "overlay_brief": "%s_overlay_brief" % PLUGIN_NAME,
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
     "overlay_mining": "%s_overlay_mining" % PLUGIN_NAME,
+    "overlay_backend": "%s_overlay_backend" % PLUGIN_NAME,   # D3: "modern" | "window"
+    # 4.12: the situation column (cockpitinfo) - warnings, places, session tally
+    "overlay_info_warn": "%s_overlay_info_warn" % PLUGIN_NAME,
+    "overlay_info_place": "%s_overlay_info_place" % PLUGIN_NAME,
+    "overlay_info_session": "%s_overlay_info_session" % PLUGIN_NAME,
     "fis_autostart": "%s_fis_autostart" % PLUGIN_NAME,
     "main_cmdr": "%s_main_cmdr" % PLUGIN_NAME,      # C1: FID, "" = suggestion
 }
@@ -123,6 +130,9 @@ def _edmc_user_agent() -> str:
 # ============================================================================
 
 class State:
+    """The shared state of the plugin: database, gateway, sources, the survey,
+    the queues and the live position. Worker threads hold lock while they
+    change it."""
     def __init__(self):
         self.db: Optional[SystemDB] = None
         self.lock = threading.RLock()
@@ -164,7 +174,12 @@ class State:
         self.bio_active: Optional[Dict[str, Any]] = None
         self._bio_shown = 0.0
         self._nav_shown = 0.0
+        # 4.12: the last surface fix (pos, radius, low) while near a body, so
+        # the compass can be redrawn when Status.json is quiet (standing still)
+        self._nav_args: Optional[Tuple[Dict[str, Any], float, bool]] = None
+        self._nav_timer = False
         self.mine = miningstat.MiningTracker()          # overlay mining block
+        self.ground = groundmine.GroundMine()           # 4.12: Rhino trip - rigs, Rhino and ship hold
         self._mine_shown = 0.0
         self._mine_drawn = False
         self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera, lost)
@@ -196,6 +211,7 @@ class State:
         self.fuel = FuelState()
         self.staging: List[Dict[str, Any]] = []
         self.update_version: Optional[str] = None
+        self.files_problem: str = ""        # 4.12: integrity.summary() when files are missing / damaged
         self.update_notes: str = ""
         self.last_body_id: Optional[int] = None
         self.last_body_name: str = ""
@@ -249,6 +265,7 @@ def cfg_str(key: str, default: str = "") -> str:
 
 
 def cfg_set(key: str, value) -> None:
+    """Store a setting through EDMC's config; a failure is logged, not raised."""
     try:
         config.set(key, value)
     except Exception as e:
@@ -263,6 +280,7 @@ def get_filters() -> List[str]:
 
 
 def get_masscodes() -> List[int]:
+    """The mass codes chosen in the settings (0-7), default a to d."""
     raw = cfg_str(CFG["masscodes"], "0,1,2,3")
     out = []
     for p in raw.split(","):

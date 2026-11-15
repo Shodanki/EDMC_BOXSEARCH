@@ -48,6 +48,7 @@ def parse_signal(signal: Optional[str]) -> Optional[Dict[str, str]]:
 
 
 def is_callsign(s: Any) -> bool:
+    """True for a fleet carrier callsign (XXX-XXX)."""
     return isinstance(s, str) and bool(_CALLSIGN.match(s))
 
 
@@ -70,6 +71,8 @@ class DockTracker:
         self.at: Optional[Dict[str, Any]] = None
 
     def feed(self, e: Dict[str, Any]) -> None:
+        """Follow docking from one journal event: where we are docked, or
+        nowhere after undocking, a jump, a new session or death."""
         ev = e.get("event")
         if ev == "Docked" or (ev == "Location" and e.get("Docked")):
             self.at = {"type": e.get("StationType"), "name": e.get("StationName"),
@@ -87,24 +90,38 @@ class DockTracker:
 
 def known_carriers(evs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """callsign -> what the journal tells about that carrier."""
-    own = own_carrier_ids(evs)
-    systems: Dict[int, Dict[str, Any]] = {}      # SystemAddress -> name, pos
-    dock = DockTracker()
-    out: Dict[str, Dict[str, Any]] = {}
+    book = _CarrierBook(own_carrier_ids(evs))
+    for e in evs:
+        book.feed(e)
+    return book.out
 
-    def is_own(cs: Optional[str], mid: Any) -> bool:
+
+class _CarrierBook:
+    """known_carriers' replay: every carrier but your own, from the journal."""
+
+    def __init__(self, own: Dict[str, Any]) -> None:
+        self.own = own
+        self.systems: Dict[int, Dict[str, Any]] = {}      # SystemAddress -> name, pos
+        self.dock = DockTracker()
+        self.out: Dict[str, Dict[str, Any]] = {}
+
+    def is_own(self, cs: Optional[str], mid: Any) -> bool:
+        """True for your own carrier (by market id or callsign)."""
+        own = self.own
         return bool((mid and mid == own["market_id"]) or (cs and cs == own["callsign"]))
 
-    def entry(cs: str) -> Dict[str, Any]:
-        return out.setdefault(cs, {"callsign": cs, "name": None, "market_id": None,
-                                   "system": None, "id64": None, "pos": None, "ts": None,
-                                   "how": None, "first_ts": None, "docked_n": 0,
-                                   "last_docked": None, "sightings": 0, "started": []})
+    def entry(self, cs: str) -> Dict[str, Any]:
+        """The record of one carrier, made on first use."""
+        return self.out.setdefault(cs, {"callsign": cs, "name": None, "market_id": None,
+                                        "system": None, "id64": None, "pos": None, "ts": None,
+                                        "how": None, "first_ts": None, "docked_n": 0,
+                                        "last_docked": None, "sightings": 0, "started": []})
 
-    def place(c: Dict[str, Any], e: Dict[str, Any], how: str, a: Any = None) -> None:
+    def place(self, c: Dict[str, Any], e: Dict[str, Any], how: str, a: Any = None) -> None:
+        """Where the carrier was last known (only a newer report moves it)."""
         ts = e.get("timestamp")
         a = a if a is not None else e.get("SystemAddress")
-        s = systems.get(a) if a is not None else None
+        s = self.systems.get(a) if a is not None else None
         c["first_ts"] = c["first_ts"] or ts
         if c["ts"] and ts and ts < c["ts"]:
             return
@@ -112,61 +129,72 @@ def known_carriers(evs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         c["system"] = e.get("StarSystem") or (s or {}).get("name")
         c["pos"] = star_pos(e.get("StarPos")) or (s or {}).get("pos")
 
-    for e in evs:
+    def feed(self, e: Dict[str, Any]) -> None:
+        """One event: systems by address, docking, and what it says of a carrier."""
         ev = e.get("event")
         if e.get("SystemAddress") is not None and e.get("StarSystem"):
-            s = systems.setdefault(e["SystemAddress"], {})
+            s = self.systems.setdefault(e["SystemAddress"], {})
             s["name"] = e["StarSystem"]
             p = star_pos(e.get("StarPos"))
             if p:
                 s["pos"] = p
-        before = dock.carrier()
-        dock.feed(e)
-        here = dock.carrier()
+        before = self.dock.carrier()
+        self.dock.feed(e)
+        here = self.dock.carrier()
         if ev == "FSSSignalDiscovered" and e.get("SignalType") == "FleetCarrier":
-            p = parse_signal(e.get("SignalName"))
-            if not p or is_own(p["callsign"], None):
-                continue
-            c = entry(p["callsign"])
-            if p["name"]:
-                c["name"] = p["name"]
-            c["sightings"] += 1
-            place(c, e, "sighted")
+            self._sighted(e)
         elif ev in ("Docked", "Location") and here and here is not before:
-            cs = here.get("name")
-            if not is_callsign(cs) or is_own(cs, here.get("market_id")):
-                continue
-            c = entry(cs)
-            c["market_id"] = here.get("market_id") or c["market_id"]
-            if ev == "Docked":
-                c["docked_n"] += 1
-                if e.get("StationServices"):
-                    # what the carrier offered when you docked (services change)
-                    c["services"] = [str(s) for s in e["StationServices"]]
-                    c["services_ts"] = e.get("timestamp")
-            c["last_docked"] = e.get("timestamp")
-            place(c, e, "docked")
+            self._docked(ev, e, here)
         elif ev == "CarrierJump" and here:
             cs = here.get("name")
-            if not is_callsign(cs) or is_own(cs, here.get("market_id")):
-                continue
-            place(entry(cs), e, "jump")
+            if is_callsign(cs) and not self.is_own(cs, here.get("market_id")):
+                self.place(self.entry(cs), e, "jump")
         elif ev in ("MissionAccepted", "CommunityGoalJoin") and here:
-            cs = here.get("name")
-            if not is_callsign(cs) or is_own(cs, here.get("market_id")):
-                continue
-            c = entry(cs)
-            if ev == "MissionAccepted":
-                item = {"kind": "mission", "ts": e.get("timestamp"),
-                        "name": e.get("LocalisedName") or e.get("Name"),
-                        "commodity": e.get("Commodity_Localised") or e.get("Commodity"),
-                        "count": e.get("Count"), "to": e.get("DestinationSystem"),
-                        "expiry": e.get("Expiry")}
-            else:
-                item = {"kind": "cg", "ts": e.get("timestamp"), "name": e.get("Name"),
-                        "to": e.get("System")}
-            c["started"] = (c["started"] + [item])[-MAX_STARTED:]
-    return out
+            self._started(ev, e, here)
+
+    def _sighted(self, e: Dict[str, Any]) -> None:
+        """Seen in the FSS."""
+        p = parse_signal(e.get("SignalName"))
+        if not p or self.is_own(p["callsign"], None):
+            return
+        c = self.entry(p["callsign"])
+        if p["name"]:
+            c["name"] = p["name"]
+        c["sightings"] += 1
+        self.place(c, e, "sighted")
+
+    def _docked(self, ev: str, e: Dict[str, Any], here: Dict[str, Any]) -> None:
+        """Docked (or logged in docked) at the carrier."""
+        cs = here.get("name")
+        if not is_callsign(cs) or self.is_own(cs, here.get("market_id")):
+            return
+        c = self.entry(cs)
+        c["market_id"] = here.get("market_id") or c["market_id"]
+        if ev == "Docked":
+            c["docked_n"] += 1
+            if e.get("StationServices"):
+                # what the carrier offered when you docked (services change)
+                c["services"] = [str(s) for s in e["StationServices"]]
+                c["services_ts"] = e.get("timestamp")
+        c["last_docked"] = e.get("timestamp")
+        self.place(c, e, "docked")
+
+    def _started(self, ev: str, e: Dict[str, Any], here: Dict[str, Any]) -> None:
+        """A mission or community goal started from the carrier."""
+        cs = here.get("name")
+        if not is_callsign(cs) or self.is_own(cs, here.get("market_id")):
+            return
+        c = self.entry(cs)
+        if ev == "MissionAccepted":
+            item = {"kind": "mission", "ts": e.get("timestamp"),
+                    "name": e.get("LocalisedName") or e.get("Name"),
+                    "commodity": e.get("Commodity_Localised") or e.get("Commodity"),
+                    "count": e.get("Count"), "to": e.get("DestinationSystem"),
+                    "expiry": e.get("Expiry")}
+        else:
+            item = {"kind": "cg", "ts": e.get("timestamp"), "name": e.get("Name"),
+                    "to": e.get("System")}
+        c["started"] = (c["started"] + [item])[-MAX_STARTED:]
 
 
 def own_jump_flags(evs: List[Dict[str, Any]]) -> List[bool]:
@@ -219,47 +247,8 @@ def build_known(archive: Any, store: Any, live: Optional[Dict[str, Any]] = None,
         access = docking_access(evs, markets, favs)        # A1: may we dock
     except Exception:
         access = {}
-    systems: Dict[Any, Any] = {}
-
-    def system_link(it: Dict[str, Any]) -> Optional[int]:
-        """The system's id64 when the plugin database knows its bodies - then
-        the view links to it; else only its name can be copied."""
-        if db is None or not (it.get("id64") or it.get("system")):
-            return None
-        key = it.get("id64") or it.get("system")
-        if key not in systems:
-            sid = None
-            try:
-                row = (db.system_by_id64(int(it["id64"])) if it.get("id64") else None) \
-                    or (db.system_by_name(it["system"]) if it.get("system") else None)
-                if row is not None and row["id64"] and db.bodies_of(int(row["id64"])):
-                    sid = int(row["id64"])
-            except Exception:
-                sid = None
-            systems[key] = sid
-        return systems[key]
-
-    def item(cs: str) -> Dict[str, Any]:
-        k = known.get(cs)
-        f = favs.get(cs)
-        it: Dict[str, Any] = dict(k) if k else {
-            "callsign": cs, "docked_n": 0, "sightings": 0, "started": [], "last_docked": None,
-            "first_ts": None}
-        if f:
-            for key in ("name", "market_id", "system", "id64", "pos", "ts", "how"):
-                if it.get(key) is None and f.get(key) is not None:
-                    it[key] = f[key]
-            if not k:
-                it["from_store"] = True     # the journal does not have it (any more)
-        it["favourite"] = bool(f)
-        it["note"] = (f or {}).get("note") or ""
-        it["online"] = (f or {}).get("online")       # K5: last lookup at Spansh
-        it["market"] = markets.get(cs)
-        it["dist_ly"] = _dist(it.get("pos"), here) if here and it.get("pos") else None
-        it["access"] = access.get(cs)
-        it["system_id64"] = system_link(it)
-        return it
-
+    view = _KnownView(known, favs, markets, here, access, db)
+    item = view.item
     fav_items = sorted((item(cs) for cs in favs), key=lambda i: i.get("ts") or "", reverse=True)
     rest = [cs for cs in known if cs not in favs]
     met = sorted((item(cs) for cs in rest if known[cs]["docked_n"] or known[cs]["started"]
@@ -279,6 +268,57 @@ def build_known(archive: Any, store: Any, live: Optional[Dict[str, Any]] = None,
     return {"commander": name, "favourites": fav_items, "met": met,
             "sighted": [item(cs) for cs in seen[:max(0, sighted)]],
             "counts": {"known": len(known), "favourites": len(favs), "sighted": len(seen)}}
+
+
+class _KnownView:
+    """build_known's items: the journal's record with the favourite's own data."""
+
+    def __init__(self, known: Dict[str, Any], favs: Dict[str, Any], markets: Dict[str, Any],
+                 here: Any, access: Dict[str, Any], db: Any) -> None:
+        self.known, self.favs, self.markets = known, favs, markets
+        self.here, self.access, self.db = here, access, db
+        self.systems: Dict[Any, Any] = {}
+
+    def system_link(self, it: Dict[str, Any]) -> Optional[int]:
+        """The system's id64 when the plugin database knows its bodies - then
+        the view links to it; else only its name can be copied."""
+        db, systems = self.db, self.systems
+        if db is None or not (it.get("id64") or it.get("system")):
+            return None
+        key = it.get("id64") or it.get("system")
+        if key not in systems:
+            sid = None
+            try:
+                row = (db.system_by_id64(int(it["id64"])) if it.get("id64") else None) \
+                    or (db.system_by_name(it["system"]) if it.get("system") else None)
+                if row is not None and row["id64"] and db.bodies_of(int(row["id64"])):
+                    sid = int(row["id64"])
+            except Exception:
+                sid = None
+            systems[key] = sid
+        return systems[key]
+
+    def item(self, cs: str) -> Dict[str, Any]:
+        """One carrier for the list."""
+        k = self.known.get(cs)
+        f = self.favs.get(cs)
+        it: Dict[str, Any] = dict(k) if k else {
+            "callsign": cs, "docked_n": 0, "sightings": 0, "started": [], "last_docked": None,
+            "first_ts": None}
+        if f:
+            for key in ("name", "market_id", "system", "id64", "pos", "ts", "how"):
+                if it.get(key) is None and f.get(key) is not None:
+                    it[key] = f[key]
+            if not k:
+                it["from_store"] = True     # the journal does not have it (any more)
+        it["favourite"] = bool(f)
+        it["note"] = (f or {}).get("note") or ""
+        it["online"] = (f or {}).get("online")       # K5: last lookup at Spansh
+        it["market"] = self.markets.get(cs)
+        it["dist_ly"] = _dist(it.get("pos"), self.here) if self.here and it.get("pos") else None
+        it["access"] = self.access.get(cs)
+        it["system_id64"] = self.system_link(it)
+        return it
 
 
 def mark_favourite_pois(poi: List[Dict[str, Any]], favs: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -447,6 +487,36 @@ def docking_access(evs: Iterable[Dict[str, Any]], markets: Optional[Dict[str, An
     you were granted docking there before (then you are one of them), else
     'maybe'. 'none' or a refusal: 'none' (the view hides those).
     """
+    recs = _access_records(evs, markets, favourites)
+    out: Dict[str, Dict[str, Any]] = {}
+    for cs, lst in recs.items():
+        lst.sort(key=lambda r: r["ep"])
+        last = lst[-1]
+        granted = any(r["access"] == "granted" for r in lst)
+        state = _access_state(last["access"], granted)
+        if state is None:
+            continue                                   # an unknown word: say nothing
+        # the access word itself (not "granted") from the newest record that has one
+        word = next((r["access"] for r in reversed(lst) if r["access"] not in ("granted", "denied")), None)
+        out[cs] = {"state": state, "access": word, "source": last["source"],
+                   "ts": _iso(last["ep"]) if last["ep"] else last["ts"], "granted": granted}
+    return out
+
+
+def _access_state(a: str, granted: bool) -> Optional[str]:
+    """dock / maybe / none for the newest access word; None for an unknown word."""
+    if a in ACCESS_NONE or a == "denied":
+        return "none"
+    if a in ACCESS_DOCK or a == "granted":
+        return "dock"
+    if a in ACCESS_MAYBE:
+        return "dock" if granted else "maybe"
+    return None
+
+
+def _access_records(evs: Iterable[Dict[str, Any]], markets: Optional[Dict[str, Any]],
+                    favourites: Optional[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """Every record of a carrier's docking access: journal, markets, Spansh."""
     recs: Dict[str, List[Dict[str, Any]]] = {}
 
     def add(cs: Any, access: Any, source: str, ts: Any) -> None:
@@ -473,25 +543,7 @@ def docking_access(evs: Iterable[Dict[str, Any]], markets: Optional[Dict[str, An
         on = (f or {}).get("online") or {}
         if on.get("found") and on.get("docking_access"):
             add(cs, on["docking_access"], "Spansh", on.get("updated") or on.get("checked"))
-    out: Dict[str, Dict[str, Any]] = {}
-    for cs, lst in recs.items():
-        lst.sort(key=lambda r: r["ep"])
-        last = lst[-1]
-        granted = any(r["access"] == "granted" for r in lst)
-        a = last["access"]
-        if a in ACCESS_NONE or a == "denied":
-            state = "none"
-        elif a in ACCESS_DOCK or a == "granted":
-            state = "dock"
-        elif a in ACCESS_MAYBE:
-            state = "dock" if granted else "maybe"
-        else:
-            continue                                   # an unknown word: say nothing
-        # the access word itself (not "granted") from the newest record that has one
-        word = next((r["access"] for r in reversed(lst) if r["access"] not in ("granted", "denied")), None)
-        out[cs] = {"state": state, "access": word, "source": last["source"],
-                   "ts": _iso(last["ep"]) if last["ep"] else last["ts"], "granted": granted}
-    return out
+    return recs
 
 
 def mark_docking_pois(poi: List[Dict[str, Any]], access: Dict[str, Dict[str, Any]]

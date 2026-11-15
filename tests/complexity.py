@@ -4,12 +4,12 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025-2026 Shodanki
 """
-Complexity ratchet (4.11): EDMC measures plugins with
+Complexity (4.11, all of it since 4.12): EDMC measures plugins with
 ``flake8 --max-complexity 15 --select C901``. Every function of the plugin
-and the FIS stays at 15 or below - except the older functions listed in
-LEGACY, which may not grow beyond the value they had when the list was
-made, and leave it once they are split up. A new function above 15, or a
-listed one that got more complex, fails.
+and the FIS stays at 15 or below; since 4.12 the project's .flake8 sets the
+same limit, and this test also counts the FIS's own folders. 4.11 had 35
+older functions above it (listed in LEGACY, not allowed to grow); 4.12
+split them all, checked against the old code. LEGACY is empty.
 
     python tests/complexity.py      (from the plugin folder; needs flake8's mccabe)
 """
@@ -23,44 +23,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIMIT = 15
 SKIP_DIRS = {"tests", "edts_pgnames", "regionmap", "vendor", "__pycache__", ".git", ".github"}
 
-# measured 13.11.2026 (4.11): what may not grow; split them up over time
-LEGACY = {
-    ("FIS/fis/calib.py", "measure"): 19,
-    ("FIS/fis/carriers.py", "build_known"): 19,
-    ("FIS/fis/carriers.py", "docking_access"): 16,
-    ("FIS/fis/carriers.py", "known_carriers"): 20,
-    ("FIS/fis/fleet.py", "Archive._read"): 16,
-    ("FIS/fis/fleet.py", "Archive.carrier"): 18,
-    ("FIS/fis/fleet.py", "Archive.fleet"): 29,
-    ("FIS/fis/galaxy.py", "build_galaxy"): 16,
-    ("FIS/fis/learn.py", "learning_status"): 16,
-    ("FIS/fis/live.py", "LiveTracker.feed"): 53,
-    ("FIS/fis/live.py", "LiveTracker.feed_status"): 17,
-    ("FIS/fis/materials.py", "stock"): 19,
-    ("FIS/fis/mining.py", "build_mining"): 37,
-    ("FIS/fis/model.py", "_build_surface"): 36,
-    ("FIS/fis/model.py", "build_atlas"): 20,
-    ("FIS/fis/model.py", "build_body"): 23,
-    ("FIS/fis/model.py", "build_briefing"): 24,
-    ("FIS/fis/model.py", "build_system"): 33,
-    ("FIS/fis/model.py", "system_poi"): 23,
-    ("FIS/fis/science.py", "body_report"): 42,
-    ("FIS/fis/science.py", "system_report"): 34,
-    ("FIS/fis/server.py", "Handler._api"): 51,
-    ("FIS/fis/server.py", "Handler._post_lost_hidden"): 16,
-    ("FIS/fis/shipview.py", "build_shipstatus"): 19,
-    ("FIS/fis/unsold.py", "build_unsold"): 24,
-    ("boxelplan.py", "Planner.build"): 43,
-    ("journalscan.py", "WorkMeter.feed"): 19,
-    ("overlay.py", "briefing_lines"): 16,
-    ("surfacenav.py", "body_state"): 19,
-    ("sysdb.py", "SystemDB._cmdr_carried"): 22,
-    ("sysdb.py", "SystemDB._migrate"): 24,
-    ("sysdb.py", "SystemDB._surface_event"): 16,
-    ("sysdb.py", "SystemDB.ingest_journal_event"): 56,
-    ("sysroute.py", "plan_route"): 18,
-    ("sysroute.py", "resolve_positions"): 22,
-}
+# 4.12: empty - every function of the plugin and the FIS keeps the limit.
+# Kept as the place for an exception, should one ever be unavoidable.
+LEGACY: dict = {}
 
 
 def measure():

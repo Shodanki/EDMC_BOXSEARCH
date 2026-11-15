@@ -47,6 +47,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "ProspectedAsteroid", "MiningRefined", "LaunchDrone", "AsteroidCracked",
           # surface vehicles: ground mining with the Rhino (M2)
           "LaunchSRV", "DockSRV", "LaunchVessel", "DockVessel",
+          # 4.12: the Rhino's and the ship's hold (groundmine)
+          "Cargo", "SRVDestroyed",
           "Statistics", "Rank", "Progress", "Reputation", "MarketSell", "CargoTransfer",
           # raw materials (jumponium)
           "Materials", "MaterialCollected", "MaterialDiscarded", "Synthesis", "EngineerCraft",
@@ -82,6 +84,8 @@ CARRIER_TANK = 1000
 
 
 def tritium_for_jump(ly: float, load_t: float, tritium_t: float) -> int:
+    """Tritium in tonnes a carrier jump of ly costs with this cargo and tritium
+    load (TRITIUM_BASE / TRITIUM_DIV)."""
     return int(round(5 + ly * (load_t + tritium_t + TRITIUM_BASE) / TRITIUM_DIV))
 
 
@@ -236,6 +240,8 @@ def readable_module(localised: Optional[str], raw: Optional[str] = None) -> str:
 
 
 def slot_group(slot: str) -> str:
+    """The group a module slot belongs to: utility, hardpoints, core, optional
+    ..."""
     s = slot or ""
     if s.startswith("TinyHardpoint"):
         return "utility"
@@ -250,6 +256,7 @@ def slot_group(slot: str) -> str:
 
 
 def slot_size(slot: str) -> Optional[int]:
+    """The size class of a slot (0 utility to 8), or None."""
     m = re.search(r"Size(\d+)", slot or "")
     if m:
         return int(m.group(1))
@@ -381,6 +388,173 @@ def rate_loadout(lo: Dict[str, Any], vehicles: Optional[Iterable[str]] = None) -
 ALL_COMMANDERS = "*"      # Archive.events(ALL_COMMANDERS): every commander's events
 
 
+def _fleet_history(evs: List[Dict[str, Any]]
+                   ) -> Tuple[Dict[int, Dict[str, Any]], Dict[int, str], Optional[Dict[str, Any]], Optional[int]]:
+    """From the events: the last fitting per ship id, ships sold, the last
+    hangar list, the ship flown last."""
+    loadouts: Dict[int, Dict[str, Any]] = {}
+    sold: Dict[int, str] = {}
+    stored: Optional[Dict[str, Any]] = None
+    current = None
+    for e in evs:
+        ev = e["event"]
+        if ev == "Loadout" and e.get("ShipID") is not None:
+            loadouts[int(e["ShipID"])] = e
+            current = int(e["ShipID"])
+            sold.pop(int(e["ShipID"]), None)
+        elif ev == "StoredShips":
+            stored = e
+        elif ev in ("ShipyardSell", "SellShipOnRebuy") and e.get("SellShipID") is not None:
+            sold[int(e["SellShipID"])] = e.get("timestamp") or ""
+        elif ev == "ShipyardSwap" and e.get("SellShipID") is not None:
+            sold[int(e["SellShipID"])] = e.get("timestamp") or ""
+    return loadouts, sold, stored, current
+
+
+def _hangar(stored: Optional[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    """The ships of the last hangar list (StoredShips), here and remote."""
+    ships: Dict[int, Dict[str, Any]] = {}
+    if stored:
+        for where, lst in (("here", stored.get("ShipsHere") or []),
+                           ("remote", stored.get("ShipsRemote") or [])):
+            for s in lst:
+                sid = s.get("ShipID")
+                if sid is None:
+                    continue
+                it = ships.setdefault(int(sid), {"id": int(sid)})
+                it.update(type=(s.get("ShipType") or "").lower(), name=s.get("Name"),
+                          value=s.get("Value"), hot=s.get("Hot"),
+                          location=(stored.get("StationName") if where == "here"
+                                    else s.get("StarSystem")),
+                          system=(stored.get("StarSystem") if where == "here"
+                                  else s.get("StarSystem")),
+                          in_transit=bool(s.get("InTransit")), stored_at=where)
+    return ships
+
+
+def _fittings(evs: List[Dict[str, Any]], ships: Dict[int, Dict[str, Any]],
+              loadouts: Dict[int, Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    """Ship ids come back after selling: a fitting belongs to a hangar entry
+    only when the hull type matches; otherwise try same type + same name."""
+    by_name: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for e in evs:
+        if e["event"] == "Loadout" and e.get("ShipName"):
+            by_name[((e.get("Ship") or "").lower(), e["ShipName"].strip().lower())] = e
+    fits: Dict[int, Dict[str, Any]] = {}
+    for sid, it in ships.items():
+        lo = loadouts.get(sid)
+        if lo is not None and (lo.get("Ship") or "").lower() == it["type"]:
+            fits[sid] = lo
+        elif it.get("name"):
+            alt = by_name.get((it["type"], it["name"].strip().lower()))
+            if alt is not None:
+                fits[sid] = alt
+    return fits
+
+
+def _launched_vehicles(evs: List[Dict[str, Any]]) -> Dict[int, set]:
+    """M3: which surface vehicles each ship has launched (LaunchSRV says
+    the type; the fitting only knows a hangar)."""
+    vehicles: Dict[int, set] = {}
+    cur_sid: Optional[int] = None
+    for e in evs:
+        if e["event"] == "Loadout" and e.get("ShipID") is not None:
+            cur_sid = int(e["ShipID"])
+        elif e["event"] in ("LaunchSRV", "LaunchVessel") and cur_sid is not None:
+            vehicles.setdefault(cur_sid, set()).add(
+                e.get("SRVType_Localised") or e.get("VesselType_Localised")
+                or e.get("SRVType") or e.get("VesselType") or "SRV")
+    return vehicles
+
+
+def _fit_entry(it: Dict[str, Any], lo: Dict[str, Any], vehicles: Iterable[str]) -> None:
+    """A ship's entry from its fitting: name, ident, hull, value, jump, cargo, roles."""
+    it["vehicles"] = sorted(vehicles)
+    it["name"] = it.get("name") or lo.get("ShipName")
+    it["ident"] = lo.get("ShipIdent")
+    it["loadout_ts"] = lo.get("timestamp")
+    it["hull"] = lo.get("HullHealth")
+    it["rebuy"] = lo.get("Rebuy")
+    it["value"] = it.get("value") or ((lo.get("HullValue") or 0) + (lo.get("ModulesValue") or 0)) or None
+    it["jump"] = lo.get("MaxJumpRange")
+    it["cargo"] = lo.get("CargoCapacity")
+    it["rating"] = rate_loadout(lo, it["vehicles"])
+    it["modules"] = len([m for m in lo.get("Modules") or [] if slot_group(m.get("Slot")) != "cosmetic"])
+
+
+class _CarrierLog:
+    """Archive.carrier's replay of the own carrier's events."""
+
+    def __init__(self) -> None:
+        self.stats: Optional[Dict[str, Any]] = None
+        self.loc: Optional[Dict[str, Any]] = None
+        self.pos: Dict[str, Any] = {}
+        self.jumps: List[Dict[str, Any]] = []
+        self.transfers: List[Dict[str, Any]] = []
+        self.balances: List[Tuple[float, int]] = []
+        self.pend: Optional[Dict[str, Any]] = None
+        self.cur: Optional[str] = None
+        self.fuel: Any = None
+        self.load: Any = None
+        self.services: Dict[str, Any] = {}
+        # CarrierLocation is written at every login; the day the carrier
+        # arrived is the last jump
+        self.arrived_ts: Any = None
+
+    def feed(self, e: Dict[str, Any]) -> None:
+        """One event."""
+        ev = e["event"]
+        p = star_pos(e.get("StarPos"))
+        if p and e.get("StarSystem"):
+            self.pos[e["StarSystem"]] = p
+        if ev == "CarrierStats":
+            self._stats(e)
+        elif ev == "CarrierDepositFuel":
+            if self.pend:
+                self.pend["dep"] = True
+            self.fuel = e.get("Total")
+        elif ev == "CarrierJumpRequest":
+            self.pend = {"from": self.cur, "to": e.get("SystemName"), "body": e.get("Body"),
+                         "before": self.fuel, "load": self.load, "ts": e.get("timestamp"),
+                         "departure": e.get("DepartureTime")}
+        elif ev == "CarrierJumpCancelled":
+            self.pend = None
+        elif ev in ("CarrierLocation", "CarrierJump"):
+            self._location(ev, e)
+        elif ev == "CarrierBankTransfer":
+            self.transfers.append({"ts": parse_ts(e.get("timestamp")) or 0.0,
+                                   "deposit": e.get("Deposit") or 0, "withdraw": e.get("Withdraw") or 0})
+        elif ev == "CarrierCrewServices":
+            self.services[e.get("CrewRole") or "?"] = e.get("Operation")
+
+    def _stats(self, e: Dict[str, Any]) -> None:
+        """CarrierStats: load, fuel, balance - and the fuel after a jump."""
+        su = e.get("SpaceUsage") or {}
+        self.load = (su.get("Cargo") or 0) + (su.get("ShipPacks") or 0) + (su.get("ModulePacks") or 0)
+        pend = self.pend
+        if pend and pend.get("arrived") and not pend.get("dep"):
+            pend["after"] = e.get("FuelLevel")
+            self.jumps.append(pend)
+            self.pend = None
+        self.fuel = e.get("FuelLevel")
+        self.stats = e
+        bal = (e.get("Finance") or {}).get("CarrierBalance")
+        if bal is not None:
+            self.balances.append((parse_ts(e.get("timestamp")) or 0.0, int(bal)))
+
+    def _location(self, ev: str, e: Dict[str, Any]) -> None:
+        """The first report from the target is the arrival; later logins
+        (CarrierLocation again) until the next CarrierStats are not."""
+        pend = self.pend
+        if pend and not pend.get("arrived") and e.get("StarSystem") == pend["to"]:
+            pend["arrived"] = e.get("timestamp")
+            self.arrived_ts = e.get("timestamp")
+        elif ev == "CarrierJump" or e.get("StarSystem") != self.cur:
+            self.arrived_ts = e.get("timestamp")
+        self.cur = e.get("StarSystem")
+        self.loc = e
+
+
 class Archive:
     """Relevant journal events from every journal, rescanned when files change."""
 
@@ -394,6 +568,8 @@ class Archive:
         self.rev = 0
 
     def refresh(self, force: bool = False) -> None:
+        """Read the journals again - only the files that changed - at most
+        every MIN_RESCAN_S unless forced."""
         if not force and time.time() - self._scanned < self.MIN_RESCAN_S:
             return
         with self._lock:
@@ -420,6 +596,8 @@ class Archive:
 
     @staticmethod
     def _read(path: str) -> List[Dict[str, Any]]:
+        """The events of one journal file the FIS needs, slimmed, each tagged
+        with the commander (FID) logged in when it happened."""
         # one journal folder can hold several commanders: every event is
         # tagged with the commander (FID) that was logged in when it happened
         out: List[Dict[str, Any]] = []
@@ -443,38 +621,46 @@ class Archive:
                         if e.get("event") == "LoadGame":      # session start (hazard log)
                             out.append({"event": "LoadGame", "timestamp": e.get("timestamp"), "_fid": fid})
                         continue
-                    if e.get("event") in ("FSDJump", "Location"):
-                        # the coordinates (carrier jump distances) - and for a
-                        # Location the docking: loading the game on a pad
-                        # writes no Docked, only Location with Docked: true
-                        slim = {"event": e["event"], "timestamp": e.get("timestamp"),
-                                "StarSystem": e.get("StarSystem"), "StarPos": star_pos(e.get("StarPos")),
-                                "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
-                        if e.get("Docked"):
-                            slim.update({k: e.get(k) for k in ("Docked", "StationName",
-                                                               "StationType", "MarketID")})
-                        e = slim
-                    elif e.get("event") == "Scan":
-                        # only who and what - the full scan is in the plugin database
-                        slim = {k: e.get(k) for k in ("event", "timestamp", "StarSystem", "SystemAddress",
-                                                      "BodyID", "BodyName", "ScanType")}
-                        # first discovery / first footfall (unsold risk) - only when present
-                        slim.update({k: e[k] for k in ("DistanceFromArrivalLS", "WasDiscovered",
-                                                       "WasFootfalled", "Landable") if k in e})
-                        e = slim
-                    elif e.get("event") == "Disembark":
-                        e = {k: e.get(k) for k in ("event", "timestamp", "SystemAddress", "Body",
-                                                   "BodyID", "OnPlanet", "SRV")}
-                    elif e.get("event") == "ShipTargeted":
-                        if not str(e.get("PilotName") or "").startswith("$RolePanel2_unmanned"):
-                            continue
-                        e = {"event": "ShipTargeted", "timestamp": e.get("timestamp"),
-                             "Ship": e.get("Ship"), "Ship_Localised": e.get("Ship_Localised")}
+                    e = Archive._slim(e)
+                    if e is None:
+                        continue
                     e["_fid"] = fid
                     out.append(e)
         except OSError:
             pass
         return out
+
+    @staticmethod
+    def _slim(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """What the FIS keeps of an event (big ones slimmed); None: not kept."""
+        if e.get("event") in ("FSDJump", "Location"):
+            # the coordinates (carrier jump distances) - and for a
+            # Location the docking: loading the game on a pad
+            # writes no Docked, only Location with Docked: true
+            slim = {"event": e["event"], "timestamp": e.get("timestamp"),
+                    "StarSystem": e.get("StarSystem"), "StarPos": star_pos(e.get("StarPos")),
+                    "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
+            if e.get("Docked"):
+                slim.update({k: e.get(k) for k in ("Docked", "StationName",
+                                                   "StationType", "MarketID")})
+            e = slim
+        elif e.get("event") == "Scan":
+            # only who and what - the full scan is in the plugin database
+            slim = {k: e.get(k) for k in ("event", "timestamp", "StarSystem", "SystemAddress",
+                                          "BodyID", "BodyName", "ScanType")}
+            # first discovery / first footfall (unsold risk) - only when present
+            slim.update({k: e[k] for k in ("DistanceFromArrivalLS", "WasDiscovered",
+                                           "WasFootfalled", "Landable") if k in e})
+            e = slim
+        elif e.get("event") == "Disembark":
+            e = {k: e.get(k) for k in ("event", "timestamp", "SystemAddress", "Body",
+                                       "BodyID", "OnPlanet", "SRV")}
+        elif e.get("event") == "ShipTargeted":
+            if not str(e.get("PilotName") or "").startswith("$RolePanel2_unmanned"):
+                return None
+            e = {"event": "ShipTargeted", "timestamp": e.get("timestamp"),
+                 "Ship": e.get("Ship"), "Ship_Localised": e.get("Ship_Localised")}
+        return e
 
     def commander(self) -> Tuple[Optional[str], Optional[str]]:
         """(FID, name) of the commander logged in last."""
@@ -522,42 +708,8 @@ class Archive:
         """Every ship you own: where it is, its last known fitting and roles."""
         evs = self.events()
         names = self.ship_names(evs)
-        loadouts: Dict[int, Dict[str, Any]] = {}
-        sold: Dict[int, str] = {}
-        stored: Optional[Dict[str, Any]] = None
-        current = None
-        for e in evs:
-            ev = e["event"]
-            if ev == "Loadout" and e.get("ShipID") is not None:
-                loadouts[int(e["ShipID"])] = e
-                current = int(e["ShipID"])
-                sold.pop(int(e["ShipID"]), None)
-            elif ev == "StoredShips":
-                stored = e
-            elif ev in ("ShipyardSell", "SellShipOnRebuy") and e.get("SellShipID") is not None:
-                sold[int(e["SellShipID"])] = e.get("timestamp") or ""
-            elif ev == "ShipyardSwap" and e.get("SellShipID") is not None:
-                sold[int(e["SellShipID"])] = e.get("timestamp") or ""
-        ships: Dict[int, Dict[str, Any]] = {}
-
-        def entry(sid: int) -> Dict[str, Any]:
-            return ships.setdefault(sid, {"id": sid})
-
-        if stored:
-            for where, lst in (("here", stored.get("ShipsHere") or []),
-                               ("remote", stored.get("ShipsRemote") or [])):
-                for s in lst:
-                    sid = s.get("ShipID")
-                    if sid is None:
-                        continue
-                    it = entry(int(sid))
-                    it.update(type=(s.get("ShipType") or "").lower(), name=s.get("Name"),
-                              value=s.get("Value"), hot=s.get("Hot"),
-                              location=(stored.get("StationName") if where == "here"
-                                        else s.get("StarSystem")),
-                              system=(stored.get("StarSystem") if where == "here"
-                                      else s.get("StarSystem")),
-                              in_transit=bool(s.get("InTransit")), stored_at=where)
+        loadouts, sold, stored, current = _fleet_history(evs)
+        ships = _hangar(stored)
         stored_ts = stored.get("timestamp") if stored else ""
         # StoredShips never lists the ship you sit in: the one active when the
         # list was written belongs to the fleet even when its Loadout is older
@@ -567,53 +719,18 @@ class Archive:
                 break
             if e["event"] == "Loadout" and e.get("ShipID") is not None:
                 active_at_list = int(e["ShipID"])
-        # ship ids come back after selling: a fitting belongs to a hangar entry
-        # only when the hull type matches; otherwise try same type + same name
-        by_name: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        for e in evs:
-            if e["event"] == "Loadout" and e.get("ShipName"):
-                by_name[((e.get("Ship") or "").lower(), e["ShipName"].strip().lower())] = e
-        fits: Dict[int, Dict[str, Any]] = {}
-        for sid, it in ships.items():
-            lo = loadouts.get(sid)
-            if lo is not None and (lo.get("Ship") or "").lower() == it["type"]:
-                fits[sid] = lo
-            elif it.get("name"):
-                alt = by_name.get((it["type"], it["name"].strip().lower()))
-                if alt is not None:
-                    fits[sid] = alt
+        fits = _fittings(evs, ships, loadouts)
         for sid, lo in loadouts.items():
             if sid in ships or sid in sold:
                 continue
             # not in the last hangar list: only ships bought or flown since
             if stored and (lo.get("timestamp") or "") < stored_ts and sid not in (current, active_at_list):
                 continue
-            entry(sid)["type"] = (lo.get("Ship") or "").lower()
+            ships.setdefault(sid, {"id": sid})["type"] = (lo.get("Ship") or "").lower()
             fits[sid] = lo
-        # M3: which surface vehicles each ship has launched (LaunchSRV says
-        # the type; the fitting only knows a hangar)
-        vehicles: Dict[int, set] = {}
-        cur_sid: Optional[int] = None
-        for e in evs:
-            if e["event"] == "Loadout" and e.get("ShipID") is not None:
-                cur_sid = int(e["ShipID"])
-            elif e["event"] in ("LaunchSRV", "LaunchVessel") and cur_sid is not None:
-                vehicles.setdefault(cur_sid, set()).add(
-                    e.get("SRVType_Localised") or e.get("VesselType_Localised")
-                    or e.get("SRVType") or e.get("VesselType") or "SRV")
+        vehicles = _launched_vehicles(evs)
         for sid, lo in fits.items():
-            it = ships[sid]
-            it["vehicles"] = sorted(vehicles.get(sid, ()))
-            it["name"] = it.get("name") or lo.get("ShipName")
-            it["ident"] = lo.get("ShipIdent")
-            it["loadout_ts"] = lo.get("timestamp")
-            it["hull"] = lo.get("HullHealth")
-            it["rebuy"] = lo.get("Rebuy")
-            it["value"] = it.get("value") or ((lo.get("HullValue") or 0) + (lo.get("ModulesValue") or 0)) or None
-            it["jump"] = lo.get("MaxJumpRange")
-            it["cargo"] = lo.get("CargoCapacity")
-            it["rating"] = rate_loadout(lo, it["vehicles"])
-            it["modules"] = len([m for m in lo.get("Modules") or [] if slot_group(m.get("Slot")) != "cosmetic"])
+            _fit_entry(ships[sid], lo, vehicles.get(sid, ()))
         if current is not None and current in ships:
             ships[current]["current"] = True
         for it in ships.values():
@@ -651,6 +768,7 @@ class Archive:
         return out
 
     def current_loadout(self) -> Optional[Dict[str, Any]]:
+        """The newest Loadout event, or None."""
         last = None
         for e in self.events():
             if e["event"] == "Loadout":
@@ -668,64 +786,17 @@ class Archive:
         return [e for e, foreign in zip(evs, own_jump_flags(evs)) if not foreign]
 
     def carrier(self) -> Optional[Dict[str, Any]]:
-        evs = self.own_carrier_events()
-        stats = loc = None
-        pos: Dict[str, Any] = {}
-        jumps: List[Dict[str, Any]] = []
-        transfers: List[Dict[str, Any]] = []
-        balances: List[Tuple[float, int]] = []
-        pend = None
-        cur = None
-        fuel = None
-        load = None
-        services: Dict[str, Any] = {}
-        arrived_ts = None        # CarrierLocation is written at every login; the
-        for e in evs:            # day the carrier arrived is the last jump
-            ev = e["event"]
-            p = star_pos(e.get("StarPos"))
-            if p and e.get("StarSystem"):
-                pos[e["StarSystem"]] = p
-            if ev == "CarrierStats":
-                su = e.get("SpaceUsage") or {}
-                load = (su.get("Cargo") or 0) + (su.get("ShipPacks") or 0) + (su.get("ModulePacks") or 0)
-                if pend and pend.get("arrived") and not pend.get("dep"):
-                    pend["after"] = e.get("FuelLevel")
-                    jumps.append(pend)
-                    pend = None
-                fuel = e.get("FuelLevel")
-                stats = e
-                bal = (e.get("Finance") or {}).get("CarrierBalance")
-                if bal is not None:
-                    balances.append((parse_ts(e.get("timestamp")) or 0.0, int(bal)))
-            elif ev == "CarrierDepositFuel":
-                if pend:
-                    pend["dep"] = True
-                fuel = e.get("Total")
-            elif ev == "CarrierJumpRequest":
-                pend = {"from": cur, "to": e.get("SystemName"), "body": e.get("Body"),
-                        "before": fuel, "load": load, "ts": e.get("timestamp"),
-                        "departure": e.get("DepartureTime")}
-            elif ev == "CarrierJumpCancelled":
-                pend = None
-            elif ev in ("CarrierLocation", "CarrierJump"):
-                # the first report from the target is the arrival; later logins
-                # (CarrierLocation again) until the next CarrierStats are not
-                if pend and not pend.get("arrived") and e.get("StarSystem") == pend["to"]:
-                    pend["arrived"] = e.get("timestamp")
-                    arrived_ts = e.get("timestamp")
-                elif ev == "CarrierJump" or e.get("StarSystem") != cur:
-                    arrived_ts = e.get("timestamp")
-                cur = e.get("StarSystem")
-                loc = e
-            elif ev == "CarrierBankTransfer":
-                transfers.append({"ts": parse_ts(e.get("timestamp")) or 0.0,
-                                  "deposit": e.get("Deposit") or 0, "withdraw": e.get("Withdraw") or 0})
-            elif ev == "CarrierCrewServices":
-                services[e.get("CrewRole") or "?"] = e.get("Operation")
-        if stats is None:
+        """The own carrier from the journals: stats, location, fuel, load, jump
+        history, a pending jump with its tritium, upkeep and changed
+        services."""
+        c = _CarrierLog()
+        for e in self.own_carrier_events():
+            c.feed(e)
+        if c.stats is None:
             return None
+        pos, pend, fuel, load = c.pos, c.pend, c.fuel, c.load
         hist = []
-        for j in jumps[-12:]:
+        for j in c.jumps[-12:]:
             a, b = pos.get(j["from"]), pos.get(j["to"])
             ly = math.dist(a, b) if a and b else None
             hist.append({"from": j["from"], "to": j["to"], "ly": round(ly, 1) if ly else None,
@@ -740,9 +811,9 @@ class Archive:
             pending = {"to": pend["to"], "body": pend.get("body"), "departure": pend.get("departure"),
                        "ly": round(ly, 1) if ly else None,
                        "tritium": tritium_for_jump(ly, load or 0, fuel or 0) if ly else None}
-        return {"stats": stats, "location": loc, "arrived": arrived_ts, "fuel": fuel, "load": load,
-                "jumps": hist, "pending": pending, "upkeep": weekly_cost(balances, transfers),
-                "services_changed": services}
+        return {"stats": c.stats, "location": c.loc, "arrived": c.arrived_ts, "fuel": fuel, "load": load,
+                "jumps": hist, "pending": pending, "upkeep": weekly_cost(c.balances, c.transfers),
+                "services_changed": c.services}
 
 
 def weekly_cost(balances: List[Tuple[float, int]], transfers: List[Dict[str, Any]],

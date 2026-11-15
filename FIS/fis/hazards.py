@@ -58,6 +58,8 @@ def _entry(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def build_hazards(archive: Any, days: Optional[float] = None, now: Optional[float] = None) -> Dict[str, Any]:
+    """The HAZARD LOG for this session (since the last LoadGame) or the last
+    days: events with time, place and level, repeats folded."""
     now = time.time() if now is None else now
     evs = archive.events()
     if days:

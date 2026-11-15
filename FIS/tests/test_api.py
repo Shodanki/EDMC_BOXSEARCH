@@ -401,6 +401,9 @@ class TestServer(_Base):
         self.assertEqual(st, 200)
         self.assertIn(js["language"], ("en", "de"))
         self.assertNotIn("token", js)
+        # 4.12: the file check for the banner - names only, never a path
+        self.assertIn("ok", js["files"])
+        self.assertNotIn(":\\", str(js["files"]))
 
     def test_404(self):
         for p in ("/api/body/%d/99" % fx.SYS_ID, "/api/nope", "/../fis/config.py"):
@@ -605,6 +608,71 @@ class TestSettings(_Base):
             ini = fh.read()
         self.assertIn("language = de", ini)
         self.assertIn("open_browser = false", ini)
+
+    def test_controls_only_when_switched_on(self):
+        """FG1: off by default - then the Bindings folder is not even read;
+        on (saved in fis.ini), the bindings and the active fire group."""
+        from unittest import mock
+        from fis import bindings
+        hdr = {"X-FIS-Settings": "1", "Origin": self.base}
+
+        def get():
+            with urllib.request.urlopen(self.base + "/api/controls", timeout=5) as r:
+                return json.loads(r.read())
+        self.cfg.show_controls = False
+        with mock.patch.object(bindings, "read", side_effect=AssertionError("read while off")):
+            self.assertEqual(get(), {"enabled": False})
+        with self._post({"show_controls": True}, hdr) as r:
+            self.assertTrue(json.loads(r.read())["show_controls"])
+        with open(self.cfg.ini_path, encoding="utf-8") as fh:
+            self.assertIn("show_controls = true", fh.read())
+        fake = {"presets": {"ship": "Custom"}, "files": ["Custom.4.2.binds"], "builtin": [],
+                "parts": {"ship": [{"action": "LandingGearToggle", "label": "Landing gear", "keys": ["L"]}]}}
+        with mock.patch.object(bindings, "read", return_value=fake), \
+                mock.patch.object(self.app, "live_state", lambda: {"status": {"fire_group": 1}}):
+            d = get()
+        self.assertTrue(d["enabled"])
+        self.assertEqual((d["fire_group"], d["parts"]["ship"][0]["keys"]), (1, ["L"]))
+        with self._post({"show_controls": False}, hdr) as r:
+            self.assertFalse(json.loads(r.read())["show_controls"])
+
+    def test_carriers_nearby_endpoint(self):
+        """H2: only from the FIS page, only with a position, offline says so."""
+        from unittest import mock
+        asked = []
+
+        class FakeLookup:
+            def nearby(self, pos):
+                asked.append(pos)
+                return {"checked": "2026-11-13T21:00:00Z", "ref": pos, "cached": False,
+                        "carriers": [{"callsign": "JFM-21Z", "distance": 5.0}]}
+        hdr = {"X-FIS-Settings": "1", "Origin": self.base}
+
+        def post(headers):
+            req = urllib.request.Request(self.base + "/api/carriers/nearby", data=b"{}", method="POST",
+                                         headers=dict({"Content-Type": "application/json"}, **headers))
+            return urllib.request.urlopen(req, timeout=5)
+        with mock.patch.object(self.app, "lookup", FakeLookup()):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                post({})
+            self.assertEqual(e.exception.code, 403)
+            e.exception.close()
+            self.assertEqual(asked, [])
+            with mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": [1, 2, 3]}}):
+                with post(hdr) as r:
+                    d = json.loads(r.read())
+            self.assertEqual((d["carriers"][0]["callsign"], asked), ("JFM-21Z", [[1.0, 2.0, 3.0]]))
+            with mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": "garbage"}}):
+                with self.assertRaises(urllib.error.HTTPError) as e:
+                    post(hdr)
+                self.assertEqual(e.exception.code, 409)
+                e.exception.close()
+        with mock.patch.object(self.app.lookup, "nearby", lambda pos: {"error": "offline"}), \
+                mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": [1, 2, 3]}}):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                post(hdr)
+            self.assertEqual(e.exception.code, 409)
+            e.exception.close()
 
     def test_internal_error_tells_no_details(self):
         """N10: a failure answers 500 without the exception's text (paths,

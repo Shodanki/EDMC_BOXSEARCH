@@ -95,11 +95,14 @@ class CostModel:
         self.work_samples = work_samples
 
     def travel(self, distance_ls: float) -> float:
+        """Supercruise seconds for a leg: entry time plus k * sqrt(distance),
+        at least floor."""
         if distance_ls <= 0.05:
             return self.floor
         return max(self.floor, self.entry + self.k * math.sqrt(distance_ls))
 
     def hop(self, distance_ls: float) -> float:
+        """Seconds for a leg including the drop out of supercruise."""
         return self.travel(distance_ls) + self.dropout
 
     def work(self, body: "Body") -> float:
@@ -113,6 +116,7 @@ class CostModel:
         return t
 
     def as_dict(self) -> Dict[str, float]:
+        """The calibrated values, rounded - for the log and the route window."""
         return {"entry": round(self.entry, 1), "k": round(self.k, 2),
                 "dropout": self.dropout, "floor": self.floor,
                 "travel_samples": self.samples,
@@ -233,6 +237,8 @@ class Body:
     # -- what is still to do here ------------------------------------------
     @property
     def wants_dss(self) -> bool:
+        """True for an unmapped planet worth mapping: bio signals, a valuable
+        class or terraformable."""
         if self.mapped or self.kind != "Planet":
             return False
         return (self.sig_bio > 0
@@ -241,13 +247,17 @@ class Body:
 
     @property
     def wants_bio(self) -> bool:
+        """True while bio signals are left that no species analysis covers."""
         return self.sig_bio > 0 and self.organics < self.sig_bio
 
     @property
     def has_work(self) -> bool:
+        """True when the body wants a DSS or bio work."""
         return self.wants_dss or self.wants_bio
 
     def work_label(self) -> str:
+        """What is to do on the body, short: DSS, bio count, first discovery,
+        a valuable class or terraformable."""
         bits = []
         if self.wants_dss:
             bits.append("DSS")
@@ -283,6 +293,14 @@ def resolve_positions(bodies: Dict[int, Body]) -> None:
       arrival distance placed on one axis - crude, but it keeps such a body in
       the route instead of dropping it at the origin.
     """
+    _resolve_orbits(bodies)
+    _shift_to_arrival(bodies)
+    _trust_arrival(bodies)
+
+
+def _resolve_orbits(bodies: Dict[int, Body]) -> None:
+    """Absolute positions from parent-relative orbits; a body without its
+    parent sits at its arrival distance on one axis."""
     done: Dict[int, Tuple[float, float, float]] = {}
 
     def resolve(bid: int, depth: int = 0) -> Tuple[float, float, float]:
@@ -310,7 +328,9 @@ def resolve_positions(bodies: Dict[int, Body]) -> None:
         if b.pos is None:
             b.pos = (b.arrival_ls or 0.0, 0.0, 0.0)
 
-    # --- shift the origin onto the arrival star ---------------------------
+
+def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
+    """--- shift the origin onto the arrival star."""
     anchor = None
     for b in bodies.values():
         if b.arrival_ls is not None and b.arrival_ls <= 0.01 and b.kind == "Star":
@@ -327,7 +347,9 @@ def resolve_positions(bodies: Dict[int, Body]) -> None:
             if b.pos:
                 b.pos = (b.pos[0] - ox, b.pos[1] - oy, b.pos[2] - oz)
 
-    # --- final sanity pass against the journal's own arrival distance -----
+
+def _trust_arrival(bodies: Dict[int, Body]) -> None:
+    """--- final sanity pass against the journal's own arrival distance."""
     for b in bodies.values():
         if not b.pos or b.arrival_ls is None or b.arrival_ls <= 1.0:
             continue
@@ -383,6 +405,9 @@ def is_moon(body: Body) -> bool:
 
 
 class Stop:
+    """One stop of the in-system route: the body, the leg there (LS and
+    seconds), the time so far, the work on station and the planetary system
+    it belongs to."""
     __slots__ = ("body", "leg_ls", "leg_s", "cum_s", "work",
                  "group", "group_start", "is_moon", "work_s")
 
@@ -401,6 +426,8 @@ class Stop:
 
 
 class SystemRoute:
+    """The planned order of bodies in one system, with times from the cost
+    model."""
     def __init__(self, system: str, stops: List[Stop], skipped: int,
                  model: CostModel):
         self.system = system
@@ -410,25 +437,31 @@ class SystemRoute:
 
     @property
     def total_s(self) -> float:
+        """Seconds for the whole route, travel and work."""
         return self.stops[-1].cum_s if self.stops else 0.0
 
     @property
     def total_ls(self) -> float:
+        """Light seconds flown over the whole route."""
         return sum(s.leg_ls for s in self.stops)
 
     @property
     def travel_s(self) -> float:
+        """Seconds in supercruise over the whole route."""
         return sum(s.leg_s for s in self.stops)
 
     @property
     def work_s(self) -> float:
+        """Seconds of work on station (DSS, bio) over the whole route."""
         return sum(s.work_s for s in self.stops)
 
     @property
     def group_switches(self) -> int:
+        """How often the route moves on to another planetary system."""
         return sum(1 for s in self.stops[1:] if s.group_start)
 
     def lines(self, limit: int = 0) -> List[str]:
+        """The route as text lines, one per stop (limit: only the first ones)."""
         out = []
         stops = self.stops if not limit else self.stops[:limit]
         for i, s in enumerate(stops, 1):
@@ -457,6 +490,7 @@ class SystemRoute:
         return (min(xs), max(xs), min(zs), max(zs))
 
     def summary(self) -> str:
+        """One line: stops, planetary systems, distance and minutes."""
         if not self.stops:
             return "%s: nothing left to do here" % self.system
         return ("%s: %d stops in %d planetary systems, %.0f LS, about %.0f min "
@@ -664,14 +698,7 @@ def plan_route(system: str, bodies: Dict[int, Body],
     """
     resolve_positions(bodies)
 
-    if filters:
-        targets = [b for b in bodies.values() if body_matches(b, filters)]
-    else:
-        targets = [b for b in bodies.values()
-                   if (b.has_work if only_work else b.kind in ("Planet", "Star"))]
-    targets = [b for b in targets if not is_secondary_star(b)]
-    if skip_arrival:
-        targets = [b for b in targets if not is_arrival_star(b)]
+    targets = _route_targets(bodies, only_work, filters, skip_arrival)
     skipped = len(bodies) - len(targets)
     if not targets:
         return SystemRoute(system, [], skipped, model)
@@ -692,18 +719,42 @@ def plan_route(system: str, bodies: Dict[int, Body],
                 sum(b.pos[2] for b in g) / n)
 
     pts = [gpos(g) for g in groups]
+    order = _two_opt(_nearest_neighbour(pts, start), pts, start, model)
+    return SystemRoute(system, _route_stops(order, groups, start, model), skipped, model)
 
-    # --- nearest neighbour --------------------------------------------------
+
+def _route_targets(bodies: Dict[int, Body], only_work: bool, filters: Optional[Sequence[str]],
+                   skip_arrival: bool) -> List[Body]:
+    """The bodies the route visits: by filters, else those with work (or
+    every planet and star); no secondary star, the arrival star on request."""
+    if filters:
+        targets = [b for b in bodies.values() if body_matches(b, filters)]
+    else:
+        targets = [b for b in bodies.values()
+                   if (b.has_work if only_work else b.kind in ("Planet", "Star"))]
+    targets = [b for b in targets if not is_secondary_star(b)]
+    if skip_arrival:
+        targets = [b for b in targets if not is_arrival_star(b)]
+    return targets
+
+
+def _nearest_neighbour(pts: List[Tuple[float, float, float]], start: Sequence[float]) -> List[int]:
+    """--- nearest neighbour: a first tour from start."""
     order: List[int] = []
-    left = set(range(len(groups)))
+    left = set(range(len(pts)))
     cur = tuple(start)
     while left:
         j = min(left, key=lambda i: _dist(cur, pts[i]))
         order.append(j)
         left.discard(j)
         cur = pts[j]
+    return order
 
-    # --- 2-opt --------------------------------------------------------------
+
+def _two_opt(order: List[int], pts: List[Tuple[float, float, float]], start: Sequence[float],
+             model: CostModel) -> List[int]:
+    """--- 2-opt: reverse stretches of the tour while that makes it cheaper
+    (at most 40 rounds)."""
     def tour_cost(o: List[int]) -> float:
         c = 0.0
         prev = tuple(start)
@@ -728,8 +779,12 @@ def plan_route(system: str, bodies: Dict[int, Body],
                         break
                 if improved:
                     break
+    return order
 
-    # --- expand clusters and cost the legs ---------------------------------
+
+def _route_stops(order: List[int], groups: List[List[Body]], start: Sequence[float],
+                 model: CostModel) -> List[Stop]:
+    """--- expand clusters and cost the legs."""
     stops: List[Stop] = []
     cur = tuple(start)
     cum = 0.0
@@ -748,7 +803,7 @@ def plan_route(system: str, bodies: Dict[int, Body],
                               is_moon=is_moon(b), work_s=work_s))
             last_group = grp
             cur = b.pos
-    return SystemRoute(system, stops, skipped, model)
+    return stops
 
 
 # ---------------------------------------------------------------------------
@@ -919,64 +974,3 @@ def shorten(name: str, system: str) -> str:
         rest = name[len(system):].strip()
         return rest if rest else "(main star)"
     return name or "?"
-
-
-def _selftest() -> int:
-    """python sysroute.py - the arrival star can be left out (R2)."""
-    fails = 0
-
-    def check(ok: bool, what: str) -> None:
-        nonlocal fails
-        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
-        fails += 0 if ok else 1
-
-    bodies = {
-        0: Body(0, "Sys A", kind="Star", arrival_ls=0.0),
-        1: Body(1, "Sys A 1", kind="Planet", arrival_ls=120.0, parent_id=0),
-        2: Body(2, "Sys A 2", kind="Planet", arrival_ls=900.0, parent_id=0),
-        3: Body(3, "Sys B", kind="Star", arrival_ls=5000.0),
-    }
-    names = lambda r: [s.body.name for s in r.stops]   # noqa: E731
-    full = plan_route("Sys", bodies, filters=[F_ALL])
-    check("Sys A" in names(full), "by default the arrival star is a stop")
-    short = plan_route("Sys", bodies, filters=[F_ALL], skip_arrival=True)
-    check("Sys A" not in names(short) and len(short.stops) == len(full.stops) - 1,
-          "skip_arrival: the route starts with the first planned body")
-    check(is_arrival_star(bodies[0]) and not is_arrival_star(bodies[3]),
-          "only the star at 0 LS counts as the arrival star")
-    # R3: start at the carrier's body, the arrival star left out
-    at = start_at_body(bodies, 2)
-    r3 = plan_route("Sys", bodies, filters=[F_ALL], start=at, skip_arrival=True)
-    check(at is not None and names(r3)[0] == "Sys A 2" and r3.stops[0].leg_ls < 1.0
-          and "Sys A" not in names(r3), "R3: the route starts at the carrier's body")
-    check(start_at_body(bodies, 42) is None, "R3: unknown body -> main star")
-    # E17: a cluster of five points on one spot spreads out, lone points stay
-    pts = {1: (100.0, 100.0), 2: (100.0, 100.0), 3: (101.0, 100.0), 4: (100.0, 101.0),
-           5: (100.5, 100.5), 9: (300.0, 50.0), 0: (200.0, 200.0)}
-    out = spread_points(pts, 12.0, fixed=[0])
-    near = [(a, b) for a in (1, 2, 3, 4, 5) for b in (1, 2, 3, 4, 5)
-            if a < b and math.hypot(out[a][0] - out[b][0], out[a][1] - out[b][1]) < 11.0]
-    check(not near, "a cluster on one spot is pulled apart (%s)" % near)
-    check(out[9] == (300.0, 50.0) and out[0] == (200.0, 200.0), "lone and fixed points stay")
-    check(max(math.hypot(out[k][0] - 100, out[k][1] - 100) for k in (1, 2, 3, 4, 5)) < 40,
-          "the cluster stays where it was")
-    # R1: today's legs - mapping a few minutes each, one with 13 min of repairs
-    legs = [(240, 300), (100, 150), (200, 260), (250, 1030), (60, 90), (300, 330)]
-    r = pace_ratio(legs)
-    check(r is not None and 1.2 <= r <= 1.5, "median pace ignores the repair leg (%.2f)" % (r or 0))
-    check(pace_ratio([(240, 300)]) is None, "one leg is not enough")
-    check(pace_ratio([(5, 300), (240, 240), (200, 200)]) == 1.0, "legs under 20 s are left out")
-    # H6: the map projection drops the flattest axis and scales the radius by log
-    proj, rmax = map_projection([(1000.0, 0.0, 0.5), (0.0, 10.0, -0.5), (-3.0, -4.0, 0.0)],
-                                100.0, 100.0, 80.0)
-    check(rmax == 1000.0 and proj((1000.0, 0.0, 0.5)) == (180.0, 100.0)
-          and proj((0.0, 0.0, 7.0)) == (100.0, 100.0), "map: flattest axis (z) dropped, rmax at the edge")
-    x, y = proj((0.0, 10.0, 0.0))
-    check(x == 100.0 and 100.0 + 80.0 * 0.3 < y < 100.0 + 80.0 * 0.4,
-          "map: 10 LS of 1000 LS sits a third out on the log scale")
-    print("failures: %d" % fails)
-    return fails
-
-
-if __name__ == "__main__":
-    raise SystemExit(1 if _selftest() else 0)

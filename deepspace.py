@@ -100,6 +100,8 @@ class FuelState:
         return True
 
     def add_jump(self, dist_ly: Optional[float], used_t: Optional[float]) -> None:
+        """Remember the fuel one jump used (the last 60 jumps), for the cost
+        per jump."""
         try:
             d, u = float(dist_ly or 0.0), float(used_t or 0.0)
         except (TypeError, ValueError):
@@ -138,6 +140,8 @@ class FuelState:
         return a * (dist_ly ** b)
 
     def jumps_at(self, dist_ly: float) -> Optional[int]:
+        """How many jumps of dist_ly the fuel in the tank lasts, or None
+        without data."""
         c = self.cost_of(dist_ly)
         if not c or c <= 0 or self.level <= 0:
             return None
@@ -156,18 +160,22 @@ class FuelState:
 
     @property
     def range_left(self) -> Optional[float]:
+        """Light years the tank lasts at the longest jump, or None."""
         j = self.jumps_left
         return (j * self.max_jump) if (j is not None and self.max_jump) else None
 
     @property
     def pct(self) -> float:
+        """Fuel in the tank, in percent of its capacity."""
         return (100.0 * self.level / self.capacity) if self.capacity else 0.0
 
     @property
     def samples(self) -> int:
+        """How many jumps the fuel model has learnt from."""
         return len(self.jumps)
 
     def summary(self) -> str:
+        """One line for the panel: fuel, jumps and range left."""
         if self.capacity <= 0:
             return "fuel: unknown"
         bits = ["fuel %.0f/%.0ft (%.0f%%)" % (self.level, self.capacity, self.pct)]
@@ -199,6 +207,7 @@ class FuelState:
 
 
 def is_scoopable(star_type: Optional[str]) -> bool:
+    """True for the star classes a fuel scoop works at (KGBFOAM)."""
     return bool(star_type) and star_type[0].upper() in SCOOPABLE
 
 
@@ -428,6 +437,8 @@ def best_staging(db, planner, current: Sequence[float], radius: float,
 
 
 def staging_lines(rows: Sequence[Dict[str, object]]) -> List[str]:
+    """The best carrier positions with tritium on site as text lines, or a hint
+    when none is known yet."""
     if not rows:
         return ["no tritium system known far enough out yet - "
                 "scan icy rings as you go"]

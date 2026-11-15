@@ -151,7 +151,7 @@ class TestPerCommander(_Base):
             cx.commit()
             cx.close()
         self.assertEqual(mine["lost"], {"what": ["bio:Bacterium Cerbrus", "map"], "ts": "2026-11-11"})
-        self.assertFalse(mine["flags"]["mapped"])            # his own map went down with the ship
+        self.assertFalse(mine["flags"]["mapped"])            # their own map went down with the ship
         self.assertEqual(mine["gravity_g"], shared["gravity_g"])   # the body's data stays
         self.assertIsNone(shared["lost"])
 

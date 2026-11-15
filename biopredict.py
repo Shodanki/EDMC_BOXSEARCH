@@ -73,6 +73,8 @@ def _atmo(row: Any) -> str:
 
 
 class GenusEnvelope:
+    """What one genus was found on so far: atmospheres, planet classes, gravity
+    and temperature range, species - counted from the own samples."""
     __slots__ = ("genus", "n", "atmos", "classes", "g_min", "g_max",
                  "t_min", "t_max", "species")
 
@@ -87,6 +89,7 @@ class GenusEnvelope:
 
     def add(self, atmo: str, pclass: str, g: Optional[float], t: Optional[float],
             species: str) -> None:
+        """Count one sampled body of this genus into the envelope."""
         self.n += 1
         self.atmos[atmo] = self.atmos.get(atmo, 0) + 1
         self.classes[pclass] = self.classes.get(pclass, 0) + 1
@@ -115,6 +118,8 @@ class GenusEnvelope:
 
 
 class BioModel:
+    """Genus prediction learnt from the own samples only: a body is a candidate
+    for a genus when it fits that genus' envelope."""
     def __init__(self) -> None:
         self.genera: Dict[str, GenusEnvelope] = {}
         self.bodies = 0
@@ -177,6 +182,7 @@ class BioModel:
         return ", ".join("%s?" % genus for genus, _s, _n in pred)
 
     def summary(self) -> str:
+        """One line for the log: how many bodies and genera the model knows."""
         if not self.genera:
             return "bio model: no samples yet - analyse a few organisms first"
         top = sorted(self.genera.values(), key=lambda e: -e.n)[:5]

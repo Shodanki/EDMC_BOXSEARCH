@@ -36,7 +36,7 @@ class TestStore(unittest.TestCase):
                              info={"system": "Test Beta", "ts": "2026-11-01T10:30:00Z", "pos": [1, 2, 3]})
         self.assertEqual(len(f["note"]), MAX_NOTE)
         self.assertNotIn("\n", f["note"])
-        # another commander has his own list; a new store reads the file
+        # another commander has their own list; a new store reads the file
         self.assertEqual(FavouriteStore(self.path).get("F2")["favourites"], {})
         got = FavouriteStore(self.path).get("F1")["favourites"]["Q2W-3ER"]
         self.assertEqual((got["system"], got["pos"]), ("Test Beta", [1, 2, 3]))

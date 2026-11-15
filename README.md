@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.10.1
+# SHBOXSEARCH v4.12.0
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -14,14 +14,17 @@ tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
 folder of this plugin. See [FIS/README.md](FIS/README.md) - with
 screenshots (demo data).
-**New in 4.10:** fewer galaxy map searches for every system no database
-knows. Sector names are computed, so boxels in sectors nobody visited are
-planned too, and hand-authored sectors (NGC 2232, Col 70 ...) under their
-own names. Catalogue stars fill their number in a boxel, *list ends at*
-takes the end of the galaxy map's list, and candidates EDDiscovery already
-knows leave the queue - in the developer's sphere 1 902 probes became 856.
-The briefing and the FIS name the codex region - see
-[What changed in 4.10](#what-changed-in-410).
+**New in 4.12:** a situation column in the cockpit overlay - a dangerous
+star ahead, unsold data at stake, a landing card, what the system is worth,
+your carrier's countdown and a session tally after a sale. Ground mining in
+the Rhino shows what still fits in the Rhino and in the ship, and the
+compass tells you when the ship has flown off. The cockpit overlay can draw
+into a window of the plugin's own (beta, Windows) - no extra plugin needed. Probe candidates
+EDSM knows by name become flight targets; the FIS finds carriers near you
+and shows your key bindings, both on request. Brain Trees with several
+species per signal and belt clusters in the FSS count are no longer
+miscounted, and the surface compass, mining block and bio distance are
+back on the overlay - see [What changed in 4.12](#what-changed-in-412).
 
 **Licence:** [Mozilla Public License 2.0](LICENSE) since 4.7 - use, change and
 share it freely; whoever passes on a changed file of this project keeps that
@@ -68,7 +71,7 @@ failure that actually hurts.
 | **Elite Dangerous: Odyssey** | required | the plugin reads its journals and status files |
 | **EDDiscovery** | recommended | its system database is the local source: while it is current the plugin does not ask Spansh at all, EDSM once per shell (see [Fair use](#7-external-sources)). Open it now and then so its data stays current, then close it |
 | **Python 3.11 or newer** (python.org) | for SHBOX FIS only | the flight information system runs on it; the plugin itself needs nothing beyond EDMC |
-| **EDMCModernOverlay** | optional | for the cockpit overlay (route targets, surface compass, mining block) |
+| **EDMCModernOverlay** | optional | for the cockpit overlay (route targets, surface compass, mining block, situation column) - or the plugin's own overlay window (4.12, beta) |
 
 > **Updating from 4.0?** Replace the `.py` files and start EDMC - that is
 > all. On the first start 4.1 repairs boxel records written under a wrong
@@ -115,10 +118,27 @@ Clicking opens the release page. Then:
 
 The database migrates itself: new columns are added in place, nothing is
 dropped. When an update adds new per-body data, the plugin replays your
-journals once on its own (4.1 does); *Preferences -> SHBOXSEARCH -> Replay
-journals* repeats that at any time and is safe to run as often as you like.
+journals once on its own (4.1 does); *Preferences -> SHBOXSEARCH -> Maintenance ->
+Replay journals* repeats that at any time and is safe to run as often as you like.
 Since 4.6 the plugin copies the database to `shboxsearch.sqlite.schema<N>-<time>.bak`
 before it changes the schema or repairs records (the last three are kept).
+
+**File check (4.12).** The release carries `SHBOXSEARCH.manifest`, the
+SHA-256 of every file of that version. At every EDMC start the plugin
+checks that all of them are there and as released (in the background;
+line endings do not count), and so does the FIS at every start of its own.
+When a file is missing or damaged:
+
+* the EDMC window shows a line `FILES: ... missing, ... changed or damaged`
+  (click: release page), and the EDMC log names every file;
+* when a file the plugin needs to start is gone, it still loads - with one
+  red line in the EDMC window instead of a traceback;
+* the FIS prints the files in its window (English and German) and shows a
+  red banner on every page.
+
+The remedy is always the same: copy the plugin folder from the release ZIP
+again. Your database, settings and the FIS's own files are not part of the
+check and are never touched by it.
 
 SHBOX FIS keeps running when EDMC is closed: after an update close its
 window (or end `python -m fis`) so it starts with the new files. Keep
@@ -133,32 +153,40 @@ on first run and is **your data** - never overwrite it on an update.
 
 | File | Lines | What it does | Depends on |
 |---|---|---|---|
-| `load.py` | 172 | EDMC entry point: start, stop, carrier data; hands the other hooks to the modules below | the plugin layer |
+| `load.py` | 179 | EDMC entry point: start, stop, carrier data; hands the other hooks to the modules below | the plugin layer |
 | `__init__.py` | 12 | Makes the folder a Python package (runs nothing) | — |
-| `state.py` | 282 | Version, settings keys, the shared state of the survey | the helpers below |
-| `uithread.py` | 93 | Worker threads, and their one way to the window (EDMC's threading rule) | `state`, `panel` |
-| `journal.py` | 571 | EDMC's journal and Status.json hooks: one handler per event | the plugin layer |
-| `planning.py` | 713 | Local-first data flow, online shells, EDD lookups, the plan | the plugin layer |
-| `survey.py` | 588 | Start and stop, targets, galaxy map checks, queues, work timings | the plugin layer |
-| `cockpit.py` | 356 | Briefing, route check, fuel-scoop plan, cockpit overlay | the plugin layer |
+| `state.py` | 273 | Version, settings keys, the shared state of the survey | the helpers below |
+| `uithread.py` | 114 | Worker threads, and their one way to the window (EDMC's threading rule) | `state`, `panel` |
+| `journal.py` | 568 | EDMC's journal and Status.json hooks: one handler per event | the plugin layer |
+| `planning.py` | 775 | Local-first data flow, online shells, EDD lookups, the plan | the plugin layer |
+| `survey.py` | 587 | Start and stop, targets, galaxy map checks, queues, work timings | the plugin layer |
+| `cockpit.py` | 370 | Briefing, route check, fuel-scoop plan, cockpit overlay | the plugin layer |
 | `panel.py` | 365 | The panel in EDMC's window | the plugin layer |
 | `routewin.py` | 793 | In-system route and its window with the system map | the plugin layer |
 | `statswin.py`, `probewin.py`, `miningwin.py` | 691 | The statistics, probe and mining/atlas windows | the plugin layer |
-| `prefs.py` | 371 | The plugin's page in EDMC's settings | the plugin layer |
-| `skin.py`, `updater.py`, `fislaunch.py`, `maintenance.py` | 693 | Window colours; update check; starting the FIS; journal import, export | the plugin layer |
-| `sysdb.py` | 3133 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
-| `sysroute.py` | 980 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
-| `boxelplan.py` | 999 | Sphere planner: gaps, probes, prospecting score, statistics, labels of named sectors | `procgen`, `sysdb` |
-| `sources.py` | 776 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
-| `netgate.py` | 474 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log, self test | — |
-| `shells.py` | 321 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover, self test | — |
-| `procgen.py` | 645 | Name ↔ id64 ↔ boxel maths, sector registry, computed sector names, named sectors over a boxel, self test | `edts_pgnames` |
+| `prefs.py` | 384 | The plugin's page in EDMC's settings | the plugin layer |
+| `skin.py`, `updater.py`, `fislaunch.py`, `maintenance.py` | 695 | Window colours; update check; starting the FIS; journal import, export | the plugin layer |
+| `sysdb.py` | 3047 | SQLite store: systems, bodies, boxels, hotspots, earnings, spheres | `procgen` |
+| `sysroute.py` | 921 | In-system routing: Kepler positions, 2-opt tour, cost model | — |
+| `boxelplan.py` | 958 | Sphere planner: gaps, probes, prospecting score, statistics, labels of named sectors | `procgen`, `sysdb` |
+| `sources.py` | 782 | External data: EDDiscovery, Spansh, EDSM | `netgate`, `shells` |
+| `netgate.py` | 300 | The one door to the internet: pacing, Retry-After, rate-limit headers, call log | — |
+| `shells.py` | 232 | Local-first: shells nearest first, coverage, 5-14 day validity, EDSM sphere cover | — |
+| `procgen.py` | 689 | Name ↔ id64 ↔ boxel maths, sector registry, computed sector names, named sectors over a boxel, self test | `edts_pgnames` |
 | `deepspace.py` | 441 | Fuel model, tritium rings, carrier staging | — |
-| `overlay.py` | 431 | Cockpit overlay through EDMCModernOverlay (optional) | — |
-| `biopredict.py` | 204 | Genus prediction learned from your own samples | — |
-| `surfacenav.py` | 493 | Surface compass: parked SRV, open samples, known points | — |
-| `miningstat.py` | 337 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
-| `journalscan.py` | 367 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay, self test | — |
+| `overlay.py` | 434 | Cockpit overlay through EDMCModernOverlay (optional) | — |
+| `overlaywin.py` | 182 | The cockpit overlay in a window of the plugin's own (option, beta) | — |
+| `biopredict.py` | 206 | Genus prediction learned from your own samples | — |
+| `surfacenav.py` | 399 | Surface compass: parked SRV, open samples, known points, the ship flown off | — |
+| `miningstat.py` | 261 | Mining block for the overlay: last rock, hold, rate, session, limpets | — |
+| `groundmine.py` | 169 | Ground mining in the Rhino: the rig being collected, the Rhino's and the ship's hold, what still fits (overlay and FIS) | — |
+| `integrity.py` | 169 | File check at every start: every file of this version there and as released (`SHBOXSEARCH.manifest`) | — |
+| `SHBOXSEARCH.manifest` | | SHA-256 of every file of the release, for the file check | — |
+| `bodyvalue.py` | 157 | What a body's exploration data is worth - an estimate from the community formula | — |
+| `situation.py` | 478 | The overlay's situation column: the board and its short texts (warnings, landing card, system value, ring, boxel, route fuel, carrier, session) | — |
+| `cockpitinfo.py` | 507 | Feeds the situation column from the journal and Status.json, draws it every 5 s | `situation`, `bodyvalue` |
+| `biosig.py` | 97 | Open biological signals: one signal per genus, but Brain Trees can be several species on one body | — |
+| `journalscan.py` | 325 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay | — |
 | `edts_pgnames/` | | Sector names computed with EDTS's algorithm, hand-authored sector table (third-party, BSD 3-Clause, see its `SOURCE.md`) | — |
 | `regionmap/` | | Codex regions of the galaxy (third-party, MIT, see its `SOURCE.md`) | — |
 | `FIS/` | | SHBOX FIS, the flight information system (own Python process, see [FIS/README.md](FIS/README.md)) | the modules above |
@@ -169,7 +197,9 @@ from `sysdb.py` on are plain Python with no third-party dependencies and can
 be run and tested on its own. The plugin imports its modules relatively, as
 members of its own package, so no module name can clash with another
 plugin's.
-`python procgen.py` runs the maths self test and should print `failures: 0`.
+`python procgen.py` runs the maths self test and should print `failures: 0`
+(the *Self test* button in the settings runs the same); the other modules'
+self tests are in `tests/` (`python tests/sysdb_selftest.py` ...).
 
 ### Suggested `.gitignore`
 
@@ -220,7 +250,7 @@ Progress appears in the plugin status line (`first-run import: journals`,
 `journals 12/340`) and in full in the EDMC log. With years of flight history
 this can take a few minutes; EDMC stays usable throughout.
 
-3. Open Preferences → SHBOXSEARCH and check:
+3. Open Preferences → SHBOXSEARCH → Maintenance and check:
    * *Journal folder* — must show a path, not `NOT FOUND`
    * *First import* — shows the timestamp of the run
    * *EDDSystem.sqlite* — set the path via `...` if needed
@@ -246,25 +276,33 @@ the git history.
 
 ## Preferences
 
+Since 4.12 the plugin's settings page has tabs of its own - all options at
+once had grown taller than a 1080p screen.
+
 **Survey** — radius (50/100/150), active mass codes, probe depth above the
-boxel maximum, empty probes on/off, queue outstanding scans on/off, jump range,
-carrier start on/off, statistics block on/off. Shows the remembered carrier and
-the last six surveyed spheres.
+boxel maximum, empty probes on/off, queue outstanding scans on/off, carrier
+start on/off, what counts as needing a visit.
 
-**Data sources** — EDDiscovery / Spansh / EDSM individually switchable, path to
-`EDDSystem.sqlite` with a file picker, per-source status line.
+**Data** — EDDiscovery / Spansh / EDSM individually switchable, offline,
+path to `EDDSystem.sqlite` with a file picker, per-source status line; read
+NavRoute, read target selection, auto-copy; the update check; the main
+commander when several fly on this PC.
 
-**Automatic harvesting** — read NavRoute, read target selection, auto-copy.
+**Overlay** — draw with EDMCModernOverlay or the own window, position, the
+blocks (route targets, briefing, surface compass, mining) and the situation
+column (warnings, places, session tally).
+
+**Windows** — on top, system map, route every body (always), whether a
+finished system still gets the full tour (on by default; off: no route
+where nothing is left, the panel says *all done here*), start at the
+arrival star, map size; the panel's route line, fuel and queue counters,
+jump range.
+
+**FIS** — start, open in the browser, start together with EDMC.
 
 **Maintenance** — run first import, replay journals, import JSON, export plan
-as CSV, export boxel prefixes, self test, database statistics.
-
-## Preferences layout
-
-Two columns instead of one stack, because the full set ran off the bottom of a
-1080p window. Left holds everything about the survey itself (sphere, mass
-codes, what counts as needing a visit); right holds sources, harvesting and
-window behaviour; maintenance buttons run full width in a 3x2 grid underneath.
+as CSV, export boxel prefixes, self test, update check; journal folder, first
+import, carrier; verbose logging.
 
 ## Known limits
 
@@ -664,9 +702,11 @@ network. Tip: open EDDiscovery once before you start a survey (it fetches
 the latest changes), then close it - while it runs, its file can be locked.
 The plugin notices a locked file and reads it again later.
 
-*FIS.* The flight information system asks Spansh only when you click *online*
-at a favourite carrier (where it was last reported), through the same
-gateway and daily cap, at most once per carrier every six hours.
+*FIS.* The flight information system asks Spansh only on your click in
+CARRIER - *online* at a favourite carrier (where it was last reported, at
+most once per carrier every six hours) and *find carriers near me* (the
+carriers within 100 ly, at most once a day per region) - through the same
+gateway and daily cap.
 
 *Route check.* When you plot a route of two jumps or more through space no
 source was asked about (outside the fetched shells), its systems are checked
@@ -676,6 +716,17 @@ and EDSM switch. Every system asked is remembered for 14 days, so plotting
 the same route again asks nothing, and the briefing can tell *known* from
 *in no database (checked: EDSM)* there instead of *not checked*. A single
 jump is never checked.
+
+*Probe names at EDSM (4.12).* Some systems are on EDSM with their name only -
+reported before the game wrote a journal, without a position (what the
+EDSM-RSE plugin shows). After EDDiscovery's file, the plan's probe
+candidates are asked by name: ONE EDSM request with at most 40 names per
+plan, at most 10 such requests a day (EDSM's other 40 stay for the shells),
+same gateway, offline switch and EDSM switch. A name asked is not asked
+again for 14 days - also when EDSM did not know it, which does not make it
+absent. A name EDSM knows without a position is certain to exist: it
+becomes a flight target at the centre of its boxel (the galaxy map finds it
+by name).
 
 *Limits.* At most 50 requests per service and UTC day (a 50 ly survey needs
 about five), at most 20 Spansh pages (10 000 systems) per shell. The
@@ -1410,6 +1461,7 @@ what changed in each release from 4.1 on.
 | 4.10.0 | sector names computed (EDTS) and hand-authored sectors planned under their own names; codex region in the briefing and the FIS (region map); galaxy map list: catalogue stars fill their number, *list ends at* replaces *boxel done*; probe candidates looked up in EDDiscovery by id64 |
 | 4.10.1 | fixes: worker threads reach the window only through EDMC's one allowed call; FIS: BRIEFING comes to the front only for a jump target, reads only for this PC's own address, only the plugin's keys from EDMC's settings; EDMC's User-Agent; flake8 by EDMC's rules; the 4.0 helper scripts removed |
 | 4.11.0 | load.py split into modules, relative imports, EDMC's complexity limit kept (journal handling 69 -> 7); FIS: your own limits for unsold data; EDMC closes after the plugin's work; settings through EDMC 5's API; FIS: Python found by itself, no error details to the browser, damaged positions skipped |
+| 4.12.0 | overlay situation column (star ahead, data at stake, landing card, system value, ring, boxel, route fuel, carrier countdown, session tally); ground mining: Rhino and ship hold; ship flown off - recall it; the hovering ship waits, SHIP AWAY from 2.3 km; surface compass stays on the ground, not on foot aboard the carrier; FIS PLANET follows you; settings on tabs; a finished system can get no route; mining overlay: limpets, full in, spare limpets; cockpit overlay in a window of its own (beta); file check at every start; probe names EDSM knows become flight targets; FIS: carriers near you (Spansh, on a click), your key bindings in SHIP; fixes: surface compass, mining block, bio distance and the self test button work again (broken since 4.11), Brain Trees - one signal, several species, belt clusters no longer fill up the FSS count; every function within EDMC's complexity limit, documented, self tests out of the download |
 
 ## Fixed since v3.0.8
 
@@ -1661,11 +1713,60 @@ back when you return to the cockpit. Selecting a jump target happens in the
 galaxy map, so its briefing is held back and shown the moment you close the
 map, instead of covering the map's system panel.
 
-*Preferences -> SHBOXSEARCH -> Cockpit overlay*: on/off, briefing on/off,
+**Situation column (4.12).** In the corner across from the other blocks
+(left and right swap), a few lines that the game's own HUD does not give -
+each only while it matters, warnings first:
+
+```
+! NEUTRON STAR ahead - jet cones hurt
+RISK  interdiction - unsold ~48.2 M Cr
+      14 systems · 212 bodies · 61 first
+LANDING  2 a 2.55 g !
+         905 K ! · thin ammonia atmosphere
+BIO  Stratum 19.0 M · Bacterium 1.0 M
+SYSTEM  12/24 scanned · ~3.1 M Cr · 9 new
+*  1 ELW · 2 terraformable
+DSS  3 to map ~+9.8 M Cr · 3 first
+```
+
+* **star ahead** - into hyperspace towards a neutron star, white dwarf or
+  black hole.
+* **unsold data at stake** - while in danger, interdicted, overheating,
+  under attack or with the hull below 60 %: what you carry unsold (bodies,
+  first discoveries, species) and about what it is worth.
+* **landing card** - approaching a body: gravity (amber from 2 g, red from
+  3 g), temperature, atmosphere, the genera still open with the best price
+  you were paid for each, and what else was found there.
+* **system value** - after the honk, when all bodies are found and after a
+  map: what your scans are worth, the earth-likes, water and ammonia worlds,
+  terraformables, and what mapping the worthwhile ones adds. An estimate
+  from the formula players worked out from the game's payouts.
+* **ring** - dropping at a ring (or mapping it): its hotspots and what you
+  last sold each material for.
+* **boxel** - on arrival during a survey: how much of the boxel is known.
+* **route fuel** - when a route is plotted: where to scoop at the latest.
+* **carrier** - your carrier's jump: countdown, distance and tritium.
+* **session** - after a sale or on docking: `SOLD 4.0 M Cr - well done`
+  and what this session brought.
+
+What you were paid is read once from your journals at the start; nothing
+leaves your computer.
+
+*Preferences -> SHBOXSEARCH -> Overlay*: on/off, briefing on/off,
+the situation column's warnings, places and session tally each on/off,
 position (four corners). The preferences show whether an overlay plugin was
 found. Without one nothing happens. The overlay is a separate transparent
 window drawn by the overlay plugin - it only displays, nothing is sent to the
 game.
+
+*Own window (4.12, beta).* *Draw with* in the same section chooses
+EDMCModernOverlay (the default) or *own window*: the plugin draws the same
+blocks into a transparent window of its own - no extra plugin, no extra
+package. The window has no frame, stays on top, lets every mouse click
+through to the game and never takes the focus; it shows only while the game
+is the window in front, so Alt+Tab hides it. The game must run in a
+*borderless window* - an exclusive full screen covers every other window
+(ModernOverlay's too). It uses the primary screen.
 
 ### Bio prediction from your own finds
 
@@ -1836,10 +1937,17 @@ Gypseeum Brain Tree         903 m  < 13
 
 * **the parked SRV** - where you left it on foot, until you get back in
 * **the parked ship** - where it touched down, until it lifts off or is sent away.
-  The Rhino is dropped by a ship hovering just above the ground, without a
-  touchdown; the ship waits at the drop point, shown as *SHIP (hover)* -
-  last known, since sending a hovering ship away writes nothing. The Nomad
-  gives no such point: the ship flies along at some 2-3 km.
+  The Nomad gives no such point: the ship flies along at some 2-3 km.
+* **the hovering ship** (4.12) - an SRV dropped from a hovering ship (no
+  touchdown before) leaves the ship waiting at the drop point, `SHIP (hover)`.
+  It flies off once the SRV is some 2.3-2.5 km away; the line turns red from
+  1.8 km, so you see it coming.
+* **the ship flown off** (4.12) - `SHIP AWAY 12 min    flew off - recall it`.
+  The journal writes nothing when a hovering ship leaves, so the plugin
+  marks the moment you pass 2.3 km itself. A landed ship sent away (or
+  leaving on its own) says `dismissed`. The line goes when you dock the SRV
+  in the recalled ship, board it, or it lands again; flying the ship
+  yourself it never shows.
 * **species not finished yet**, with the samples taken (a new Log restarts the
   count, as in the game)
 * **earlier finds on this body** - codex entries, settlements, screenshots;
@@ -1925,15 +2033,15 @@ event - the overlay shows five lines:
 
 ```
 ROCK  Tritium 18.3 % | low | GOOD
-HOLD  59 t ore | 141 t free | 122 limpets
-RATE  336 t/h | full in ~25 min
-SESSION  59 t Tritium | 36 min
+HOLD  122 limpets | 59 t ore | 141 t free
+RATE  336 t/h | 0.40 limpets/t
+SESSION  59 t Tritium | 36 min | full ~25 min
 LIMPETS  last ~189 t OK
 ```
 
-In a ring the SESSION line becomes `HOTSPOT  Tritium Hotspot targeted - HUD
-compass | 59 t in 36 min`, or an amber reminder when the hotspot is not your
-target: then the game's own HUD compass points to the hotspot's centre, which
+In a ring the SESSION line becomes `HOTSPOT  Tritium Hotspot targeted | 59 t
+in 36 min | full ~25 min`, or an amber `HOTSPOT  not targeted (nav panel)`
+when the hotspot is not your target: then the game's own HUD compass points to the hotspot's centre, which
 keeps you oriented in the field. The game reports no position inside a ring
 (no latitude, longitude or heading in `Status.json`, no coordinates for a
 hotspot), so the plugin cannot draw a map or a compass of its own there.
@@ -1944,13 +2052,19 @@ ten minutes after the last mining event.
   (the hotspot you target, else what you refine most), its content, and a
   verdict against the best rock of this session (GOOD / FAIR / MOVE ON);
   a motherlode is named
-* **HOLD** - ore and limpets on board, free space
-* **RATE** - tonnes refined in the last ten minutes, per hour, and when the
-  hold is full at that pace (the game writes nothing about the refinery's
-  bins, only each finished tonne)
+* **HOLD** - limpets and ore on board, free space
+* **RATE** - tonnes refined in the last ten minutes, per hour, and the
+  limpets this session uses per tonne (the game writes nothing about the
+  refinery's bins, only each finished tonne)
+* **SESSION / HOTSPOT** - refined so far, how long, and when the hold is
+  full at this pace (4.12)
 * **LIMPETS** - how many tonnes your limpets last at the rate this session
   uses them; amber when that is less than the room left (every limpet
-  launched leaves the hold, so its tonne is free for ore again)
+  launched leaves the hold, so its tonne is free for ore again). Once the
+  free space is down to a quarter, limpets beyond what the rest needs (and
+  five for one more rock) are named: `LIMPETS  ~25 spare - eject them for
+  ~25 t more ore` - in the 15.11.2026 session the hold was full with 43
+  limpets aboard (4.12)
 
 Switch it off under "mining" in the settings.
 
@@ -2471,6 +2585,125 @@ copy **all `.py` files and `__init__.py`** and the `FIS` folder (keep
 `FIS/lost_hidden.json`, `FIS/vehicle_tanks.json`). Simplest: unpack the ZIP
 over the old folder - it carries none of your files. No database change, no
 replay. Close the FIS window once so it starts with the new files.
+
+## What changed in 4.12
+* **The overlay's situation column.** In the corner across from the other
+  blocks, a few lines the game's own HUD does not give - each only while it
+  matters, warnings first: a neutron star, white dwarf or black hole ahead;
+  your unsold data at stake (value, first discoveries, species) while in
+  danger, interdicted, overheating, under attack or with a low hull; on
+  approach a landing card - gravity, temperature, atmosphere, the open
+  genera by the best price you were paid, other finds; after the honk the
+  system's value and what mapping adds; a ring's hotspots with your last
+  price; the boxel on arrival; fuel along a plotted route; your carrier's
+  jump countdown with distance and tritium; and after a sale or on docking
+  *SOLD 4.0 M Cr - well done* with the session's tally. Warnings, places
+  and the tally can each be switched off in the settings.
+* **Settings on tabs.** The plugin's settings page had grown taller than a
+  1080p screen; it now has tabs - Survey, Data, Overlay, Windows, FIS,
+  Maintenance - and fits easily.
+* **Fix: no compass on foot aboard your carrier.** Parked beside a planet,
+  the carrier makes the game report the planet's position; walking in the
+  hangar brought up the surface compass and left an "on foot" mark on the
+  planet. Not any more.
+* **Ground mining in the Rhino.** The overlay's mining block and the FIS
+  show the rig being collected, what still fits in the Rhino (72 t) and -
+  just as important - what the ship can still take once the Rhino's load
+  is aboard, and which of the two is the limit.
+* **The hovering ship, and when it has flown off.** A ship that dropped
+  the Rhino in a hover waits there until the SRV is some 2.3 km away, then
+  leaves - the journal writes nothing for either. The compass shows
+  *SHIP (hover)* with the distance, red from 1.8 km, and from 2.3 km
+  *SHIP AWAY 12 min - flew off, recall it* (and *dismissed* for a landed
+  ship sent away) until you are aboard again; FIS PLANET the same.
+* **A finished system can get no route.** Windows: with "show the full tour
+  anyway" off, a system with nothing left gets no route; the panel says
+  *all done here*.
+* **Mining overlay.** HOLD reads limpets | ore | free, RATE shows your
+  limpets per tonne, the session (or hotspot) line says when the hold is
+  full, and with the hold filling up it names the limpets you will not
+  need - eject them for more ore.
+
+* **The cockpit overlay in a window of its own (beta).** Until now the
+  overlay needed the plugin EDMCModernOverlay. *Preferences -> Cockpit
+  overlay -> Draw with* now offers **own window (beta)** (Windows only):
+  the same blocks - briefing, next targets, surface compass, bio distance,
+  mining - in a transparent window of the plugin's own. It stays on top,
+  lets every click through to the game, never takes the focus and hides
+  while the game is not the window in front. The game has to run in a
+  borderless window (an exclusive full screen covers every window,
+  ModernOverlay's too). EDMCModernOverlay stays the default.
+* **Probe names EDSM knows become flight targets.** A probe candidate
+  neither the plugin nor EDDiscovery knows is asked at EDSM by its exact
+  name - in bundles of up to 40, at most 10 requests a day out of the 50,
+  each name at most every 14 days, all through the daily cap and the
+  offline switch. A name EDSM knows without coordinates becomes a flight
+  target at the centre of its boxel; "EDSM does not know it" never marks a
+  system as absent.
+* **FIS: carriers near you.** CARRIER -> KNOWN CARRIERS has *find carriers
+  near me*: one Spansh search on your click for the 15 nearest fleet
+  carriers within 100 ly, with services, docking access and when they were
+  last reported. ☆ makes one a favourite. Answers are kept 24 hours per
+  50-ly cell; offline mode or no known position sends nothing.
+* **FIS: your key bindings in SHIP (off by default).** On the settings page
+  *Show my key bindings in SHIP* adds a CONTROLS frame - the keys for
+  ship, SRV and on foot, read from the game's active binding preset, plus
+  the fire group from Status.json. Only while it is switched on does the
+  FIS read the game's `Options\Bindings` folder, and only reads it. What a
+  fire group holds is not in any file the game writes, so it is not shown.
+* **Fix: on the ground the compass stays.** In the SRV the compass to the
+  ship and the SRV ran out after 4 s when you stood still (Status.json
+  writes nothing then) and came back only when a side panel was opened. It
+  is now redrawn every 2 s while you are near the body; the route block
+  steps aside on the ground (landed, SRV, on foot) and returns on lift-off.
+* **FIS: the surface map follows you.** PLANET keeps you in the middle
+  while you drive (Follow; off: the ground stays still). Me, Ship and SRV
+  centre on you, the ship and the parked SRV.
+* **Fix: surface compass, mining block and bio distance are back.** Since
+  4.11 the plugin is a package; six imports inside functions still asked
+  for plugin modules by their plain names and found nothing in EDMC. The
+  overlay's surface compass, its mining block, the bio sample distance and
+  the "analysed" line stayed away, and the *Self test* button in the
+  settings failed - quietly, the error went to the debug log only. A test
+  now reads every module and fails on such an import.
+* **Fix: Brain Trees - one signal, several species.** The game reports one
+  biological signal for Brain Trees, but a body can hold up to three Brain
+  Tree species, each one sampled and paid on its own. A body with one
+  species analysed read "done" while the others were still there. Now
+  every species the codex saw on the body and nobody has analysed counts
+  as open - in the panel, ATLAS, SYSTEM and PLANET INFO. Brain Trees can be
+  sampled, so the FIS no longer lists them as codex only.
+* **Fix: belt clusters no longer fill up the FSS count.** The game counts
+  stars and planets only; belt clusters come as scans too and were counted
+  as bodies. A system with a planet still missing could read "FSS 11/10",
+  drop out of the unfinished systems, and a scan target in the flight plan
+  was ticked off too early. The FIS counted right already.
+
+* **File check at every start.** The release carries a list of its files
+  with their checksums. EDMC and the FIS check them at every start; a
+  missing or damaged file is named (EDMC window and log, FIS window and a
+  banner on every page, English and German) with the remedy: copy the
+  plugin folder from the release ZIP again. When a file the plugin needs to
+  start is gone, it still loads with one red line instead of a traceback.
+* **Tidier inside, for the EDMC plugin browser.** Every function of the
+  plugin and the FIS now keeps EDMC's complexity limit (15) - the 35 older
+  ones above it were split up, each checked against the old code on real
+  journals (the same database rows, routes, plans and FIS answers before
+  and after). Every module and public function says what it does. The
+  helper modules' self tests moved out of the download into `tests/`
+  (netgate, sysdb, surfacenav ... are up to 300 lines shorter); procgen
+  keeps its own, because the *Self test* button runs it.
+
+**Updating to 4.12.0:** new files `overlaywin.py`, `biosig.py`,
+`groundmine.py`, `integrity.py`, `bodyvalue.py`, `situation.py`,
+`cockpitinfo.py`, `SHBOXSEARCH.manifest`, `FIS/fis/bindings.py`,
+`FIS/fis/files.py` and `FIS/web/js/views/rhino.js`. Close EDMC, then copy all `.py` files and
+`__init__.py` and the `FIS` folder (keep `shboxsearch.sqlite`,
+`FIS/fis.ini`, `FIS/favourites.json`, `FIS/lost_hidden.json`,
+`FIS/vehicle_tanks.json`). Simplest: unpack the ZIP over the old folder -
+it carries none of your files. One new table (EDSM name lookups) is
+created by itself; no journal replay. Close the FIS window once so it
+starts with the new files.
 
 ---
 

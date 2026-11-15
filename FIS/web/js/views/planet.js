@@ -99,6 +99,7 @@ const REPORT = {
   geo_signals: N_("{n} geological signals."),
   bio_signals: N_("{n} biological signals, {a} species analysed."),
   bio_open: N_("Not yet sampled: {g}."),
+  bio_multi: N_("{g}: one signal can be several species - the codex saw here: {s}."),
   bio_forecast: N_("Most likely genus: {g} ({p} %)."),
   rare_materials: N_("Rare materials: {m}."),
   jumponium_premium: N_("All materials for premium FSD injection present."),

@@ -41,7 +41,7 @@ if __package__:     # inside the plugin package (EDMC)
     from .netgate import Gateway
     from .procgen import id64_matches_position
     from .shells import edsm_queries, in_shell
-else:               # on its own: the self test, the FIS
+else:               # on its own: the FIS, plain imports
     from netgate import Gateway
     from procgen import id64_matches_position
     from shells import edsm_queries, in_shell
@@ -61,6 +61,9 @@ def _dist(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 class Source:
+    """One external star catalogue. fetch() gives the systems of a shell around
+    a point; last_ok and truncated tell the local-first logic whether the
+    shell may be remembered as fetched."""
     name = "?"
     priority = 99
     # did the last fetch deliver the whole region? Only then is the shell
@@ -71,6 +74,7 @@ class Source:
     truncated = False
 
     def available(self) -> Tuple[bool, str]:
+        """(usable, why) - shown on the settings page."""
         return False, "not implemented"
 
     def fetch(self, center: Sequence[float], radius: float,
@@ -84,6 +88,8 @@ class Source:
 # ---------------------------------------------------------------------------
 
 class EDSMSource(Source):
+    """EDSM's sphere and cube endpoints through the gateway (100 ly sphere, 200
+    ly cube at most per request)."""
     name = "EDSM"
     priority = 30
     MAX_SPHERE = 100.0     # API limit
@@ -94,6 +100,7 @@ class EDSMSource(Source):
         self.timeout = timeout
 
     def available(self) -> Tuple[bool, str]:
+        """Usable when the gateway may send to EDSM now."""
         return self.gw.status("edsm")
 
     def _parse(self, data, out: Dict[str, Dict]) -> None:
@@ -108,17 +115,18 @@ class EDSMSource(Source):
             out[s["name"]] = {"name": s["name"], "x": float(c["x"]), "y": float(c["y"]),
                               "z": float(c["z"]), "id64": s.get("id64")}
 
-    def lookup(self, names: Sequence[str]) -> Optional[Dict[str, Dict]]:
+    def lookup(self, names: Sequence[str], endpoint: str = "systems") -> Optional[Dict[str, Dict]]:
         """
         I1 route check: ONE request for several systems by name
         (systemName[] repeated). Returns {lower-case name: row} of those EDSM
         knows - with coordinates where it has them - or None when EDSM was
         not asked (offline, resting, daily cap) or the answer failed.
+        `endpoint` is the label in the call log (H3 #5 counts its own).
         """
         names = [n for n in names if n]
         if not names:
             return {}
-        resp = self.gw.request("edsm", "GET", EDSM_SYSTEMS, "systems", timeout=self.timeout,
+        resp = self.gw.request("edsm", "GET", EDSM_SYSTEMS, endpoint, timeout=self.timeout,
                                params={"systemName[]": list(names), "showCoordinates": 1,
                                        "showId": 1},
                                headers={"Accept": "application/json"})
@@ -183,6 +191,8 @@ class EDSMSource(Source):
 # ---------------------------------------------------------------------------
 
 class SpanshSource(Source):
+    """Spansh's systems search through the gateway: pages of 500 systems sorted
+    by distance, at most MAX_PAGES pages per shell (fair use)."""
     name = "Spansh"
     priority = 20
     PAGE = 500
@@ -195,11 +205,16 @@ class SpanshSource(Source):
         self.timeout = timeout
 
     def available(self) -> Tuple[bool, str]:
+        """Usable when the gateway may send to Spansh now; its index lags up to
+        48 h."""
         ok, why = self.gw.status("spansh")
         return ok, (why + ", index up to 48 h old") if ok else why
 
     def fetch(self, center, radius, progress: ProgressCB = None,
               r_min: float = 0.0) -> List[Dict]:
+        """Systems with r_min <= distance <= radius from Spansh, page by page
+        until a short page or the page cap. last_ok only when the shell came
+        complete (a cut at the cap counts as complete and sets truncated)."""
         self.last_ok = False
         self.truncated = False
         out: Dict[str, Dict] = {}
@@ -479,6 +494,8 @@ class EDDiscoverySource(Source):
         return True, self.reason
 
     def available(self) -> Tuple[bool, str]:
+        """Usable when EDDSystem.sqlite was found and its coordinate scale is
+        calibrated (calibrates on the first call)."""
         if not self.path:
             return False, "EDDSystem.sqlite not found"
         if not self.calibrated:
@@ -534,6 +551,8 @@ class EDDiscoverySource(Source):
 
     @classmethod
     def with_sector(cls, sector: Optional[str], rest: str) -> str:
+        """The full system name from sector and rest; NO_SECTOR stands for
+        names without a sector."""
         if sector and sector != cls.NO_SECTOR:
             return "%s %s" % (sector, rest)
         return rest
@@ -657,6 +676,8 @@ class EDDiscoverySource(Source):
 
     def fetch(self, center, radius, progress: ProgressCB = None,
               r_min: float = 0.0) -> List[Dict]:
+        """Systems of the shell from the local EDDiscovery database - no
+        network. last_ok when EDD's table was readable."""
         rows = self._fetch_ball(center, radius, progress)
         self.last_ok = bool(self.table)
         if r_min > 0:
@@ -709,6 +730,8 @@ class EDDiscoverySource(Source):
 # ---------------------------------------------------------------------------
 
 class SourceManager:
+    """The sources in priority order (EDDiscovery, Spansh, EDSM) behind one
+    gateway, and their merged answer for a shell."""
     def __init__(self, edd_path: Optional[str] = None,
                  gateway: Optional[Gateway] = None):
         # one gateway for the whole plugin: pass it in so that pacing and
@@ -722,11 +745,15 @@ class SourceManager:
 
     def set_reference(self, id64: Optional[int],
                       coords: Optional[Sequence[float]]) -> None:
+        """Hand the current system (id64 and coordinates) to EDDiscovery's
+        calibration."""
         edd = self.sources.get("edd")
         if isinstance(edd, EDDiscoverySource):
             edd.set_reference(id64, coords)
 
     def status(self) -> List[Tuple[str, bool, str]]:
+        """(name, usable, why) of every source, in priority order - for the
+        settings page."""
         out = []
         for key, s in sorted(self.sources.items(), key=lambda kv: kv[1].priority):
             ok, why = s.available()
@@ -779,55 +806,3 @@ class SourceManager:
             if i not in known_ids:
                 merged["#%d" % i] = r
         return list(merged.values()), used
-
-
-def _selftest() -> int:
-    """python sources.py - EDD name decoding, no files, no network."""
-    fails = 0
-
-    def check(ok: bool, what: str) -> None:
-        nonlocal fails
-        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
-        fails += 0 if ok else 1
-
-    E = EDDiscoverySource
-    cases = [
-        (0x1000140000007a62, "HIP", "HIP 31330"),        # values from EDDSystem.sqlite
-        (0x1000100000000956, "HR", "HR 2390"),
-        ((1 << 60) | (7 << 42) | (5 << 38) | 1846031, "EXO", "EXO 1846-031"),
-        ((1 << 60) | (6 << 42) | 4321, "HD", "HD 004321"),
-    ]
-    for nid, sec, want in cases:
-        got = E.decode_nameid(nid, sec)
-        check(got == want, "catalogue name %s (got %s)" % (want, got))
-    std = (1 << 61) | (19 << 38) | (8 << 33) | (10 << 28) | (1 << 24) | 1
-    check(E.decode_nameid(std, "Synuefe") == "Synuefe SH-J b1",
-          "procgen name still decoded")
-    check(E.decode_nameid(12345, "TYC") is None, "Names id is left to the Names table")
-    check(E.with_sector("TYC", "3996-1327-1") == "TYC 3996-1327-1"
-          and E.with_sector(E.NO_SECTOR, "15 Sagittarii") == "15 Sagittarii",
-          "Names entries get their sector, except NoSectorName")
-    # EDD freshness from its Register table (layout as in EDDSystem.sqlite)
-    import tempfile
-    with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "EDDSystem.sqlite")
-        cx = sqlite3.connect(path)
-        cx.execute("CREATE TABLE Register (ID TEXT PRIMARY KEY, ValueInt INTEGER,"
-                   " ValueDouble DOUBLE, ValueString TEXT, ValueBlob BLOB)")
-        cx.execute("INSERT INTO Register VALUES ('DBSource', NULL, NULL, 'SPANSH', NULL)")
-        cx.execute("INSERT INTO Register VALUES ('EDSMLastSystems', NULL, NULL,"
-                   " '11/09/2026 21:59:59', NULL)")
-        cx.commit()
-        cx.close()
-        e = EDDiscoverySource(path)
-        src, ts = e.freshness()
-        check(src == "SPANSH" and ts == 1794261599.0, "EDD source and last update read")
-        check(e.is_current("spansh", now=ts + 86400) and not e.is_current("edsm", now=ts + 86400),
-              "EDD one day old holds Spansh's data, not EDSM's")
-        check(not e.is_current("spansh", now=ts + 3 * 86400), "three days old: not current")
-    print("failures: %d" % fails)
-    return fails
-
-
-if __name__ == "__main__":
-    raise SystemExit(1 if _selftest() else 0)

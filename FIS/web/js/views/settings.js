@@ -49,6 +49,7 @@ function render() {
   const lang = el("select", { class: "lay-pick" }, el("option", { value: "en", text: "English" }), el("option", { value: "de", text: "Deutsch" }));
   lang.value = data.language;
   const browser = el("input", { type: "checkbox", checked: data.open_browser ? true : null });
+  const controlsBox = el("input", { type: "checkbox", checked: data.show_controls ? true : null });
   const lan = el("input", { type: "checkbox", checked: data.lan ? true : null });
   // C1: main commander - survey and statistics; "" = automatic (plugin / suggestion)
   const cmdrs = data.commanders || [];
@@ -58,7 +59,7 @@ function render() {
   main.value = data.main_cmdr || "";
   const save = async () => {
     try {
-      const body = { language: lang.value, open_browser: browser.checked, lan: lan.checked };
+      const body = { language: lang.value, open_browser: browser.checked, lan: lan.checked, show_controls: controlsBox.checked };
       if (cmdrs.length > 1) body.main_cmdr = main.value;
       data = await postJSON("/api/settings", body);
       msg = data.restart ? t("Saved. Restart the FIS (or EDMC with autostart) for the home network change.") : t("Saved.");
@@ -69,6 +70,8 @@ function render() {
     el("label", { class: "st-set" }, el("span", { text: t("Default language") }), lang),
     el("div", { class: "c-dim small", text: t("Each browser can still switch with EN / DE at the bottom.") }),
     el("label", { class: "st-set" }, el("span", { text: t("Open the browser when the FIS starts") }), browser),
+    el("label", { class: "st-set" }, el("span", { text: t("Show my key bindings in SHIP") }), controlsBox),
+    el("div", { class: "c-dim small", text: t("Reads the game's key bindings (Options\\Bindings) while on - read only, never written.") }),
     el("label", { class: "st-set" }, el("span", { text: t("Home network (tablet, second PC)") }), lan),
     el("div", { class: "c-dim small", text: t("Other devices need the address below with its token; the FIS then answers the home network too.") }),
     cmdrs.length > 1 ? el("label", { class: "st-set" }, el("span", { text: t("Main commander") }), main) : null,

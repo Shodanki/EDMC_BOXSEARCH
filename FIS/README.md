@@ -14,11 +14,12 @@ own database and maths.
 **It only reads.** The plugin database (opened read-only), the game's journal
 and its state files (`Status.json`, `NavRoute.json`, `ModulesInfo.json`,
 `Cargo.json`, ...). It sends nothing to the game and automates nothing. It asks
-a service on the internet in one case only: when you click *online* at a
-favourite carrier in CARRIER - one request to Spansh for where someone last
-reported it, through the plugin's polite gateway (pacing, the daily cap shared
-with the plugin, the plugin's *offline* switch), at most once per carrier every
-six hours.
+a service on the internet in two cases only, both on your click in CARRIER:
+*online* at a favourite carrier - where someone last reported it, at most once
+per carrier every six hours - and *find carriers near me* - the carriers
+within 100 ly of you, at most once a day per region of space. Each is one
+request to Spansh, through the plugin's polite gateway (pacing, the daily cap
+shared with the plugin, the plugin's *offline* switch).
 
 The FIS itself is under the Mozilla Public License 2.0 like the plugin
 (`LICENSE` in the plugin folder).
@@ -102,6 +103,18 @@ hardpoints out with the HUD in combat mode) or **COMBAT** (red, blinking:
 under attack, shields down, hull hit, interdiction - whatever the HUD); it
 calms down by itself 30 s after the last hit.
 
+### Your key bindings (optional)
+
+The settings page has *Show my key bindings in SHIP* (off by default). While
+it is on, SHIP has a block CONTROLS with the keys for what an explorer
+reaches for - jump, FSS, HUD mode, fire groups, hardpoints, gear, scoop,
+lights, maps, the SRV and on foot the genetic sampler and the composition
+scanner - read from the game's own files in `Options\Bindings` (the preset
+in use per part, read only, never written) - and the active fire group from
+`Status.json`. What is in a fire group is in no game file the FIS reads.
+A preset that comes with the game keeps its bindings in the game folder,
+which the FIS does not read; the block says so.
+
 ### Unsold data: your own limits
 
 SHIP calls losing your unsold data a low, moderate or high risk and, from a
@@ -111,6 +124,26 @@ settings page (game PC) has **UNSOLD DATA** - risk moderate from (default
 many systems (100). **Defaults** puts the developer's values back. Systems
 you discovered first and species with the first-footfall bonus make the risk
 at least moderate whatever their value. Stored in `fis.ini` (`unsold_*`).
+
+### Surface map (PLANET)
+
+The map of the body you are on follows you while you drive or walk
+(**Follow**, on by default). Switched off, the ground stays still and your
+marker moves across it; dragging the map switches it off too. **Me**,
+**Ship** and **SRV** centre on you, the landed ship and the parked SRV -
+the last two appear only when their position is known. A ship that dropped
+the Rhino in a hover waits there (*SHIP HOVERING 1240 m · leaves at 2.3 km*); once
+it has flown off (the SRV went too far, or the ship was sent away) it shows
+as *SHIP AWAY · 12 min ago · flew off - recall it* until you are aboard again.
+Double-click resets the view.
+
+### Ground mining (Rhino)
+
+Out in the SRV Rhino, MINING and PLANET show the rig being collected, the
+Rhino's hold (72 t) and the ship's: when the Rhino docks its load goes
+into the ship, so what still fits is the smaller of the Rhino's free room
+and what the ship has free with the Rhino's load aboard. The cockpit
+overlay shows the same block below the compass.
 
 ### Cockpit
 
@@ -153,6 +186,12 @@ tests/             python -m unittest discover -s tests -t .  (not needed to run
 ```
 
 Settings beyond the questions (all optional) are listed in `fis.ini.example`.
+
+At every start the FIS checks the plugin's files against
+`SHBOXSEARCH.manifest` (4.12, `fis/files.py` with the plugin's
+`integrity.py`): what is missing or damaged is printed in the FIS window
+in English and German, and every page shows a red banner until the plugin
+folder is copied from the release ZIP again.
 
 ## Views
 
@@ -215,7 +254,7 @@ QR code on the settings page is drawn with Project Nayuki's QR Code generator
 
 The FIS reads the game's own journal and state files and, from EDMC's
 Frontier data (Companion API), what the journal does not say about your
-carrier; Spansh is asked only on your click at *online* (above). All
+carrier; Spansh is asked only on your click (*online*, *find carriers near me* - above). All
 third-party parts of the project, and Frontier's data:
 [Third-party parts](../README.md#third-party-parts) in the plugin README.
 
@@ -245,7 +284,10 @@ third-party parts of the project, and Frontier's data:
   a value resting on few rocks, runs or rigs is marked as thin.
 * Known carriers come from your own journals - a carrier's position is
   where *you* last saw it, unless you click *online* at a favourite (one
-  Spansh request, shown with its date). Favourites,
+  Spansh request, shown with its date). *Find carriers near me* lists the
+  carriers Spansh knows within 100 ly - callsign, system, distance, who may
+  dock, services, when it was reported; a carrier starred there keeps that
+  position without a second request. Favourites,
   notes and the last market of each visited carrier are kept per commander
   in `favourites.json` next to `fis.ini` (personal - keep it out of anything
   you share). Starring works from the tablet too (with the home-network

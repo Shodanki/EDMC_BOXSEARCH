@@ -10,10 +10,16 @@
 import { getJSON } from "../api.js";
 import { el, frame, fmt, C, alpha } from "../ui.js";
 import { t, N_ } from "../i18n.js";
+import { rhinoHold } from "./rhino.js";
 
 let root = null, cv = null, g = null, data = null, info = null, list = null;
 let view = { zoom: null, panX: 0, panY: 0 };
 let drag = null;
+// 4.12: follow you while you move (default), or keep the ground still;
+// focus buttons for you, the ship and the parked SRV
+let follow = (() => { try { return localStorage.getItem("fis.surface.follow") !== "0"; } catch (e) { return true; } })();
+let lastCenter = null;          // the centre of the previous answer (lat, lon, body)
+let btn = {};
 
 const COL = { ship: C.cyan, srv: C.amber, foot: C.green, grid: alpha("cyan", .10),
   dim: C.dim, violet: C.violet, red: C.red, text: C.text };
@@ -34,11 +40,20 @@ export function mount(r) {
   cv = el("canvas", { class: "sf-map" });
   info = el("div", { class: "sf-info" });
   list = el("div", { class: "sf-list scroll" });
-  wrap.append(cv, el("div", { class: "sf-side" }, info, list));
+  btn.follow = el("button", { onclick: () => setFollow(!follow), title: t("Keep the map centred on you while you move") });
+  btn.me = el("button", { onclick: () => focusOn(0, 0), text: t("Me"), title: t("Centre on your position") });
+  btn.ship = el("button", { onclick: () => focusVehicle("ship"), text: t("Ship"), title: t("Centre on the ship") });
+  btn.srv = el("button", { onclick: () => focusVehicle("parked"), text: t("SRV"), title: t("Centre on the parked SRV") });
+  const box = el("div", { class: "sf-mapbox" }, cv,
+    el("div", { class: "sf-bar" }, btn.follow, btn.me, btn.ship, btn.srv));
+  wrap.append(box, el("div", { class: "sf-side" }, info, list));
   root.append(frame(t("PLANET · SURFACE"), "", wrap, { cls: "sf-frame" }));
   g = cv.getContext("2d");
   cv.addEventListener("wheel", (e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.25 : 0.8); }, { passive: false });
-  cv.addEventListener("mousedown", (e) => { drag = { x: e.clientX, y: e.clientY, px: view.panX, py: view.panY }; });
+  cv.addEventListener("mousedown", (e) => {
+    drag = { x: e.clientX, y: e.clientY, px: view.panX, py: view.panY };
+    if (follow) setFollow(false, false);            // moving the map yourself: stop following
+  });
   window.addEventListener("mouseup", () => { drag = null; });
   window.addEventListener("mousemove", (e) => {
     if (!drag) return;
@@ -52,9 +67,53 @@ export function mount(r) {
 
 function zoomBy(f) { view.zoom = Math.max(0.002, Math.min(50, (view.zoom || 0.1) * f)); draw(); }
 
+function setFollow(on, recentre = true) {
+  follow = on;
+  try { localStorage.setItem("fis.surface.follow", on ? "1" : "0"); } catch (e) { /* private window */ }
+  if (on && recentre && data && data.me) { view.panX = 0; view.panY = 0; }
+  bar(); draw();
+}
+
+function focusOn(x, y) { view.panX = x; view.panY = y; draw(); }
+
+function focusVehicle(key) {
+  const v = data && data[key];
+  if (!v) return;
+  setFollow(false, false);                          // else the next update centres on you again
+  focusOn(v.x, v.y);
+}
+
+function bar() {
+  if (!btn.follow) return;
+  btn.follow.textContent = (follow ? "◉ " : "○ ") + t("Follow");
+  btn.follow.setAttribute("aria-pressed", follow ? "true" : "false");
+  btn.me.hidden = !(data && data.me);
+  btn.ship.hidden = !(data && data.ship);
+  btn.srv.hidden = !(data && data.parked);
+}
+
+// the map's metres are around your position of each answer: following, you
+// stay in the middle; not following, the view moves by what you moved, so
+// the ground stays still and your marker travels
+function recentre() {
+  const c = data && data.center;
+  if (!c || !data.radius_m) { lastCenter = null; return; }
+  if (lastCenter && lastCenter.body !== data.body) view = { zoom: null, panX: 0, panY: 0 };
+  else if (lastCenter && view.zoom && !follow) {
+    const dx = data.radius_m * Math.cos(lastCenter.lat * Math.PI / 180) *
+      ((((c.lon - lastCenter.lon) + 540) % 360) - 180) * Math.PI / 180;
+    const dy = data.radius_m * (c.lat - lastCenter.lat) * Math.PI / 180;
+    view.panX -= dx; view.panY -= dy;
+  }
+  if (follow && data.me && view.zoom) { view.panX = 0; view.panY = 0; }
+  lastCenter = { lat: c.lat, lon: c.lon, body: data.body };
+}
+
 export async function update(ctx, reason) {
   if (!root) return;
   try { data = await getJSON("/api/surface"); } catch (e) { data = null; }
+  recentre();
+  bar();
   render();
 }
 
@@ -69,6 +128,14 @@ function niceStep(m) {
   const p = Math.pow(10, Math.floor(Math.log10(m)));
   for (const k of [1, 2, 5, 10]) if (k * p >= m) return k * p;
   return 10 * p;
+}
+
+function shipAway(a) {
+  const t0 = Date.parse(a.ts);
+  const min = isNaN(t0) ? null : Math.max(0, Math.floor((Date.now() - t0) / 60000));
+  const why = a.why === "dismissed" ? t("sent away") : t("flew off");
+  return el("div", { class: "sf-park c-amber" },
+    "▲ " + t("SHIP AWAY") + (min !== null ? " · " + t("{n} min ago", { n: Math.max(1, min) }) : "") + " · " + why + " – " + t("recall it"));
 }
 
 function vehicleLabel(key, v) {
@@ -92,6 +159,7 @@ function draw() {
     const span = Math.max(200, e.maxX - e.minX, e.maxY - e.minY) * 1.25;
     view.zoom = Math.min(W, H) / span;
     view.panX = (e.minX + e.maxX) / 2; view.panY = (e.minY + e.maxY) / 2;
+    if (follow && data.me) { view.panX = 0; view.panY = 0; }
   }
   const P = (x, y) => [W / 2 + (x - view.panX) * view.zoom, H / 2 - (y - view.panY) * view.zoom];
   // grid + scale
@@ -299,12 +367,6 @@ function compass(d) {
   return el("div", { class: "sf-compass-box", title: t("heading up · dots: earlier samples (green = far enough) · ring 1 km") }, c);
 }
 
-// out in the Rhino: hold and how many full rigs still fit (a rig goes in whole)
-function rhinoHold(h) {
-  return el("div", { class: "small " + (h.short ? "c-amber" : "c-dim"), text: h.short
-    ? t("Rhino hold {u}/{c} t · a full rig ({r} t) no longer fits - make room before collecting", { u: h.used, c: h.capacity, r: h.rig_t })
-    : t("Rhino hold {u}/{c} t · full rigs that still fit: {n} ({r} t each)", { u: h.used, c: h.capacity, n: h.rigs_fit, r: h.rig_t }) });
-}
 
 function render() {
   if (!root) return;
@@ -329,9 +391,12 @@ function render() {
     if (!v) continue;
     const where = v.dist_m !== undefined ? fmt(v.dist_m, 0) + " m · " + fmt(v.bearing, 0) + "°" : t("position saved");
     const what = key === "parked" ? t("{v} PARKED", { v: vehicleLabel(key, v) })
-      : v.hover ? t("SHIP HOVERING · last known") : t("SHIP LANDED");
-    info.append(el("div", { class: "sf-park " + colr }, (key === "parked" ? "◆ " : "▼ ") + what + "  " + where));
+      : v.hover ? t("SHIP HOVERING") : t("SHIP LANDED");
+    const leaves = v.hover ? " · " + t("leaves at 2.3 km") : "";
+    info.append(el("div", { class: "sf-park " + colr }, (key === "parked" ? "◆ " : "▼ ") + what + "  " + where + leaves));
   }
+  // 4.12: dropped from a hover or sent away - the ship has flown off
+  if (data.here && data.ship_away && !(data.me && data.me.mode === "ship")) info.append(shipAway(data.ship_away));
   for (const b of data.bio) {
     if (b.done) { info.append(el("div", { class: "c-green small", text: "✔ " + t("{s} analysed", { s: b.species }) })); continue; }
     const n = b.samples !== undefined ? b.samples : b.points.length;

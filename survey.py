@@ -18,13 +18,14 @@ import math
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import groundmine
 from . import journalscan
 from .boxelplan import K_BIO, K_DSS, K_NEW, K_SCAN, Target, bundled_probe_prefix, set_origin
 from .deepspace import best_staging, staging_lines
 from .procgen import boxel_prefix
 from .sysdb import PLAN
 from .sysroute import (bodies_from_rows, calibrate_from_journal, calibrate_work_from_journal,
-                       leg_distance_ls, plan_route, resolve_positions, shorten)
+                       group_label, leg_distance_ls, plan_route, resolve_positions, shorten)
 from .state import CFG, ST, cfg_bool, get_masscodes, logger
 from . import maintenance
 from . import panel
@@ -113,10 +114,38 @@ def _bootstrap_session() -> None:
     except Exception:
         logger.exception("last position bootstrap failed")
     try:
+        _bootstrap_ground()
+    except Exception:
+        logger.exception("ground mining bootstrap failed")
+    try:
         updater._check_for_update()
     except Exception:
         logger.exception("update check failed")
     uithread._ui(panel._refresh)
+
+
+def _bootstrap_ground() -> None:
+    """4.12 (worker): the ship's hold and - when EDMC started while out in
+    the Rhino - the trip so far, from the newest journal. Taken over here,
+    under ST.lock, not through uithread._ui: that drops calls while the
+    panel is not built yet, and the ship's numbers were lost with them."""
+    d = maintenance._journal_dir()
+    files = journalscan.journal_files(d, last=1) if d else []
+    if not files:
+        return
+    gm = groundmine.GroundMine().replay((e, journalscan.event_time(e)) for e in journalscan.read_events(files))
+    with ST.lock:
+        cur = ST.ground
+        if gm.in_rhino and not cur.in_rhino:
+            ST.ground = gm
+            logger.info("ground mining | out in the Rhino: %d rig(s), %s t aboard",
+                        len(gm.rigs), gm.srv_cargo)
+            return
+        if cur.ship_capacity is None:
+            cur.ship_capacity = gm.ship_capacity
+        if cur.ship_cargo is None:
+            cur.ship_cargo = gm.ship_cargo
+    logger.info("ground mining | ship hold from the journal: %s of %s t", gm.ship_cargo, gm.ship_capacity)
 
 
 def _bootstrap_last_body() -> None:
@@ -272,7 +301,6 @@ def _actual_visits(sys_id64: int) -> List[Tuple[str, float]]:
 
 def _count_switches(seq, bodies) -> int:
     """How often the flown order moved from one planetary system to another."""
-    from sysroute import group_label
     n = 0
     last = None
     for b in seq:
@@ -360,10 +388,12 @@ def _stop_survey() -> None:
 # ============================================================================
 
 def current_flight() -> Optional[Target]:
+    """The head of the flight queue, or None."""
     return ST.flight[0] if ST.flight else None
 
 
 def current_probe() -> Optional[Target]:
+    """The head of the probe queue (galaxy map checks), or None."""
     return ST.probe[0] if ST.probe else None
 
 

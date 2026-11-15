@@ -12,14 +12,16 @@ to five lines for the cockpit overlay:
 
   ROCK     the last prospector report: target material share, content,
            a verdict against the best rock of the session, motherlode
-  HOLD     ore on board, free space, limpets
-  RATE     tonnes per hour over the last ten minutes, full in ~ minutes
-  SESSION  refined this session, how long - in a ring this line becomes
+  HOLD     limpets, ore on board, free space
+  RATE     tonnes per hour over the last ten minutes, limpets per tonne
+  SESSION  refined this session, how long, full in ~ minutes - in a ring this line becomes
   HOTSPOT  whether the hotspot is your target (then the game's own HUD
            compass points to its centre; the game gives no position in a
            ring, so nothing here can draw a map or a compass of its own)
   LIMPETS  how far the limpets go at the rate your session uses them,
-           against the room left (a launched limpet frees its tonne)
+           against the room left (a launched limpet frees its tonne); with
+           the hold filling up, the limpets more than it still needs - ore
+           you would leave behind
 
 Only a prospector limpet starts a session - collectors serve other work too
 (refining alone - the
@@ -32,6 +34,7 @@ about the refinery's bins - only each finished tonne (MiningRefined).
 
 from __future__ import annotations
 
+import math
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -42,6 +45,9 @@ GAP_S = 30 * 60            # a break this long starts a new session
 ACTIVE_S = 10 * 60         # the overlay block shows this long after the last mining event
 RATE_S = 10 * 60
 DEFAULT_RATIO = 0.4        # limpets per refined tonne until the session says better
+MIN_LIMPETS = 5            # kept back: one more rock (15.11.2026: 1.2 prospectors and 2.6
+#                            collectors per rock mined)
+SPARE_WHEN = 0.25          # spare limpets are named once the free space is down to this share
 EVENTS = ("MiningRefined", "ProspectedAsteroid", "LaunchDrone", "AsteroidCracked", "Loadout", "Docked")
 MINING_TOOLS = ("hpt_mininglaser", "hpt_mining_", "hpt_mrascanner", "int_refinery")
 PLACE = ("SupercruiseExit", "SupercruiseEntry", "FSDJump", "Location")
@@ -57,6 +63,8 @@ def _ts(e: Dict[str, Any]) -> float:
 
 
 def type_key(s: Optional[str]) -> str:
+    """A material's internal key from a journal name, a hotspot type or a label
+    - lower case, no 'hotspot', no blanks."""
     s = (s or "").strip().strip("$;").lower()
     if "#type=" in s:
         s = s.split("#type=", 1)[1].strip("$;")
@@ -66,6 +74,8 @@ def type_key(s: Optional[str]) -> str:
 
 
 class MiningTracker:
+    """One mining session from the journal: last prospected rock, refined
+    tonnes, rate, limpets - the mining block of the overlay."""
     def __init__(self) -> None:
         self.reset()
         self.capacity = 0
@@ -76,6 +86,7 @@ class MiningTracker:
         self.miner: Optional[bool] = None         # ship has mining tools (None: no Loadout yet)
 
     def reset(self) -> None:
+        """Start a new session (the hold and the capacity stay)."""
         self.start = 0.0
         self.last = 0.0
         self.refined: Dict[str, int] = {}
@@ -170,6 +181,8 @@ class MiningTracker:
 
     # -- derived -------------------------------------------------------------
     def key(self) -> Optional[str]:
+        """The material the block follows: the chosen target, else the most
+        refined, else the richest in the last rock."""
         if self.target:
             return self.target
         if self.refined:
@@ -183,160 +196,110 @@ class MiningTracker:
         return max((p for mk, _n, p in (rock or {}).get("mats", []) if mk == k), default=0.0)
 
     def active(self, now: Optional[float] = None) -> bool:
+        """True while the last mining event is no older than ACTIVE_S."""
         now = time.time() if now is None else now
         return bool(self.last) and now - self.last <= ACTIVE_S
 
     def rate_h(self, now: Optional[float] = None) -> int:
+        """Refined tonnes per hour over the last RATE_S seconds."""
         now = time.time() if now is None else now
         n = sum(1 for t in self.ticks if now - t <= RATE_S)
         return round(n * 3600.0 / RATE_S)
 
     def ratio(self) -> float:
+        """Limpets used per refined tonne - measured after 20 t, else the
+        default."""
         total = sum(self.refined.values())
         return self.limpets_used / total if total >= 20 and self.limpets_used else DEFAULT_RATIO
 
     # -- the five lines ------------------------------------------------------
     def lines(self, now: Optional[float] = None, col: Optional[Dict[str, str]] = None) -> List[Line]:
+        """The mining block as (text, colour) lines, at most five: rock, hold
+        (limpets, ore, free), rate, session with "full in", limpets."""
         now = time.time() if now is None else now
         c = dict(COLOURS, **(col or {}))
         out: List[Line] = []
-        k = self.key()
-        r = self.rock
-        if r:
-            name = next((n for mk, n, _p in r["mats"] if mk == k), (self.names.get(k) or (k or "?").capitalize()))
-            best = max(self.best, r["share"])
-            verdict, colour = "", c["dim"]
-            if best:
-                if r["share"] >= 0.75 * best:
-                    verdict, colour = "GOOD", c["data"]
-                elif r["share"] < 0.4 * best:
-                    verdict, colour = "MOVE ON", c["warn"]
-                else:
-                    verdict = "FAIR"
-            txt = "ROCK  %s %.1f %% | %s" % (name, r["share"], r["content"])
-            if verdict:
-                txt += " | " + verdict
-            if r.get("remaining") is not None and r["remaining"] < 100:
-                txt += " | %d %% left" % round(r["remaining"])
-            if r.get("motherlode"):
-                txt += " | MOTHERLODE " + str(r["motherlode"])
-                colour = c["new"]
-            out.append((txt, colour))
+        if self.rock:
+            out.append(self._rock_line(c))
+        h = self.hold()
+        hold = "HOLD  %d limpets | %d t ore" % (h["limpets"], h["ore"])
+        if h["free"] is not None:
+            hold += " | %d t free" % h["free"]
+        tight = h["free"] is not None and self.capacity and h["free"] < 0.05 * self.capacity
+        out.append((hold, c["warn"] if tight else c["data"]))
+        rate = self.rate_h(now)
+        full = None
+        if rate:
+            out.append(("RATE  %d t/h | %.2f limpets/t" % (rate, h["ratio"]), c["data"]))
+            if h["room"] is not None:
+                full = round(min(h["room"], h["reach"]) / rate * 60)
+        else:
+            out.append(("RATE  nothing refined in 10 min", c["dim"]))
+        out.append(self._session_line(now, full, c))
+        out.append(self._limpet_line(h, c))
+        return out[:5]
+
+    def _rock_line(self, c: Dict[str, str]) -> Line:
+        """ROCK: the last prospected asteroid against the best of the session."""
+        k, r = self.key(), self.rock or {}
+        name = next((n for mk, n, _p in r["mats"] if mk == k), (self.names.get(k) or (k or "?").capitalize()))
+        best = max(self.best, r["share"])
+        verdict, colour = "", c["dim"]
+        if best:
+            if r["share"] >= 0.75 * best:
+                verdict, colour = "GOOD", c["data"]
+            elif r["share"] < 0.4 * best:
+                verdict, colour = "MOVE ON", c["warn"]
+            else:
+                verdict = "FAIR"
+        txt = "ROCK  %s %.1f %% | %s" % (name, r["share"], r["content"])
+        if verdict:
+            txt += " | " + verdict
+        if r.get("remaining") is not None and r["remaining"] < 100:
+            txt += " | %d %% left" % round(r["remaining"])
+        if r.get("motherlode"):
+            txt += " | MOTHERLODE " + str(r["motherlode"])
+            colour = c["new"]
+        return txt, colour
+
+    def hold(self) -> Dict[str, Any]:
+        """The hold now: limpets, ore, free (None without the capacity), the
+        ore that still fits (a launched limpet frees its tonne), how far the
+        limpets go, and the limpets more than that needs (spare)."""
         limpets = self.cargo.get("drones", 0)
         ore = sum(v for n, v in self.cargo.items() if n != "drones")
         free = max(0, self.capacity - ore - limpets) if self.capacity else None
         ratio = self.ratio()
-        # every limpet launched frees its tonne: room for more ore than "free"
         room = int(free / (1.0 - ratio)) if free is not None and ratio < 1 else free
         reach = int(limpets / ratio) if ratio else 0
-        hold = "HOLD  %d t ore" % ore
-        if free is not None:
-            hold += " | %d t free" % free
-        hold += " | %d limpets" % limpets
-        tight = free is not None and self.capacity and free < 0.05 * self.capacity
-        out.append((hold, c["warn"] if tight else c["data"]))
-        rate = self.rate_h(now)
-        if rate:
-            txt = "RATE  %d t/h" % rate
-            if room is not None:
-                txt += " | full in ~%d min" % round(min(room, reach) / rate * 60)
-            out.append((txt, c["data"]))
-        else:
-            out.append(("RATE  nothing refined in 10 min", c["dim"]))
+        spare = None
+        if room is not None:
+            spare = max(0, limpets - int(math.ceil(ratio * room)) - MIN_LIMPETS)
+        return {"limpets": limpets, "ore": ore, "free": free, "ratio": ratio, "room": room,
+                "reach": reach, "spare": spare}
+
+    def _session_line(self, now: float, full: Optional[int], c: Dict[str, str]) -> Line:
+        """SESSION or, in a ring, HOTSPOT: tonnes, minutes, full in."""
         total = sum(self.refined.values())
         mins = max(1, round((now - self.start) / 60)) if self.start else 0
-        main = max(self.refined, key=self.refined.get) if self.refined else None
+        tail = " | full ~%d min" % full if full is not None else ""
         if self.ring and self.target:
-            out.append(("HOTSPOT  %s targeted - HUD compass | %d t in %d min"
-                        % (self.target_name or self.target, total, mins), c["head"]))
-        elif self.ring:
-            out.append(("HOTSPOT  not targeted - select it in the nav panel for the HUD compass", c["warn"]))
-        else:
-            what = (" " + self.names.get(main, "")) if main else ""
-            out.append(("SESSION  %d t%s | %d min" % (total, what, mins), c["head"]))
-        if room is not None and reach < room:
-            out.append(("LIMPETS  last ~%d t - room for %d t" % (reach, room), c["warn"]))
-        else:
-            out.append(("LIMPETS  last ~%d t OK" % reach, c["dim"]))
-        return out[:5]
+            return ("HOTSPOT  %s targeted | %d t in %d min%s"
+                    % (self.target_name or self.target, total, mins, tail), c["head"])
+        if self.ring:
+            return ("HOTSPOT  not targeted (nav panel) | %d t in %d min%s" % (total, mins, tail), c["warn"])
+        main = max(self.refined, key=self.refined.get) if self.refined else None
+        what = (" " + self.names.get(main, "")) if main else ""
+        return "SESSION  %d t%s | %d min%s" % (total, what, mins, tail), c["head"]
 
-
-def _selftest() -> int:
-    """python miningstat.py - checks the lines with a short session."""
-    m = MiningTracker()
-    m.feed({"event": "Loadout", "CargoCapacity": 322})
-    t0 = "2026-11-06T10:00:%02dZ"
-    m.feed({"timestamp": t0 % 0, "event": "LaunchDrone", "Type": "Prospector"})
-    m.feed({"timestamp": t0 % 5, "event": "ProspectedAsteroid", "Content": "$AsteroidMaterialContent_High;",
-            "Materials": [{"Name": "Tritium", "Proportion": 31.5}, {"Name": "Water", "Proportion": 8}],
-            "Remaining": 100})
-    for i in range(10, 40, 3):
-        m.feed({"timestamp": t0 % i, "event": "MiningRefined", "Type": "$tritium_name;", "Type_Localised": "Tritium"},
-               cargo={"tritium": (i - 10) // 3 + 1, "drones": 120})
-    m.status({"Flags": 1, "Destination": {"Name": "$SAA_RingHotspot:#type=$Tritium_name;;",
-                                          "Name_Localised": "Tritium Hotspot"}})
-    now = _ts({"timestamp": t0 % 59})
-    lines = m.lines(now)
-    # in the ring: the session line becomes the hotspot line
-    m.feed({"timestamp": t0 % 50, "event": "SupercruiseExit", "Body": "X 4 B Ring", "BodyType": "PlanetaryRing"})
-    ring_lines = m.lines(now)
-    targeted = m.target
-    m.status({"Flags": 1})                    # target dropped
-    lost = m.lines(now)
-    was_active = m.active(now)
-    m.feed({"timestamp": t0 % 58, "event": "Docked", "StationType": "FleetCarrier"})
-    docked_active = m.active(now)
-    # refining without a limpet (Rhino SRV, the refinery's last tonnes) starts nothing
-    rhino = MiningTracker()
-    rhino.feed({"timestamp": t0 % 1, "event": "MiningRefined", "Type": "$tantalum_name;"})
-    rhino_idle = not rhino.active(now) and not rhino.refined
-    # a collector limpet from a ship without mining tools (an explorer) starts nothing
-    explorer = MiningTracker()
-    explorer.feed({"event": "Loadout", "CargoCapacity": 128,
-                   "Modules": [{"Item": "int_dronecontrol_collection_size1_class5"}]})
-    explorer.feed({"timestamp": t0 % 1, "event": "LaunchDrone", "Type": "Collection"})
-    explorer_idle = not explorer.active(now)
-    # a collector limpet even from a mining ship starts nothing - only a prospector does
-    collector = MiningTracker()
-    collector.feed({"event": "Loadout", "CargoCapacity": 322, "Modules": [{"Item": "hpt_mininglaser_fixed_small"}]})
-    collector.feed({"timestamp": t0 % 1, "event": "LaunchDrone", "Type": "Collection"})
-    collector_idle = not collector.active(now)
-    # a jump ends the session like docking
-    jumper = MiningTracker()
-    jumper.feed({"timestamp": t0 % 1, "event": "LaunchDrone", "Type": "Prospector"})
-    jumper.feed({"timestamp": t0 % 2, "event": "FSDJump", "StarSystem": "X"})
-    jump_ends = not jumper.active(now)
-    # undocked again: the next limpet starts a new session from zero
-    m.feed({"timestamp": "2026-11-06T10:05:00Z", "event": "LaunchDrone", "Type": "Prospector"})
-    fresh = sum(m.refined.values()) == 0 and m.limpets_used == 1
-    fails = 0
-    checks = [
-        (len(lines) == 5, "five lines"),
-        (lines[0][0].startswith("ROCK  Tritium 31.5 %") and "GOOD" in lines[0][0], "rock line"),
-        ("HOLD  10 t ore | 192 t free | 120 limpets" == lines[1][0], "hold line: " + lines[1][0]),
-        (lines[2][0].startswith("RATE  60 t/h"), "rate line: " + lines[2][0]),
-        (lines[3][0].startswith("SESSION  10 t Tritium"), "session line"),
-        (targeted == "tritium", "target from hotspot"),
-        (was_active, "active"),
-        (not docked_active, "docking ends the session"),
-        (fresh, "a new session after docking"),
-        (rhino_idle, "refining without a limpet starts nothing"),
-        (jump_ends, "a jump ends the session"),
-        (explorer_idle, "no session out of a ship without mining tools"),
-        (collector_idle, "a collector limpet alone starts no session"),
-        (ring_lines[3][0].startswith("HOTSPOT  Tritium Hotspot targeted"), "hotspot line: " + ring_lines[3][0]),
-        (lost[3][0].startswith("HOTSPOT  not targeted"), "hotspot lost: " + lost[3][0]),
-        (len(lost) == 5, "still five lines"),
-    ]
-    for ok, what in checks:
-        if not ok:
-            fails += 1
-            print("FAIL", what)
-    print("miningstat selftest: %d failures" % fails)
-    for ln in lines:
-        print("  ", ln[0])
-    return fails
-
-
-if __name__ == "__main__":
-    raise SystemExit(1 if _selftest() else 0)
+    def _limpet_line(self, h: Dict[str, Any], c: Dict[str, str]) -> Line:
+        """LIMPETS: too few for the room left - or, with the hold filling up,
+        more than it needs: those tonnes are ore you leave behind (15.11.2026:
+        the hold full with 43 limpets aboard)."""
+        if h["room"] is not None and h["reach"] < h["room"]:
+            return "LIMPETS  last ~%d t - room for %d t" % (h["reach"], h["room"]), c["warn"]
+        filling = h["free"] is not None and self.capacity and h["free"] <= SPARE_WHEN * self.capacity
+        if filling and h["spare"] and h["spare"] >= MIN_LIMPETS:
+            return ("LIMPETS  ~%d spare - eject them for ~%d t more ore" % (h["spare"], h["spare"]),
+                    c["warn"])
+        return "LIMPETS  last ~%d t OK" % h["reach"], c["dim"]

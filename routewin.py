@@ -55,10 +55,11 @@ def _rebuild_route() -> None:
     route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
                        filters=filters, skip_arrival=skip_arrival, start=start)
     ST.route_full = False
-    if not route.stops and F_ALL not in filters:
+    if not route.stops and F_ALL not in filters and cfg_bool(CFG["route_done_tour"], True):
         # Nothing outstanding - show the complete tour anyway rather than an
         # empty window. Useful when revisiting a system, and it makes clear
-        # that the system really is finished rather than unknown.
+        # that the system really is finished rather than unknown. 4.12: a
+        # setting turns this off - then a finished system gets no route.
         route = plan_route(ST.cur_system or "", bodies, model=ST.cost_model,
                            filters=[F_ALL], skip_arrival=skip_arrival, start=start)
         ST.route_full = True

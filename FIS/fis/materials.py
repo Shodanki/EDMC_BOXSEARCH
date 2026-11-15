@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .science import JUMPONIUM
 
@@ -50,43 +50,43 @@ def stock(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             for m in evs[base].get(cat) or []:
                 have[_k(m.get("Name"))] = int(m.get("Count") or 0)
     start = base + 1 if base is not None else 0
-
-    def add(name, n):
-        k = _k(name)
-        have[k] = max(0, have.get(k, 0) + int(n or 0))
-
     for e in evs[start:]:
-        ev = e["event"]
-        if ev == "MaterialCollected":
-            add(e.get("Name"), e.get("Count") or 1)
-        elif ev == "MaterialDiscarded":
-            add(e.get("Name"), -(e.get("Count") or 1))
-        elif ev == "Synthesis":
-            for m in e.get("Materials") or []:
-                add(m.get("Name"), -(m.get("Count") or 1))
+        for name, n in _material_changes(e):
+            k = _k(name)
+            have[k] = max(0, have.get(k, 0) + int(n or 0))
+        if e["event"] == "Synthesis":
             g = SYNTH.get(_k(e.get("Name")))
             if g:
                 synth.append({"grade": g, "ts": e.get("timestamp")})
-        elif ev == "EngineerCraft":
-            for m in e.get("Ingredients") or []:
-                add(m.get("Name"), -(m.get("Count") or 1))
-        elif ev == "TechnologyBroker":
-            for m in e.get("Materials") or []:
-                add(m.get("Name"), -(m.get("Count") or 1))
-        elif ev == "MaterialTrade":
-            paid, got = e.get("Paid") or {}, e.get("Received") or {}
-            add(paid.get("Material"), -(paid.get("Quantity") or 0))
-            add(got.get("Material"), got.get("Quantity") or 0)
-        elif ev == "MissionCompleted":
-            for m in e.get("MaterialsReward") or []:
-                add(m.get("Name"), m.get("Count") or 1)
-        elif ev == "ScientificResearch":
-            add(e.get("Name"), -(e.get("Count") or 1))
     return {"have": have, "base_ts": evs[base].get("timestamp") if base is not None else None,
             "synthesised": synth}
 
 
+def _material_changes(e: Dict[str, Any]) -> List[Tuple[Any, Any]]:
+    """(material, change) of one event, in the order the event names them."""
+    ev = e["event"]
+    if ev == "MaterialCollected":
+        return [(e.get("Name"), e.get("Count") or 1)]
+    if ev == "MaterialDiscarded":
+        return [(e.get("Name"), -(e.get("Count") or 1))]
+    if ev in ("Synthesis", "TechnologyBroker"):
+        return [(m.get("Name"), -(m.get("Count") or 1)) for m in e.get("Materials") or []]
+    if ev == "EngineerCraft":
+        return [(m.get("Name"), -(m.get("Count") or 1)) for m in e.get("Ingredients") or []]
+    if ev == "MaterialTrade":
+        paid, got = e.get("Paid") or {}, e.get("Received") or {}
+        return [(paid.get("Material"), -(paid.get("Quantity") or 0)),
+                (got.get("Material"), got.get("Quantity") or 0)]
+    if ev == "MissionCompleted":
+        return [(m.get("Name"), m.get("Count") or 1) for m in e.get("MaterialsReward") or []]
+    if ev == "ScientificResearch":
+        return [(e.get("Name"), -(e.get("Count") or 1))]
+    return []
+
+
 def readiness(have: Dict[str, int]) -> List[Dict[str, Any]]:
+    """For each jump boost grade: how many injections the materials make, and
+    which material runs short first."""
     out = []
     for grade in ("basic", "standard", "premium"):
         recipe = JUMPONIUM[grade]
@@ -128,6 +128,8 @@ def sources(db: Any, wanted: Iterable[str], pos, per: int = 3) -> Dict[str, List
 
 
 def build_jumponium(archive: Any, db: Any = None, pos=None) -> Dict[str, Any]:
+    """The jumponium view: stock, readiness per grade and where to find what is
+    short."""
     st = stock(archive.events())
     have = st["have"]
     ready = readiness(have)
