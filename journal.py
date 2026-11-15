@@ -498,6 +498,15 @@ def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> N
         genera = [g for g in ((r["genuses"] if r else None) or "").split(",") if g]
         c = ST._nav_cache = (key, marks, r["sig_bio"] if r else None, genera, lost)
         _bio_resume(pos["body"], marks)
+    if surfacenav.hover_gone(c[1], pos, radius):
+        # 4.12: the SRV went too far - the hovering ship has flown off now
+        with ST.lock:
+            # game time of the fix (journal time), the PC clock only without one
+            ST.db.mark_ship_gone(ST.cur_id64, pos["body"],
+                                 time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(pos.get("gt") or now)),
+                                 pos["lat"], pos["lon"])
+        logger.info("surface | the hovering ship has flown off (SRV over %.0f m away) - recall it",
+                    surfacenav.SHIP_LEAVE_M)
     lines = surfacenav.compass_lines(pos, c[1], radius, sig_bio=c[2], genera=c[3],
                                      colours=overlay.COL, orbit=not low, lost=c[4], now=now)
     if lines:

@@ -108,55 +108,80 @@ def _selftest() -> None:
     marks.append({"ts": "6", "kind": "bio_log", "label": "Roseum Brain Tree",
                   "detail": "Brain Trees", "lat": 0.01, "lon": 0.0})
     assert body_state(marks)["species"][0]["samples"] == 1
-    # the Rhino dropped from a hovering ship (no Touchdown): the ship flies
-    # off at once and writes nothing - away until recalled (14.11.2026)
+    # the Rhino dropped from a hovering ship (no Touchdown): the ship waits
+    # at the drop point until the SRV is some 2.3-2.5 km away (15.11.2026)
+    from SHBOXSEARCH.surfacenav import SHIP_LEAVE_M, SHIP_WARN_M, hover_gone
+    R = 492617.0
     rh = [{"ts": "2026-11-14T15:12:08Z", "kind": "srv_out", "label": "SRV Rhino", "detail": None,
            "lat": -26.05, "lon": 143.60}]
     st = body_state(rh)
+    assert st["ship"]["hover"] and st["ship_away"] is None, st
+    near = {"lat": -26.06, "lon": 143.61, "heading": 0, "mode": "srv"}
+    lines = compass_lines(near, rh, R)
+    ship = [(ln, c) for ln, c in lines if ln.startswith("SHIP")]
+    assert ship and ship[0][0].startswith("SHIP (hover)") and ship[0][1] != "#FF4D4D", lines
+    assert not hover_gone(rh, near, R)
+    deg = 180.0 / 3.141592653589793 / R             # one metre in degrees of latitude
+    late = dict(near, lat=-26.05 - 2000 * deg, lon=143.60)
+    ship = [(ln, c) for ln, c in compass_lines(late, rh, R) if ln.startswith("SHIP")]
+    assert ship and ship[0][0].startswith("SHIP (hover)") and ship[0][1] == "#FF4D4D" \
+        and SHIP_WARN_M < 2000 < SHIP_LEAVE_M, ship
+    far = dict(near, lat=-26.05 - 2400 * deg, lon=143.60)
+    assert hover_gone(rh, far, R), "2.4 km away: the hovering ship has left"
+    lines = compass_lines(far, rh, R)
+    assert any(ln.startswith("SHIP AWAY") and "flew off - recall it" in ln for ln, _c in lines), lines
+    assert not hover_gone(rh, dict(far, mode="ship"), R), "flying the ship: nothing has left"
+    # the plugin stores that moment; from then on the ship stays away,
+    # even back at the drop point
+    gone = rh + [{"ts": "2026-11-14T15:30:00Z", "kind": "ship_gone", "label": "hover", "detail": None,
+                  "lat": far["lat"], "lon": far["lon"]}]
+    st = body_state(gone)
     assert st["ship"] is None and st["ship_away"]["why"] == "hover", st
-    t_launch = calendar.timegm(time.strptime("2026-11-14T15:12:08Z", "%Y-%m-%dT%H:%M:%SZ"))
-    lines = compass_lines({"lat": -26.06, "lon": 143.61, "heading": 0}, rh, 492617.0, now=t_launch + 725)
-    away = [ln for ln, _c in lines if ln.startswith("SHIP AWAY")]
-    assert away == ["SHIP AWAY 12 min    flew off - recall it"], lines
+    t_gone = calendar.timegm(time.strptime("2026-11-14T15:30:00Z", "%Y-%m-%dT%H:%M:%SZ"))
+    away = [ln for ln, _c in compass_lines(near, gone, R, now=t_gone + 725) if ln.startswith("SHIP AWAY")]
+    assert away == ["SHIP AWAY 12 min    flew off - recall it"], away
     assert len(away[0]) <= 44
-    assert not any("SHIP (hover)" in ln for ln, _c in lines), lines
+    assert not hover_gone(gone, far, R), "already marked: not again"
     # flying the ship yourself: it is not away, whatever an old visit left
-    aboard = compass_lines({"lat": -26.06, "lon": 143.61, "heading": 0, "mode": "ship"}, rh, 492617.0)
+    aboard = compass_lines(dict(near, mode="ship"), gone, R)
     assert not any(ln.startswith("SHIP AWAY") for ln, _c in aboard), aboard
     # docked back into the recalled ship: the ship is here again
-    back = rh + [{"ts": "2026-11-14T15:42:12Z", "kind": "srv_in", "label": "SRV Rhino",
-                  "detail": None, "lat": 0.0, "lon": 0.0}]
+    back = gone + [{"ts": "2026-11-14T15:42:12Z", "kind": "srv_in", "label": "SRV Rhino",
+                    "detail": None, "lat": 0.0, "lon": 0.0}]
     assert body_state(back)["ship"] is None and body_state(back)["ship_away"] is None
-    # on foot from the Rhino and back into it: the ship is still away
+    # docked into the hovering ship before it left: nothing waits any more
+    assert body_state(rh + back[-1:])["ship"] is None
+    # on foot from the Rhino and back into it: the ship still hovers
     foot = rh + [{"ts": "2026-11-14T15:20:00Z", "kind": "srv_parked", "label": "SRV", "detail": "SRV Rhino",
                   "lat": -26.0, "lon": 143.7},
                  {"ts": "2026-11-14T15:21:00Z", "kind": "embark", "label": "SRV", "detail": None,
                   "lat": -26.0, "lon": 143.7}]
-    assert body_state(foot)["ship_away"]["why"] == "hover"
+    assert body_state(foot)["ship"]["hover"]
     # a Rhino out of a landed ship: the Touchdown stays the ship's point, nothing away
     td = [{"ts": "2026-11-14T15:00:00Z", "kind": "touchdown", "label": "b", "detail": "ship", "lat": 1.0, "lon": 2.0}]
     st = body_state(td + rh)
-    assert st["ship"]["kind"] == "touchdown" and st["ship_away"] is None, st
+    assert st["ship"]["kind"] == "touchdown" and not st["ship"].get("hover") and st["ship_away"] is None, st
+    assert not hover_gone(td + rh, dict(near, lat=1.5), R), "a landed ship is no hovering one"
     # the Nomad: the ship flies along - no point to show, nothing to recall
     st = body_state([{"ts": "1", "kind": "srv_out", "label": "Nomad", "detail": None,
                       "lat": 1.0, "lon": 1.0}])
     assert st["ship"] is None and st["ship_away"] is None
     # a landed ship sent away (Liftoff without the player): away - recall it
-    gone = td + rh + [{"ts": "2026-11-14T15:13:00Z", "kind": "liftoff", "label": "b", "detail": "auto",
+    sent = td + rh + [{"ts": "2026-11-14T15:13:00Z", "kind": "liftoff", "label": "b", "detail": "auto",
                        "lat": 1.0, "lon": 2.0}]
-    st = body_state(gone)
+    st = body_state(sent)
     assert st["ship"] is None and st["ship_away"]["why"] == "dismissed", st
     assert any(ln.startswith("SHIP AWAY") and "dismissed - recall it" in ln
-               for ln, _c in compass_lines({"lat": 1.0, "lon": 2.01, "heading": 0}, gone, 492617.0)), gone
+               for ln, _c in compass_lines({"lat": 1.0, "lon": 2.01, "heading": 0}, sent, R)), sent
     # you lift off yourself: aboard, nothing away
     assert body_state(td + [{"ts": "2026-11-14T15:13:00Z", "kind": "liftoff", "label": "b", "detail": "ship",
                              "lat": 1.0, "lon": 2.0}])["ship_away"] is None
     # the recalled ship lands (Touchdown without the player): its new point
-    s = body_state(gone + [{"ts": "2026-11-14T15:30:00Z", "kind": "touchdown", "label": "b", "detail": "auto",
+    s = body_state(sent + [{"ts": "2026-11-14T15:30:00Z", "kind": "touchdown", "label": "b", "detail": "auto",
                             "lat": -26.2, "lon": 143.7}])
     assert s["ship"]["lat"] == -26.2 and s["ship"]["kind"] == "touchdown" and s["ship_away"] is None, s
     # nothing else on the body: the away line alone still shows
-    only = compass_lines({"lat": 0.0, "lon": 0.0, "heading": 0}, rh, 492617.0)
+    only = compass_lines({"lat": 0.0, "lon": 0.0, "heading": 0}, gone, R)
     assert only and only[0][0] == "NAV" and only[1][0].startswith("SHIP AWAY"), only
     # Rhino rigs: tonnes close in time and place are one rig; numbered per launch
 

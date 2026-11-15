@@ -409,6 +409,8 @@ const DE = /*DE*/{
   "position saved": "Position gespeichert",
   "{v} PARKED": "{v} GEPARKT",
   "SHIP LANDED": "SCHIFF GELANDET",
+  "SHIP HOVERING": "SCHIFF SCHWEBT",
+  "leaves at 2.3 km": "fliegt bei 2,3 km ab",
   "SHIP AWAY": "SCHIFF WEG",
   "sent away": "weggeschickt",
   "flew off": "abgeflogen",

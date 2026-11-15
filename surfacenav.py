@@ -115,12 +115,16 @@ def body_state(marks: Iterable[Any], radius: Optional[float] = None) -> Dict[str
              Touchdown of its own (PlayerControlled false). The Nomad gives
              no such point - the ship follows it at some 2-3 km - and a drop
              from a landed ship keeps the Touchdown.
+             An SRV dropped from a hovering ship (no Touchdown before) leaves
+             the ship hovering at the drop point, "hover": True - until the
+             SRV is some 2.3-2.5 km away; then it flies off, and the journal
+             writes nothing for that (developer, 15.11.2026). The plugin
+             marks that moment itself ("ship_gone", see hover_gone).
     ship_away  4.12: the ship has flown off and must be recalled - {"ts",
-             "why"}: "hover" when an SRV was dropped from a hovering ship
-             (it leaves at once and the journal writes nothing for that -
-             developer's journals of 14.11.2026), "dismissed" for a Liftoff
-             without the player (sent away, or it left on its own). Over
-             when you are back aboard (DockSRV, Embark) or it lands again.
+             "why"}: "hover" for a hovering ship left behind (ship_gone),
+             "dismissed" for a Liftoff without the player (sent away, or it
+             left on its own). Over when you are back aboard (DockSRV,
+             Embark) or it lands again.
     species  one entry per species: samples taken since its last Log (the
              game restarts the count on a new Log), positions, analysed
     sites    positioned finds worth returning to, close ones merged
@@ -158,6 +162,8 @@ class _BodyReplay:
         self._vehicles(m, kind, lat, lon, detail)
         if kind == "srv_in" or (kind == "embark" and _g(m, "label") != "SRV"):
             self.ship_away = None        # back on board: the ship is here
+            if isinstance(self.ship, dict) and self.ship.get("hover"):
+                self.ship = None         # aboard the hovering ship again
         elif kind.startswith("bio_"):
             self._bio(m, kind, lat, lon, detail)
         if kind in SITE_KINDS and lat is not None:
@@ -178,6 +184,9 @@ class _BodyReplay:
             self.ship = None
             # without the player: sent away or left on its own - recall it
             self.ship_away = {"ts": _g(m, "ts"), "why": "dismissed"} if detail == "auto" else None
+        elif kind == "ship_gone" and isinstance(self.ship, dict) and self.ship.get("hover"):
+            self.ship = None             # the SRV went too far: the hovering ship left
+            self.ship_away = {"ts": _g(m, "ts"), "why": "hover"}
         elif kind == "refined" and lat is not None:
             self._rig(m, lat, lon)
         elif kind == "srv_out":
@@ -203,16 +212,18 @@ class _BodyReplay:
 
     def _srv_out(self, m: Any, lat: Any, lon: Any) -> None:
         """A vehicle launched: a new Rhino outing; the ship flying along (Nomad),
-        or - dropped from a hover - flown off until recalled."""
+        or - dropped from a hover - waiting at the drop point."""
         vehicle = (_g(m, "label") or "").lower()
         if "rhino" in vehicle:
             self.outing += 1
         if "nomad" in vehicle:
             self.ship = None             # the ship flies along with the Nomad
-        elif self.ship is None:
-            # no Touchdown before: dropped from a hovering ship, which leaves
-            # at once - nothing in the journal says so (14.11.2026)
-            self.ship_away = {"ts": _g(m, "ts"), "why": "hover"}
+        elif self.ship is None and lat is not None:
+            # no Touchdown before: dropped from a hovering ship, which waits
+            # there until the SRV is too far away (hover_gone)
+            self.ship = {"ts": _g(m, "ts"), "kind": "srv_out", "label": _g(m, "label"),
+                         "detail": "hover", "lat": lat, "lon": lon, "hover": True}
+            self.ship_away = None
 
     def _bio(self, m: Any, kind: str, lat: Any, lon: Any, detail: Any) -> None:
         """A bio log, sample or analysis of one species."""
@@ -308,6 +319,28 @@ def head_line(label: str, done: int, open_n: int = 0, lost_n: int = 0,
     return base
 
 
+SHIP_LEAVE_M = 2300.0     # a hovering ship flies off when the SRV is this far (seen: 2.3-2.5 km)
+SHIP_WARN_M = 1800.0      # from here the ship's line turns red: it is about to leave
+
+
+def _hover_dist(ship: Any, pos: Dict[str, Any], radius: float) -> Optional[float]:
+    """Distance to a hovering ship, None when the ship is not hovering."""
+    if not (isinstance(ship, dict) and ship.get("hover")) or pos.get("lat") is None or radius <= 0:
+        return None
+    return surface_distance_m(float(pos["lat"]), float(pos["lon"]), float(ship["lat"]),
+                              float(ship["lon"]), radius)
+
+
+def hover_gone(marks: Iterable[Any], pos: Dict[str, Any], radius: float) -> bool:
+    """4.12: in the SRV (or on foot) further than SHIP_LEAVE_M from the
+    hovering ship - it has flown off now. The journal says nothing, so the
+    caller stores that moment as a "ship_gone" mark."""
+    if pos.get("mode") == "ship":
+        return False
+    d = _hover_dist(body_state(marks)["ship"], pos, radius)
+    return d is not None and d > SHIP_LEAVE_M
+
+
 def away_line(away: Dict[str, Any], now: Optional[float], colour: str) -> Line:
     """4.12: the ship has flown off - no point to steer to, a recall to make."""
     t0 = _ts(away.get("ts"))
@@ -354,9 +387,15 @@ def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
         p = st["parked"]
         rows.append(entry("%s PARKED" % (_g(p, "detail") or "SRV").upper(),
                           float(p["lat"]), float(p["lon"]), c_warn)[1])
-    if st["ship"] is not None:
+    hd = _hover_dist(st["ship"], pos, radius)
+    if hd is not None and hd > SHIP_LEAVE_M and pos.get("mode") != "ship":
+        # too far: gone - until the caller's ship_gone mark is read back
+        rows.append(away_line({"ts": None, "why": "hover"}, now, c_warn))
+    elif st["ship"] is not None:
         p = st["ship"]
-        rows.append(entry("SHIP", float(p["lat"]), float(p["lon"]), c_warn)[1])
+        late = hd is not None and hd >= SHIP_WARN_M
+        rows.append(entry("SHIP (hover)" if hd is not None else "SHIP", float(p["lat"]), float(p["lon"]),
+                          col.get("alert", "#FF4D4D") if late else c_warn)[1])
     elif st["ship_away"] is not None and pos.get("mode") != "ship":     # aboard: it is here
         rows.append(away_line(st["ship_away"], now, c_warn))
     bio = []

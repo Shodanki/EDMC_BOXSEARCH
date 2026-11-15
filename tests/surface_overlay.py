@@ -157,5 +157,37 @@ ST.db.ingest_journal_event({"event": "Undocked", "timestamp": "2027-01-15T09:10:
 check(not ST.db.aboard_station(), "undocked: the surface counts again")
 check(ST.db.aboard_station(1 << 3), "on foot in a station (Flags2): not the surface either")
 
+print("the Rhino dropped from a hover: the ship waits, then leaves at 2.3 km")
+R_B = 1_500_000.0
+DEG = 180.0 / 3.141592653589793 / R_B          # one metre in degrees
+
+
+def at(flags, lat, ts, alt=0.0):
+    e = {"event": "Status", "timestamp": ts, "Flags": flags, "Flags2": 0, "GuiFocus": 0, "Latitude": lat,
+         "Longitude": 0.0, "Altitude": alt, "BodyName": "Test B 1", "PlanetRadius": R_B}
+    load.dashboard_entry("Cmdr", False, e)
+
+
+clock[0] += 60
+ST.db.ingest_journal_event({"event": "ApproachBody", "timestamp": "2027-01-15T09:58:00Z", "StarSystem": "Test",
+                            "SystemAddress": 42, "Body": "Test B 1", "BodyID": 6})
+at(IN_SHIP, 0.0, "2027-01-15T10:00:00Z", alt=8.0)              # hovering just above the ground
+ST.db.ingest_journal_event({"event": "LaunchSRV", "timestamp": "2027-01-15T10:00:02Z", "SystemAddress": 42,
+                            "SRVType": "mev_rhino", "SRVType_Localised": "SRV Rhino"})
+client.sent.clear()
+clock[0] += 2
+at(SRV, 500 * DEG, "2027-01-15T10:01:00Z")
+nav = client.shown("nav")
+check(any(t.startswith("SHIP (hover)") for t in nav), "500 m away: the hovering ship waits (%s)" % nav[1:2])
+clock[0] += 2
+at(SRV, 2400 * DEG, "2027-01-15T10:05:00Z")
+kinds = [m["kind"] for m in ST.db.marks_of(42, "Test B 1")]
+check("ship_gone" in kinds, "2.4 km away: the moment it left is stored (%s)" % kinds)
+clock[0] += 2
+at(SRV, 100 * DEG, "2027-01-15T10:06:00Z")
+nav = client.shown("nav")
+check(any(t.startswith("SHIP AWAY") for t in nav) and not any(t.startswith("SHIP (hover)") for t in nav),
+      "back near the drop point: still away - recall it (%s)" % nav[1:2])
+
 print("surface overlay: %s" % ("all OK" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)

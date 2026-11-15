@@ -2062,6 +2062,13 @@ class SystemDB:
             " UNION ALL SELECT sys_id64, body_name, datetime(ts,'unixepoch') FROM surface_track)"
             " GROUP BY sys_id64, body_name ORDER BY last DESC").fetchall()
 
+    def mark_ship_gone(self, sys_id64: int, body: str, ts: str, lat: float, lon: float) -> bool:
+        """4.12: the hovering ship has flown off - the SRV went too far from
+        it (surfacenav.hover_gone). No journal event says so; the plugin
+        marks the moment where it happened."""
+        return self._mark({"SystemAddress": sys_id64, "timestamp": ts}, "ship_gone", body, "hover",
+                          lat=lat, lon=lon)
+
     def marks_of(self, sys_id64: int, body_name: str) -> List[sqlite3.Row]:
         """The surface marks of a body (samples, SRV, finds), oldest first."""
         return self.cx.execute(

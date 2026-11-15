@@ -1931,12 +1931,16 @@ Gypseeum Brain Tree         903 m  < 13
 * **the parked SRV** - where you left it on foot, until you get back in
 * **the parked ship** - where it touched down, until it lifts off or is sent away.
   The Nomad gives no such point: the ship flies along at some 2-3 km.
+* **the hovering ship** (4.12) - an SRV dropped from a hovering ship (no
+  touchdown before) leaves the ship waiting at the drop point, `SHIP (hover)`.
+  It flies off once the SRV is some 2.3-2.5 km away; the line turns red from
+  1.8 km, so you see it coming.
 * **the ship flown off** (4.12) - `SHIP AWAY 12 min    flew off - recall it`.
-  An SRV dropped from a hovering ship (no touchdown before) leaves the ship
-  flying off at once - the journal writes nothing for that, so the plugin
-  knows it from the drop itself. A landed ship sent away (or leaving on its
-  own) says `dismissed`. The line goes when you dock the SRV in the recalled
-  ship, board it, or it lands again; flying the ship yourself it never shows.
+  The journal writes nothing when a hovering ship leaves, so the plugin
+  marks the moment you pass 2.3 km itself. A landed ship sent away (or
+  leaving on its own) says `dismissed`. The line goes when you dock the SRV
+  in the recalled ship, board it, or it lands again; flying the ship
+  yourself it never shows.
 * **species not finished yet**, with the samples taken (a new Log restarts the
   count, as in the game)
 * **earlier finds on this body** - codex entries, settlements, screenshots;

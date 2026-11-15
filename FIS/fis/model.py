@@ -1603,6 +1603,8 @@ def _surface_vehicles(out: Dict[str, Any], nav: Any, xy: Any, me_xy: Any) -> Non
         x, y = xy(v["lat"], v["lon"])
         item = {"x": round(x, 1), "y": round(y, 1), "ts": v["ts"],
                 "label": (v["detail"] or "SRV") if key == "parked" else "ship"}
+        if key == "ship" and isinstance(v, dict) and v.get("hover"):
+            item["hover"] = True     # dropped the Rhino in a hover: it waits there
         if me_xy is not None:
             _dist_bearing(item, x, y)
         out[key] = item
