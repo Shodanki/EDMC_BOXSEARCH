@@ -39,7 +39,7 @@ from .sysroute import ALL_FILTERS, DEFAULT_MODEL, F_OUTSTANDING
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-VERSION = "4.12.0"
+VERSION = "4.12.1"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 for _mod in (_sysdb_mod, _sources_mod, netgate, _overlay_mod):
@@ -212,6 +212,7 @@ class State:
         self.staging: List[Dict[str, Any]] = []
         self.update_version: Optional[str] = None
         self.files_problem: str = ""        # 4.12: integrity.summary() when files are missing / damaged
+        self.journal_gap: str = ""          # 4.12.1: EDMC passes on no journal events (journalgap)
         self.update_notes: str = ""
         self.last_body_id: Optional[int] = None
         self.last_body_name: str = ""

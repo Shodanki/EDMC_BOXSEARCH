@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.12.0
+# SHBOXSEARCH v4.12.1
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -1462,6 +1462,7 @@ what changed in each release from 4.1 on.
 | 4.10.1 | fixes: worker threads reach the window only through EDMC's one allowed call; FIS: BRIEFING comes to the front only for a jump target, reads only for this PC's own address, only the plugin's keys from EDMC's settings; EDMC's User-Agent; flake8 by EDMC's rules; the 4.0 helper scripts removed |
 | 4.11.0 | load.py split into modules, relative imports, EDMC's complexity limit kept (journal handling 69 -> 7); FIS: your own limits for unsold data; EDMC closes after the plugin's work; settings through EDMC 5's API; FIS: Python found by itself, no error details to the browser, damaged positions skipped |
 | 4.12.0 | overlay situation column (star ahead, data at stake, landing card, system value, ring, boxel, route fuel, carrier countdown, session tally); ground mining: Rhino and ship hold; ship flown off - recall it; the hovering ship waits, SHIP AWAY from 2.3 km; surface compass stays on the ground, not on foot aboard the carrier; FIS PLANET follows you; settings on tabs; a finished system can get no route; mining overlay: limpets, full in, spare limpets; cockpit overlay in a window of its own (beta); file check at every start; probe names EDSM knows become flight targets; FIS: carriers near you (Spansh, on a click), your key bindings in SHIP; fixes: surface compass, mining block, bio distance and the self test button work again (broken since 4.11), Brain Trees - one signal, several species, belt clusters no longer fill up the FSS count; every function within EDMC's complexity limit, documented, self tests out of the download |
+| 4.12.1 | fix: when EDMC passes on no journal events (the game wrote its journal anew), the plugin warns, stores the missed landings, samples and finds itself and places them by the stored track; a replay fills in positions marks were stored without |
 
 ## Fixed since v3.0.8
 
@@ -2704,6 +2705,36 @@ replay. Close the FIS window once so it starts with the new files.
 it carries none of your files. One new table (EDSM name lookups) is
 created by itself; no journal replay. Close the FIS window once so it
 starts with the new files.
+
+### 4.12.1 - fixes
+
+* **When EDMC stops passing on journal events.** After a lost connection
+  the game can write its journal anew under the same name. EDMC then reads
+  on at its old place in the file and passes nothing on - for many minutes,
+  or until it is restarted. The plugin stored no landing, sample or find
+  meanwhile, and the FIS's PLANET showed only the track. Now the plugin
+  notices it: Status.json keeps coming, EDMC has been quiet for a minute,
+  and the newest journal file holds events EDMC never passed on. Then
+  - EDMC's window and the overlay say *EDMC gets no journal events -
+    restart EDMC*;
+  - the plugin stores the missed events itself, in their order, and leaves
+    them out should EDMC pass them on later after all;
+  - the warning goes when EDMC passes on a new event again.
+
+  Only the newest journal file is read, only while EDMC is quiet and the
+  file has changed, at most every 30 s.
+* **Late events in the right place.** A landing, a parked SRV or a sample
+  stored late is placed by the track the plugin kept, where it happened,
+  not where you are when it is stored. *Replay journals* now also fills in
+  the position of a mark that was stored without one - for example the
+  samples of a session in which EDMC passed nothing on.
+
+**Updating to 4.12.1:** new file `journalgap.py`; changed `journal.py`,
+`sysdb.py`, `panel.py`, `situation.py`, `cockpitinfo.py`, `state.py`,
+`SHBOXSEARCH.manifest` and `FIS/fis/__init__.py`. Close EDMC and unpack
+the ZIP over the old folder (it carries none of your files). No database
+change. If marks of an earlier session have no position, press *Replay
+journals* once in the settings (Maintenance).
 
 ---
 

@@ -19,6 +19,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from . import groundmine
+from . import journalgap
 from . import journalscan
 from . import miningstat
 from . import overlay
@@ -47,6 +48,8 @@ def journal_entry(cmdr: str, is_beta: bool, system: str, station: str,
     """
     if not ST.db:
         return
+    if not journalgap.journal_event(entry):
+        return                  # 4.12.1: stored by the plugin while EDMC passed nothing on
     ev = entry.get("event")
     _track_commander(cmdr, state)
     try:
@@ -628,6 +631,7 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
         ST.mine.status(entry)                # target hotspot -> material
         ST.ground.status(entry)              # 4.12: the Rhino's load between events
         cockpitinfo.dashboard(entry)         # 4.12: danger - unsold data at stake
+        journalgap.status_tick()             # 4.12.1: EDMC quiet, the journal not?
         _mining_overlay()                    # rate and ages move on; at most every 5 s
     except Exception:
         logger.debug("mining overlay failed", exc_info=True)

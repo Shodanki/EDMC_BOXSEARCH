@@ -59,6 +59,8 @@ _v_update: Optional[tk.StringVar] = None
 _lbl_update = None
 _v_files: Optional[tk.StringVar] = None
 _lbl_files = None
+_v_gap: Optional[tk.StringVar] = None
+_lbl_gap = None
 _lbl_fuel = None
 _lbl_queue = None
 _lbl_route = None
@@ -89,6 +91,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     global _btn_stats, _lbl_stats, _v_stats, _carrier_var
     global _btn_next, _v_route, _lbl_route, _btn_route
     global _v_fuel, _lbl_queue, _lbl_fuel, _v_update, _lbl_update, _v_files, _lbl_files
+    global _v_gap, _lbl_gap
 
     _frame = tk.Frame(parent)
     _frame.columnconfigure(1, weight=1)
@@ -181,6 +184,13 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     _lbl_files.grid(row=11, column=0, columnspan=2, sticky=tk.EW)
     _lbl_files.bind("<Button-1>", lambda e: updater._open_release_page())
     _lbl_files.grid_remove()
+
+    # 4.12.1: only while EDMC passes on no journal events (journalgap)
+    _v_gap = tk.StringVar(value="")
+    _lbl_gap = tk.Label(_frame, textvariable=_v_gap, anchor=tk.W, justify=tk.LEFT,
+                        wraplength=360)
+    _lbl_gap.grid(row=12, column=0, columnspan=2, sticky=tk.EW)
+    _lbl_gap.grid_remove()
 
     _refresh()
     theme.update(_frame)
@@ -349,6 +359,10 @@ def _refresh_optional_lines() -> None:
     if _v_files is not None and _lbl_files is not None:
         _v_files.set(("FILES: " + ST.files_problem) if ST.files_problem else "")
         (_lbl_files.grid() if ST.files_problem else _lbl_files.grid_remove())
+
+    if _v_gap is not None and _lbl_gap is not None:
+        _v_gap.set(("JOURNAL: " + ST.journal_gap) if ST.journal_gap else "")
+        (_lbl_gap.grid() if ST.journal_gap else _lbl_gap.grid_remove())
 
     if _lbl_queue is not None:
         (_lbl_queue.grid() if cfg_bool(CFG["panel_queue"], False)
