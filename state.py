@@ -212,6 +212,7 @@ class State:
         self.staging: List[Dict[str, Any]] = []
         self.update_version: Optional[str] = None
         self.files_problem: str = ""        # 4.12: integrity.summary() when files are missing / damaged
+        self.journal_gap: str = ""          # 4.12.1: EDMC passes on no journal events (journalgap)
         self.update_notes: str = ""
         self.last_body_id: Optional[int] = None
         self.last_body_name: str = ""

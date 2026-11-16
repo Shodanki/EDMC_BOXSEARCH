@@ -66,7 +66,7 @@ _unsold: Optional[Dict[str, Any]] = None
 _unsold_t = 0.0
 _carrier_dist: Optional[float] = None    # ly from the carrier to its destination
 
-GROUPS = {"warn": ("hazard", "risk"),
+GROUPS = {"warn": ("journal", "hazard", "risk"),
           "place": ("landing", "system", "ring", "boxel", "route", "carrier"),
           "session": ("session",)}
 

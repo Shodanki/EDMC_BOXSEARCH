@@ -38,7 +38,7 @@ MAX_LINES = 9
 LINE_MAX = 44            # characters, as the other overlay blocks
 
 # what goes first: warnings, then tasks, then information
-PRIORITY = {"hazard": 5, "risk": 8, "carrier": 20, "route": 25, "landing": 30, "system": 50,
+PRIORITY = {"journal": 2, "hazard": 5, "risk": 8, "carrier": 20, "route": 25, "landing": 30, "system": 50,
             "ring": 55, "boxel": 60, "session": 70}
 COL = {"head": "#3EF2E0", "data": "#7CFF6B", "warn": "#FFB23E", "alert": "#FF4D4D",
        "new": "#B57CFF", "dim": "#8FA3A6"}
@@ -117,6 +117,13 @@ class Board:
 # ---------------------------------------------------------------------------
 # Every line fits LINE_MAX characters, like the other overlay blocks - the
 # column stands in the right half of the 1280-wide canvas.
+
+def journal_gap_lines(added: int) -> List[Line]:
+    """4.12.1: EDMC passes on no journal events (journalgap) - the plugin
+    stores the missed ones itself, but only a restart brings EDMC back."""
+    return [("! EDMC GETS NO JOURNAL EVENTS", COL["alert"]),
+            (("  restart EDMC - %d missed ones stored" % added)[:LINE_MAX], COL["warn"])]
+
 
 def hazard_lines(star_type: Optional[str]) -> List[Line]:
     """The arrival star can hurt: neutron star, white dwarf, black hole."""

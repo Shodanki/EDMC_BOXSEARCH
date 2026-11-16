@@ -1918,6 +1918,29 @@ class SystemDB:
             return None
         return p
 
+    LIVE_SLACK_S = 3.0       # s: a live fix this much after the event still tells where it happened
+
+    def _pos_at(self, sys_id64: Optional[int], body: Optional[str],
+                at: Optional[float]) -> Optional[Dict[str, Any]]:
+        """
+        4.12.1: where we were on the body when the event happened. The live
+        Status.json fix if it is not newer than the event (as for every
+        event EDMC passes on at once), else the last stored track point
+        before it - for events stored late (journalgap: EDMC passed nothing
+        on for minutes, the live fix is from now) and journal replays. None
+        when neither fits: no position is better than today's.
+        """
+        p = self._fresh_pos(body, at)
+        if p and (at is None or p.get("gt") is None or p["gt"] <= at + self.LIVE_SLACK_S):
+            return p
+        if at is None or not sys_id64 or not body:
+            return None
+        r = self.cx.execute(
+            "SELECT lat, lon, mode FROM surface_track WHERE sys_id64=? AND body_name=?"
+            " AND ts BETWEEN ? AND ? ORDER BY ts DESC LIMIT 1",
+            (sys_id64, body, at - self.POS_MAX_AGE, at + self.LIVE_SLACK_S)).fetchone()
+        return {"body": body, "lat": r[0], "lon": r[1], "mode": r[2]} if r else None
+
     def add_track_point(self, sys_id64: int, pos: Dict[str, Any], ts: float) -> None:
         """Store one point of the surface track (position, altitude, heading,
         mode); the same time twice is ignored."""
@@ -1935,12 +1958,17 @@ class SystemDB:
         if not a or not body:
             return False
         if lat is None or lon is None:
-            p = self._fresh_pos(body, _epoch(entry.get("timestamp")))
+            p = self._pos_at(a, body, _epoch(entry.get("timestamp")))
             if p:
                 lat, lon = p["lat"], p["lon"]
+        # 4.12.1: the same event again (a replay) fills in a position the
+        # mark was stored without - EDMC had passed nothing on and the
+        # replay of 4.12.0 knew no track; a position once stored stays
         self.cx.execute(
-            "INSERT OR IGNORE INTO surface_marks(ts,sys_id64,body_name,kind,label,"
-            "detail,lat,lon) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO surface_marks(ts,sys_id64,body_name,kind,label,"
+            "detail,lat,lon) VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(ts,kind,body_name,label) DO UPDATE SET lat=excluded.lat, lon=excluded.lon "
+            "WHERE surface_marks.lat IS NULL AND excluded.lat IS NOT NULL",
             (entry.get("timestamp") or _now(), a, body, kind, label or "", detail,
              lat, lon))
         self.cx.commit()
@@ -2006,7 +2034,8 @@ class SystemDB:
         if e.get("PlayerControlled") is False:
             who = "auto"
         else:
-            p = self._fresh_pos(e.get("Body"), _epoch(e.get("timestamp")))
+            p = self._pos_at(e.get("SystemAddress") or self._here_sys, e.get("Body"),
+                             _epoch(e.get("timestamp")))
             who = ("srv" if p["mode"] == "srv" else "ship") if p else None
         self._mark(e, ev.lower(), e.get("Body"), e.get("Body") or "", detail=who,
                    lat=e.get("Latitude"), lon=e.get("Longitude"))
