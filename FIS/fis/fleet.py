@@ -887,7 +887,35 @@ class Archive:
                        "tritium": tritium_for_jump(ly, load or 0, fuel or 0) if ly else None}
         return {"stats": c.stats, "location": c.loc, "arrived": c.arrived_ts, "fuel": fuel, "load": load,
                 "jumps": hist, "pending": pending, "upkeep": weekly_cost(c.balances, c.transfers),
-                "services_changed": c.services}
+                "services_changed": c.services,
+                # PL2: the balance over time and your transfers, for GAIN / LOSS
+                "balances": list(c.balances), "transfers": list(c.transfers)}
+
+
+def type_label(names: Dict[str, str], typ: Optional[str]) -> str:
+    """A ship type for people: the game's own name from the journal, else
+    the internal one made readable ("type9_military" -> "Type9 Military")."""
+    t = (typ or "").lower()
+    return names.get(t) or (t.replace("_", " ").title() if t else "?")
+
+
+def upkeep_between(balances: List[Tuple[float, int]], transfers: List[Dict[str, Any]],
+                   since: Optional[float], min_days: float = 3.0) -> Optional[Dict[str, Any]]:
+    """
+    PL2: what the carrier cost over a period - its balance (CarrierStats)
+    at the first and the last reading from `since` on, your own transfers
+    to and from it taken out. An estimate: market income of other
+    commanders at the carrier cannot be told apart, so it can come out too
+    low; positive drift gives no cost. None below min_days of readings.
+    """
+    pts = [(t, b) for t, b in balances if since is None or t >= since]
+    if len(pts) < 2 or (pts[-1][0] - pts[0][0]) / 86400.0 < min_days:
+        return None
+    (t0, b0), (t1, b1) = pts[0], pts[-1]
+    net_tr = sum(x["deposit"] - x["withdraw"] for x in transfers if t0 < x["ts"] <= t1)
+    drift = b1 - b0 - net_tr
+    return {"cost": int(round(-drift)) if drift < 0 else None, "drift": int(round(drift)),
+            "days": round((t1 - t0) / 86400.0, 1), "readings": len(pts), "from": t0, "to": t1}
 
 
 def weekly_cost(balances: List[Tuple[float, int]], transfers: List[Dict[str, Any]],

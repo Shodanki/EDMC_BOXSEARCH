@@ -1089,10 +1089,16 @@ class Handler(BaseHTTPRequestHandler):
                         "systems": un["exploration"]["systems"], "explo": un["exploration"].get("value")}
                        if un else None)
         names = app.archive.ship_names(evs)
+        from .fleet import type_label, upkeep_between
         for s in out["ships"]:
-            s["type_name"] = names.get(str(s.get("type") or "").lower())
+            s["type_name"] = type_label(names, s.get("type"))      # PL2: readable without a localised name
         for d in out["deaths"]:
-            d["type_name"] = names.get(str(d.get("type") or "").lower())
+            d["type_name"] = type_label(names, d.get("type"))
+        # PL2: the carrier's upkeep over the period - an estimate from its balance
+        car = app.archive.carrier()
+        if car:
+            out["carrier"]["upkeep"] = upkeep_between(car.get("balances") or [], car.get("transfers") or [],
+                                                      out.get("since"))
         return self._json(out)
 
     def _get_statistics(self, qs: Dict[str, Any]) -> None:

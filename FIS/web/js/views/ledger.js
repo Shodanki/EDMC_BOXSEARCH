@@ -149,8 +149,13 @@ function losses() {
 
 function carrier() {
   const K = data.carrier;
-  if (!K.deposit && !K.withdraw) return null;
-  return frame(t("CARRIER"), "", [row(t("Paid in"), cr(K.deposit)), row(t("Taken out"), cr(K.withdraw)),
-    el("div", { class: "c-dim small", text: t("Transfers move money, they are no gain or loss. The carrier's upkeep follows later.") })],
-    { cls: "st-card", appear: false });
+  const U = K.upkeep;
+  if (!K.deposit && !K.withdraw && !U) return null;
+  const rows = [row(t("Paid in"), cr(K.deposit)), row(t("Taken out"), cr(K.withdraw))];
+  // PL2: upkeep from the carrier's balance, your transfers taken out - an estimate
+  if (U) rows.push(row(t("Upkeep (estimate)"), U.cost ? "~ " + cr(-U.cost, true) : t("not measurable"), U.cost ? "c-amber" : "c-dim"),
+    el("div", { class: "c-dim small", text: t("From {n} balance readings over {d} days, your transfers taken out. Market income at the carrier cannot be told apart - so it can come out too low; not in the sums above.",
+      { n: U.readings, d: fmt(U.days, 0) }) }));
+  rows.push(el("div", { class: "c-dim small", text: t("Transfers move money, they are no gain or loss.") }));
+  return frame(t("CARRIER"), "", rows, { cls: "st-card", appear: false });
 }

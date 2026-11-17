@@ -274,5 +274,27 @@ class FsdHintTest(unittest.TestCase):
         self.assertIsNone(fsd_of({"Modules": []}))
 
 
+class LedgerCarrierTest(unittest.TestCase):
+    """PL2: the carrier's upkeep over a period, readable ship types."""
+
+    def test_upkeep_between(self):
+        from fis.fleet import upkeep_between
+        day = 86400.0
+        bal = [(0.0, 100_000_000), (4 * day, 90_000_000), (8 * day, 95_000_000)]
+        tr = [{"ts": 6 * day, "deposit": 10_000_000, "withdraw": 0}]       # you paid in 10 M
+        u = upkeep_between(bal, tr, None)
+        self.assertEqual((u["cost"], u["days"], u["readings"]), (15_000_000, 8.0, 3))
+        self.assertEqual(upkeep_between(bal, tr, 4 * day)["cost"], 5_000_000)
+        self.assertIsNone(upkeep_between(bal, tr, 7 * day))                   # one reading left
+        up = upkeep_between([(0.0, 1), (5 * day, 50)], [], None)
+        self.assertEqual((up["cost"], up["drift"]), (None, 49))                # rose: no cost made up
+
+    def test_type_label(self):
+        from fis.fleet import type_label
+        self.assertEqual(type_label({"krait_light": "Krait Phantom"}, "Krait_Light"), "Krait Phantom")
+        self.assertEqual(type_label({}, "type9_military"), "Type9 Military")
+        self.assertEqual(type_label({}, None), "?")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -28,8 +28,9 @@ the balance" - more than booked: income, less: costs. Journals missing for
 a stretch show up there too; it is an honest rest, not a guess.
 
 The own carrier: transfers to and from it (CarrierBankTransfer) move money,
-they are neither gain nor loss; its upkeep needs the carrier's balance
-(CarrierStats) and is left for later.
+they are neither gain nor loss. Its upkeep (5.0, PL2) comes from the
+carrier's balance (CarrierStats) with the transfers taken out - an estimate,
+shown beside the sums, not in them (fleet.upkeep_between, in the server).
 
 Plain Python, nothing online.
 """
