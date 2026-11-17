@@ -307,6 +307,7 @@ function bioRates() {
   if (B.v0 && B.v0.bodies) rows.push(el("div", { class: "small", text: t("Bio model check (leave one out, {n} sampled bodies): real genera among the top 3 predicted {r} %, the first one right {f} %",
     { n: B.v0.bodies, r: fmt(100 * B.v0.recall_top3, 0), f: fmt(100 * B.v0.top1_right, 0) }) }));
   rows.push(el("div", { class: "c-dim small", text: t("Every landable planet scanned on this PC; groups from {m} planets on. A rate, not a promise: hover for the interval.", { m: B.min_n }) }));
+  if (B.from_archive) rows.push(el("div", { class: "c-dim small", text: t("{n} of them from the EDDiscovery archive (scans since Odyssey the plugin database does not have).", { n: fmt(B.from_archive, 0) }) }));
   return frame(t("BIO RATES"), t("{b} of {n} with life", { b: fmt(B.with_bio, 0), n: fmt(B.planets, 0) }), rows, { cls: "st-card", appear: false });
 }
 

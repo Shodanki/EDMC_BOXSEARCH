@@ -93,6 +93,21 @@ class TestBioAtlas(unittest.TestCase):
         self.assertEqual(finds, [["Lividum Brain Tree", "Roseum Brain Tree"]])
         s = self.model.build_system(self.db, fx.SYS_ID, None, ["all"])
         self.assertEqual(s["bio_multi"]["Brain Trees"], {"n": 1, "mean": 2.0, "lo": 2, "hi": 2, "dist": {2: 1}})
+        # EA2: the archive's codex entries and analyses add bodies; the same body counts once
+        from fis import fleet
+        evs = [fleet.Archive._slim(e) for e in (
+            {"event": "CodexEntry", "Category": "$Codex_Category_Biology;", "SystemAddress": 5, "BodyID": 9,
+             "Name_Localised": "Aureum Brain Tree"},
+            {"event": "CodexEntry", "Category": "$Codex_Category_StellarBodies;", "SystemAddress": 5,
+             "BodyID": 9, "Name_Localised": "Gioulis Brain Tree"},                     # not biology: not kept
+            {"event": "ScanOrganic", "ScanType": "Analyse", "SystemAddress": 5, "Body": 9,
+             "Species_Localised": "Puniceum Brain Tree"},
+            {"event": "ScanOrganic", "ScanType": "Log", "SystemAddress": 5, "Body": 9,
+             "Species_Localised": "Viride Brain Tree"})]                              # a log is no find
+        self.assertIsNone(evs[1])
+        finds = self.db.genus_finds("Brain Trees", "Brain Tree", [e for e in evs if e])
+        self.assertEqual(sorted(finds), [["Aureum Brain Tree", "Puniceum Brain Tree"],
+                                         ["Lividum Brain Tree", "Roseum Brain Tree"]])
 
     def test_planet_info_and_system_name_the_open_species(self):
         from fis import science

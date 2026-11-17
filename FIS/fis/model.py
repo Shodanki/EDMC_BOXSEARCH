@@ -453,7 +453,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
     out["kepler"] = sr.check_summary(bodies) if hasattr(sr, "check_summary") else None
 
     out["bio"] = bio_list(db, id64, rows, out["bodies"])
-    out["bio_multi"] = _multi_stats(db, out["bio"])
+    out["bio_multi"] = _multi_stats(db, out["bio"], archive)
     lost = [b for b in out["bodies"] if b["flags"]["lost"]]
     if lost:
         out["lost"] = {"bodies": len(lost),
@@ -739,15 +739,16 @@ def bio_list(db: Database, id64: int, rows, bodies: List[Dict[str, Any]]
 _MULTI_CACHE: Dict[str, Any] = {"key": None, "val": {}}
 
 
-def _multi_stats(db: Database, bio: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _multi_stats(db: Database, bio: List[Dict[str, Any]], archive: Any = None) -> Dict[str, Any]:
     """BT2: for each multi-species genus on this system's bodies, how many
     species one signal stood for on the bodies found so far (biosig
-    species_per_signal), worked out again when the database changed."""
+    species_per_signal), worked out again when the database or the archive
+    changed. 5.0 EA2: the archive's codex entries and analyses count too."""
     genera = sorted({g for b in bio for g in b.get("multi") or []})
     bs = plugin().biosig
     if not genera or bs is None or not hasattr(bs, "species_per_signal") or not hasattr(db, "genus_finds"):
         return {}
-    key = (id(db), db.mtime())
+    key = (id(db), db.mtime(), getattr(archive, "rev", None))
     if _MULTI_CACHE["key"] != key:
         _MULTI_CACHE.update(key=key, val={})
     out = {}
@@ -755,7 +756,9 @@ def _multi_stats(db: Database, bio: List[Dict[str, Any]]) -> Dict[str, Any]:
         if g not in _MULTI_CACHE["val"]:
             suffix = next((s for s, gg in getattr(bs, "_SPECIES_SUFFIX", {}).items() if gg == g), g)
             try:
-                _MULTI_CACHE["val"][g] = bs.species_per_signal(db.genus_finds(g, suffix))
+                from .fleet import ALL_COMMANDERS
+                evs = archive.events(ALL_COMMANDERS) if archive is not None else None
+                _MULTI_CACHE["val"][g] = bs.species_per_signal(db.genus_finds(g, suffix, evs))
             except Exception:
                 _MULTI_CACHE["val"][g] = None
         out[g] = _MULTI_CACHE["val"][g]

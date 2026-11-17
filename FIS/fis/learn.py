@@ -342,18 +342,51 @@ def wilson(k: int, n: int, z: float = 1.96) -> Tuple[Optional[float], Optional[f
 BIO_MIN_N = 5             # a group of fewer landable planets is not shown
 
 
-def bio_rates(db: Any, top: int = 8) -> Dict[str, Any]:
+# FSSBodySignals came with Odyssey: before it a planet's bio signals were
+# only known after a DSS - an older unmapped planet would count as lifeless
+FSS_SIGNALS_SINCE = "2021-05-19"
+
+
+def archive_planets(evs: Any, known: Any) -> List[Dict[str, Any]]:
+    """5.0 EA2: landable planets the archive's events know and the plugin
+    database does not (key (SystemAddress, BodyID) not in `known`) - from
+    the EDDiscovery archive when it is switched on: planet class,
+    atmosphere, the most biological signals seen, the class of the
+    system's arrival star. Only scans from FSS_SIGNALS_SINCE on. Rows
+    shaped like bio_rates' database rows."""
+    planets: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
+    stars: Dict[Any, str] = {}
+    bio: Dict[Tuple[Any, Any], int] = {}
+    for e in evs:
+        ev, a = e.get("event"), e.get("SystemAddress")
+        if ev == "Scan" and e.get("StarType") and e.get("DistanceFromArrivalLS") == 0:
+            stars.setdefault(a, e["StarType"])
+        elif (ev == "Scan" and e.get("PlanetClass") and e.get("Landable")
+              and (e.get("timestamp") or "") >= FSS_SIGNALS_SINCE):
+            planets[(a, e.get("BodyID"))] = {"sys_id64": a, "planet_class": e["PlanetClass"],
+                                             "atmo_type": e.get("AtmosphereType") or "None"}
+        elif ev in ("FSSBodySignals", "SAASignalsFound"):
+            k = (a, e.get("BodyID"))
+            bio[k] = max(bio.get(k, 0), int(e.get("bio") or 0))
+    return [dict(p, sig_bio=bio.get(k, 0), sys_star=stars.get(k[0]))
+            for k, p in planets.items() if k not in known]
+
+
+def bio_rates(db: Any, top: int = 8, extra: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     BQ1 (5.0): how often a landable planet carried biological signals, by
     atmosphere, planet class and the class of its system's main star - with
     n and the 95 % interval, from the plugin database (every scan on this
     PC). Next to it the V0 check of the bio model: biopredict.validate,
     leave one sampled body out, learn from the rest, are its genera among
-    the top three predicted?
+    the top three predicted? `extra`: planets from the archive the
+    database lacks (archive_planets, EA2) - they count in the rates, not in
+    the model check.
     """
     from .model import plugin
-    rows = db.query("SELECT b.*, s.star_class AS sys_star FROM bodies b LEFT JOIN systems s ON s.id64 = b.sys_id64 "
-                    "WHERE b.kind = 'Planet' AND b.landable = 1")
+    db_rows = db.query("SELECT b.*, s.star_class AS sys_star FROM bodies b LEFT JOIN systems s "
+                       "ON s.id64 = b.sys_id64 WHERE b.kind = 'Planet' AND b.landable = 1")
+    rows = list(db_rows) + list(extra or [])
 
     def groups(keyf) -> List[Dict[str, Any]]:
         by: Dict[str, List[int]] = {}
@@ -372,13 +405,13 @@ def bio_rates(db: Any, top: int = 8) -> Dict[str, Any]:
     star = groups(lambda r: (r["sys_star"] or "?")[:1] if (r["sys_star"] or "?")[:1] not in "DN" else r["sys_star"][:2])
     v0 = None
     try:
-        v0 = plugin().biopredict.validate(list(rows))
+        v0 = plugin().biopredict.validate(list(db_rows))
     except Exception:
         v0 = None
     total = len(rows)
     with_bio = sum(1 for r in rows if (r["sig_bio"] or 0) > 0)
     return {"planets": total, "with_bio": with_bio, "atmo": atmo, "pclass": pclass, "star": star,
-            "min_n": BIO_MIN_N, "v0": v0}
+            "min_n": BIO_MIN_N, "v0": v0, "from_archive": len(extra or [])}
 
 
 def _rock_counts(archive: Any, db: Any) -> List[Dict[str, Any]]:

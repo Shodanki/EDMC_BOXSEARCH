@@ -70,6 +70,9 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "NavBeaconScan",
           # unsold exploration data: which bodies you scanned (kept slim)
           "Scan",
+          # 5.0 EA2: bio rates and Brain Trees also from the EDDiscovery archive
+          # (slim: the bio count, biological codex entries only)
+          "FSSBodySignals", "SAASignalsFound", "CodexEntry",
           # which ring the rocks were prospected in (fis/prospect.py)
           "SupercruiseEntry",
           # 5.0 GAIN / LOSS (fis/ledger.py): what was earned, spent and invested
@@ -394,6 +397,66 @@ def rate_loadout(lo: Dict[str, Any], vehicles: Optional[Iterable[str]] = None) -
 
 
 # --------------------------------------------------------------- archive
+
+def _slim_position(e: Dict[str, Any]) -> Dict[str, Any]:
+    """FSDJump / Location: the coordinates (carrier jump distances) - and for
+    a Location the docking: loading the game on a pad writes no Docked, only
+    Location with Docked: true."""
+    slim = {"event": e["event"], "timestamp": e.get("timestamp"),
+            "StarSystem": e.get("StarSystem"), "StarPos": star_pos(e.get("StarPos")),
+            "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
+    if e.get("Docked"):
+        slim.update({k: e.get(k) for k in ("Docked", "StationName", "StationType", "MarketID")})
+    return slim
+
+
+def _slim_scan(e: Dict[str, Any]) -> Dict[str, Any]:
+    """Scan: only who and what - the full scan is in the plugin database."""
+    slim = {k: e.get(k) for k in ("event", "timestamp", "StarSystem", "SystemAddress",
+                                  "BodyID", "BodyName", "ScanType")}
+    # first discovery / first footfall (unsold risk) - only when present
+    slim.update({k: e[k] for k in ("DistanceFromArrivalLS", "WasDiscovered",
+                                   "WasFootfalled", "Landable") if k in e})
+    # B6: what the data is worth (bodyvalue) - class, mass, terraforming
+    slim.update({k: e[k] for k in ("StarType", "StellarMass", "PlanetClass", "MassEM",
+                                   "TerraformState", "WasMapped") if k in e})
+    if e.get("Landable"):
+        slim["AtmosphereType"] = e.get("AtmosphereType") or "None"     # 5.0 EA2: bio rates
+    return slim
+
+
+def _slim_signals(e: Dict[str, Any]) -> Dict[str, Any]:
+    """FSSBodySignals / SAASignalsFound (5.0 EA2): the biological count only."""
+    bio = sum(int(s.get("Count") or 0) for s in e.get("Signals") or []
+              if "Biological" in str(s.get("Type") or ""))
+    return {"event": e["event"], "timestamp": e.get("timestamp"), "SystemAddress": e.get("SystemAddress"),
+            "BodyID": e.get("BodyID"), "bio": bio}
+
+
+def _slim_codex(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """CodexEntry (5.0 EA2): biological entries only - which species where."""
+    if "Biology" not in str(e.get("Category") or ""):
+        return None
+    return {"event": "CodexEntry", "timestamp": e.get("timestamp"), "SystemAddress": e.get("SystemAddress"),
+            "BodyID": e.get("BodyID"), "Name_Localised": e.get("Name_Localised") or e.get("Name")}
+
+
+def _slim_ship_targeted(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """ShipTargeted: only your own unmanned fighters (ship names)."""
+    if not str(e.get("PilotName") or "").startswith("$RolePanel2_unmanned"):
+        return None
+    return {"event": "ShipTargeted", "timestamp": e.get("timestamp"),
+            "Ship": e.get("Ship"), "Ship_Localised": e.get("Ship_Localised")}
+
+
+_SLIM = {
+    "FSDJump": _slim_position, "Location": _slim_position, "Scan": _slim_scan,
+    "FSSBodySignals": _slim_signals, "SAASignalsFound": _slim_signals, "CodexEntry": _slim_codex,
+    "Disembark": lambda e: {k: e.get(k) for k in ("event", "timestamp", "SystemAddress", "Body",
+                                                  "BodyID", "OnPlanet", "SRV")},
+    "ShipTargeted": _slim_ship_targeted,
+}
+
 
 ALL_COMMANDERS = "*"      # Archive.events(ALL_COMMANDERS): every commander's events
 
@@ -793,37 +856,8 @@ class Archive:
     @staticmethod
     def _slim(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """What the FIS keeps of an event (big ones slimmed); None: not kept."""
-        if e.get("event") in ("FSDJump", "Location"):
-            # the coordinates (carrier jump distances) - and for a
-            # Location the docking: loading the game on a pad
-            # writes no Docked, only Location with Docked: true
-            slim = {"event": e["event"], "timestamp": e.get("timestamp"),
-                    "StarSystem": e.get("StarSystem"), "StarPos": star_pos(e.get("StarPos")),
-                    "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
-            if e.get("Docked"):
-                slim.update({k: e.get(k) for k in ("Docked", "StationName",
-                                                   "StationType", "MarketID")})
-            e = slim
-        elif e.get("event") == "Scan":
-            # only who and what - the full scan is in the plugin database
-            slim = {k: e.get(k) for k in ("event", "timestamp", "StarSystem", "SystemAddress",
-                                          "BodyID", "BodyName", "ScanType")}
-            # first discovery / first footfall (unsold risk) - only when present
-            slim.update({k: e[k] for k in ("DistanceFromArrivalLS", "WasDiscovered",
-                                           "WasFootfalled", "Landable") if k in e})
-            # B6: what the data is worth (bodyvalue) - class, mass, terraforming
-            slim.update({k: e[k] for k in ("StarType", "StellarMass", "PlanetClass", "MassEM",
-                                           "TerraformState", "WasMapped") if k in e})
-            e = slim
-        elif e.get("event") == "Disembark":
-            e = {k: e.get(k) for k in ("event", "timestamp", "SystemAddress", "Body",
-                                       "BodyID", "OnPlanet", "SRV")}
-        elif e.get("event") == "ShipTargeted":
-            if not str(e.get("PilotName") or "").startswith("$RolePanel2_unmanned"):
-                return None
-            e = {"event": "ShipTargeted", "timestamp": e.get("timestamp"),
-                 "Ship": e.get("Ship"), "Ship_Localised": e.get("Ship_Localised")}
-        return e
+        f = _SLIM.get(e.get("event"))
+        return f(e) if f is not None else e
 
     def commander(self) -> Tuple[Optional[str], Optional[str]]:
         """(FID, name) of the commander logged in last."""

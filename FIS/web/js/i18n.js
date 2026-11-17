@@ -836,6 +836,7 @@ const DE = /*DE*/{
   "commodity": "Ware",
   "in hold": "an Bord",
   "TIME PER SYSTEM": "ZEIT JE SYSTEM",
+  "{n} of them from the EDDiscovery archive (scans since Odyssey the plugin database does not have).": "Davon {n} aus dem EDDiscovery-Archiv (Scans seit Odyssey, die die Plugin-Datenbank nicht hat).",
   "here {h} h": "hier {h} h",
   "estimate ~{e} h": "Schätzung ~{e} h",
   "From your journals: arrival to the next jump, pauses of 30 min left out. The estimate is the route's first one after your FSS (STATISTICS > TIME PER SYSTEM).": "Aus deinen Journalen: Ankunft bis zum nächsten Sprung, Pausen ab 30 min ohne. Die Schätzung ist die erste der Route nach deinem FSS (STATISTIK > ZEIT JE SYSTEM).",

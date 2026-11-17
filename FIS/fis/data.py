@@ -204,12 +204,14 @@ class Database:
                           "b.genuses, b.bio_species, 1 count, s.name sys_name, s.x, s.y, s.z, " + codex +
                           " FROM bodies b " + self._BEST_SYS + "b.sys_id64 WHERE b.sig_bio > 0")
 
-    def genus_finds(self, genus: str, suffix: str) -> List[List[str]]:
+    def genus_finds(self, genus: str, suffix: str, evs: Any = None) -> List[List[str]]:
         """
         BT2: per body where species of `genus` were found, their names -
         from codex entries and analysed species (all commanders on this PC:
         what grows on a body is shared knowledge). `suffix` is how the
-        species names end ("Brain Tree").
+        species names end ("Brain Tree"). `evs` (5.0 EA2): archive events -
+        their biological codex entries and analyses add bodies and species
+        (the same body counts once).
         """
         import json as _json
         by: Dict[Any, set] = {}
@@ -229,6 +231,12 @@ class Database:
                 for nm in names:
                     if nm and suffix in nm:
                         by.setdefault((r["sys_id64"], r["body_id"]), set()).add(nm)
+        for e in evs or ():
+            nm = (e.get("Name_Localised") if e.get("event") == "CodexEntry"
+                  else e.get("Species_Localised") if e.get("event") == "ScanOrganic" and e.get("ScanType") == "Analyse"
+                  else None)
+            if nm and suffix in nm:
+                by.setdefault((e.get("SystemAddress"), e.get("BodyID", e.get("Body"))), set()).add(nm)
         return [sorted(v) for v in by.values()]
 
     def codex_species(self, id64: int, body_id: Optional[int] = None) -> Dict[int, List[str]]:

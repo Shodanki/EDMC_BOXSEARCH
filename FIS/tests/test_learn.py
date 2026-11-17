@@ -169,6 +169,31 @@ class BioRatesTest(unittest.TestCase):
         self.assertEqual((by["none"]["n"], by["none"]["bio"]), (6, 0))
         self.assertEqual(out["pclass"][0]["key"], "Icy body")
         self.assertIsNotNone(out["v0"])                          # nothing sampled: the check says so
+        # EA2: planets only the archive knows count in the rates (not twice, not in the check)
+        from fis import fleet
+        raw = [{"event": "Scan", "timestamp": "2022-05-01T10:00:00Z", "SystemAddress": 7, "BodyID": 0,
+                "StarType": "M", "DistanceFromArrivalLS": 0.0},
+               {"event": "Scan", "timestamp": "2022-05-01T10:01:00Z", "SystemAddress": 7, "BodyID": 3,
+                "PlanetClass": "Icy body", "Landable": True, "AtmosphereType": "Argon", "Atmosphere": "thin argon"},
+               {"event": "Scan", "timestamp": "2022-05-01T10:01:00Z", "SystemAddress": 7, "BodyID": 4,
+                "PlanetClass": "Icy body", "Landable": True, "AtmosphereType": ""},
+               {"event": "FSSBodySignals", "timestamp": "2022-05-01T10:02:00Z", "SystemAddress": 7, "BodyID": 3,
+                "Signals": [{"Type": "$SAA_SignalType_Biological;", "Count": 2},
+                            {"Type": "$SAA_SignalType_Geological;", "Count": 5}]},
+               {"event": "Scan", "timestamp": "2022-05-01T10:03:00Z", "SystemAddress": fx.SYS_ID, "BodyID": 1,
+                "PlanetClass": "Icy body", "Landable": True, "AtmosphereType": "Argon"}]       # known to the DB
+        evs = [fleet.Archive._slim(e) for e in raw]
+        self.assertEqual(evs[3]["bio"], 2)
+        self.assertNotIn("Atmosphere", evs[1])
+        extra = learn.archive_planets(evs, {(fx.SYS_ID, i) for i in range(12)})
+        self.assertEqual(sorted((p["atmo_type"], p["sig_bio"], p["sys_star"])
+                                for p in extra), [("Argon", 2, "M"), ("None", 0, "M")])
+        old = dict(raw[2], timestamp="2020-05-01T10:01:00Z", BodyID=8)       # before FSSBodySignals: left out
+        self.assertEqual(len(learn.archive_planets(evs + [fleet.Archive._slim(old)], set())), 3)
+        out = learn.bio_rates(Database(path), extra=extra)
+        by = {g["key"]: g for g in out["atmo"]}
+        self.assertEqual((out["planets"], out["with_bio"], out["from_archive"]), (14, 5, 2))
+        self.assertEqual((by["Argon"]["n"], by["Argon"]["bio"]), (7, 5))
 
 
 if __name__ == "__main__":

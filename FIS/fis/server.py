@@ -206,6 +206,13 @@ class App:
                         lambda: systime.visits(evs))
         return systime.here(v.get(id64), systime.estimates(self.db, self.fid()).get(id64))
 
+    def archive_planets(self) -> List[Dict[str, Any]]:
+        """EA2: landable planets the archive knows and the plugin database
+        does not (learn.archive_planets) - with the EDDiscovery archive on."""
+        from . import fleet, learn
+        known = {(r["sys_id64"], r["body_id"]) for r in self.db.query("SELECT sys_id64, body_id FROM bodies")}
+        return learn.archive_planets(self.archive.events(fleet.ALL_COMMANDERS), known)
+
     def _with_places(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
         """S2b: what the SYSTEM map draws - your favourite carriers as long as
         their newest known position is here, other carriers while fresh, never
@@ -1154,7 +1161,8 @@ class Handler(BaseHTTPRequestHandler):
             from . import shipview
             un = shipview._unsold(app.archive, app.cfg.unsold, app._learn_marks().get("value"))
             out["learning"]["models"]["value"] = un["exploration"].get("calibration") if un else None
-            out["bio_rates"] = app.cached("bio_rates", app.db.mtime(), lambda: learn.bio_rates(app.db))   # BQ1
+            out["bio_rates"] = app.cached("bio_rates", (app.db.mtime(), app.archive.rev),    # BQ1, EA2
+                                          lambda: learn.bio_rates(app.db, extra=app.archive_planets()))
             from .shipview import _bodyvalue
             out["sessions"] = stats.play_sessions(app.archive.events(), _bodyvalue(), app.archive.organic_values())
             from . import systime        # own-4: time per system against the route's estimate

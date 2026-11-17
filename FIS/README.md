@@ -126,6 +126,9 @@ in the background (a few seconds; again at most hourly while EDDiscovery
 adds to the file) and adds what the journals on disk do not have: the
 same moment and event counts once. STATISTICS, GAIN / LOSS, TRADE,
 MINING and the learnt models then reach back as far as EDDiscovery does.
+The bio rates (STATISTICS) add the landable planets the plugin database
+does not have (scans since Odyssey, when FSS signals began), and the
+species per Brain Trees signal the archive's codex entries and analyses.
 
 * The file is found beside the `EDDSystem.sqlite` the plugin is set to, or
   in EDDiscovery's own folder (`%LOCALAPPDATA%\EDDiscovery`).
@@ -136,7 +139,8 @@ MINING and the learnt models then reach back as far as EDDiscovery does.
   commander that never logged in there are left out. As everywhere in
   the FIS, statistics count for the active commander only.
 * Events that only matter live (signals, cargo, damage, market lists)
-  are not taken. Nothing is copied, stored or sent: the events stay in
+  are not taken; of the body signals only the biological count is kept,
+  of the codex only the biological entries. Nothing is copied, stored or sent: the events stay in
   the FIS's memory. Switching it off drops them at once.
 * The settings page says how many older events were added and since when.
 
