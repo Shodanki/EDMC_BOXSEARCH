@@ -23,6 +23,7 @@ import os
 from . import groundmine
 from . import journalscan
 from . import learnreset
+from . import miningstat
 from .boxelplan import K_BIO, K_DSS, K_NEW, K_SCAN, Target, bundled_probe_prefix, set_origin
 from .deepspace import best_staging, staging_lines
 from .procgen import boxel_prefix
@@ -151,6 +152,10 @@ def _bootstrap_session() -> None:
     except Exception:
         logger.exception("ground mining bootstrap failed")
     try:
+        _bootstrap_rock_yield()
+    except Exception:
+        logger.exception("rock yield bootstrap failed")
+    try:
         updater._check_for_update()
     except Exception:
         logger.exception("update check failed")
@@ -179,6 +184,23 @@ def _bootstrap_ground() -> None:
         if cur.ship_cargo is None:
             cur.ship_cargo = gm.ship_cargo
     logger.info("ground mining | ship hold from the journal: %s of %s t", gm.ship_cargo, gm.ship_capacity)
+
+
+def _bootstrap_rock_yield() -> None:
+    """5.0 MP1 (worker): tonnes per rock from the last 60 journals, for the
+    ROCK line's expectation; the live tracker learns on from there."""
+    d = maintenance._journal_dir()
+    files = journalscan.journal_files(d, 60) if d else []
+    if not files:
+        return
+    y = miningstat.RockYield()
+    names = ("ProspectedAsteroid", "MiningRefined", "LaunchSRV", "LaunchVessel", "DockSRV", "DockVessel",
+             "SRVDestroyed") + miningstat.YIELD_END
+    for e in journalscan.read_events_matching(files, tuple('"%s"' % n for n in names)):
+        y.feed(e)
+    with ST.lock:
+        ST.mine.yields = y
+    logger.info("mining | tonnes per rock learnt from %d mined rocks", sum(len(v) for v in y.bins.values()))
 
 
 def _bootstrap_last_body() -> None:

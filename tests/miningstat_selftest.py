@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import plugin_pkg  # noqa: E402
 plugin_pkg.package()
-from SHBOXSEARCH.miningstat import (MiningTracker, _ts)  # noqa: E402
+from SHBOXSEARCH.miningstat import (MiningTracker, RockYield, _ts)  # noqa: E402
 
 
 def _selftest() -> int:
@@ -79,8 +79,34 @@ def _selftest() -> int:
     spare_line = full.lines(now)[-1][0]
     full.feed({"timestamp": t0 % 3, "event": "Cargo"}, cargo={"drones": 25, "tritium": 120})
     early_line = full.lines(now)[-1][0]
+    # MP1: tonnes per rock, by the main material's share; the ROCK line says what to expect
+    y = RockYield()
+
+    def rock(share):
+        return {"event": "ProspectedAsteroid", "Materials": [{"Name": "Tritium", "Proportion": share}]}
+    for tonnes in (8, 10, 11, 12, 15):
+        y.feed(rock(20.0))
+        for _ in range(tonnes):
+            y.feed({"event": "MiningRefined", "Type": "$tritium_name;"})
+    y.feed(rock(40.0))                                   # prospected, never mined: no count
+    y.feed({"event": "LaunchSRV"})
+    y.feed(rock(30.0))
+    y.feed({"event": "MiningRefined", "Type": "$tritium_name;"})     # in the Rhino: not the ship's rock
+    y.feed({"event": "DockSRV"})
+    y.feed({"event": "Docked"})
+    exp20, exp30 = y.expect(18.0), y.expect(30.0)
+    yt = MiningTracker()
+    yt.yields = y
+    yt.feed({"timestamp": t0 % 0, "event": "Loadout", "CargoCapacity": 320,
+             "Modules": [{"Item": "hpt_mining_abrblstr_fixed_small"}]})
+    yt.feed({"timestamp": t0 % 1, "event": "ProspectedAsteroid", "Materials": [{"Name": "Tritium", "Proportion": 22.0}],
+             "Content": "$AsteroidMaterialContent_Medium;", "Remaining": 100.0})
+    y_line = yt.lines(now)[0][0]
     fails = 0
     checks = [
+        (exp20 == {"t": 11, "lo": 10, "hi": 12, "n": 5}, "rocks of 10-25 %%: median 11 t (10-12), n 5: %r" % (exp20,)),
+        (exp30 is None, "no rock of 25 % and more mined in the ship: no expectation"),
+        ("| ~11 t (10-12)" in y_line, "ROCK line with the expectation: " + y_line),
         (len(lines) == 5, "five lines"),
         (lines[0][0].startswith("ROCK  Tritium 31.5 %") and "GOOD" in lines[0][0], "rock line"),
         ("HOLD  120 limpets | 10 t ore | 192 t free" == lines[1][0], "hold line: " + lines[1][0]),

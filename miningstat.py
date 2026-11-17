@@ -11,7 +11,8 @@ Follows the mining events of the journal and Status.json and condenses them
 to five lines for the cockpit overlay:
 
   ROCK     the last prospector report: target material share, content,
-           a verdict against the best rock of the session, motherlode
+           a verdict against the best rock of the session, motherlode -
+           and (5.0, MP1) the tonnes such a rock gave you before
   HOLD     limpets, ore on board, free space
   RATE     tonnes per hour over the last ten minutes, limpets per tonne
   SESSION  refined this session, how long, full in ~ minutes - in a ring this line becomes
@@ -73,6 +74,70 @@ def type_key(s: Optional[str]) -> str:
     return s.replace(" hotspot", "").replace("hotspot", "").replace(" ", "")
 
 
+# MP1 (5.0): tonnes a mined rock gave, by the share of its main material.
+# Measured on the developer's journals, 17.11.2026 (246 mined rocks of 309
+# prospected): under 10 % median 4 t (2-6, n 116), 10-25 % 10 t (7-13,
+# n 99), 25 % and more 14 t (11-18, n 31); the content level hardly
+# matters next to the share.
+YIELD_BINS = (10.0, 25.0)
+YIELD_MIN_N = 5
+YIELD_END = ("Docked", "FSDJump", "SupercruiseEntry", "LoadGame", "Died", "Shutdown")
+
+
+class RockYield:
+    """
+    MP1: what a prospected rock gave - the tonnes refined until the next
+    prospector report or the end of the session, of the rock's main
+    refined material, against that material's share. Rocks left without a
+    tonne do not count; tonnes refined in a surface vehicle neither.
+    expect(share) gives median and middle half of the rocks like it.
+    """
+
+    def __init__(self) -> None:
+        self.bins: Dict[int, List[int]] = {}
+        self._rock: Optional[Dict[str, float]] = None
+        self._got: Dict[str, int] = {}
+        self._vehicle = False
+
+    @staticmethod
+    def _bin(share: float) -> int:
+        return sum(1 for b in YIELD_BINS if share >= b)
+
+    def _close(self) -> None:
+        if self._rock is not None and self._got:
+            main = max(self._got, key=self._got.get)
+            self.bins.setdefault(self._bin(self._rock.get(main, 0.0)), []).append(self._got[main])
+            for v in self.bins.values():
+                del v[:-400]
+        self._rock, self._got = None, {}
+
+    def feed(self, e: Dict[str, Any]) -> None:
+        """One journal event."""
+        ev = e.get("event")
+        if ev in ("LaunchSRV", "LaunchVessel"):
+            self._vehicle = True
+        elif ev in ("DockSRV", "DockVessel", "SRVDestroyed"):
+            self._vehicle = False
+        elif ev == "ProspectedAsteroid":
+            self._close()
+            self._rock = {type_key(m.get("Name")): float(m.get("Proportion") or 0) for m in e.get("Materials") or []}
+        elif ev == "MiningRefined" and self._rock is not None and not self._vehicle:
+            k = type_key(e.get("Type"))
+            self._got[k] = self._got.get(k, 0) + 1
+        elif ev in YIELD_END:
+            self._close()
+
+    def expect(self, share: float) -> Optional[Dict[str, int]]:
+        """{"t": median, "lo", "hi" (middle half), "n"} for rocks of this
+        share, None below YIELD_MIN_N rocks."""
+        xs = sorted(self.bins.get(self._bin(share), []))
+        n = len(xs)
+        if n < YIELD_MIN_N:
+            return None
+        med = xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
+        return {"t": int(round(med)), "lo": xs[n // 4], "hi": xs[(3 * n) // 4], "n": n}
+
+
 class MiningTracker:
     """One mining session from the journal: last prospected rock, refined
     tonnes, rate, limpets - the mining block of the overlay."""
@@ -84,6 +149,7 @@ class MiningTracker:
         self.target_name: Optional[str] = None
         self.ring: Optional[str] = None           # the ring you dropped into
         self.miner: Optional[bool] = None         # ship has mining tools (None: no Loadout yet)
+        self.yields = RockYield()                 # MP1: tonnes per rock, learnt across sessions
 
     def reset(self) -> None:
         """Start a new session (the hold and the capacity stay)."""
@@ -101,6 +167,7 @@ class MiningTracker:
     def feed(self, e: Dict[str, Any], cargo: Optional[Dict[str, int]] = None) -> bool:
         """A journal event; True when the overlay block should be redrawn."""
         ev = e.get("event")
+        self.yields.feed(e)
         if cargo is not None:
             self.cargo = {str(k).lower(): int(v or 0) for k, v in cargo.items()}
         if ev == "Loadout":
@@ -257,6 +324,9 @@ class MiningTracker:
             txt += " | " + verdict
         if r.get("remaining") is not None and r["remaining"] < 100:
             txt += " | %d %% left" % round(r["remaining"])
+        exp = self.yields.expect(r["share"])
+        if exp:
+            txt += " | ~%d t (%d-%d)" % (exp["t"], exp["lo"], exp["hi"])
         if r.get("motherlode"):
             txt += " | MOTHERLODE " + str(r["motherlode"])
             colour = c["new"]
