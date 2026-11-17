@@ -95,6 +95,10 @@ class TestModel(_Base):
         # the equator the rings are drawn in (K2): a unit vector; none for the main star
         self.assertAlmostEqual(sum(v * v for v in by[1]["pole"]), 1.0, delta=1e-3)
         self.assertIsNone(by[0]["pole"])
+        # SK1: the Kepler watch is in the record (fixture rows carry no scan
+        # time, so nothing is checkable and nothing is moved)
+        self.assertEqual(s["kepler"]["checked"], sum(1 for b in s["bodies"] if b["kepler"]))
+        self.assertEqual(s["kepler"]["trusted"], 0)
         self.assertTrue(by[1]["flags"]["first"])
         self.assertEqual(by[1]["flags"]["bio"], 2)
         self.assertEqual(by[3]["rings"][0]["cls"], "Icy")

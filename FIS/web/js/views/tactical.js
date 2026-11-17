@@ -279,6 +279,12 @@ function renderSide() {
       t("{n} bodies", { n: sys.body_count ? sys.bodies.length + "/" + sys.body_count : sys.bodies.length }) +
       (sys.fss_complete ? " · " + t("FSS complete") : "")),
   ];
+  // SK1: the Kepler watch - positions the game's own arrival distances confirm
+  const kw = sys.kepler;
+  if (kw && kw.checked) head.push(el("div", { class: kw.trusted ? "c-amber" : "c-dim",
+    title: t("Each scan says how far the body is from the arrival star. Within 1 % of its own orbit counts as confirmed; more than 5 % off, the body is placed at the game's distance."),
+    text: t("positions checked {n}/{m}", { n: kw.ok, m: kw.checked })
+      + (kw.trusted ? " · " + t("{k} placed by the game's distance", { k: kw.trusted }) : "") }));
   if (sys.carrier) {
     const c = sys.carrier, at = c.body_id !== null && c.body_id !== undefined && sys.bodies.find((b) => b.body_id === c.body_id);
     head.push(el("div", { class: "c-amber", text: (c.expected ? t("Your carrier {n} should be here", { n: c.name || "" })

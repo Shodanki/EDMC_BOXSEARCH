@@ -203,6 +203,17 @@ def _pole(sr: Any, b: Any) -> Optional[List[float]]:
     return [round(v, 4) for v in p] if p else None
 
 
+def _kepler(b: Any) -> Optional[Dict[str, Any]]:
+    """The Kepler watch of one body (sysroute SK1): the error of the model at
+    the scan in % of its own orbit and of the arrival distance, and whether
+    the game's distance placed it. None when the body could not be checked."""
+    c = getattr(b, "check", None)
+    if not c:
+        return None
+    return {"orbit_pct": round(c[0] * 100.0, 2), "arrival_pct": round(c[1] * 100.0, 2),
+            "trusted": bool(getattr(b, "trusted", False))}
+
+
 def _rings(row, hotspots: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> List[Dict[str, Any]]:
     """Rings with class, width - and the hotspots you mapped in each (DSS)."""
     out = []
@@ -423,6 +434,8 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
 
     for bid, b in sorted(bodies.items()):
         out["bodies"].append(_body_entry(sr, bid, b, by_row[bid], bodies, hs_by_ring))
+    # SK1: the Kepler watch - how many places the game's own distances confirm
+    out["kepler"] = sr.check_summary(bodies) if hasattr(sr, "check_summary") else None
 
     out["bio"] = bio_list(db, id64, rows, out["bodies"])
     lost = [b for b in out["bodies"] if b["flags"]["lost"]]
@@ -561,6 +574,8 @@ def _body_entry(sr: Any, bid: int, b: Any, r: Any, bodies: Any,
         "orbit": _orbit_points(sr, b, ppos) if r["kind"] != "Ring" else None,
         # the equator: rings and moons lie in it (K2), None when unknown
         "pole": _pole(sr, b),
+        # SK1: error at the scan in % of the own orbit; placed by the game's distance
+        "kepler": _kepler(b),
         "radius_km": _r(radius / 1000.0, 1) if radius else None,
         "radius_ls": (radius * LS_PER_M) if radius else None,
         "arrival_ls": _r(r["arrival_ls"], 1),

@@ -68,9 +68,18 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 __all__ = ["Body", "Stop", "SystemRoute", "plan_route", "DEFAULT_MODEL",
            "CostModel", "group_label", "is_moon", "bodies_from_rows",
            "calibrate_from_journal", "shorten", "resolve_positions",
-           "orbit_basis", "orbit_points", "equator_pole"]
+           "orbit_basis", "orbit_points", "equator_pole", "kepler_check",
+           "check_summary", "CHECK_BAR", "TRUST_BAR"]
 
 LS_PER_METRE = 1.0 / 299792458.0
+
+# SK1 (5.0): the Kepler watch. A body lies right when the model puts it
+# within 1 % of its own orbit of the game's DistanceFromArrivalLS, at the
+# time of its scan (the bar of tests/kepler_reality.py). Off by more than
+# 5 % of that distance, the model has failed for the body and the game's
+# figure wins.
+CHECK_BAR = 0.01
+TRUST_BAR = 0.05
 
 # Bodies worth a detailed surface scan
 VALUABLE = {
@@ -269,7 +278,7 @@ class Body:
                  "landable", "arrival_ls", "parent_id", "pos", "rel",
                  "scanned", "mapped", "was_discovered", "was_mapped",
                  "sig_bio", "sig_geo", "organics", "rings", "bio_hint",
-                 "orbit", "basis", "tilt")
+                 "orbit", "basis", "tilt", "check", "trusted")
 
     def __init__(self, body_id: int, name: str, **kw):
         self.body_id = body_id
@@ -291,6 +300,10 @@ class Body:
         # moons orbit in is tilted against its own orbit by this (5.0, K2)
         self.tilt = float(kw.get("tilt") or 0.0)
         self.pos: Optional[Tuple[float, float, float]] = None
+        # SK1: (error in parts of the own orbit, error in parts of the
+        # arrival distance) at the time of the scan; None = not checkable
+        self.check: Optional[Tuple[float, float]] = None
+        self.trusted = False            # placed by the game's figure (SK1)
         self.scanned = bool(kw.get("scanned"))
         self.mapped = bool(kw.get("mapped"))
         # True / False / None (unknown). SQLite hands these over as 1 / 0 /
@@ -458,8 +471,8 @@ def orbit_points(b: Body, centre: Sequence[float], n: int = 72) -> Optional[List
     return pts
 
 
-def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
-    """--- shift the origin onto the arrival star."""
+def _anchor(bodies: Dict[int, Body]) -> Optional[Body]:
+    """The arrival star: the lowest star at 0 LS, else the lowest body at 0 LS."""
     anchor = None
     for b in bodies.values():
         if b.arrival_ls is not None and b.arrival_ls <= 0.01 and b.kind == "Star":
@@ -470,6 +483,12 @@ def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
             if b.arrival_ls is not None and b.arrival_ls <= 0.01:
                 anchor = b
                 break
+    return anchor
+
+
+def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
+    """--- shift the origin onto the arrival star."""
+    anchor = _anchor(bodies)
     if anchor is not None and anchor.pos and anchor.pos != (0.0, 0.0, 0.0):
         ox, oy, oz = anchor.pos
         for b in bodies.values():
@@ -478,19 +497,138 @@ def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
 
 
 def _trust_arrival(bodies: Dict[int, Body]) -> None:
-    """--- final sanity pass against the journal's own arrival distance."""
-    for b in bodies.values():
-        if not b.pos or b.arrival_ls is None or b.arrival_ls <= 1.0:
+    """
+    --- final sanity pass against the journal's own arrival distance.
+
+    SK1 (5.0): a body the Kepler watch has checked is moved only when the
+    model failed for it (more than TRUST_BAR of the arrival distance off at
+    its scan); then it goes onto the game's distance, keeping its direction,
+    and its moons move with it. A body without a check (no scan time, hand
+    built) keeps the old rule: only a factor of 3 off counts.
+    """
+    shift: Dict[int, Tuple[float, float, float]] = {}
+    zero = (0.0, 0.0, 0.0)
+    for b in sorted(bodies.values(), key=lambda x: _depth(bodies, x)):
+        d = shift.get(b.parent_id, zero) if b.parent_id is not None else zero
+        if b.pos and d != zero:
+            b.pos = (b.pos[0] + d[0], b.pos[1] + d[1], b.pos[2] + d[2])
+        if b.pos and _failed(b):
+            before = b.pos
+            b.pos = _onto_arrival(b.pos, b.arrival_ls)
+            b.trusted = True
+            d = (d[0] + b.pos[0] - before[0], d[1] + b.pos[1] - before[1], d[2] + b.pos[2] - before[2])
+        shift[b.body_id] = d
+
+
+def _depth(bodies: Dict[int, Body], b: Body) -> int:
+    """How many parents up to the root (at most 9, cycles guarded)."""
+    n = 0
+    while b.parent_id is not None and b.parent_id in bodies and n < 9:
+        b = bodies[b.parent_id]
+        n += 1
+    return n
+
+
+def _failed(b: Body) -> bool:
+    """True when the game's arrival distance should replace the model's place."""
+    if b.arrival_ls is None or b.arrival_ls <= 1.0:
+        return False
+    if b.check is not None:
+        return b.check[1] > TRUST_BAR
+    r = math.sqrt(b.pos[0] ** 2 + b.pos[1] ** 2 + b.pos[2] ** 2)
+    return r < 1e-6 or r > b.arrival_ls * 3.0 + 10.0 or r < b.arrival_ls / 3.0 - 10.0
+
+
+def _onto_arrival(pos: Tuple[float, float, float], arrival: float) -> Tuple[float, float, float]:
+    """The point at the arrival distance in the direction of pos (on +x
+    without a direction)."""
+    r = math.sqrt(pos[0] ** 2 + pos[1] ** 2 + pos[2] ** 2)
+    if r <= 1e-6:
+        return (arrival, 0.0, 0.0)
+    f = arrival / r
+    return (pos[0] * f, pos[1] * f, pos[2] * f)
+
+
+def _rows_at(rows: List[Dict], t: float) -> List[Dict]:
+    """The rows with every orbit moved to unix time t, also backwards (a
+    parent may have been scanned after its moon)."""
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d.get("period") and d.get("scan_ts") and d.get("mean_anom") is not None:
+            d["mean_anom"] = d["mean_anom"] + 360.0 * (t - float(d["scan_ts"])) / d["period"]
+            d["scan_ts"] = t
+        out.append(d)
+    return out
+
+
+def _chain_ids(bodies: Dict[int, Body], bid: Optional[int]) -> List[int]:
+    """A body and all its parents present in the map."""
+    out: List[int] = []
+    while bid is not None and bid in bodies and bid not in out and len(out) < 10:
+        out.append(bid)
+        bid = bodies[bid].parent_id
+    return out
+
+
+def kepler_check(rows: Iterable) -> Dict[int, Tuple[float, float]]:
+    """
+    SK1 (5.0), the Kepler watch: how far the model places each scanned body
+    from the game's DistanceFromArrivalLS, at the time of its own scan.
+
+    Returns {body_id: (error / own semi-major axis, error / arrival
+    distance)} for every body with an orbit, a scan time and more than 1 LS
+    from the arrival star. Only the body's own parent chain and the arrival
+    star's chain are resolved per scan time, so the cost grows with the
+    depth of the system, not its square.
+    """
+    rows = [dict(r) for r in rows]
+    key = tuple(sorted((r.get("body_id"), r.get("parent_id"), r.get("scan_ts"), r.get("sma"),
+                        r.get("arrival_ls"), r.get("mean_anom"), r.get("axial_tilt")) for r in rows))
+    hit = _CHECKS.get(key)
+    if hit is None:
+        hit = _kepler_check(rows)
+        if len(_CHECKS) > 64:
+            _CHECKS.clear()
+        _CHECKS[key] = hit
+    return dict(hit)
+
+
+# the watch depends only on the scan-time data of a system, not on "now";
+# a survey replays many legs of one system (calibration), so it is kept
+_CHECKS: Dict[tuple, Dict[int, Tuple[float, float]]] = {}
+
+
+def _kepler_check(rows: List[Dict]) -> Dict[int, Tuple[float, float]]:
+    """kepler_check without the cache."""
+    full = _build_bodies(rows, None)
+    anchor = _anchor(full)
+    anchor_ids = _chain_ids(full, anchor.body_id) if anchor is not None else []
+    out: Dict[int, Tuple[float, float]] = {}
+    for r in rows:
+        ts, sma, arrival = r.get("scan_ts"), r.get("sma"), r.get("arrival_ls")
+        if not ts or not sma or not arrival or arrival <= 1.0 or r.get("body_id") not in full:
             continue
-        r = math.sqrt(b.pos[0] ** 2 + b.pos[1] ** 2 + b.pos[2] ** 2)
-        if r < 1e-6 or r > b.arrival_ls * 3.0 + 10.0 or r < b.arrival_ls / 3.0 - 10.0:
-            # geometry disagrees with the game's own figure - trust the game,
-            # but keep the direction if we have one
-            if r > 1e-6:
-                f = b.arrival_ls / r
-                b.pos = (b.pos[0] * f, b.pos[1] * f, b.pos[2] * f)
-            else:
-                b.pos = (b.arrival_ls, 0.0, 0.0)
+        ids = set(_chain_ids(full, r["body_id"])) | set(anchor_ids)
+        sub = _build_bodies([x for x in _rows_at(rows, float(ts)) if x.get("body_id") in ids], None)
+        _resolve_orbits(sub)
+        _shift_to_arrival(sub)
+        p = sub[r["body_id"]].pos or (0.0, 0.0, 0.0)
+        err = abs(math.sqrt(p[0] ** 2 + p[1] ** 2 + p[2] ** 2) - arrival)
+        out[r["body_id"]] = (err / (float(sma) * LS_PER_METRE), err / arrival)
+    return out
+
+
+def check_summary(bodies: Dict[int, Body]) -> Dict[str, int]:
+    """
+    The Kepler watch for the SYSTEM view: of `checked` bodies, `ok` lie
+    within CHECK_BAR of their own orbit at their scan, `trusted` were moved
+    onto the game's distance (model off by more than TRUST_BAR).
+    """
+    checked = [b for b in bodies.values() if b.check is not None]
+    return {"checked": len(checked),
+            "ok": sum(1 for b in checked if b.check[0] <= CHECK_BAR),
+            "trusted": sum(1 for b in bodies.values() if b.trusted)}
 
 
 # ---------------------------------------------------------------------------
@@ -1061,7 +1199,21 @@ def bodies_from_rows(rows: Iterable, now: Optional[float] = None
     The orbital elements are a snapshot taken when the body was scanned, so
     every body is advanced along its orbit by the time elapsed since. Pass
     now=None to skip that (useful for comparing against the original layout).
+    Every body also carries its Kepler watch (SK1, kepler_check).
     """
+    rows = list(rows)
+    out = _build_bodies(rows, now)
+    try:
+        for bid, c in kepler_check(rows).items():
+            if bid in out:
+                out[bid].check = c
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+        pass                # a row without the fields: no watch, old rule
+    return out
+
+
+def _build_bodies(rows: Iterable, now: Optional[float]) -> Dict[int, Body]:
+    """The Body objects of the rows, without the Kepler watch."""
     out: Dict[int, Body] = {}
     for r in rows:
         rel, orbit = _row_orbit(r, now)

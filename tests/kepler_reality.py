@@ -162,6 +162,68 @@ class KeplerReality(unittest.TestCase):
             with self.subTest(body=name):
                 self.assertLess(near, ring * 0.02)
 
+    # -- the Kepler watch (SK1) ---------------------------------------------
+    def test_watch_confirms_the_fixtures(self):
+        """kepler_check measures the same error as this test. The bodies
+        named above lie within the bar; five more of the fixtures do not
+        (Lalande 11206 A 4 e/f/A 7 e, 1.6-4.6 % of their orbit; OW-V B 1/B 2,
+        17-19 %), but none of them is 5 % of its arrival distance off, so
+        nothing is moved."""
+        misses = {"Lalande 11206 A 4 e", "Lalande 11206 A 4 f", "Lalande 11206 A 7 e",
+                  "Synuefe OW-V c18-2 B 1", "Synuefe OW-V c18-2 B 2"}
+        for sa, rows in self.rows.items():
+            bodies = sr.bodies_from_rows(rows, now=None)
+            sr.resolve_positions(bodies)
+            s = sr.check_summary(bodies)
+            off = {b.name for b in bodies.values() if b.check and b.check[0] > sr.CHECK_BAR}
+            with self.subTest(system=sa):
+                self.assertGreater(s["checked"], 3)
+                self.assertEqual(s["ok"], s["checked"] - len(off))
+                self.assertLessEqual(off, misses)
+                self.assertEqual(s["trusted"], 0)
+        for name in ("LHS 129 6 a", "El Tio 4 h", "Synuefe OW-V c18-2 A 3 d"):
+            sa = next(k for k, rows in self.rows.items() if any(r["name"] == name for r in rows))
+            row = next(r for r in self.rows[sa] if r["name"] == name)
+            got = sr.kepler_check(self.rows[sa])[row["body_id"]][0]
+            with self.subTest(body=name):
+                self.assertAlmostEqual(got, self.error(sa, name), places=9)
+
+    def test_watch_moves_a_failed_body_with_its_moons(self):
+        """A planet the model misses by more than 5 % of its arrival distance
+        goes onto the game's distance, and its moons move with it."""
+        rows = [dict(r) for r in self.rows[LHS_129]]
+        planet = next(r for r in rows if r["name"] == "LHS 129 6")
+        planet["arrival_ls"] *= 1.2                     # the game says 20 % further out
+        bodies = sr.bodies_from_rows(rows, now=None)
+        before = sr._build_bodies(rows, None)
+        sr._resolve_orbits(before)
+        sr._shift_to_arrival(before)
+        sr.resolve_positions(bodies)
+        p = bodies[planet["body_id"]]
+        self.assertTrue(p.trusted)
+        self.assertGreater(p.check[1], sr.TRUST_BAR)
+        self.assertAlmostEqual(math.sqrt(sum(v * v for v in p.pos)), planet["arrival_ls"], delta=0.01)
+        moon = next(b for b in bodies.values() if b.name == "LHS 129 6 a")
+        self.assertFalse(moon.trusted)
+        off_now = [moon.pos[i] - p.pos[i] for i in range(3)]
+        off_was = [before[moon.body_id].pos[i] - before[p.body_id].pos[i] for i in range(3)]
+        for a, b in zip(off_now, off_was):
+            self.assertAlmostEqual(a, b, places=6)
+        self.assertEqual(sr.check_summary(bodies)["trusted"], 1)
+
+    def test_watch_small_miss_keeps_the_model(self):
+        """Off by 3 % of the arrival distance: counted as not confirmed, but
+        the model's place stays (up to 4.12 only a factor of 3 counted)."""
+        rows = [dict(r) for r in self.rows[LHS_129]]
+        planet = next(r for r in rows if r["name"] == "LHS 129 6")
+        planet["arrival_ls"] *= 1.03
+        bodies = sr.bodies_from_rows(rows, now=None)
+        sr.resolve_positions(bodies)
+        p = bodies[planet["body_id"]]
+        self.assertFalse(p.trusted)
+        self.assertGreater(p.check[0], sr.CHECK_BAR)
+        self.assertLess(p.check[1], sr.TRUST_BAR)
+
     # -- moons of tilted planets (K2) ---------------------------------------
     def test_moons_el_tio_4(self):
         """El Tio 4 (tilt -170 degrees), with 4 h inclined by 53 degrees and the
