@@ -26,6 +26,8 @@ jobs:
         run: python tests/surfacenav_selftest.py
       - name: mining overlay self test
         run: python tests/miningstat_selftest.py
+      - name: EDDiscovery archive self test
+        run: python tests/eddhistory_selftest.py
       - name: cockpit overlay self test
         run: python tests/overlay_selftest.py
       - name: in-system route self test

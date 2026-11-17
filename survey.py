@@ -14,7 +14,9 @@ sorted and pruned. Also the measured work model (DSS, sampling times).
 
 from __future__ import annotations
 
+import itertools
 import math
+import sqlite3
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,6 +25,7 @@ import os
 from . import groundmine
 from . import journalscan
 from . import learnreset
+from . import eddhistory
 from . import miningstat
 from .boxelplan import K_BIO, K_DSS, K_NEW, K_SCAN, Target, bundled_probe_prefix, set_origin
 from .deepspace import best_staging, staging_lines
@@ -30,7 +33,7 @@ from .procgen import boxel_prefix
 from .sysdb import PLAN
 from .sysroute import (bodies_from_rows, calibrate_from_journal, calibrate_work_from_journal,
                        group_label, leg_distance_ls, plan_route, resolve_positions, shorten)
-from .state import CFG, ST, cfg_bool, get_masscodes, logger
+from .state import CFG, ST, cfg_bool, cfg_str, get_masscodes, logger
 from . import maintenance
 from . import panel
 from . import planning
@@ -186,6 +189,24 @@ def _bootstrap_ground() -> None:
     logger.info("ground mining | ship hold from the journal: %s of %s t", gm.ship_cargo, gm.ship_capacity)
 
 
+def _archive_lines(names: Tuple[str, ...], files: List[str], what: str) -> List[Dict[str, Any]]:
+    """5.0 (worker): the lines of EDDiscovery's archive older than ``files``,
+    when the commander switched it on - else none."""
+    if not cfg_bool(CFG["edd_archive"], False):
+        return []
+    path = eddhistory.find(cfg_str(CFG["edd_path"]) or None)
+    if not path:
+        logger.info("EDDiscovery archive | EDDUser.sqlite not found - %s from the journals only", what)
+        return []
+    try:
+        got = list(eddhistory.lines(path, names, eddhistory.first_time(files)))
+    except (sqlite3.Error, OSError) as exc:
+        logger.warning("EDDiscovery archive | not readable (%s) - %s from the journals only", exc, what)
+        return []
+    logger.info("EDDiscovery archive | %d older lines for the %s", len(got), what)
+    return got
+
+
 def _bootstrap_rock_yield() -> None:
     """5.0 MP1 (worker): tonnes per rock from the last 60 journals, for the
     ROCK line's expectation; the live tracker learns on from there."""
@@ -196,6 +217,8 @@ def _bootstrap_rock_yield() -> None:
     y = miningstat.RockYield()
     names = ("ProspectedAsteroid", "MiningRefined", "LaunchSRV", "LaunchVessel", "DockSRV", "DockVessel",
              "SRVDestroyed") + miningstat.YIELD_END
+    for e in _archive_lines(names, files, "tonnes per rock"):
+        y.feed(e)
     for e in journalscan.read_events_matching(files, tuple('"%s"' % n for n in names)):
         y.feed(e)
     with ST.lock:
@@ -225,7 +248,9 @@ def _bootstrap_fuel() -> None:
     if not d:
         return
     ST.fuel.since = learnreset.fuel_since(_learn_marks())       # SK3: resets per ship
-    journalscan.replay_fuel(journalscan.journal_files(d, 6), ST.fuel)
+    files = journalscan.journal_files(d, 6)
+    older = _archive_lines(("Loadout", "Cargo", "FSDJump"), files, "fuel model")
+    journalscan.replay_fuel_events(itertools.chain(older, journalscan.read_events(files)), ST.fuel)
     logger.info("fuel | %s", ST.fuel.summary())
     lm = ST.fuel.learned()
     logger.info("learning | fuel model of this ship: %s, power %.2f, %d jumps%s", lm["source"],

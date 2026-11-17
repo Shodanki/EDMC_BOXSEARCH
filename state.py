@@ -60,6 +60,8 @@ CFG = {
     "src_edsm": "%s_src_edsm" % PLUGIN_NAME,
     "offline": "%s_offline" % PLUGIN_NAME,
     "edd_path": "%s_edd_path" % PLUGIN_NAME,
+    # 5.0: the fuel model and the tonnes per rock also learn from EDDUser.sqlite
+    "edd_archive": "%s_edd_archive" % PLUGIN_NAME,
     "jump_range": "%s_jump_range" % PLUGIN_NAME,
     "harvest_navroute": "%s_harvest_navroute" % PLUGIN_NAME,
     "harvest_destination": "%s_harvest_dest" % PLUGIN_NAME,

@@ -133,6 +133,8 @@ def _tab_data(r: _Rows) -> None:
     nb.EntryMenu(row, textvariable=_p["eddpath"], width=30).grid(row=0, column=0, sticky=tk.W)
     tk.Button(row, text="...", width=3, command=_pick_edd).grid(row=0, column=1, sticky=tk.W, padx=4)
     r.field("EDDSystem.sqlite", row)
+    r.check("edd_archive", "edd_archive", False,
+            "learn from EDDiscovery's archive (older journals in EDDUser.sqlite, read only)")
     for name, ok, why in ST.sources.status():
         r.note("  %-12s %-4s %s" % (name, "ok" if ok else "no", why[:40]))
     r.head("Harvesting")
@@ -272,6 +274,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["offline"], bool(_p["offline"].get()))
         ST.net.offline = bool(_p["offline"].get())
         cfg_set(CFG["edd_path"], _p["eddpath"].get())
+        cfg_set(CFG["edd_archive"], bool(_p["edd_archive"].get()))
         cfg_set(CFG["harvest_navroute"], bool(_p["navroute"].get()))
         cfg_set(CFG["harvest_destination"], bool(_p["dest"].get()))
         cfg_set(CFG["autocopy"], bool(_p["autocopy"].get()))

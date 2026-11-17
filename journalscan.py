@@ -39,7 +39,7 @@ else:               # on its own: the FIS, plain imports
     from procgen import star_pos
 
 __all__ = ["journal_files", "newest_location", "last_body", "approached_bodies", "WorkMeter",
-           "replay_work", "replay_fuel", "read_events", "read_events_matching"]
+           "replay_work", "replay_fuel", "replay_fuel_events", "read_events", "read_events_matching"]
 
 LOCATION_EVENTS = ("FSDJump", "Location", "CarrierJump")
 BODY_EVENTS = ("ApproachBody", "SupercruiseExit", "Touchdown", "Liftoff", "SAAScanComplete")
@@ -303,8 +303,14 @@ def replay_work(files: Iterable[str], since: Optional[float] = None) -> WorkMete
 def replay_fuel(files: Iterable[str], fuel: Any) -> Any:
     """Ship, tank, jump range, mass and fuel per jump into a
     deepspace.FuelState (its feed(), as the plugin does live)."""
+    return replay_fuel_events(read_events(files), fuel)
+
+
+def replay_fuel_events(events: Iterable[Dict[str, Any]], fuel: Any) -> Any:
+    """replay_fuel() for any journal lines in order - 5.0: the EDDiscovery
+    archive's older lines first, then the journal files."""
     cmdr: Optional[str] = None
-    for e in read_events(files):
+    for e in events:
         v = e.get("event")
         try:
             if v in ("Commander", "LoadGame"):
