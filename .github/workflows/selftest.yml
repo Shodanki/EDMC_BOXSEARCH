@@ -34,6 +34,8 @@ jobs:
         run: python tests/kepler_reality.py
       - name: fuel model with the ship's mass (dist * mass, per ship and mass step, FSD prior, reset)
         run: python tests/fuel_model.py
+      - name: resetting a learnt model (marks in FIS/learn_reset.json, replays from the reset on)
+        run: python tests/learn_reset.py
       - name: database backup self test
         run: python tests/sysdb_selftest.py
       - name: network gateway self test (no network)
@@ -91,7 +93,7 @@ jobs:
       - name: complexity (EDMC's limit 15, every function of the plugin and the FIS)
         run: python tests/complexity.py
       - name: plain-python modules import without EDMC
-        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan, biosig, bodyvalue, situation, groundmine, edts_pgnames, regionmap; assert procgen._edts is not None; assert regionmap.find_region(0, 0, 0)[1] == 'Inner Orion Spur'; print('imports ok')"
+        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan, biosig, bodyvalue, situation, groundmine, learnreset, edts_pgnames, regionmap; assert procgen._edts is not None; assert regionmap.find_region(0, 0, 0)[1] == 'Inner Orion Spur'; print('imports ok')"
       - name: FIS tests (flight information system)
         working-directory: FIS
         run: python -m unittest discover -s tests -t .

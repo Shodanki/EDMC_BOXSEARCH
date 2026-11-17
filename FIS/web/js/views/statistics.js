@@ -8,7 +8,7 @@
 // exobiology, mining, the carrier, wealth - and the growth over a chosen
 // period (the Statistics event from back then against the latest one).
 
-import { getJSON } from "../api.js";
+import { getJSON, postJSON } from "../api.js";
 import { el, frame, fmt, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
@@ -147,6 +147,7 @@ function learning() {
   const line = (label, value, thin) => el("div", { class: "st-row" + (thin ? " c-dim" : "") },
     el("span", { text: label }), el("span", { class: "num", text: value }), el("span", { class: "num small " + (thin ? "c-amber" : "c-green"), text: thin ? t("thin") : "✓" }));
   const head = (s) => el("div", { class: "c-cyan small st-learn-h", text: s });
+  if (L.models) rows.push(...modelRows(L.models, line, head));
   if (L.rocks.length) {
     rows.push(head(t("Prospected rocks per ring class and hotspot (needs {n})", { n: L.min_rocks })));
     for (const r of L.rocks) rows.push(line(r.cls + (r.hotspot ? " · " + r.hotspot : " · " + t("all")),
@@ -167,6 +168,36 @@ function learning() {
   const thin = L.thin.rocks + L.thin.runs + L.thin.rigs + L.thin.genera;
   rows.push(el("div", { class: "c-dim small", text: t("Counting and averages from your own journals and the plugin database (all commanders) - no AI. Thin groups lean on broader ones.") }));
   return frame(t("LEARNING STATUS"), thin ? t("{n} still thin", { n: thin }) : "", rows, { cls: "st-card st-learning", appear: false });
+}
+
+// SK3: the route, work and fuel models - what each learnt from, since when, and a reset
+const MODEL_PARTS = { route: N_("route minutes"), work: N_("scan and sample times"), fuel: N_("fuel model of this ship") };
+
+async function resetModel(part) {
+  if (!window.confirm(t("Reset the {m}? What it learnt is forgotten; only journals from now on count - here and in the plugin at its next start.",
+    { m: t(MODEL_PARTS[part]) }))) return;
+  try { await postJSON("/api/learning/reset", { part }); } catch (e) { window.alert(t("Reset failed: {e}", { e: e.message })); return; }
+  update(null, "data");
+  setTimeout(() => update(null, "data"), 2500);      // the route and work models are measured again in the background
+}
+
+function modelRows(M, line, head) {
+  const rows = [head(t("Route and fuel models (learnt from your journals)"))];
+  const reset = (part, since) => el("div", { class: "c-dim small st-row" },
+    el("span", { text: since ? t("reset {d}", { d: new Date(since * 1000).toLocaleString() }) : t("never reset") }), el("span"),
+    el("button", { class: "small", text: t("reset"), title: t("Forget what this model learnt"), onclick: () => resetModel(part) }));
+  const r = M.route;
+  rows.push(line(t("Supercruise per leg"), r.calibrated
+    ? t("~{e} s + {k} × √LS · learned from {n} legs", { e: fmt(r.entry_s, 0), k: fmt(r.k, 1), n: r.n })
+    : t("default · {n} legs measured", { n: r.measured }), !r.calibrated), reset("route", r.since));
+  const w = M.work;
+  rows.push(line(t("Surface scan / bio sample"), t("~{d} s · ~{b} s · learned from {n} and {m}",
+    { d: fmt(w.dss_s, 0), b: fmt(w.bio_s, 0), n: w.dss_n, m: w.bio_n }), w.dss_n < 3 || w.bio_n < 3), reset("work", w.since));
+  const f = M.fuel;
+  if (f) rows.push(line(t("Fuel") + " · " + (f.ship || "?"), f.source === "fit"
+    ? t("~{x}^{b}, ±{s} % · learned from {n} jumps", { x: f.mass ? t("(distance × mass)") : t("distance"), b: fmt(f.power, 2), s: fmt(f.spread_pct, 1), n: f.n })
+    : t("~distance^{b} from the FSD · {n} of 4 jumps", { b: fmt(f.power, 2), n: f.n }), f.source !== "fit"), reset("fuel", null));
+  return rows;
 }
 
 function ranks() {

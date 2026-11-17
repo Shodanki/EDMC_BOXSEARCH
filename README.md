@@ -142,9 +142,10 @@ check and are never touched by it.
 
 SHBOX FIS keeps running when EDMC is closed: after an update close its
 window (or end `python -m fis`) so it starts with the new files. Keep
-`FIS/fis.ini`, `FIS/favourites.json`, `FIS/lost_hidden.json` and
-`FIS/vehicle_tanks.json` - your settings, favourites, hidden losses and the
-tank sizes the FIS learnt.
+`FIS/fis.ini`, `FIS/favourites.json`, `FIS/lost_hidden.json`,
+`FIS/vehicle_tanks.json` and `FIS/learn_reset.json` - your settings,
+favourites, hidden losses, the tank sizes the FIS learnt and when you reset
+a learnt model (STATISTICS > LEARNING STATUS).
 
 ## Files
 

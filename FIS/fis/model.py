@@ -74,8 +74,22 @@ def plugin():
         p.regionmap = regionmap
         p.biosig = biosig
         p.groundmine = groundmine
+        p.learnreset = _optional("learnreset")     # plugin 5.0+: model resets (SK3)
         _plugin = p
     return _plugin
+
+
+def _optional(name: str) -> Any:
+    """A plugin module that older plugins lack, or None (no bytecode written)."""
+    import importlib
+    import sys
+    keep, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        return importlib.import_module(name)
+    except ImportError:
+        return None
+    finally:
+        sys.dont_write_bytecode = keep
 
 
 def region_of(pos: Optional[Sequence[float]], id64: Optional[int] = None) -> Optional[Tuple[int, str]]:

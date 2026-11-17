@@ -18,8 +18,11 @@ import math
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+import os
+
 from . import groundmine
 from . import journalscan
+from . import learnreset
 from .boxelplan import K_BIO, K_DSS, K_NEW, K_SCAN, Target, bundled_probe_prefix, set_origin
 from .deepspace import best_staging, staging_lines
 from .procgen import boxel_prefix
@@ -58,13 +61,43 @@ def _measure_work(ev: str, entry: Dict[str, Any]) -> None:
         logger.exception("work measurement failed")
 
 
+def _learn_marks() -> Dict[str, Any]:
+    """SK3: when the commander reset a model in the FIS (FIS/learn_reset.json)."""
+    return learnreset.load(learnreset.plugin_path(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _replay_legs(files: List[str], work: Any, work_since: Optional[float],
+                 route_since: Optional[float]) -> List[Any]:
+    """The supercruise legs for the route model from route_since on: taken
+    from the work replay when it starts no later, else read once more."""
+    if route_since is not None and (work_since or 0.0) > route_since:
+        work = journalscan.replay_work(files, since=route_since)
+    elif work_since is not None and route_since is None:
+        work = journalscan.replay_work(files)
+    return [leg for leg in work.sc_legs if route_since is None or leg[3] >= route_since]
+
+
+def _work_inputs(d: str) -> Tuple[List[float], List[float], List[Any]]:
+    """DSS and bio timings and supercruise legs of the last 30 journals,
+    each from its model's last reset on (SK3), with a log line per reset."""
+    marks = _learn_marks()
+    work_since, route_since = learnreset.since(marks, "work"), learnreset.since(marks, "route")
+    for part, ts in (("route", route_since), ("work", work_since)):
+        if ts is not None:
+            logger.info("learning | %s model reset %s UTC - older journals left out",
+                        part, time.strftime("%Y-%m-%d %H:%M", time.gmtime(ts)))
+    files = journalscan.journal_files(d, 30)
+    m = journalscan.replay_work(files, since=work_since)
+    return m.dss, m.bio, _replay_legs(files, m, work_since, route_since)
+
+
 def _bootstrap_work_model() -> None:
-    """Measure the work constants once from the existing journals."""
+    """Measure the work constants once from the existing journals - from
+    the last reset of each model on (SK3)."""
     d = maintenance._journal_dir()
     if not d:
         return
-    m = journalscan.replay_work(journalscan.journal_files(d, 30))
-    dss, bio, sc_legs = m.dss, m.bio, m.sc_legs
+    dss, bio, sc_legs = _work_inputs(d)
     ST.work_dss, ST.work_bio = dss, bio
     before = ST.cost_model.as_dict()
     ST.cost_model = calibrate_work_from_journal(dss, bio, [], ST.cost_model)
@@ -169,8 +202,12 @@ def _bootstrap_fuel() -> None:
     d = maintenance._journal_dir()
     if not d:
         return
+    ST.fuel.since = learnreset.fuel_since(_learn_marks())       # SK3: resets per ship
     journalscan.replay_fuel(journalscan.journal_files(d, 6), ST.fuel)
     logger.info("fuel | %s", ST.fuel.summary())
+    lm = ST.fuel.learned()
+    logger.info("learning | fuel model of this ship: %s, power %.2f, %d jumps%s", lm["source"],
+                lm["power"], lm["n"], "" if lm["spread_pct"] is None else ", scatter %.1f %%" % lm["spread_pct"])
 
 
 def _plan_staging() -> None:

@@ -296,6 +296,38 @@ def learning_status(archive: Any, db: Any) -> Dict[str, Any]:
     return out
 
 
+def model_status(calib_info: Dict[str, Any], live: Dict[str, Any], cost_model: Any) -> Dict[str, Any]:
+    """
+    SK3 for STATISTICS > LEARNING STATUS: the three models the route and
+    the fuel forecast rest on, each with what it learnt from and since when
+    (a reset leaves older journals out; None = never reset):
+
+      route  supercruise seconds per leg: entry + k * sqrt(LS), n legs
+      work   a surface scan and a bio sample, n measurements each
+      fuel   fuel per jump of the current ship (deepspace.FuelState.learned)
+    """
+    from .model import _fuel_state
+    since = calib_info.get("since") or {}
+    meas = calib_info.get("measured") or {}
+    cm = cost_model.as_dict() if cost_model is not None else {}
+    out: Dict[str, Any] = {
+        "route": {"n": int(cm.get("travel_samples") or 0), "measured": meas.get("sc", 0),
+                  "entry_s": cm.get("entry"), "k": cm.get("k"),
+                  "calibrated": bool(cm.get("travel_samples")), "since": since.get("route")},
+        "work": {"dss_n": meas.get("dss", 0), "bio_n": meas.get("bio", 0),
+                 "dss_s": cm.get("dss"), "bio_s": cm.get("bio"), "since": since.get("work")},
+        "fuel": None,
+    }
+    ship = (live or {}).get("ship") or {}
+    if ship.get("type") and (live or {}).get("fuel_ship"):
+        try:
+            fs = _fuel_state(live)
+            out["fuel"] = dict(fs.learned(), ship=ship.get("name") or ship.get("type"))
+        except Exception:
+            out["fuel"] = None
+    return out
+
+
 def _rock_counts(archive: Any, db: Any) -> List[Dict[str, Any]]:
     """Prospected rocks per ring class and hotspot (L1/L2), and whether thin."""
     from . import prospect

@@ -27,7 +27,8 @@ PLUGIN_MODULES = ["load", "state", "uithread", "panel", "planning", "cockpit", "
                   "survey", "updater", "fislaunch", "statswin", "journal", "probewin", "miningwin",
                   "prefs", "maintenance", "procgen", "sysdb", "sources", "netgate", "shells",
                   "deepspace", "sysroute", "boxelplan", "overlay", "biopredict", "surfacenav",
-                  "miningstat", "journalscan", "biosig", "overlaywin", "integrity", "groundmine", "regionmap", "edts_pgnames"]
+                  "miningstat", "journalscan", "biosig", "overlaywin", "integrity", "groundmine", "regionmap", "edts_pgnames",
+                  "learnreset"]
 HOOKS = ["plugin_start3", "plugin_stop", "plugin_app", "plugin_prefs", "prefs_changed",
          "journal_entry", "dashboard_entry", "capi_fleetcarrier"]
 

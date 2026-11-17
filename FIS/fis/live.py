@@ -200,6 +200,9 @@ class LiveTracker:
         self.errors = 0
         self._jumps_by_ship: Dict[Any, List[Any]] = {}     # fuel model per ship
         self._jump_ship: Any = None
+        # SK3: fuel model resets by ship key (learnreset.fuel_since), set
+        # before prime(); jumps before a ship's reset are not learnt
+        self.fuel_since: Dict[Any, float] = {}
         # watchdog: when the polling last ran, how often the game rewrote the
         # journal under the same name (06.11.2026: after a lost connection the
         # game started the file anew; reading on at the old offset, past the
@@ -227,7 +230,19 @@ class LiveTracker:
         if cur is not None:
             self._jumps_by_ship[cur] = self.state["jumps"]
         self._jump_ship = key
+        self.state["fuel_ship"] = list(key)
         self.state["jumps"] = list(self._jumps_by_ship.get(key, []))
+
+    def reset_fuel(self, ts: float) -> Optional[List[Any]]:
+        """SK3: forget the fuel jumps of the current ship; returns its key
+        (None without a ship)."""
+        with self._lock:
+            key = self._jump_ship
+            if key is None:
+                return None
+            self.fuel_since[tuple(key)] = float(ts)
+            self.state["jumps"] = []
+            return list(key)
 
     def snapshot(self) -> Dict[str, Any]:
         """A deep copy of the live state, safe to read in another thread."""
@@ -327,7 +342,8 @@ class LiveTracker:
             if e.get("FuelLevel") is not None:
                 s["fuel"]["main"] = e.get("FuelLevel")
             d, u = e.get("JumpDist"), e.get("FuelUsed")
-            if d and u:
+            cut = self.fuel_since.get(tuple(self._jump_ship or ()))
+            if d and u and not (cut is not None and ts is not None and ts < cut):
                 s["jumps"].append(_jump_point(s["ship"], float(d), float(u), e.get("FuelLevel")))
                 del s["jumps"][:-60]
         s["jumping"] = None

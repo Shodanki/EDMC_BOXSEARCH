@@ -18,5 +18,6 @@ FIS/fis.ini
 FIS/favourites.json*
 FIS/lost_hidden.json*
 FIS/vehicle_tanks.json*
+FIS/learn_reset.json*
 FIS/tests/data/
 FIS/.run.lock

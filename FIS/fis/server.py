@@ -73,8 +73,20 @@ class App:
         from .online import CarrierLookup
         self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
                                     offline=self._plugin_offline)
+        # SK3: when a learnt model was reset (FIS-owned file next to fis.ini,
+        # read by the plugin at start-up too)
+        self.learn_reset_path = os.path.join(os.path.dirname(cfg.ini_path), "learn_reset.json")
+        lr = model.plugin().learnreset
+        if lr is not None:
+            self.live.fuel_since = lr.fuel_since(lr.load(self.learn_reset_path))
         from .calib import Calibrator
-        self.calib = Calibrator(cfg.journal_dir, model.plugin().sysroute, self._leg_ls)
+        self.calib = Calibrator(cfg.journal_dir, model.plugin().sysroute, self._leg_ls,
+                                marks=self._learn_marks)
+
+    def _learn_marks(self) -> Dict[str, Any]:
+        """The model resets (plugin learnreset), empty with an older plugin."""
+        lr = self.model.plugin().learnreset
+        return lr.load(self.learn_reset_path) if lr is not None else {}
 
     def _leg_ls(self, id64: int, a: str, b: str, at: float) -> Optional[float]:
         """Distance body a -> body b at time `at`, from the plugin's orbits."""
@@ -547,6 +559,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._post_nearby()
         if url.path == "/api/ship/lost_hidden":
             return self._post_lost_hidden(raw)
+        if url.path == "/api/learning/reset":
+            return self._post_learning_reset(raw)
         if url.path != "/api/settings":
             return self._error(404, "not found")
         return self._post_settings(raw)
@@ -661,6 +675,37 @@ class Handler(BaseHTTPRequestHandler):
         if seen:
             app.favourites.set_online(fid, cs, seen)     # H2: starred from the nearby list
         return self._json({"callsign": cs, "favourite": fav is not None, "note": (fav or {}).get("note", "")})
+
+    def _post_learning_reset(self, raw: bytes) -> None:
+        """
+        SK3, POST /api/learning/reset {"part": "route" | "work" | "fuel"}:
+        forget what a model learnt - measurements before now are left out
+        from then on, here and in the plugin at its next start. Same locks
+        as a favourite (the FIS page only; with LAN the token).
+        """
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "resets only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            part = str(body.get("part") or "") if isinstance(body, dict) else ""
+        except (ValueError, UnicodeDecodeError):
+            part = ""
+        app = self.app
+        lr = app.model.plugin().learnreset
+        if lr is None or part not in lr.PARTS:
+            return self._error(400, "bad request")
+        now = time.time()
+        ship = app.live.reset_fuel(now) if part == "fuel" else None
+        if part == "fuel" and ship is None:
+            return self._error(409, "no ship known yet")
+        try:
+            lr.mark(app.learn_reset_path, part, now, ship=ship)
+        except (OSError, ValueError):
+            return self._error(500, "could not write the reset")
+        if part != "fuel":
+            threading.Thread(target=app.calib.run_once, name="fis-calib", daemon=True).start()
+        return self._json({"part": part, "since": now})
 
     def _post_lost_hidden(self, raw: bytes) -> None:
         """SHIP -> LOST DATA: hide crash losses from the list, or show them
@@ -1056,6 +1101,9 @@ class Handler(BaseHTTPRequestHandler):
             from . import learn
             # L4: what the FIS has learnt from your own data so far
             out["learning"] = learn.learning_status(app.archive, app.db)
+            # SK3: the route, work and fuel models with what they rest on
+            out["learning"]["models"] = learn.model_status(app.calib.info, app.live_state(),
+                                                           app.calib.model)
         except Exception:
             out["learning"] = None
         return self._json(out)

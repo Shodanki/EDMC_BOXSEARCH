@@ -289,12 +289,13 @@ class WorkMeter:
         return None
 
 
-def replay_work(files: Iterable[str]) -> WorkMeter:
-    """A WorkMeter fed with every timed event of the files."""
+def replay_work(files: Iterable[str], since: Optional[float] = None) -> WorkMeter:
+    """A WorkMeter fed with every timed event of the files - from `since`
+    on, when the model was reset then (SK3, learnreset)."""
     m = WorkMeter()
     for e in read_events(files):
         ts = event_time(e)
-        if ts is not None:
+        if ts is not None and (since is None or ts >= since):
             m.feed(e, ts)
     return m
 
