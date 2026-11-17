@@ -116,6 +116,9 @@ ses.feed({"event": "LoadGame"})
 check(ses.summary()["jumps"] == 0, "LoadGame starts a new session")
 check(situation.genus_open(["Bacterium", "Brain Trees", "Stratum"], ["Bacterium Aurasus", "Roseum Brain Tree"])
       == ["Stratum"], "open genera: none of their species analysed")
+check(situation.genus_open(["Bacterium", "Brain Trees"], [{"species": "Ostrinum Brain Tree", "genus": "Brain Trees",
+                                                           "variant": None, "ts": "2026-11-17T15:34:11Z"}])
+      == ["Bacterium"], "open genera from the database's species entries (dicts, not names)")
 cw = situation.CarrierWatch()
 cw.feed({"event": "CarrierStats", "FuelLevel": 800, "SpaceUsage": {"TotalCapacity": 25000, "FreeSpace": 15000}})
 cw.feed({"event": "CarrierJumpRequest", "SystemName": "Colonia", "timestamp": "2027-01-15T08:00:00Z",
