@@ -33,7 +33,7 @@ EVS = [
     _e(31, "Music"),                                          # then 59 min away from the keys
     _e(90, "Music"), _e(100, "SAAScanComplete", BodyID=2),    # the time runs on in the same system
     _e(101, "FSDJump", SystemAddress=3, StarSystem="Short"),
-    _e(102, "Shutdown"),
+    _e(102, "LoadGame"),
     _e(200, "Location", SystemAddress=2, StarSystem="Work"),  # back in Work later
     _e(210, "ScanOrganic", ScanType="Analyse"),
 ]
@@ -65,6 +65,11 @@ class SysTimeTest(unittest.TestCase):
             self.assertEqual((w["minutes"], w["estimate"], w["stops"], w["ratio"]), (50.0, 28.3, 4, 1.76))
             self.assertEqual((out["n"], out["ratio"], out["ratio_n"]), (1, 1.76, 1))
             self.assertIsNone(systime.build(EVS, db, "F2")["ratio"])                 # another commander's
+
+    def test_long_supercruise_is_no_pause(self):
+        evs = [_e(0, "FSDJump", SystemAddress=9, StarSystem="Far"), _e(1, "SupercruiseEntry"),
+               _e(46, "SupercruiseExit"), _e(50, "SAAScanComplete"), _e(51, "LoadGame"), _e(80, "Music")]
+        self.assertEqual(systime.visits(evs)[9]["seconds"], 50 * 60)     # 45 min flight counted, LoadGame ends it
 
     def test_here(self):
         v = systime.visits(EVS)

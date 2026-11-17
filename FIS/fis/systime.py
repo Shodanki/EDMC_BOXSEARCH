@@ -9,7 +9,8 @@ spent in each system and on what, set against the route's estimate.
 
 From the journals of the active commander: a visit runs from the arrival
 (FSDJump, CarrierJump, Location) to the next one elsewhere, a Shutdown or a
-pause of PAUSE_S - the pause does not count. Per system: minutes, visits,
+pause of PAUSE_S (PAUSE_SC_S in supercruise: a long flight to a far body
+has no event in between) - the pause does not count; a LoadGame ends it. Per system: minutes, visits,
 the honk, bodies scanned, maps, species analysed, landings. The estimate is
 the plugin's first route estimate once your FSS was complete (table
 route_estimates, kept since 5.0 - older systems have none). Read only.
@@ -23,6 +24,8 @@ from typing import Any, Dict, List, Optional
 from .live import parse_ts
 
 PAUSE_S = 30 * 60           # a gap this long ends the visit (as a game session)
+PAUSE_SC_S = 2 * 3600       # in supercruise: the FIS keeps no event between entry and exit
+ENDS = ("Shutdown", "LoadGame")     # the FIS keeps LoadGame, not Shutdown
 MIN_S = 5 * 60              # a system without work counts from this long on
 ARRIVALS = ("FSDJump", "CarrierJump", "Location")
 
@@ -59,17 +62,19 @@ def visits(evs: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
     cur: Optional[Dict[str, Any]] = None
     here: Optional[tuple] = None
     start = last = 0.0
+    in_sc = False
     for e in evs:
         t = parse_ts(e.get("timestamp"))
         if t is None:
             continue
         ev = e.get("event")
         arrival = ev in ARRIVALS and bool(e.get("SystemAddress"))
-        if cur is not None and (t - last > PAUSE_S or ev == "Shutdown"
+        if cur is not None and (t - last > (PAUSE_SC_S if in_sc else PAUSE_S) or ev in ENDS
                                 or (arrival and e["SystemAddress"] != cur["id64"])):
             cur["seconds"] += last - start
             cur = None
-        if ev == "Shutdown":
+        in_sc = ev == "SupercruiseEntry" or (in_sc and ev not in ("SupercruiseExit",) + ARRIVALS + ENDS)
+        if ev in ENDS:
             here = None
         elif arrival:
             here = (e["SystemAddress"], e.get("StarSystem") or "?")
