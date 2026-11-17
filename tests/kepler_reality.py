@@ -129,6 +129,25 @@ class KeplerReality(unittest.TestCase):
         """Trivially right before and after: the distance to the parent is the SMA."""
         self.check(OW_V, "Synuefe OW-V c18-2", ["A 1", "A 2", "A 3", "A 4"])
 
+    def test_rings_and_moons_share_the_equator(self):
+        """The pole the FIS turns the rings onto stands on the plane of the
+        flat moons, also for OW-V A 3, tilted by 104.5 degrees."""
+        rows = self.rows[OW_V]
+        bodies = sr.bodies_from_rows(rows, now=None)
+        sr.resolve_positions(bodies)
+        by = {b.name: b for b in bodies.values()}
+        a3 = by["Synuefe OW-V c18-2 A 3"]
+        pole = sr.equator_pole(a3)
+        self.assertAlmostEqual(math.sqrt(sum(v * v for v in pole)), 1.0, places=9)
+        for n in ("a", "b", "c", "d", "e", "f"):
+            m = by["Synuefe OW-V c18-2 A 3 " + n]
+            off = [m.pos[i] - a3.pos[i] for i in range(3)]
+            cos = abs(sum(p * o for p, o in zip(pole, off))) / math.sqrt(sum(o * o for o in off))
+            with self.subTest(moon=n):
+                self.assertLess(cos, math.sin(math.radians(0.5)))    # inclinations up to 0.15 degrees
+        self.assertGreater(abs(pole[2]), 0.0)
+        self.assertLess(abs(pole[2]), 0.5)       # the equator stands almost upright
+
     def test_orbit_line_passes_through_the_body(self):
         """The orbit drawn in the FIS is the orbit the body sits on."""
         rows = self.rows[EL_TIO]

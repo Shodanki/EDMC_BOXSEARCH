@@ -92,6 +92,9 @@ class TestModel(_Base):
         self.assertAlmostEqual(dm, 1.0, delta=0.05)
         self.assertTrue(moon["moon"])
         self.assertEqual(len(by[1]["orbit"]), 73)
+        # the equator the rings are drawn in (K2): a unit vector; none for the main star
+        self.assertAlmostEqual(sum(v * v for v in by[1]["pole"]), 1.0, delta=1e-3)
+        self.assertIsNone(by[0]["pole"])
         self.assertTrue(by[1]["flags"]["first"])
         self.assertEqual(by[1]["flags"]["bio"], 2)
         self.assertEqual(by[3]["rings"][0]["cls"], "Icy")

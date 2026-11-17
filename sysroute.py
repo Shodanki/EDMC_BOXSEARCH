@@ -68,7 +68,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 __all__ = ["Body", "Stop", "SystemRoute", "plan_route", "DEFAULT_MODEL",
            "CostModel", "group_label", "is_moon", "bodies_from_rows",
            "calibrate_from_journal", "shorten", "resolve_positions",
-           "orbit_basis", "orbit_points"]
+           "orbit_basis", "orbit_points", "equator_pole"]
 
 LS_PER_METRE = 1.0 / 299792458.0
 
@@ -392,6 +392,18 @@ def _child_frame(parent: Body) -> Matrix:
     if parent.tilt and parent.orbit and parent.orbit[0] and parent.kind != "BaryCentre":
         frame = _mat_mul(frame, _rot_x(math.degrees(parent.tilt)))
     return frame
+
+
+def equator_pole(b: Body) -> Optional[Tuple[float, float, float]]:
+    """
+    The pole of a body's equator, a unit vector in the system frame: the
+    plane its rings and moons lie in (5.0, K2). None before
+    resolve_positions or for a body without an orbit of its own.
+    """
+    if b.basis is None or not b.orbit or not b.orbit[0]:
+        return None
+    f = _child_frame(b)
+    return (f[0][2], f[1][2], f[2][2])
 
 
 def _resolve_orbits(bodies: Dict[int, Body]) -> None:

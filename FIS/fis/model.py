@@ -196,6 +196,13 @@ def _orbit_points(sr: Any, b: Any, parent_pos: Sequence[float], n: int = 72
     return [[round(v, 3) for v in q] for q in pts]
 
 
+def _pole(sr: Any, b: Any) -> Optional[List[float]]:
+    """The pole of the body's equator (sysroute.equator_pole), rounded; the
+    FIS turns the rings of the body into that plane."""
+    p = sr.equator_pole(b)
+    return [round(v, 4) for v in p] if p else None
+
+
 def _rings(row, hotspots: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> List[Dict[str, Any]]:
     """Rings with class, width - and the hotspots you mapped in each (DSS)."""
     out = []
@@ -552,6 +559,8 @@ def _body_entry(sr: Any, bid: int, b: Any, r: Any, bodies: Any,
         # where the orbit is centred (parent body or unscanned barycentre)
         "ppos": [round(v, 3) for v in ppos],
         "orbit": _orbit_points(sr, b, ppos) if r["kind"] != "Ring" else None,
+        # the equator: rings and moons lie in it (K2), None when unknown
+        "pole": _pole(sr, b),
         "radius_km": _r(radius / 1000.0, 1) if radius else None,
         "radius_ls": (radius * LS_PER_M) if radius else None,
         "arrival_ls": _r(r["arrival_ls"], 1),

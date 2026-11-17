@@ -137,6 +137,8 @@ export function buildScene(sys, mode = "log") {
       id: b.body_id, src: b, kind: b.kind, short: b.short, group: b.group, moon: b.moon,
       p: toScene(S(b)), size, colour: COLOURS[b.colour] || COLOURS.other,
       orbit: orbitPts(b),
+      // the equator's pole in scene space: rings lie in that plane, like the moons (5.0, K2)
+      pole: b.pole ? toScene(b.pole) : null,
       rings: ring.map((r) => ({ inner: size * ringRatio(r.inner_km / b.radius_km),
                                 outer: size * ringRatio(r.outer_km / b.radius_km) })),
       flags: b.flags || {},
