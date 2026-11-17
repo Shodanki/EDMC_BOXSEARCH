@@ -120,7 +120,7 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
 
     # ---------------------------------------------------------- modules
     info = _read_json(os.path.join(journal_dir, "ModulesInfo.json")) or {}
-    groups, capacity = _ship_modules(lo, info, archive)
+    groups, capacity = _ship_modules(lo, info, archive, flying=_flying(st, flags))
     allm = [x for g in groups.values() for x in g]
     draw = sum(x["power"] or 0.0 for x in allm)
     by_prio = []
@@ -171,10 +171,19 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
     return out
 
 
-def _ship_modules(lo: Dict[str, Any], info: Dict[str, Any], archive: fl.Archive
+def _flying(st: Dict[str, Any], flags: int) -> bool:
+    """In the ship and neither docked nor landed, by Status.json."""
+    return bool(st) and _bit(flags, 24) and not _bit(flags, 0) and not _bit(flags, 1)
+
+
+def _ship_modules(lo: Dict[str, Any], info: Dict[str, Any], archive: fl.Archive, flying: bool = False
                   ) -> Tuple[Dict[str, List[Dict[str, Any]]], Optional[float]]:
     """The modules by group with power, engineering and ammunition, and the
-    power plant's capacity."""
+    power plant's capacity.
+
+    The game writes a Loadout with the thrusters off when the SRV docks on
+    the ground, and none after Liftoff; while the ship flies its thrusters
+    are on, whatever that older Loadout says."""
     power = {m.get("Slot"): m for m in info.get("Modules") or []}
     ammo_full = _ammo_full(archive)
     groups: Dict[str, List[Dict[str, Any]]] = {"hardpoints": [], "utility": [], "core": [], "optional": []}
@@ -188,8 +197,11 @@ def _ship_modules(lo: Dict[str, Any], info: Dict[str, Any], archive: fl.Archive
         if m.get("Slot") == "PowerPlant" and mods.get("PowerCapacity"):
             capacity = float(mods["PowerCapacity"])
         pw = power.get(m.get("Slot")) or {}
+        on = m.get("On", True)
+        if flying and m.get("Slot") == "MainEngines":
+            on = True
         item = {"slot": m.get("Slot"), "size": fl.slot_size(m.get("Slot")),
-                "name": fl.module_name(m.get("Item")), "on": m.get("On", True),
+                "name": fl.module_name(m.get("Item")), "on": on,
                 "priority": (pw.get("Priority", m.get("Priority")) or 0) + 1,
                 "health": m.get("Health"), "power": pw.get("Power"),
                 "eng": ("%s G%s" % (eng.get("BlueprintName", "").split("_")[-1], eng.get("Level"))

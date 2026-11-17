@@ -238,6 +238,19 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(hs["ammo_pct"], 100)
         self.assertNotIn("cosmetic", s["modules"])
 
+    def test_thrusters_on_after_liftoff(self):
+        # own-1: the Loadout after DockSRV on the ground has the thrusters
+        # off and no new one follows Liftoff - flying, they count as on
+        lo = {"Modules": [{"Slot": "MainEngines", "Item": "int_engine_size7_class5", "On": False},
+                          {"Slot": "Slot02_Size5", "Item": "int_shieldgenerator_size5_class2", "On": False}]}
+        ship = 1 << 24
+        for flags, want in ((ship, True), (ship | 1 << 1, False), (ship | 1 << 0, False), (1 << 26, False)):
+            st = {"ts": time.time(), "flags": flags}
+            g, _ = shipview._ship_modules(lo, {}, self.ar, flying=shipview._flying(st, flags))
+            self.assertIs(g["core"][0]["on"], want, flags)
+            self.assertIs(g["optional"][0]["on"], False)
+        self.assertFalse(shipview._flying({}, ship))
+
     def test_overheat_is_warning(self):
         live = {"status": {"ts": time.time(), "flags": (1 << 24) | (1 << 20) | (1 << 3), "flags2": 0},
                 "ship": {"hull": 1.0}, "alerts": []}
