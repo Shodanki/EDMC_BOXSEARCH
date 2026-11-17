@@ -87,6 +87,9 @@ class Config:
         # FG1 (4.12): show the game's key bindings in SHIP - reads
         # Options\Bindings only while on; off by default
         self.show_controls = False
+        # 5.0: learn from the older journals EDDiscovery keeps (EDDUser.sqlite,
+        # read only, fis/eddarchive.py); off by default
+        self.edd_archive = False
 
     @property
     def filters(self) -> List[str]:
@@ -137,6 +140,15 @@ class Config:
         raw = str(data.get("shboxsearch_filters", "") or "")
         return [f.strip() for f in raw.split(",") if f.strip() in PLUGIN_FILTERS] or ["todo"]
 
+    def edd_user_db(self) -> Optional[str]:
+        """5.0: EDDiscovery's EDDUser.sqlite while the archive is switched on -
+        beside the EDDSystem.sqlite the plugin is set to, else in EDDiscovery's
+        default folder. None when off or not found."""
+        if not self.edd_archive:
+            return None
+        from . import eddarchive
+        return eddarchive.find((self._plugin_settings() or {}).get(PLUGIN_PREFIX + "edd_path") or None)
+
     @property
     def skip_arrival(self) -> bool:
         """R2: the plugin's "start the route at the arrival star" switched
@@ -170,6 +182,7 @@ class Config:
         self.main_cmdr = (s.get("main_cmdr", "") or "").strip()
         self.set_unsold_limits({k: s.get("unsold_" + k) for k in UNSOLD_LIMITS})
         self.show_controls = _bool(s.get("show_controls", "false"))
+        self.edd_archive = _bool(s.get("edd_archive", "false"))
         if self.lan:
             self.host = "0.0.0.0"
         return self
@@ -230,6 +243,7 @@ class Config:
         }
         vals.update({"unsold_" + k: str(v) for k, v in self.unsold.items()})
         vals["show_controls"] = "true" if self.show_controls else "false"
+        vals["edd_archive"] = "true" if self.edd_archive else "false"
         for k, v in vals.items():
             cp.set("fis", k, v)
         for k, v, d in (("db_path", self.db_path, DEFAULT_DB),

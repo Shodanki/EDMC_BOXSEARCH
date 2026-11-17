@@ -624,9 +624,14 @@ class _CarrierLog:
 
 
 class Archive:
-    """Relevant journal events from every journal, rescanned when files change."""
+    """Relevant journal events from every journal, rescanned when files change.
+
+    5.0: with use_edd() also the older journals EDDiscovery keeps (fis/
+    eddarchive.py) - read once in the background, then only what the journals
+    on disk do not have is added."""
 
     MIN_RESCAN_S = 20.0
+    EDD_RELOAD_S = 3600.0     # EDDiscovery's file changes while it runs: at most hourly
 
     def __init__(self, journal_dir: str) -> None:
         self.journal_dir = journal_dir
@@ -634,6 +639,83 @@ class Archive:
         self._lock = threading.Lock()
         self._scanned = 0.0
         self.rev = 0
+        self._evcache: Tuple[Any, List[Dict[str, Any]]] = (None, [])
+        # the EDDiscovery archive: off until use_edd(path)
+        self._edd_path: Optional[str] = None
+        self._edd_raw: List[Dict[str, Any]] = []     # every event read from it
+        self._edd: List[Dict[str, Any]] = []         # those the journals on disk lack
+        self._edd_sig: Any = None
+        self._edd_loaded = 0.0
+        self._edd_busy = False
+        self.edd_state: Dict[str, Any] = {"state": "off"}
+
+    # ------------------------------------------------------- EDD archive
+    def use_edd(self, path: Optional[str]) -> None:
+        """Read the EDDiscovery archive at ``path`` from now on (None: off,
+        its events are dropped at once)."""
+        with self._lock:
+            if path == self._edd_path:
+                return
+            self._edd_path = path
+            self._edd_raw, self._edd, self._edd_sig = [], [], None
+            self.edd_state = {"state": "waiting", "path": path} if path else {"state": "off"}
+            self.rev += 1
+        self._scanned = 0.0
+        self._kick_edd()
+
+    def _kick_edd(self) -> None:
+        """Start the background read of the archive when one is due."""
+        with self._lock:
+            due = self._edd_due()
+        if due:
+            threading.Thread(target=self._load_edd, args=(due,), name="fis-edd-archive", daemon=True).start()
+
+    def _edd_due(self) -> Optional[str]:
+        """Under the lock: the path to read now, if a read is due."""
+        path = self._edd_path
+        if not path or self._edd_busy:
+            return None
+        if self._edd_sig is not None:
+            if time.time() - self._edd_loaded < self.EDD_RELOAD_S:
+                return None
+            from . import eddarchive
+            if eddarchive.signature(path) == self._edd_sig:
+                return None
+        self._edd_busy = True
+        self.edd_state = dict(self.edd_state, state="loading", path=path)
+        return path
+
+    def _load_edd(self, path: str) -> None:
+        """Worker: read the archive, hand it over for merging."""
+        from . import eddarchive
+        sig, t0 = eddarchive.signature(path), time.time()
+        try:
+            got: Optional[Dict[str, Any]] = eddarchive.read(path, EVENTS, Archive._take)
+            state: Dict[str, Any] = {"state": "ready", "rows": got["rows"],
+                                     "commanders": len(got["commanders"])}
+        except Exception as exc:           # a broken or foreign file: say so, never stop the FIS
+            got, state = None, {"state": "error", "error": str(exc)[:200]}
+        state.update(path=path, seconds=round(time.time() - t0, 1))
+        with self._lock:
+            self._edd_busy = False
+            if path != self._edd_path:
+                return                         # switched off or moved meanwhile
+            self._edd_loaded = time.time()
+            self._edd_sig = sig if got else ("error",)
+            self.edd_state = state
+            if got:
+                self._edd_raw = got["events"]
+                self._merge_edd()
+                self.rev += 1
+
+    def _merge_edd(self) -> None:
+        """Under the lock: what the archive adds to the journals on disk."""
+        from . import eddarchive
+        local = (e for _p, (_s, lst) in self._files.items() for e in lst)
+        self._edd = eddarchive.missing_from(local, self._edd_raw)
+        if self.edd_state.get("state") == "ready":
+            stamps = [e["timestamp"] for e in self._edd if e.get("event") != "Commander"]
+            self.edd_state.update(added=len(stamps), first=min(stamps) if stamps else None)
 
     def refresh(self, force: bool = False) -> None:
         """Read the journals again - only the files that changed - at most
@@ -659,8 +741,11 @@ class Archive:
                 if p not in paths:
                     del self._files[p]
                     changed = True
+            if changed and self._edd_raw:
+                self._merge_edd()          # the journals on disk changed: what the archive adds, again
             if changed:
                 self.rev += 1
+        self._kick_edd()
 
     @staticmethod
     def _read(path: str) -> List[Dict[str, Any]]:
@@ -682,21 +767,28 @@ class Archive:
                         e = json.loads(raw.decode("utf-8", errors="replace"))
                     except ValueError:
                         continue
-                    if e.get("event") in ("Commander", "LoadGame"):
-                        fid = e.get("FID") or fid
-                        out.append({"event": "Commander", "timestamp": e.get("timestamp"),
-                                    "_fid": fid, "Name": e.get("Name") or e.get("Commander")})
-                        if e.get("event") == "LoadGame":      # session start (hazard log)
-                            out.append({"event": "LoadGame", "timestamp": e.get("timestamp"), "_fid": fid})
-                        continue
-                    e = Archive._slim(e)
-                    if e is None:
-                        continue
-                    e["_fid"] = fid
-                    out.append(e)
+                    fid = Archive._take(e, fid, out)
         except OSError:
             pass
         return out
+
+    @staticmethod
+    def _take(e: Dict[str, Any], fid: Optional[str], out: List[Dict[str, Any]]) -> Optional[str]:
+        """One journal line into ``out``, slimmed and tagged with the
+        commander; returns the commander (FID) logged in from then on. The
+        same for the journals on disk and the EDDiscovery archive."""
+        if e.get("event") in ("Commander", "LoadGame"):
+            fid = e.get("FID") or fid
+            out.append({"event": "Commander", "timestamp": e.get("timestamp"),
+                        "_fid": fid, "Name": e.get("Name") or e.get("Commander")})
+            if e.get("event") == "LoadGame":      # session start (hazard log)
+                out.append({"event": "LoadGame", "timestamp": e.get("timestamp"), "_fid": fid})
+            return fid
+        slim = Archive._slim(e)
+        if slim is not None:
+            slim["_fid"] = fid
+            out.append(slim)
+        return fid
 
     @staticmethod
     def _slim(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -738,7 +830,7 @@ class Archive:
         self.refresh()
         with self._lock:
             last = None
-            for _p, (_s, lst) in sorted(self._files.items()):
+            for lst in self._lists():
                 for e in lst:
                     if e["event"] == "Commander" and e.get("_fid"):
                         last = e
@@ -753,11 +845,20 @@ class Archive:
             fid = self.commander()[0]
         every = fid == ALL_COMMANDERS
         with self._lock:
-            evs = [e for _p, (_s, lst) in sorted(self._files.items()) for e in lst
+            key = (self.rev, fid)
+            if self._evcache[0] == key:
+                return list(self._evcache[1])
+            evs = [e for lst in self._lists() for e in lst
                    if e["event"] != "Commander"
                    and (every or fid is None or e.get("_fid") in (fid, None))]
-        evs.sort(key=lambda e: e.get("timestamp") or "")
-        return evs
+            evs.sort(key=lambda e: e.get("timestamp") or "")
+            self._evcache = (key, evs)
+        return list(evs)
+
+    def _lists(self) -> List[List[Dict[str, Any]]]:
+        """Under the lock: the event lists, the EDDiscovery archive first (so
+        the journals on disk name the commander logged in last)."""
+        return [self._edd] + [lst for _p, (_s, lst) in sorted(self._files.items())]
 
     # -------------------------------------------------------------- ships
     def ship_names(self, evs: Iterable[Dict[str, Any]]) -> Dict[str, str]:

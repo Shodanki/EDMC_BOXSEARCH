@@ -60,6 +60,7 @@ class App:
         self._stop = threading.Event()
         from .fleet import Archive
         self.archive = Archive(cfg.journal_dir)
+        self.archive.use_edd(cfg.edd_user_db())     # 5.0: EDDiscovery's archive, when on
         from .favourites import FavouriteStore
         # personal (K2): next to fis.ini, never in the repository
         self.favourites = FavouriteStore(os.path.join(os.path.dirname(cfg.ini_path), "favourites.json"))
@@ -522,7 +523,9 @@ class Handler(BaseHTTPRequestHandler):
                 "unsold": dict(cfg.unsold),
                 "unsold_defaults": {k: v[0] for k, v in config_mod.UNSOLD_LIMITS.items()},
                 # FG1: the key bindings in SHIP (reads the game's Bindings folder)
-                "show_controls": cfg.show_controls}
+                "show_controls": cfg.show_controls,
+                # 5.0: the EDDiscovery archive - switch, file, what it added
+                "edd_archive": cfg.edd_archive, "edd": self.app.archive.edd_state}
 
     def do_POST(self) -> None:
         """The few writing calls (carrier favourites and lookups, lost and
@@ -590,6 +593,8 @@ class Handler(BaseHTTPRequestHandler):
         cfg.language = lang if lang in config_mod.LANGUAGES else cfg.language
         cfg.open_browser = bool(body.get("open_browser", cfg.open_browser))
         cfg.show_controls = bool(body.get("show_controls", cfg.show_controls))
+        cfg.edd_archive = bool(body.get("edd_archive", cfg.edd_archive))
+        self.app.archive.use_edd(cfg.edd_user_db())
         cfg.lan = bool(body.get("lan", cfg.lan))
         if "main_cmdr" in body:
             mc = str(body.get("main_cmdr") or "")

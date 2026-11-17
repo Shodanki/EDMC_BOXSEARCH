@@ -115,6 +115,34 @@ in use per part, read only, never written) - and the active fire group from
 A preset that comes with the game keeps its bindings in the game folder,
 which the FIS does not read; the block says so.
 
+### The EDDiscovery archive (optional)
+
+The journals on disk are rarely the whole story: a new PC, a cleaned
+folder or a rewritten journal, and the years before are gone - but
+EDDiscovery keeps every journal line it ever read in its user database,
+`EDDUser.sqlite`. The settings page has *Learn from the EDDiscovery
+archive* (off by default). While it is on, the FIS reads those lines once
+in the background (a few seconds; again at most hourly while EDDiscovery
+adds to the file) and adds what the journals on disk do not have: the
+same moment and event counts once. STATISTICS, GAIN / LOSS, TRADE,
+MINING and the learnt models then reach back as far as EDDiscovery does.
+
+* The file is found beside the `EDDSystem.sqlite` the plugin is set to, or
+  in EDDiscovery's own folder (`%LOCALAPPDATA%\EDDiscovery`).
+* It is opened read only and never written. Only the journal lines are
+  read, and of EDDiscovery's commanders only id and name - the EDSM API
+  key stored in the same file is never read.
+* Every line counts for the commander its own login names; lines of a
+  commander that never logged in there are left out. As everywhere in
+  the FIS, statistics count for the active commander only.
+* Events that only matter live (signals, cargo, damage, market lists)
+  are not taken. Nothing is copied, stored or sent: the events stay in
+  the FIS's memory. Switching it off drops them at once.
+* The settings page says how many older events were added and since when.
+
+EDDiscovery is Apache-2.0 software by the EDDiscovery Team; no part of it
+ships with the FIS, only its file is read.
+
 ### Unsold data: your own limits
 
 SHIP calls losing your unsold data a low, moderate or high risk and, from a

@@ -364,7 +364,10 @@ licence, so none of its code or text is used.
 * **EDMCModernOverlay** (or the older EDMCOverlay) - optional; the cockpit
   overlay is drawn through its `edmcoverlay` interface when it is installed.
 * **EDDiscovery** - its system database `EDDSystem.sqlite` is read as the
-  local source; nothing is written to it.
+  local source; nothing is written to it. With the FIS switch *Learn from
+  the EDDiscovery archive* (off by default) the FIS also reads your older
+  journal lines from `EDDUser.sqlite` - read only, never the EDSM API key
+  stored in the same file.
 * **Spansh** and **EDSM** - asked over their public web interfaces, in shells
   and only when needed, at most 50 requests per service and UTC day, one at a
   time through one polite gateway (`netgate.py`). The rules are in
