@@ -28,7 +28,7 @@ ARRIVALS = ("FSDJump", "CarrierJump", "Location")
 
 
 def _new(a: int, name: str, t: float) -> Dict[str, Any]:
-    return {"id64": a, "name": name, "first": t, "last": t, "seconds": 0.0, "visits": 0,
+    return {"id64": a, "name": name, "first": t, "seconds": 0.0, "visits": 0,
             "honk": 0, "scans": set(), "maps": 0, "bio": 0, "landings": 0}
 
 
@@ -83,7 +83,7 @@ def visits(evs: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
     return out
 
 
-def _estimates(db: Any, fid: Optional[str]) -> Dict[int, Dict[str, Any]]:
+def estimates(db: Any, fid: Optional[str]) -> Dict[int, Dict[str, Any]]:
     """The plugin's kept estimates of one commander (none before 5.0)."""
     if db is None or not fid:
         return {}
@@ -106,7 +106,7 @@ def _median(xs: List[float]) -> Optional[float]:
 def build(evs: List[Dict[str, Any]], db: Any = None, fid: Optional[str] = None, keep: int = 40) -> Dict[str, Any]:
     """The card: the last `keep` systems you worked in, newest first, with
     the estimate where one was kept, and the median of time / estimate."""
-    est = _estimates(db, fid)
+    est = estimates(db, fid)
     rows = []
     for s in visits(evs).values():
         work = s["maps"] + s["bio"] + s["landings"] + s["honk"]
@@ -125,3 +125,14 @@ def build(evs: List[Dict[str, Any]], db: Any = None, fid: Optional[str] = None, 
     return {"systems": rows[:keep], "n": len(rows), "hours": round(sum(r["minutes"] for r in rows) / 60.0, 1),
             "median_min": _median([r["minutes"] for r in rows]),
             "ratio": _median(with_est), "ratio_n": len(with_est)}
+
+
+def here(v: Optional[Dict[str, Any]], est: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """SYSTEM: this system so far (visits()) against its kept estimate."""
+    if v is None and est is None:
+        return None
+    sec = v["seconds"] if v else 0.0
+    return {"minutes": round(sec / 60.0, 1), "visits": v["visits"] if v else 0,
+            "maps": v["maps"] if v else 0, "bio": v["bio"] if v else 0, "landings": v["landings"] if v else 0,
+            "estimate": round(est["total_s"] / 60.0, 1) if est else None,
+            "ratio": round(sec / est["total_s"], 2) if est and est["total_s"] and sec else None}

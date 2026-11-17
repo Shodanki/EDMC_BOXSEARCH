@@ -190,7 +190,21 @@ class App:
         out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
             self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om,
             skip_arrival=self.cfg.skip_arrival, archive=self.archive, fid=self.fid()))
-        return self._with_places(self._with_favourites(self._with_carrier(out, id64)), id64)
+        out = self._with_places(self._with_favourites(self._with_carrier(out, id64)), id64)
+        try:
+            out = dict(out, time_here=self._time_here(id64))
+        except Exception:
+            pass
+        return out
+
+    def _time_here(self, id64: int) -> Optional[Dict[str, Any]]:
+        """own-4: the time spent in this system so far and the route's kept
+        estimate (systime)."""
+        from . import systime
+        evs = self.archive.events()
+        v = self.cached("systime:visits", (len(evs), evs[-1].get("timestamp") if evs else None),
+                        lambda: systime.visits(evs))
+        return systime.here(v.get(id64), systime.estimates(self.db, self.fid()).get(id64))
 
     def _with_places(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
         """S2b: what the SYSTEM map draws - your favourite carriers as long as

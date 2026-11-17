@@ -400,6 +400,9 @@ class TestServer(_Base):
         self.assertIn("kinds", js["synthesis"])
         st, js = self.getj("/api/system/current")
         self.assertEqual(js["id64"], fx.SYS_ID)
+        self.assertIn("time_here", js)                          # own-4 (None without visits or estimate)
+        st, js = self.getj("/api/statistics")
+        self.assertIn("systime", js)                            # own-4
         st, js = self.getj("/api/health")
         self.assertFalse(js["ai_at_runtime"])
 

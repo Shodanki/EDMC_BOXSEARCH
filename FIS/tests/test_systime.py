@@ -66,6 +66,14 @@ class SysTimeTest(unittest.TestCase):
             self.assertEqual((out["n"], out["ratio"], out["ratio_n"]), (1, 1.76, 1))
             self.assertIsNone(systime.build(EVS, db, "F2")["ratio"])                 # another commander's
 
+    def test_here(self):
+        v = systime.visits(EVS)
+        h = systime.here(v[2], {"total_s": 1500.0})
+        self.assertEqual((h["minutes"], h["estimate"], h["ratio"], h["maps"], h["visits"]), (50.0, 25.0, 2.0, 2, 2))
+        self.assertEqual(systime.here(None, {"total_s": 600.0})["ratio"], None)     # estimate, no time yet
+        self.assertEqual(systime.here(v[2], None)["estimate"], None)
+        self.assertIsNone(systime.here(None, None))
+
     def test_without_the_table(self):
         # a plugin database from before 5.0: no estimates, no error
         with tempfile.TemporaryDirectory() as d:

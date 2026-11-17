@@ -285,6 +285,15 @@ function renderSide() {
     title: t("Each scan says how far the body is from the arrival star. Within 1 % of its own orbit counts as confirmed; more than 5 % off, the body is placed at the game's distance."),
     text: t("positions checked {n}/{m}", { n: kw.ok, m: kw.checked })
       + (kw.trusted ? " · " + t("{k} placed by the game's distance", { k: kw.trusted }) : "") }));
+  // own-4: the time spent here so far against the route's first estimate after the FSS
+  const th = sys.time_here;
+  if (th && (th.minutes || th.estimate)) {
+    const hm = (m) => Math.floor(m / 60) + ":" + String(Math.round(m % 60)).padStart(2, "0");
+    head.push(el("div", { class: th.ratio > 1.5 ? "c-amber" : "c-dim",
+      title: t("From your journals: arrival to the next jump, pauses of 30 min left out. The estimate is the route's first one after your FSS (STATISTICS > TIME PER SYSTEM)."),
+      text: t("here {h} h", { h: hm(th.minutes) }) + (th.estimate ? " · " + t("estimate ~{e} h", { e: hm(th.estimate) }) : "")
+        + (th.ratio ? " · ×" + fmt(th.ratio, 1) : "") }));
+  }
   if (sys.carrier) {
     const c = sys.carrier, at = c.body_id !== null && c.body_id !== undefined && sys.bodies.find((b) => b.body_id === c.body_id);
     head.push(el("div", { class: "c-amber", text: (c.expected ? t("Your carrier {n} should be here", { n: c.name || "" })
