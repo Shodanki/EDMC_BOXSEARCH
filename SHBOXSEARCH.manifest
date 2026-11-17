@@ -31,7 +31,7 @@ c1907579bc6cd5b4af60bb1c2977549805e7d295952f5c26c82abe50aff4b034  FIS/fis/server
 6840bf129dd8851768da10060abebb19c35e122de28ed98c08eabb15da80f38b  FIS/fis/shipview.py
 f2a7a1e85a16e4c6d7ecf13e8d13b23fa8e7edcbd7c6ac01bade84af595a25de  FIS/fis/stats.py
 ae3fccc2946c73c810d16fe04ac0ce1b1eb2e9c69eb1a88898c9240fd2fc63e3  FIS/fis/synthesis.py
-8a57e4a9e65ea83192a3d3cde4179b1826e1799d9ad6f71f76fddf3365a617ac  FIS/fis/unsold.py
+f4784bfbe6b29dd6e7760b38146bf78c5dabcc4e0f3e9a47afd6029648c8b2c5  FIS/fis/unsold.py
 4af0e521a3f616ad9b85223d2db4d95d38a1e6f941880d965dd41b904473d64c  FIS/fis/vehicletanks.py
 70a881d99be51fd9289e4155502f6e921dccc3f37d0f0203de17093ab828357e  FIS/fis/vendor/SOURCE.md
 c00ac308d3cabbea1e7a4d8c3cb8cbd4e912d18404b82c9001a2ada22b13ab69  FIS/fis/vendor/__init__.py
@@ -44,7 +44,7 @@ c00ac308d3cabbea1e7a4d8c3cb8cbd4e912d18404b82c9001a2ada22b13ab69  FIS/fis/vendor
 e86e6e79a5947ec84bf39ae3ad7c0f6c66e07d0af55fe0fb29d996023e35126d  FIS/web/js/api.js
 31fe9760caac23fcf99c6106ce48838bb402b0e22630bc8fd03142555709219b  FIS/web/js/app.js
 5ffb2f461a0c4eb44c4e0f356eeedca5d7a0634a75ba1657e7cc22d00e9e2d52  FIS/web/js/fullscreen.js
-d5624f5aab6190905da39ec58e376c3b9c2f09dc39ee7c3766040911c7c91665  FIS/web/js/i18n.js
+0b85a4b28c39b6cfc80d79403ad0f4741b2b888dccdeb261eaa4f55ea4785286  FIS/web/js/i18n.js
 86bce0a66756e1bc33f88754f6ce5d571183da8e4a0d396bf162173483a1e564  FIS/web/js/layout.js
 df42c888e35d9c43527a37423a38ff2e5d990cc86837022bf051ff00a47efe53  FIS/web/js/theme-boot.js
 43b5d469a5a7a10de6038f5286467c9581282b9d7793a8395ed5e7d979ddeb12  FIS/web/js/ui.js
@@ -61,7 +61,7 @@ dc492bbf0487c68d206c83b218695a1f7ecf0ad9e34bf49b96065d92351b62ed  FIS/web/js/vie
 514dbd693baa9700607a6eb80e414747b536e05709f16bf72cd2fb480a0a0375  FIS/web/js/views/rhino.js
 ca808b6d81c3778c03e75fc869ec3db754d2cf426055b91718859ef247b7c57f  FIS/web/js/views/scene.js
 3733ea1cb8507fe77f5faeda7eae5ae91b9bdedd9eb66e48837c6fc3e3605780  FIS/web/js/views/settings.js
-58ed8477decaaafe679fc7acbf874ebebaf06b01ecf64e2b136ec910d409e5fd  FIS/web/js/views/ship.js
+f5cf00fd2cb132cf5b0c2a62513b075335f4fee388d8b57dcbb8326182657978  FIS/web/js/views/ship.js
 ece774e7b4f86cee8d18384377c99816a61874266d487d1fcdcc3c84c5ad6c9c  FIS/web/js/views/statistics.js
 a002ab15d5c387f85fe60267775b1558d0bc8b2bde30b587394ce6616efe5f3f  FIS/web/js/views/surface.js
 ed5769ef9f711fbde3aa93894551a7ab60b63eed8c0b7ee806d305aec245b94f  FIS/web/js/views/tactical.js

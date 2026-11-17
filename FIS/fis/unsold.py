@@ -40,15 +40,21 @@ their own on the FIS settings page (fis.ini, section [fis], unsold_*).
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from .live import parse_ts
+from .live import parse_ts, star_pos
 
 BONUS_FACTOR = 4                 # first footfall: 4x the base value on top (own sales)
 WARN_CR = 50_000_000             # from here on the sheet advises to sell
 WARN_SYSTEMS = 100
 RISK_MODERATE_CR = 50_000_000    # user 11.11.: below this a loss is a low risk
 RISK_HIGH_CR = 100_000_000       # ... from here on a real one
+# 5.0: a station buys cartographic data only from systems at least this far
+# away (the user's own sales: none closer than 25 ly in 7 station sales); a
+# fleet carrier with Universal Cartographics buys it at any distance (23 of
+# 26 carrier sales held systems under 20 ly, often the carrier's own)
+STATION_MIN_LY = 20.0
 # the defaults of the settings page (fis.ini unsold_*), in M Cr / systems
 DEFAULT_LIMITS = {"sell_mcr": WARN_CR // 1_000_000, "sell_systems": WARN_SYSTEMS,
                   "moderate_mcr": RISK_MODERATE_CR // 1_000_000, "high_mcr": RISK_HIGH_CR // 1_000_000}
@@ -86,11 +92,35 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
                             "mapped": sum(len(v) for v in mapped.values()),
                             "bodies": sum(len(v) for v in scanned.values()),
                             "since": u.last_sale["exploration"]},
+            "sell": _where_to_sell(u, systems),
             "lost_last": u.lost, "advice": advice,
             "warn_cr": warn_cr, "warn_systems": warn_systems,
             # what a loss would cost and what is irreplaceable
             "risk": risk, "first_systems": len(first_sys), "footfall_bio": ff_bio,
             "risk_cr": {"moderate": risk_moderate, "high": risk_high}}
+
+
+def _where_to_sell(u: "_Unsold", systems: Set[str]) -> Dict[str, Any]:
+    """5.0: where the exploration data can be sold from here. A station takes
+    only systems at least STATION_MIN_LY away; a carrier with Universal
+    Cartographics takes everything. Systems without a known position are
+    counted apart - never guessed."""
+    near, far, unknown = 0, 0, 0
+    for nm in systems:
+        pos = u.pos.get(nm)
+        if pos is None or u.here is None:
+            unknown += 1
+        elif math.dist(pos, u.here) < STATION_MIN_LY:
+            near += 1
+        else:
+            far += 1
+    carrier = None
+    if u.carrier_system:
+        cpos = u.pos.get(u.carrier_system)
+        carrier = {"system": u.carrier_system, "uc": u.carrier_uc,
+                   "ly": round(math.dist(cpos, u.here), 1) if cpos and u.here else None}
+    return {"min_ly": STATION_MIN_LY, "station_now": far, "too_near": near, "no_position": unknown,
+            "carrier": carrier}
 
 
 def _priced(bio: List[Dict[str, Any]], values: Dict[str, Dict[str, int]]
@@ -128,11 +158,31 @@ class _Unsold:
         self.first_sys: Set[str] = set()              # discovered first by you, not sold yet
         self.no_foot: Set[Any] = set()                # (address, body name): nobody walked there
         self.first_foot: Set[Any] = set()             # (address, body id): your first footfall
+        self.pos: Dict[str, List[float]] = {}         # system -> StarPos (5.0)
+        self.here: Optional[List[float]] = None       # the last known position
+        self.carrier_system: Optional[str] = None     # where the own carrier stands
+        self.carrier_uc = False                       # ... and whether it buys cartographic data
 
     def arrival(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
-        """A system's name by its address."""
+        """A system's name by its address, and where it lies."""
         if e.get("SystemAddress") is not None:
             self.names[e["SystemAddress"]] = e.get("StarSystem")
+        pos = star_pos(e.get("StarPos"))
+        if pos is not None:
+            self.here = pos
+            if e.get("StarSystem"):
+                self.pos[e["StarSystem"]] = pos
+
+    def carrier_at(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """CarrierLocation (at login): where the own fleet carrier stands."""
+        if e.get("CarrierType", "FleetCarrier") == "FleetCarrier" and e.get("StarSystem"):
+            self.carrier_system = e["StarSystem"]
+
+    def carrier_stats(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
+        """CarrierStats: is Universal Cartographics (crew role Exploration) on board and on?"""
+        crew = [c for c in e.get("Crew") or [] if c.get("CrewRole") == "Exploration"]
+        if crew:
+            self.carrier_uc = bool(crew[0].get("Activated")) and crew[0].get("Enabled") is not False
 
     def organic(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
         """A species analysed: carried until sold."""
@@ -204,6 +254,7 @@ class _Unsold:
 
 # journal event -> its _Unsold handler (4.12)
 _UNSOLD = {
+    "CarrierLocation": _Unsold.carrier_at, "CarrierStats": _Unsold.carrier_stats,
     "FSDJump": _Unsold.arrival, "Location": _Unsold.arrival, "CarrierJump": _Unsold.arrival,
     "ScanOrganic": _Unsold.organic,
     "Disembark": _Unsold.disembark,

@@ -138,6 +138,22 @@ function render() {
     el("div", { class: "sh-col sh-right" }, target(), unsold(), report(), hazards(), engineer(), controlsFrame())));
 }
 
+// 5.0: where the exploration data can be sold - a station only takes systems
+// at least 20 ly away, a carrier with Universal Cartographics takes it all
+function sellWhere(U, X) {
+  const S = U.sell;
+  if (!S || !X.systems || !(S.too_near || U.advice === "sell")) return [];
+  const out = [];
+  if (S.too_near) out.push(el("div", { class: "c-amber small", text: t("A station here buys {a} of {s} systems - {n} lie within {ly} ly, a station takes data only from {ly} ly away.", { a: S.station_now, s: X.systems, n: S.too_near, ly: fmt(S.min_ly, 0) }) }));
+  const C = S.carrier;
+  let line = t("A carrier with Universal Cartographics buys all of it, at any distance.");
+  if (C && C.uc) line += " " + t("Your carrier: {sys}", { sys: C.system }) + (C.ly != null ? " · " + fmt(C.ly, 0) + " ly" : "");
+  else if (C) line += " " + t("Your carrier ({sys}) has Universal Cartographics switched off.", { sys: C.system });
+  out.push(el("div", { class: "c-dim small", text: line }));
+  if (S.no_position) out.push(el("div", { class: "c-dim small", text: t("{n} systems without a known position - not counted.", { n: S.no_position }) }));
+  return out;
+}
+
 // ------------------------------------------------------------ unsold data (M4)
 // What a destroyed ship would cost in data: exobiology since it was sold
 // (valued from your own sales), exploration data only counted.
@@ -171,6 +187,7 @@ function unsold() {
     U.footfall_bio ? t("{n} species on bodies of your first footfall", { n: U.footfall_bio }) : null].filter(Boolean).join(" · ")));
   rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; the ×5 bonus only on bodies of your first footfall; exploration data only counted.") }));
   if (U.advice === "sell") rows.push(el("div", { class: "c-red", text: t("A lot at stake - consider selling at the next station or carrier with Vista Genomics / Universal Cartographics.") }));
+  rows.push(...sellWhere(U, X));
   return frame(t("UNSOLD DATA"), B.value ? "≈ " + Mcr(B.value) : "", rows, { cls: "sh-unsold", appear: false,
     kind: U.risk === "high" ? "alert" : U.advice || U.risk === "moderate" ? "warn" : "" });
 }

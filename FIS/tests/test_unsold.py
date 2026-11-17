@@ -148,5 +148,40 @@ class TestUnsold(unittest.TestCase):
         self.assertEqual(unsold.build_unsold(sold, VALUES)["first_systems"], 0)
 
 
+class TestWhereToSell(unittest.TestCase):
+    """5.0: a station buys only systems 20 ly away or more; a carrier with
+    Universal Cartographics buys all of it (the user's own sales, 17.11.)."""
+
+    def _trip(self):
+        def scan(t, sysname, addr):
+            return ev(t, "Scan", StarSystem=sysname, SystemAddress=addr, BodyID=1, ScanType="Detailed")
+        return [ev("08:00", "FSDJump", StarSystem="Far", SystemAddress=1, StarPos=[0.0, 0.0, 0.0]),
+                scan("08:01", "Far", 1),
+                ev("08:10", "FSDJump", StarSystem="Near", SystemAddress=2, StarPos=[100.0, 0.0, 0.0]),
+                scan("08:11", "Near", 2),
+                ev("08:20", "FSDJump", StarSystem="Here", SystemAddress=3, StarPos=[110.0, 0.0, 0.0]),
+                scan("08:21", "Here", 3)]
+
+    def test_station_only_beyond_20_ly(self):
+        s = unsold.build_unsold(self._trip())["sell"]
+        self.assertEqual((s["station_now"], s["too_near"], s["no_position"]), (1, 2, 0))
+        self.assertEqual(s["min_ly"], 20.0)
+        self.assertIsNone(s["carrier"])
+
+    def test_own_carrier_with_cartographics(self):
+        evs = [ev("07:00", "CarrierStats", Crew=[{"CrewRole": "Exploration", "Activated": True, "Enabled": True}]),
+               ev("07:01", "CarrierLocation", CarrierType="FleetCarrier", StarSystem="Far", SystemAddress=1)]
+        c = unsold.build_unsold(evs + self._trip())["sell"]["carrier"]
+        self.assertEqual((c["system"], c["uc"], c["ly"]), ("Far", True, 110.0))
+        off = [ev("07:00", "CarrierStats", Crew=[{"CrewRole": "Exploration", "Activated": True, "Enabled": False}])]
+        self.assertFalse(unsold.build_unsold(off + evs[1:] + self._trip())["sell"]["carrier"]["uc"])
+
+    def test_no_position_is_not_guessed(self):
+        evs = [ev("08:00", "FSDJump", StarSystem="Blank", SystemAddress=9),
+               ev("08:01", "Scan", StarSystem="Blank", SystemAddress=9, BodyID=1, ScanType="Detailed")]
+        s = unsold.build_unsold(self._trip() + evs)["sell"]
+        self.assertEqual(s["no_position"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
