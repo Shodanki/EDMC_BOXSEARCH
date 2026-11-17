@@ -72,5 +72,49 @@ cfg[state.CFG["route_all"]] = True
 routewin._rebuild_route()
 check(ST.route.stops and not ST.route_full, "route every body, always: the bodies all the same")
 
+print("bio found by the DSS keeps the stop open (test finding k-brain, 17.11.)")
+cfg[state.CFG["route_all"]] = False
+cfg[state.CFG["route_done_tour"]] = True
+ST.cur_id64, ST.cur_system = 78, "Bio Sys"
+B = "Bio Sys A 5"
+ST.db.ingest_journal_event({"event": "FSDJump", "timestamp": T % 20, "StarSystem": "Bio Sys",
+                            "SystemAddress": 78, "StarPos": [4.0, 5.0, 6.0]})
+ST.db.ingest_journal_event({"event": "Scan", "timestamp": T % 21, "ScanType": "AutoScan", "StarSystem": "Bio Sys",
+                            "SystemAddress": 78, "BodyID": 0, "BodyName": "Bio Sys", "StarType": "K",
+                            "DistanceFromArrivalLS": 0.0, "WasDiscovered": True})
+ST.db.ingest_journal_event({"event": "Scan", "timestamp": T % 22, "ScanType": "Detailed", "StarSystem": "Bio Sys",
+                            "SystemAddress": 78, "BodyID": 11, "BodyName": B,
+                            "PlanetClass": "High metal content body", "Landable": True,
+                            "DistanceFromArrivalLS": 44.0, "WasDiscovered": True, "WasMapped": False,
+                            "Parents": [{"Star": 0}]})
+routewin._rebuild_route()
+check(ST.route is not None and any(s.body.name == B for s in ST.route.stops), "the planet is a stop (DSS)")
+# the game's order: SAAScanComplete, then SAASignalsFound in the same second
+ST.db.ingest_journal_event({"event": "SAAScanComplete", "timestamp": T % 23, "SystemAddress": 78,
+                            "BodyName": B, "BodyID": 11, "ProbesUsed": 4, "EfficiencyTarget": 6})
+routewin._route_auto_tick(B, "mapped")
+check(11 in ST.route_done, "mapped: ticked off while no bio is known yet")
+ST.db.ingest_journal_event({"event": "SAASignalsFound", "timestamp": T % 23, "SystemAddress": 78,
+                            "BodyName": B, "BodyID": 11,
+                            "Signals": [{"Type": "$SAA_SignalType_Biological;", "Count": 1}],
+                            "Genuses": [{"Genus": "$Codex_Ent_Brancae_Name;", "Genus_Localised": "Brain Trees"}]})
+routewin._route_reopen_bio(B)
+check(11 not in ST.route_done, "the DSS found Brain Trees: the stop is back on the list")
+check(not any(r["route_done"] for r in ST.db.bodies_of(78) if r["body_id"] == 11), "... and in the database")
+routewin._rebuild_route()
+from SHBOXSEARCH import overlay  # noqa: E402
+lines = overlay.targets_lines(ST.route, ST.route_done)
+row = [ln for ln in lines if "A 5" in ln[0] or B in ln[0]]
+check(row and "BIO" in row[0][0] and row[0][1] == overlay.COL["warn"],
+      "NEXT TARGETS shows it amber with BIO: %r" % (row,))
+routewin._route_auto_tick(B, "approach")
+check(11 not in ST.route_done, "approach and landing do not tick it off while bio is open")
+ST.db.ingest_journal_event({"event": "ScanOrganic", "timestamp": T % 30, "ScanType": "Analyse",
+                            "SystemAddress": 78, "Body": 11, "Genus": "$Codex_Ent_Brancae_Name;",
+                            "Genus_Localised": "Brain Trees", "Species": "$Codex_Ent_Brancae_04_Name;",
+                            "Species_Localised": "Ostrinum Brain Tree"})
+routewin._route_auto_tick(B, "sampled")
+check(11 in ST.route_done, "the species analysed: now it is ticked off")
+
 print("route done: %s" % ("all OK" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)

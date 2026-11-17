@@ -1777,6 +1777,14 @@ class SystemDB:
         genera = [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()]
         return open_bio(r["sig_bio"] or 0, genera, analysed, seen)["open"]
 
+    def bio_left_of(self, sys_id64: int, body_id: int, fid: Optional[str]) -> int:
+        """Biological signals still to sample on one body for one commander
+        (biosig.open_bio, with the species the codex saw there)."""
+        row = next((r for r in self.bodies_for(sys_id64, fid) if r["body_id"] == body_id), None)
+        if row is None:
+            return 0
+        return self._bio_left(row, self.codex_species(sys_id64).get(body_id, ()))
+
     def bodies_for(self, sys_id64: int, fid: Optional[str]) -> List[Any]:
         """The bodies of a system as one commander explored them: the shared
         knowledge (class, orbit, signals ...) with that commander's scanned /

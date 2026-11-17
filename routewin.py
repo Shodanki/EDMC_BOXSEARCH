@@ -590,6 +590,11 @@ def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
         return
     for st in ST.route.stops:
         if st.body.name == body_name and st.body.body_id not in ST.route_done:
+            if _bio_open(st.body.body_id):
+                # 5.0 (k-brain): bio still to sample - the stop stays on the
+                # list, amber in NEXT TARGETS, until the last species is done
+                logger.debug("route | %s reached (%s), bio still open", st.body.short, reason)
+                return
             ST.route_done.add(st.body.body_id)
             if ST.db and ST.cur_id64:
                 try:
@@ -601,6 +606,44 @@ def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
                         st.body.short, reason, len(ST.route_done),
                         len(ST.route.stops))
             _route_progress_feedback(st)
+            uithread._ui(_route_window_refresh)
+            uithread._ui(panel._refresh)
+            return
+
+
+def _bio_open(body_id: int) -> int:
+    """Bio signals left on a body of this system for the commander in view."""
+    if not (ST.db and ST.cur_id64):
+        return 0
+    try:
+        with ST.lock:
+            return ST.db.bio_left_of(ST.cur_id64, body_id, ST.db.view_fid(CURRENT))
+    except Exception:
+        logger.debug("bio left failed", exc_info=True)
+        return 0
+
+
+def _route_reopen_bio(body_name: Optional[str]) -> None:
+    """
+    SAASignalsFound: a stop ticked off but with bio found by the DSS goes
+    back on the list.
+
+    The game writes SAAScanComplete before SAASignalsFound, so the mapping
+    tick came before anyone knew of the signal - the Brain Trees found by
+    the DSS on 17.11. never showed in NEXT TARGETS (test finding k-brain).
+    """
+    if not (body_name and ST.route):
+        return
+    for st in ST.route.stops:
+        bid = st.body.body_id
+        if st.body.name == body_name and bid in ST.route_done and _bio_open(bid):
+            ST.route_done.discard(bid)
+            try:
+                with ST.lock:
+                    ST.db.set_route_done(ST.cur_id64, bid, False)
+            except Exception:
+                logger.exception("could not store the reopened stop")
+            logger.info("route | %s back on the list: bio found by the DSS", st.body.short)
             uithread._ui(_route_window_refresh)
             uithread._ui(panel._refresh)
             return

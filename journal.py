@@ -328,6 +328,8 @@ def _on_body_scan(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, An
     if ev in ("SAAScanComplete", "ScanOrganic"):
         routewin._route_auto_tick(entry.get("BodyName") or entry.get("Body"),
                                   "mapped" if ev == "SAAScanComplete" else "sampled")
+    if ev == "SAASignalsFound":
+        routewin._route_reopen_bio(entry.get("BodyName"))
     if ev in ("FSSAllBodiesFound", "SAAScanComplete", "ScanOrganic",
               "FSSBodySignals", "SAASignalsFound"):
         planning._request_route()
