@@ -34,10 +34,16 @@ system. The frame of an orbit is
 and the body sits at B * (x, y, 0), its place in its own orbital plane.
 The children of a body (moons) orbit in its equator, not in its orbital
 plane: their frame is B * Rx(AxialTilt) of the parent (K2).
-Measured against the game's DistanceFromArrivalLS on 1,980 bodies of the
-developer's journals, this puts 93 % of all bodies within 1 % of their own
+The planets around a pair of stars (children of a star barycentre that
+carry no star) orbit in the plane of the pair, measured from the periapsis
+of its first star (the lower BodyID): their frame is turned by that star's
+Rz(-AscendingNode) * Rx(Inclination) * Rz(-Periapsis) (KR1).
+Measured against the game's DistanceFromArrivalLS on 1,989 bodies of the
+developer's journals, this puts 96 % of all bodies within 1 % of their own
 orbit (one shared frame up to 4.12: 40 %), the planets of a companion star
-100 % (1 %), the moons 87 % (2 %). See tests/kepler_reality.py.
+100 % (1 %), the moons 97 % (2 %), the planets around a star pair that
+orbits another barycentre 97 % (before KR1: 15 %). See
+tests/kepler_reality.py.
 
 Cost model
 ----------
@@ -419,10 +425,69 @@ def equator_pole(b: Body) -> Optional[Tuple[float, float, float]]:
     return (f[0][2], f[1][2], f[2][2])
 
 
-def _resolve_orbits(bodies: Dict[int, Body]) -> None:
+def _has_star(b: Body, kids: Dict[int, List[Body]], depth: int = 0) -> bool:
+    """True for a star or a barycentre with a star below it."""
+    if b.kind == "Star":
+        return True
+    if b.kind != "BaryCentre" or depth > 8:
+        return False
+    return any(_has_star(k, kids, depth + 1) for k in kids.get(b.body_id, ()))
+
+
+def _is_pair(a: Body, b: Body) -> bool:
+    """The two orbits of a pair around their barycentre: one plane, the
+    periapses half a turn apart."""
+    if not (a.orbit and a.orbit[0] and b.orbit and b.orbit[0]):
+        return False
+    inc, peri, node = a.orbit[2] or 0.0, a.orbit[3] or 0.0, a.orbit[4] or 0.0
+    turn = (peri - (b.orbit[3] or 0.0)) % 360.0
+    return (abs(inc - (b.orbit[2] or 0.0)) < 0.01 and abs(node - (b.orbit[4] or 0.0)) < 0.01
+            and abs(turn - 180.0) < 0.1)
+
+
+def _pair_turns(bodies: Dict[int, Body]) -> Dict[int, Matrix]:
+    """
+    KR1 (5.0): the extra turn of the children of a star pair that carry no
+    star - planets and planet pairs around a barycentre of two stars.
+
+    They orbit in the plane of the pair, measured from the periapsis of its
+    first star (the lower BodyID): the frame of their parent turned by that
+    star's Rz(-AscendingNode) * Rx(Inclination) * Rz(-Periapsis). Without
+    it a planet around a star pair that orbits another barycentre missed
+    the game's distance by a median of 25 % of its orbit (Synuefe MQ-M
+    b40-0 ABCD 2: 392 LS). The parent may be missing (the root barycentre
+    has no Scan); then only the signature of a pair counts.
+    Returns {body_id of the child: turn}.
+    """
+    kids: Dict[int, List[Body]] = {}
+    for b in bodies.values():
+        if b.parent_id is not None:
+            kids.setdefault(b.parent_id, []).append(b)
+    out: Dict[int, Matrix] = {}
+    for pid, children in kids.items():
+        parent = bodies.get(pid)
+        if parent is not None and parent.kind != "BaryCentre":
+            continue
+        stars = sorted((c for c in children if _has_star(c, kids)), key=lambda c: c.body_id)
+        if len(stars) != 2 or not _is_pair(stars[0], stars[1]):
+            continue
+        _sma, _ecc, inc, peri, node = stars[0].orbit[:5]
+        turn = orbit_basis(inc, peri, node)
+        for c in children:
+            if not _has_star(c, kids):
+                out[c.body_id] = turn
+    return out
+
+
+def _resolve_orbits(bodies: Dict[int, Body],
+                    turns: Optional[Dict[int, Matrix]] = None) -> None:
     """Absolute positions from parent-relative orbits, every orbit in the
-    frame of its parent; a body without its parent sits at its arrival
-    distance on one axis."""
+    frame of its parent (a planet around a star pair also turned into the
+    plane of the pair, KR1; `turns` from _pair_turns, computed here when
+    None); a body without its parent sits at its arrival distance on one
+    axis."""
+    if turns is None:
+        turns = _pair_turns(bodies)
     done: Dict[int, Tuple[float, float, float]] = {}
 
     def resolve(bid: int, depth: int = 0) -> Tuple[float, float, float]:
@@ -440,6 +505,8 @@ def _resolve_orbits(bodies: Dict[int, Body]) -> None:
         else:
             base = resolve(b.parent_id, depth + 1)
             frame = _child_frame(bodies[b.parent_id])
+        if bid in turns:
+            frame = _mat_mul(frame, turns[bid])
         _chain_orbit(b, frame)
         p = (base[0] + b.rel[0], base[1] + b.rel[1], base[2] + b.rel[2])
         done[bid] = p
@@ -602,6 +669,7 @@ _CHECKS: Dict[tuple, Dict[int, Tuple[float, float]]] = {}
 def _kepler_check(rows: List[Dict]) -> Dict[int, Tuple[float, float]]:
     """kepler_check without the cache."""
     full = _build_bodies(rows, None)
+    turns = _pair_turns(full)           # from all bodies: the stars of a pair may not be in a chain
     anchor = _anchor(full)
     anchor_ids = _chain_ids(full, anchor.body_id) if anchor is not None else []
     out: Dict[int, Tuple[float, float]] = {}
@@ -611,7 +679,7 @@ def _kepler_check(rows: List[Dict]) -> Dict[int, Tuple[float, float]]:
             continue
         ids = set(_chain_ids(full, r["body_id"])) | set(anchor_ids)
         sub = _build_bodies([x for x in _rows_at(rows, float(ts)) if x.get("body_id") in ids], None)
-        _resolve_orbits(sub)
+        _resolve_orbits(sub, turns)
         _shift_to_arrival(sub)
         p = sub[r["body_id"]].pos or (0.0, 0.0, 0.0)
         err = abs(math.sqrt(p[0] ** 2 + p[1] ** 2 + p[2] ** 2) - arrival)

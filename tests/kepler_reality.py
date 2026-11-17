@@ -23,7 +23,9 @@ orbit off). Since 5.0 every level is placed in the frame of its parent (K1),
 and moons in the equator of their planet (K2: the frame turned by the
 planet's AxialTilt). Before K2 the moons of tilted planets kept what looked
 like a fixed offset per planet (El Tio 4, tilt -170 degrees: -34; Lalande
-11206 A 1, -164: -50; Synuefe OW-V c18-2 A 3, 104.5: +5).
+11206 A 1, -164: -50; Synuefe OW-V c18-2 A 3, 104.5: +5). Since KR1 the
+planets around a pair of stars orbit in the plane of the pair, measured from
+the periapsis of its first star (Synuefe MQ-M b40-0 ABCD 2 was 392 LS off).
 
     python tests/kepler_reality.py      (from the plugin folder)
 """
@@ -43,6 +45,8 @@ LHS_129 = 670954366377
 EL_TIO = 525890193771
 LALANDE = 1183297082050
 OW_V = 634480595618
+MQ_M = 677664728409         # Synuefe MQ-M b40-0: two star pairs, the root barycentre has no Scan
+RK_N = 2876956550185        # NGC 2232 Sector RK-N b7-1: planets around the arrival star's pair
 BAR = 0.01          # 1 % of the body's own semi-major axis
 
 
@@ -74,7 +78,7 @@ class KeplerReality(unittest.TestCase):
         for e in _events():
             db.ingest_journal_event(e)
         cls.rows = {}
-        for sa in (LHS_129, EL_TIO, LALANDE, OW_V):
+        for sa in (LHS_129, EL_TIO, LALANDE, OW_V, MQ_M, RK_N):
             cls.rows[sa] = [dict(r) for r in db.bodies_for(sa, None)]
         db.close()
 
@@ -83,11 +87,14 @@ class KeplerReality(unittest.TestCase):
         cls.tmp.cleanup()
 
     def error(self, sa, name):
-        """|computed - game| / semi-major axis of the body, at its scan time."""
+        """|computed - game| / semi-major axis of the body, at its scan time.
+        The model alone: resolve_positions would put a body the model misses
+        by more than 5 % onto the game's distance (SK1) and hide the miss."""
         rows = self.rows[sa]
         row = next(r for r in rows if r["name"] == name)
         bodies = sr.bodies_from_rows(_at(rows, row["scan_ts"]), now=None)
-        sr.resolve_positions(bodies)
+        sr._resolve_orbits(bodies)
+        sr._shift_to_arrival(bodies)
         pos = bodies[row["body_id"]].pos
         return abs(math.sqrt(sum(v * v for v in pos)) - row["arrival_ls"]) / (row["sma"] * sr.LS_PER_METRE)
 
@@ -149,11 +156,12 @@ class KeplerReality(unittest.TestCase):
         self.assertLess(abs(pole[2]), 0.5)       # the equator stands almost upright
 
     def test_orbit_line_passes_through_the_body(self):
-        """The orbit drawn in the FIS is the orbit the body sits on."""
-        rows = self.rows[EL_TIO]
-        bodies = sr.bodies_from_rows(rows, now=None)
-        sr.resolve_positions(bodies)
-        for name in ("El Tio 3 b", "El Tio 3 f", "El Tio 5"):
+        """The orbit drawn in the FIS is the orbit the body sits on, also
+        the turned one of a planet around a star pair (KR1)."""
+        for sa, name in ((EL_TIO, "El Tio 3 b"), (EL_TIO, "El Tio 3 f"), (EL_TIO, "El Tio 5"),
+                         (RK_N, "NGC 2232 Sector RK-N b7-1 AB 3"), (MQ_M, "Synuefe MQ-M b40-0 CD 2")):
+            bodies = sr.bodies_from_rows(self.rows[sa], now=None)
+            sr.resolve_positions(bodies)
             b = next(x for x in bodies.values() if x.name == name)
             centre = bodies[b.parent_id].pos
             pts = sr.orbit_points(b, centre, 360)
@@ -167,10 +175,11 @@ class KeplerReality(unittest.TestCase):
         """kepler_check measures the same error as this test. The bodies
         named above lie within the bar; five more of the fixtures do not
         (Lalande 11206 A 4 e/f/A 7 e, 1.6-4.6 % of their orbit; OW-V B 1/B 2,
-        17-19 %), but none of them is 5 % of its arrival distance off, so
-        nothing is moved."""
+        17-19 %; MQ-M b40-0 ABCD 1 c a, 1.2 % of an orbit of 0.034 LS, which
+        is 0.0004 LS and below what the journal's figures can resolve), but
+        none of them is 5 % of its arrival distance off, so nothing is moved."""
         misses = {"Lalande 11206 A 4 e", "Lalande 11206 A 4 f", "Lalande 11206 A 7 e",
-                  "Synuefe OW-V c18-2 B 1", "Synuefe OW-V c18-2 B 2"}
+                  "Synuefe OW-V c18-2 B 1", "Synuefe OW-V c18-2 B 2", "Synuefe MQ-M b40-0 ABCD 1 c a"}
         for sa, rows in self.rows.items():
             bodies = sr.bodies_from_rows(rows, now=None)
             sr.resolve_positions(bodies)
@@ -237,6 +246,45 @@ class KeplerReality(unittest.TestCase):
     def test_moons_ow_v_a_3(self):
         """Synuefe OW-V c18-2 A 3 with its moons a-f (A 3 b and A 3 d, 16.11.)."""
         self.check(OW_V, "Synuefe OW-V c18-2", ["A 3 a", "A 3 b", "A 3 c", "A 3 d", "A 3 e", "A 3 f"])
+
+    # -- planets around a pair of stars (KR1) -------------------------------
+    def test_planets_around_two_star_pairs(self):
+        """MQ-M b40-0: the arrival star A orbits barycentre 1 with B, C and D
+        orbit barycentre 4, and both pairs orbit the root barycentre, which
+        has no Scan. ABCD 1/2 orbit the root (2 was 392 LS off, 18 % of its
+        orbit), CD 1-3 orbit the pair C/D (25-135 %)."""
+        self.check(MQ_M, "Synuefe MQ-M b40-0", ["ABCD 1", "ABCD 2", "CD 1", "CD 2", "CD 3"])
+
+    def test_moons_of_planets_around_a_star_pair(self):
+        """Their moons come along (before KR1: 15 to 320 times their orbit off)."""
+        moons = ["ABCD 1 " + m for m in "abcd"] + ["ABCD 2 " + m for m in "abcdef"]
+        self.check(MQ_M, "Synuefe MQ-M b40-0", moons)
+
+    def test_planets_around_the_arrival_pair(self):
+        """RK-N b7-1: AB 3/AB 4 orbit the barycentre of the arrival star A and
+        B (15-16 % before), AB 1/AB 2 are a planet pair around a barycentre
+        that orbits it (100-140 times their orbit). B's own planets and the
+        far star C stay where they were."""
+        self.check(RK_N, "NGC 2232 Sector RK-N b7-1", ["AB 1", "AB 2", "AB 3", "AB 4", "B", "B 1", "B 6",
+                                                       "C", "C 4 a"])
+
+    def test_pair_turn_needs_a_true_pair(self):
+        """Only the children without a star are turned, and only around two
+        stars in one plane with periapses half a turn apart; with one star
+        of the pair unknown nothing changes."""
+        rows = self.rows[MQ_M]
+        bodies = sr.bodies_from_rows(rows, now=None)
+        turns = sr._pair_turns(bodies)
+        by = {b.name: b.body_id for b in bodies.values()}
+        name = "Synuefe MQ-M b40-0 "
+        for n in ("ABCD 1", "ABCD 2", "CD 1", "CD 2", "CD 3"):
+            self.assertIn(by[name + n], turns)
+        for n in ("A", "B", "C", "D", "A 1", "ABCD 2 a"):
+            self.assertNotIn(by[name + n], turns)
+        one = [r for r in rows if r["name"] != name + "D"]
+        turned = sr._pair_turns(sr.bodies_from_rows(one, now=None))
+        self.assertNotIn(by[name + "CD 1"], turned)
+        self.assertIn(by[name + "ABCD 1"], turned)
 
 
 if __name__ == "__main__":
