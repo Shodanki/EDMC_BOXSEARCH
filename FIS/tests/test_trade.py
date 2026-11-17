@@ -69,6 +69,28 @@ class TradeTest(unittest.TestCase):
         moved = self.evs[:-1] + [{"timestamp": "2026-11-17T11:00:00Z", "event": "Docked", "MarketID": 88}]
         self.assertFalse(trade.build_trade(_Archive(moved), {"status": {"flags": 1}}, self.jd)["docked_here"])
 
+    def test_mean_kept_after_a_carrier(self):
+        # h-tab (17.11.): the last market was a fleet carrier without
+        # MeanPrice and the column was empty - the means stay now
+        path = os.path.join(self.jd, "market_means.json")
+        out = trade.build_trade(_Archive(self.evs), {"status": {"flags": 0}}, self.jd, path)
+        tri = out["rows"][1]
+        self.assertEqual((tri["mean"], tri["mean_from"]["station"], tri["vs_mean"]), (50000, "Test Port", -5))
+        self.assertEqual((out["means"], out["sales"], out["earned"]), (2, 3, 100 * 40000 + 300 * 50000 + 90000))
+        with open(os.path.join(self.jd, "Market.json"), "w", encoding="utf-8") as fh:
+            json.dump({"timestamp": "2026-11-17T12:00:00Z", "MarketID": 99, "StationName": "K7Q-1XZ",
+                       "StationType": "FleetCarrier", "Items": [
+                           {"Name": "$tritium_name;", "Name_Localised": "Tritium", "SellPrice": 30000}]}, fh)
+        out = trade.build_trade(_Archive(self.evs), {"status": {"flags": 0}}, self.jd, path)
+        self.assertEqual((out["rows"][1]["mean"], out["rows"][0]["mean"]), (50000, 40000))
+        # a newer market with a mean replaces it; an older one does not
+        newer = {"timestamp": "2026-11-18T09:00:00Z", "StationName": "New Port",
+                 "Items": [{"Name": "$tritium_name;", "MeanPrice": 51000}]}
+        older = {"timestamp": "2026-11-01T09:00:00Z", "StationName": "Old Port",
+                 "Items": [{"Name": "$tritium_name;", "MeanPrice": 10}]}
+        self.assertEqual(trade.remember_means(path, newer)["tritium"]["mean"], 51000)
+        self.assertEqual(trade.remember_means(path, older)["tritium"]["station"], "New Port")
+
     def test_key(self):
         self.assertEqual(trade.key_of("$lowtemperaturediamond_name;"), "lowtemperaturediamond")
         self.assertEqual(trade.key_of("Tritium"), "tritium")
