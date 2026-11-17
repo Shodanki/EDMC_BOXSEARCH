@@ -36,6 +36,8 @@ jobs:
         run: python tests/fuel_model.py
       - name: resetting a learnt model (marks in FIS/learn_reset.json, replays from the reset on)
         run: python tests/learn_reset.py
+      - name: permit hint (EDD's permit list marks sphere targets, never removes them)
+        run: python tests/permit_hint.py
       - name: database backup self test
         run: python tests/sysdb_selftest.py
       - name: network gateway self test (no network)

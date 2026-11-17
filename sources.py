@@ -35,7 +35,7 @@ import os
 import sqlite3
 import time
 from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 if __package__:     # inside the plugin package (EDMC)
     from .netgate import Gateway
@@ -326,6 +326,7 @@ class EDDiscoverySource(Source):
         self.scale = 128.0
         self.offset = 0x1000000
         self.calibrated = False
+        self._permits: Optional[Set[int]] = None     # PM1, read on first use
         self.reason = "not checked yet"
         self.ref_id64: Optional[int] = None
         self.ref_coords: Optional[Sequence[float]] = None
@@ -503,6 +504,34 @@ class EDDiscoverySource(Source):
         return True, self.reason
 
     FRESH_DAYS = 2.0       # EDD this new counts as "current" (user, 10.11.)
+
+    def permit_ids(self) -> Set[int]:
+        """
+        5.0 PM1: the systems EDDiscovery lists as permit-locked (its table
+        PermitSystems), as id64s. The keys are id64s in the files EDD builds
+        from Spansh's data (its Register names the source; checked on the
+        developer's file 17.11.2026: 2,700 of 2,700 lie in the boxel their
+        number names). Checking each row's position costs 30 s and more in
+        a 19 GB file, so the list is taken as it is when the source is
+        Spansh and left empty otherwise. Read once per run, read only. A
+        hint with its source, never a ban: the game decides.
+        """
+        if self._permits is not None:
+            return self._permits
+        out: Set[int] = set()
+        src = self.freshness()[0] if self.path else None
+        if src and "SPANSH" in str(src).upper():
+            cx = self._connect()
+            try:
+                rows = cx.execute("SELECT edsmid FROM PermitSystems").fetchall() if cx else []
+            except sqlite3.Error:
+                rows = []
+            finally:
+                if cx is not None:
+                    cx.close()
+            out = {int(r[0]) for r in rows if r[0]}
+        self._permits = out
+        return out
 
     def freshness(self) -> Tuple[Optional[str], Optional[float]]:
         """(data source, Unix time of its last system update) from EDD's

@@ -62,6 +62,20 @@ def _selftest() -> int:
         check(e.is_current("spansh", now=ts + 86400) and not e.is_current("edsm", now=ts + 86400),
               "EDD one day old holds Spansh's data, not EDSM's")
         check(not e.is_current("spansh", now=ts + 3 * 86400), "three days old: not current")
+        # PM1: the permit list - taken when the source is Spansh, else empty
+        cx = sqlite3.connect(path)
+        cx.execute("CREATE TABLE PermitSystems (edsmid INTEGER PRIMARY KEY NOT NULL)")
+        cx.executemany("INSERT INTO PermitSystems VALUES (?)", [(10477373803,), (3932277478106,)])
+        cx.commit()
+        cx.close()
+        e = EDDiscoverySource(path)
+        check(e.permit_ids() == {10477373803, 3932277478106}, "permit systems read from EDD (Spansh keys = id64)")
+        cx = sqlite3.connect(path)
+        cx.execute("UPDATE Register SET ValueString='EDSM' WHERE ID='DBSource'")
+        cx.commit()
+        cx.close()
+        check(EDDiscoverySource(path).permit_ids() == set(), "EDSM-built file: no permit list (keys are no id64)")
+        check(EDDiscoverySource(os.path.join(d, "none.sqlite")).permit_ids() == set(), "no file: empty")
     print("failures: %d" % fails)
     return fails
 
