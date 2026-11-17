@@ -88,6 +88,17 @@ const CARDS = [
 
 let root = null, data = null, busy = false;
 let days = Number(localStorage.getItem("fis.stat.days") || "30");
+// 5.0 (night 18.11.): sub-tabs instead of one long page - current state,
+// then the course over time, then rates and times; the learning status
+// keeps its own column on the right. Each pane is a list of rows, each row
+// a list of columns, each column a list of frames: fixed columns that stack
+// their frames, so a short frame no longer stretches to its tall neighbour.
+const PANES = [
+  ["overview", N_("OVERVIEW"), [[["ranks", "EXPLORATION"], ["EXOBIOLOGY", "WEALTH"], ["CARRIER", "MINING", "OTHER"]]]],
+  ["trends", N_("HISTORY"), [[["overTime", "surfaceMaps"], ["firstFinds"], ["perSession"]]]],
+  ["rates", N_("RATES & TIMES"), [[["bioRates"]], [["timePerSystem"]]]],
+];
+let sub = localStorage.getItem("fis.stat.sub") || "overview";
 
 export function mount(r) { root = r; root.classList.add("stat-view"); }
 
@@ -126,17 +137,36 @@ function render() {
   } }, ...SPANS.map(([v, l]) => el("option", { value: String(v), text: t(l) })));
   sel.value = String(days);
   const since = data.since_ts ? new Date(data.since_ts * 1000).toLocaleDateString() : "";
+  if (!PANES.some(([k]) => k === sub)) sub = "overview";
+  const tabs = el("div", { class: "kc-tabs st-tabs" }, ...PANES.map(([k, label]) => el("button", { class: sub === k ? "on" : "",
+    "aria-pressed": sub === k ? "true" : "false", "data-sub": k, text: t(label),
+    onclick: () => { sub = k; localStorage.setItem("fis.stat.sub", k); render(); } })));
   const head = withPopout(frame(t("STATISTICS"), t("as of {d}", { d: new Date(data.ts * 1000).toLocaleString() }), [
-    el("div", { class: "gal-row" }, el("span", { class: "c-dim", text: t("Growth over") }), sel,
-      el("span", { class: "c-green small", text: since ? "+ " + t("since {d}", { d: since }) : "" })),
+    el("div", { class: "gal-row st-headrow" }, el("span", { class: "c-dim", text: t("Growth over") }), sel,
+      el("span", { class: "c-green small", text: since ? "+ " + t("since {d}", { d: since }) : "" }), tabs),
     el("div", { class: "c-dim small", text: t("The game's own numbers, written at every login; the journals reach back to {d}.",
       { d: new Date(data.first_ts * 1000).toLocaleDateString() }) }),
-  ], { appear: false }), "statistics");
+  ], { cls: "st-head", appear: false }), "statistics");
   // the learning status in a column of its own on the right - no scrolling down to it (11.11.)
   const lr = learning();
   root.append(el("div", { class: "stat-wrap" + (lr ? "" : " solo") },
-    el("div", { class: "stat-grid scroll" }, head, ranks(), overTime(), firstFinds(), surfaceMaps(), bioRates(), perSession(), timePerSystem(), ...CARDS.map(card)),
+    el("div", { class: "stat-main" }, head, pane(sub)),
     lr ? el("div", { class: "stat-side scroll" }, lr) : null));
+}
+
+const BUILD = { ranks: () => ranks(), overTime: () => overTime(), firstFinds: () => firstFinds(), surfaceMaps: () => surfaceMaps(),
+  bioRates: () => bioRates(), perSession: () => perSession(), timePerSystem: () => timePerSystem() };
+for (const c of CARDS) BUILD[c[0]] = () => card(c);
+
+/** One sub-tab: its rows of columns; empty frames and columns drop out. */
+function pane(key) {
+  const rows = PANES.find(([k]) => k === key)[2].map((cols) => {
+    const built = cols.map((col) => col.map((k) => BUILD[k]()).filter(Boolean)).filter((col) => col.length);
+    return built.length ? el("div", { class: "st-cols", style: "--n: " + built.length },
+      ...built.map((col) => el("div", { class: "st-col" }, ...col))) : null;
+  }).filter(Boolean);
+  return el("div", { class: "st-pane st-pane-" + key + " scroll" },
+    ...(rows.length ? rows : [el("div", { class: "empty c-dim", text: t("Nothing here yet.") })]));
 }
 
 // L4: what the FIS has learnt from your own data - and where it is still thin
@@ -295,12 +325,15 @@ function bioRates() {
   const rows = [];
   const sect = (title, list) => {
     if (!list.length) return;
-    rows.push(el("div", { class: "c-cyan small st-learn-h", text: title }));
-    for (const g of list) rows.push(el("div", { class: "st-row st-month st-rate", title: t("{b} of {n} landable planets with biological signals; 95 % interval {lo}–{hi} %", { b: g.bio, n: g.n, lo: fmt(g.lo, 1), hi: fmt(g.hi, 1) }) },
+    const box = el("div", { class: "st-rate-sect" }, el("div", { class: "c-cyan small st-learn-h", text: title }));
+    groups.append(box);
+    for (const g of list) box.append(el("div", { class: "st-row st-month st-rate", title: t("{b} of {n} landable planets with biological signals; 95 % interval {lo}–{hi} %", { b: g.bio, n: g.n, lo: fmt(g.lo, 1), hi: fmt(g.hi, 1) }) },
       el("span", { class: "c-dim", text: g.key === "none" ? t("no atmosphere") : g.key }),
       el("span", { class: "lbar" }, el("i", { style: { width: Math.min(100, g.pct) + "%" } })),
       el("span", { class: "num", text: fmt(g.pct, 0) + " % · n " + fmt(g.n, 0) })));
   };
+  const groups = el("div", { class: "st-rate-groups" });
+  rows.push(groups);
   sect(t("by atmosphere"), B.atmo);
   sect(t("by planet class"), B.pclass);
   sect(t("by the system's main star"), B.star);

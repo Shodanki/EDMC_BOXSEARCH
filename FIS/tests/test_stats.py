@@ -158,6 +158,30 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertIn('class: "c-dim small st-row st-reset"', js)
         self.assertIn(".st-learning .st-reset { display: flex;", css)
 
+    def test_sub_tabs_hold_every_frame_once(self):
+        """Night run 18.11.2026: STATISTICS in sub-tabs of fixed columns -
+        every frame in exactly one pane, nothing dropped, labels translated."""
+        import re
+        js, css, i18n = self._read("js", "views", "statistics.js"), self._read("css", "fis.css"), self._read("js", "i18n.js")
+        block = js[js.index("const PANES = ["):js.index("];", js.index("const PANES = ["))]
+        keys = re.findall(r'"([A-Za-z]+)"', re.sub(r'N_\("[^"]*"\)', "", block))
+        panes = ["overview", "trends", "rates"]
+        frames = [k for k in keys if k not in panes]
+        cards = re.findall(r'^  \["([A-Z]+)", N_\(', js, re.M)
+        expected = ["ranks", "overTime", "firstFinds", "surfaceMaps", "bioRates", "perSession", "timePerSystem"] + cards
+        self.assertEqual(sorted(frames), sorted(expected))          # each once, none missing
+        for k in expected[:7]:
+            self.assertIn(k + ": () => " + k + "()", js)
+        for label in ("OVERVIEW", "HISTORY", "RATES & TIMES", "Nothing here yet."):
+            self.assertIn('N_("' + label + '")' if label != "Nothing here yet." else 't("' + label + '")', js)
+            self.assertIn('"' + label + '": "', i18n)
+        # a custom property cannot go through style.foo = ...; it is set as text
+        self.assertIn('style: "--n: " + built.length', js)
+        self.assertIn(".st-cols { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr));", css)
+        self.assertIn("align-items: start; }", css[css.index(".st-cols {"):])
+        # LEDGER and TRADE still use the old grid
+        self.assertIn(".stat-grid { display: grid;", css)
+
 
 if __name__ == "__main__":
     unittest.main()
