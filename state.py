@@ -93,6 +93,7 @@ CFG = {
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
     "overlay_mining": "%s_overlay_mining" % PLUGIN_NAME,
     "overlay_state": "%s_overlay_state" % PLUGIN_NAME,       # 5.0 (own-3): gear, lights, hardpoints
+    "overlay_suit": "%s_overlay_suit" % PLUGIN_NAME,         # 5.0 (own-2): suit heat / cold, time left
     "overlay_backend": "%s_overlay_backend" % PLUGIN_NAME,   # D3: "modern" | "window"
     # 4.12: the situation column (cockpitinfo) - warnings, places, session tally
     "overlay_info_warn": "%s_overlay_info_warn" % PLUGIN_NAME,

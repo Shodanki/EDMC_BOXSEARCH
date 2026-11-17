@@ -17,6 +17,7 @@ import plugin_pkg  # noqa: E402
 plugin_pkg.package()
 from SHBOXSEARCH.overlay import (ANCHORS, COL, CockpitOverlay, briefing_lines)  # noqa: E402
 from SHBOXSEARCH import shipstate as ss  # noqa: E402
+from SHBOXSEARCH import suittemp as st  # noqa: E402
 
 
 def _selftest() -> int:
@@ -94,6 +95,24 @@ def _selftest() -> int:
     check(ov._origin("state") == ANCHORS["top-left"], "own-3: blocks at the bottom - top left")
     ov.hidden = True
     check(not ov.show_state(rl(ship | ss.GEAR)), "own-3: not over a map screen")
+    # 5.0 (own-2): on foot in heat or cold - suit health and time left
+    w = st.SuitWatch()
+    foot = st.ON_FOOT
+    check(w.feed(0, foot, 1.0, 290) == [] and w.feed(0, st.VERY_HOT, 1.0, 900) == [],
+          "own-2: bearable, or hot but not on foot: nothing")
+    first = w.feed(100.0, foot | st.VERY_HOT, 1.0, 812.4)
+    check(first[0] == ("SUIT VERY HOT 812 K - suit takes damage", st.RED) and "no damage measured yet" in first[1][0],
+          "own-2: very hot, no rate yet: %r" % first)
+    w.feed(105.0, foot | st.VERY_HOT, 0.9, 812)
+    lines = w.feed(110.0, foot | st.VERY_HOT, 0.8, 812)      # 2 % per second
+    check(lines[1][0] == "     health 80 % · ~0:40 left (from 10 s)", "own-2: time left at the rate now: %r" % lines)
+    w.feed(140.0, foot | st.VERY_HOT, 0.8, 812)
+    check(w.rate() == (None, 0.0) or w.rate()[0] is None, "own-2: older ticks than 20 s drop out of the rate")
+    check(w.feed(141.0, foot | st.COLD, 0.8, 150)[0] == ("SUIT COLD 150 K - near the limit", st.AMBER),
+          "own-2: cold is amber, near the limit")
+    check(w.feed(142.0, foot, 0.8, 250) == [] and w.samples == [], "own-2: bearable again - gone, rate forgotten")
+    check(w.feed(143.0, foot | st.HOT, None, 400) == [] and w.feed(144.0, "x", 1, 1) == [],
+          "own-2: without health or with junk: nothing")
     print("failures: %d" % fails)
     return fails
 

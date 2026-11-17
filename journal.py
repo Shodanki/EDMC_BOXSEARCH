@@ -24,6 +24,7 @@ from . import journalscan
 from . import miningstat
 from . import overlay
 from . import shipstate
+from . import suittemp
 from . import surfacenav
 from .biopredict import COLONY_RANGE_M, surface_distance_m
 from .procgen import star_pos
@@ -649,14 +650,22 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
         logger.exception("dashboard_entry failed")
 
 
+_SUIT = suittemp.SuitWatch()
+
+
 def _state_overlay(entry: Dict[str, Any]) -> None:
-    """Out of supercruise: gear, lights, hardpoints still out, on the left
-    (shipstate; setting "overlay_state")."""
+    """The left line: out of supercruise gear, lights, hardpoints still out
+    (shipstate, setting "overlay_state"); on foot in heat or cold the suit's
+    health and time left (suittemp, setting "overlay_suit")."""
     ov = getattr(ST, "overlay", None)
-    if ov is None or "Flags" not in entry:
+    if ov is None or ("Flags" not in entry and "Flags2" not in entry):
         return
-    on = ov.enabled and cfg_bool(CFG["overlay_state"], True)
-    ov.show_state(shipstate.reminder_lines(entry["Flags"]) if on else [])
+    lines: List[Any] = []
+    if ov.enabled and cfg_bool(CFG["overlay_suit"], True):
+        lines = _SUIT.feed(time.time(), entry.get("Flags2"), entry.get("Health"), entry.get("Temperature"))
+    if not lines and ov.enabled and cfg_bool(CFG["overlay_state"], True):
+        lines = shipstate.reminder_lines(entry.get("Flags"))
+    ov.show_state(lines)
 
 
 def _status_fuel(entry: Dict[str, Any]) -> None:
