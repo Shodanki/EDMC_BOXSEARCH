@@ -135,7 +135,7 @@ function render() {
   // the learning status in a column of its own on the right - no scrolling down to it (11.11.)
   const lr = learning();
   root.append(el("div", { class: "stat-wrap" + (lr ? "" : " solo") },
-    el("div", { class: "stat-grid scroll" }, head, ranks(), overTime(), firstFinds(), surfaceMaps(), bioRates(), perSession(), ...CARDS.map(card)),
+    el("div", { class: "stat-grid scroll" }, head, ranks(), overTime(), firstFinds(), surfaceMaps(), bioRates(), perSession(), timePerSystem(), ...CARDS.map(card)),
     lr ? el("div", { class: "stat-side scroll" }, lr) : null));
 }
 
@@ -324,6 +324,34 @@ function perSession() {
     el("span", { class: "num small", text: P.valued ? "~" + value(s.value_h, "cr") + "/h" : "" })));
   rows.push(el("div", { class: "c-dim small", text: t("Value gathered, not sold: the formula's estimate of the bodies you scanned first (mapped ones mapped) plus your own prices of the species analysed - hence ~. A pause of 30 min or a login starts a new session.") }));
   return frame(t("PER SESSION"), "", rows, { cls: "st-card", appear: false });
+}
+
+// own-4 (17.11.): how long each system took and on what, against the route's
+// first estimate after the FSS (kept by the plugin since 5.0)
+const hm = (min) => min === null || min === undefined ? "–" : Math.floor(min / 60) + ":" + String(Math.round(min % 60)).padStart(2, "0");
+
+function timePerSystem() {
+  const T = data.systime;
+  if (!T || !T.systems.length) return null;
+  const rows = [el("div", { class: "st-row" },
+    el("span", { class: "c-dim", text: t("median per system") }),
+    el("span", { class: "num", text: hm(T.median_min) + " h" }),
+    el("span", { class: "num " + (T.ratio === null ? "c-dim" : "c-green"), text: T.ratio === null ? "" : "×" + fmt(T.ratio, 2) })),
+    el("div", { class: "c-dim small", text: T.ratio === null ? t("No estimate kept yet - from 5.0 on the plugin keeps the route's first estimate once your FSS is complete.")
+      : t("You take {r} × the route's estimate (median of {n} systems).", { r: fmt(T.ratio, 2), n: T.ratio_n }) }),
+    el("div", { class: "st-row st-systime c-cyan small" }, el("span", { text: t("system") }), el("span", { class: "num", text: t("time") }),
+      el("span", { class: "num", text: t("estimate") }), el("span", { class: "num", text: "×" }))];
+  for (const s of T.systems.slice(0, 15)) {
+    const work = [s.maps ? t("{n} maps", { n: s.maps }) : "", s.bio ? t("{n} species", { n: s.bio }) : "",
+      s.landings ? t("{n} landings", { n: s.landings }) : ""].filter(Boolean).join(" · ") || t("scans only");
+    rows.push(el("div", { class: "st-row st-systime", title: t("{v} visits · {b} bodies scanned · FSS {h}×", { v: s.visits, b: s.scans, h: s.honk }) },
+      el("span", {}, el("div", { text: new Date(s.first * 1000).toLocaleDateString() + " · " + s.name }), el("div", { class: "c-dim small", text: work })),
+      el("span", { class: "num", text: hm(s.minutes) }),
+      el("span", { class: "num c-dim", text: s.estimate === null ? "–" : "~" + hm(s.estimate) }),
+      el("span", { class: "num " + (s.ratio === null ? "c-dim" : s.ratio > 1.5 ? "c-amber" : "c-green"), text: s.ratio === null ? "" : fmt(s.ratio, 1) })));
+  }
+  rows.push(el("div", { class: "c-dim small", text: t("Time in a system from the arrival to the next jump; a pause of 30 min does not count. Systems you only passed through are left out. Active commander.") }));
+  return frame(t("TIME PER SYSTEM"), t("{n} systems · {h} h", { n: T.n, h: fmt(T.hours, 0) }), rows, { cls: "st-card", appear: false });
 }
 
 function card([key, title, fields]) {

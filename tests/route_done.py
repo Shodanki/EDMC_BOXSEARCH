@@ -116,5 +116,27 @@ ST.db.ingest_journal_event({"event": "ScanOrganic", "timestamp": T % 30, "ScanTy
 routewin._route_auto_tick(B, "sampled")
 check(11 in ST.route_done, "the species analysed: now it is ticked off")
 
+print("the first estimate after the FSS is kept (own-4)")
+est = ST.db.cx.execute("SELECT * FROM route_estimates").fetchall()
+check(not any(r["sys_id64"] == 78 for r in est), "FSS not complete: nothing kept yet")
+routewin._rebuild_route()
+check(ST.route_full and not ST.db.cx.execute("SELECT 1 FROM route_estimates WHERE sys_id64=78").fetchone(),
+      "nothing left, the full tour shown: no estimate")
+ST.db.ingest_journal_event({"event": "Scan", "timestamp": T % 39, "ScanType": "Detailed", "StarSystem": "Bio Sys",
+                            "SystemAddress": 78, "BodyID": 12, "BodyName": "Bio Sys A 6",
+                            "PlanetClass": "High metal content body", "Landable": True,
+                            "DistanceFromArrivalLS": 60.0, "WasDiscovered": True, "WasMapped": False,
+                            "Parents": [{"Star": 0}]})
+ST.db.ingest_journal_event({"event": "FSSAllBodiesFound", "timestamp": T % 40, "SystemName": "Bio Sys",
+                            "SystemAddress": 78, "Count": 3})
+routewin._rebuild_route()
+first = ST.db.cx.execute("SELECT * FROM route_estimates WHERE sys_id64=78").fetchone()
+check(first is not None and first["fid"] == "F1" and first["stops"] >= 1 and first["total_s"] > 0,
+      "FSS complete: kept (%s)" % (dict(first) if first else None))
+ST.db.cx.execute("UPDATE route_estimates SET total_s=12345 WHERE sys_id64=78")
+routewin._rebuild_route()
+check(ST.db.cx.execute("SELECT total_s FROM route_estimates WHERE sys_id64=78").fetchone()[0] == 12345,
+      "later routes do not replace it")
+
 print("route done: %s" % ("all OK" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)

@@ -758,6 +758,9 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 /* test finding st-bio: atmospheres and planet classes are longer than a month ("Carbon dioxide") */
 .st-rate { grid-template-columns: minmax(0, 1.2fr) minmax(48px, 1fr) 104px; }
 .st-rate > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+/* own-4: TIME PER SYSTEM - system and work, time, estimate, ratio */
+.st-systime { grid-template-columns: minmax(0, 1fr) 52px 76px 36px; align-items: start; }
+.st-systime > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .st-learn-h { margin: 8px 0 2px; }
 .lay-phone .stat-wrap, .lay-tablet.orient-portrait .stat-wrap { grid-template-columns: 1fr; overflow-y: auto; align-content: start; }
 .lay-phone .stat-wrap > *, .lay-tablet.orient-portrait .stat-wrap > * { height: auto; overflow: visible; }

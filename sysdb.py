@@ -313,6 +313,19 @@ CREATE TABLE IF NOT EXISTS cmdr_systems (
     PRIMARY KEY (fid, sys_id64)
 );
 CREATE INDEX IF NOT EXISTS ix_cmdr_sys ON cmdr_systems(sys_id64);
+-- 5.0 (test finding own-4): the route's estimate for a system, the first
+-- one after this commander's FSS was complete - to set against the time
+-- the system really took (FIS STATISTICS > TIME PER SYSTEM)
+CREATE TABLE IF NOT EXISTS route_estimates (
+    fid       TEXT NOT NULL,
+    sys_id64  INTEGER NOT NULL,
+    ts        TEXT NOT NULL,           -- when it was made (UTC, ISO)
+    total_s   REAL NOT NULL,
+    travel_s  REAL,
+    work_s    REAL,
+    stops     INTEGER,
+    PRIMARY KEY (fid, sys_id64)
+);
 CREATE TABLE IF NOT EXISTS cmdr_bodies (
     fid            TEXT NOT NULL,
     sys_id64       INTEGER NOT NULL,
@@ -1776,6 +1789,23 @@ class SystemDB:
             return max(0, (r["sig_bio"] or 0) - (r["organics"] or 0))
         genera = [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()]
         return open_bio(r["sig_bio"] or 0, genera, analysed, seen)["open"]
+
+    def keep_route_estimate(self, fid: Optional[str], sys_id64: int, total_s: float, travel_s: float,
+                            work_s: float, stops: int) -> bool:
+        """The first route estimate of a system once the commander's FSS is
+        complete; later ones (the route shrinks as you work) are not kept.
+        True when this one was stored."""
+        if not fid or not sys_id64 or not stops:
+            return False
+        own = self.cx.execute("SELECT fss_complete FROM cmdr_systems WHERE fid=? AND sys_id64=?",
+                              (fid, sys_id64)).fetchone()
+        if not own or not own["fss_complete"]:
+            return False
+        cur = self.cx.execute("INSERT OR IGNORE INTO route_estimates (fid, sys_id64, ts, total_s, travel_s, "
+                              "work_s, stops) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                              (fid, sys_id64, _now(), float(total_s), float(travel_s), float(work_s), int(stops)))
+        self.cx.commit()
+        return cur.rowcount > 0
 
     def bio_left_of(self, sys_id64: int, body_id: int, fid: Optional[str]) -> int:
         """Biological signals still to sample on one body for one commander

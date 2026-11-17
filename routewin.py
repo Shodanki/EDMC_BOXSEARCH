@@ -65,6 +65,8 @@ def _rebuild_route() -> None:
         ST.route_full = True
     _route_work_notes(route, rows)
     ST.route = route
+    if not ST.route_full:
+        _keep_estimate(route)
     # Restore the ticks for this system, then drop any that no longer refer to
     # a stop on the current route.
     try:
@@ -82,6 +84,18 @@ def _rebuild_route() -> None:
     for line in route.lines(limit=8):
         logger.info("route | %s", line)
     uithread._ui(_route_window_refresh)
+
+
+def _keep_estimate(route: Any) -> None:
+    """5.0 (own-4): the first estimate after the FSS, for TIME PER SYSTEM."""
+    try:
+        with ST.lock:
+            kept = ST.db.keep_route_estimate(ST.db.view_fid(CURRENT), ST.cur_id64, route.total_s,
+                                             route.travel_s, route.work_s, len(route.stops))
+        if kept:
+            logger.info("route | estimate kept for %s: about %.0f min", ST.cur_system, route.total_s / 60.0)
+    except Exception:
+        logger.debug("route estimate not kept", exc_info=True)
 
 
 def _route_body_rows():

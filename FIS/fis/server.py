@@ -1143,6 +1143,11 @@ class Handler(BaseHTTPRequestHandler):
             out["bio_rates"] = app.cached("bio_rates", app.db.mtime(), lambda: learn.bio_rates(app.db))   # BQ1
             from .shipview import _bodyvalue
             out["sessions"] = stats.play_sessions(app.archive.events(), _bodyvalue(), app.archive.organic_values())
+            from . import systime        # own-4: time per system against the route's estimate
+            evs = app.archive.events()
+            out["systime"] = app.cached("systime", (len(evs), evs[-1].get("timestamp") if evs else None,
+                                                    app.db.mtime()),
+                                        lambda: systime.build(evs, app.db, app.archive.commander()[0]))
         except Exception:
             out["learning"] = None
         return self._json(out)
