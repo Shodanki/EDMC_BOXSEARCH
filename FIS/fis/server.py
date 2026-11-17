@@ -1128,6 +1128,7 @@ class Handler(BaseHTTPRequestHandler):
             from . import shipview
             un = shipview._unsold(app.archive, app.cfg.unsold, app._learn_marks().get("value"))
             out["learning"]["models"]["value"] = un["exploration"].get("calibration") if un else None
+            out["bio_rates"] = app.cached("bio_rates", app.db.mtime(), lambda: learn.bio_rates(app.db))   # BQ1
         except Exception:
             out["learning"] = None
         return self._json(out)

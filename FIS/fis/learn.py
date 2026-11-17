@@ -328,6 +328,59 @@ def model_status(calib_info: Dict[str, Any], live: Dict[str, Any], cost_model: A
     return out
 
 
+def wilson(k: int, n: int, z: float = 1.96) -> Tuple[Optional[float], Optional[float]]:
+    """The 95 % Wilson interval of k in n, in percent (None, None for n = 0)."""
+    if n <= 0:
+        return None, None
+    p = k / n
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    h = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / d
+    return round(100 * max(0.0, c - h), 1), round(100 * min(1.0, c + h), 1)
+
+
+BIO_MIN_N = 5             # a group of fewer landable planets is not shown
+
+
+def bio_rates(db: Any, top: int = 8) -> Dict[str, Any]:
+    """
+    BQ1 (5.0): how often a landable planet carried biological signals, by
+    atmosphere, planet class and the class of its system's main star - with
+    n and the 95 % interval, from the plugin database (every scan on this
+    PC). Next to it the V0 check of the bio model: biopredict.validate,
+    leave one sampled body out, learn from the rest, are its genera among
+    the top three predicted?
+    """
+    from .model import plugin
+    rows = db.query("SELECT b.*, s.star_class AS sys_star FROM bodies b LEFT JOIN systems s ON s.id64 = b.sys_id64 "
+                    "WHERE b.kind = 'Planet' AND b.landable = 1")
+
+    def groups(keyf) -> List[Dict[str, Any]]:
+        by: Dict[str, List[int]] = {}
+        for r in rows:
+            g = by.setdefault(keyf(r), [0, 0])
+            g[0] += 1
+            g[1] += 1 if (r["sig_bio"] or 0) > 0 else 0
+        out = []
+        for k, (n, b) in by.items():
+            if n >= BIO_MIN_N:
+                lo, hi = wilson(b, n)
+                out.append({"key": k, "n": n, "bio": b, "pct": round(100.0 * b / n, 1), "lo": lo, "hi": hi})
+        return sorted(out, key=lambda x: (-x["n"], x["key"]))[:top]
+    atmo = groups(lambda r: r["atmo_type"] if r["atmo_type"] and r["atmo_type"] != "None" else "none")
+    pclass = groups(lambda r: r["planet_class"] or "?")
+    star = groups(lambda r: (r["sys_star"] or "?")[:1] if (r["sys_star"] or "?")[:1] not in "DN" else r["sys_star"][:2])
+    v0 = None
+    try:
+        v0 = plugin().biopredict.validate(list(rows))
+    except Exception:
+        v0 = None
+    total = len(rows)
+    with_bio = sum(1 for r in rows if (r["sig_bio"] or 0) > 0)
+    return {"planets": total, "with_bio": with_bio, "atmo": atmo, "pclass": pclass, "star": star,
+            "min_n": BIO_MIN_N, "v0": v0}
+
+
 def _rock_counts(archive: Any, db: Any) -> List[Dict[str, Any]]:
     """Prospected rocks per ring class and hotspot (L1/L2), and whether thin."""
     from . import prospect

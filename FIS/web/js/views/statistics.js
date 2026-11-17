@@ -135,7 +135,7 @@ function render() {
   // the learning status in a column of its own on the right - no scrolling down to it (11.11.)
   const lr = learning();
   root.append(el("div", { class: "stat-wrap" + (lr ? "" : " solo") },
-    el("div", { class: "stat-grid scroll" }, head, ranks(), overTime(), firstFinds(), surfaceMaps(), ...CARDS.map(card)),
+    el("div", { class: "stat-grid scroll" }, head, ranks(), overTime(), firstFinds(), surfaceMaps(), bioRates(), ...CARDS.map(card)),
     lr ? el("div", { class: "stat-side scroll" }, lr) : null));
 }
 
@@ -285,6 +285,29 @@ function surfaceMaps() {
     el("div", { class: "c-dim small", text: t("Time per map: between two maps in one system less than 15 minutes apart - flying there and mapping; median with the middle half.") }),
   ];
   return frame(t("SURFACE MAPS"), "", rows, { cls: "st-card", appear: false });
+}
+
+// BQ1: how often a landable planet carried life, by atmosphere, planet class and
+// main star - with the 95 % interval - and the bio model's own check (V0)
+function bioRates() {
+  const B = data.bio_rates;
+  if (!B || !B.planets) return null;
+  const rows = [];
+  const sect = (title, list) => {
+    if (!list.length) return;
+    rows.push(el("div", { class: "c-cyan small st-learn-h", text: title }));
+    for (const g of list) rows.push(el("div", { class: "st-row st-month", title: t("{b} of {n} landable planets with biological signals; 95 % interval {lo}–{hi} %", { b: g.bio, n: g.n, lo: fmt(g.lo, 1), hi: fmt(g.hi, 1) }) },
+      el("span", { class: "c-dim", text: g.key === "none" ? t("no atmosphere") : g.key }),
+      el("span", { class: "lbar" }, el("i", { style: { width: Math.min(100, g.pct) + "%" } })),
+      el("span", { class: "num", text: fmt(g.pct, 0) + " % · n " + fmt(g.n, 0) })));
+  };
+  sect(t("by atmosphere"), B.atmo);
+  sect(t("by planet class"), B.pclass);
+  sect(t("by the system's main star"), B.star);
+  if (B.v0 && B.v0.bodies) rows.push(el("div", { class: "small", text: t("Bio model check (leave one out, {n} sampled bodies): real genera among the top 3 predicted {r} %, the first one right {f} %",
+    { n: B.v0.bodies, r: fmt(100 * B.v0.recall_top3, 0), f: fmt(100 * B.v0.top1_right, 0) }) }));
+  rows.push(el("div", { class: "c-dim small", text: t("Every landable planet scanned on this PC; groups from {m} planets on. A rate, not a promise: hover for the interval.", { m: B.min_n }) }));
+  return frame(t("BIO RATES"), t("{b} of {n} with life", { b: fmt(B.with_bio, 0), n: fmt(B.planets, 0) }), rows, { cls: "st-card", appear: false });
 }
 
 function card([key, title, fields]) {

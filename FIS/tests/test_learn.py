@@ -133,5 +133,43 @@ class TestLearningStatus(unittest.TestCase):
         self.assertGreaterEqual(st["thin"]["rocks"], 1)
 
 
+class BioRatesTest(unittest.TestCase):
+    """BQ1: bio rates by atmosphere, planet class and main star, with n and
+    the 95 % interval - and the bio model's leave-one-out check."""
+
+    def test_wilson(self):
+        from fis.learn import wilson
+        self.assertEqual(wilson(0, 0), (None, None))
+        lo, hi = wilson(16, 19)
+        self.assertTrue(60 < lo < 65 and 93 < hi < 96)          # Argon on the developer's data: 62.4-94.5
+        self.assertEqual(wilson(0, 10)[0], 0.0)
+
+    def test_groups(self):
+        import os
+        import sqlite3
+        import tempfile
+        from tests import fixtures as fx
+        from tests.test_api import make_cfg
+        from fis.data import Database
+        from fis import learn
+        tmp = tempfile.mkdtemp(prefix="fis-bq1-")
+        path = fx.make_db(os.path.join(tmp, "db.sqlite"))
+        cx = sqlite3.connect(path)
+        cx.execute("DELETE FROM bodies")
+        rows = [(i, "Planet", 1, "Icy body", "Argon" if i < 6 else None, 1 if i < 4 else 0) for i in range(12)]
+        cx.executemany("INSERT INTO bodies (sys_id64, body_id, kind, landable, planet_class, atmo_type, sig_bio)"
+                       " VALUES (%d,?,?,?,?,?,?)" % fx.SYS_ID, rows)
+        cx.commit()
+        cx.close()
+        make_cfg(path, tmp)
+        out = learn.bio_rates(Database(path))
+        self.assertEqual((out["planets"], out["with_bio"]), (12, 4))
+        by = {g["key"]: g for g in out["atmo"]}
+        self.assertEqual((by["Argon"]["n"], by["Argon"]["bio"], by["Argon"]["pct"]), (6, 4, 66.7))
+        self.assertEqual((by["none"]["n"], by["none"]["bio"]), (6, 0))
+        self.assertEqual(out["pclass"][0]["key"], "Icy body")
+        self.assertIsNotNone(out["v0"])                          # nothing sampled: the check says so
+
+
 if __name__ == "__main__":
     unittest.main()
