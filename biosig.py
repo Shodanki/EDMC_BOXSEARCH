@@ -28,7 +28,7 @@ MULTI_SPECIES_GENERA = ("Brain Trees",)
 # how their species names end ("Lividum Brain Tree") -> the genus
 _SPECIES_SUFFIX = {"Brain Tree": "Brain Trees"}
 
-__all__ = ["MULTI_SPECIES_GENERA", "species_name", "genus_of", "open_bio"]
+__all__ = ["MULTI_SPECIES_GENERA", "species_name", "genus_of", "open_bio", "species_per_signal"]
 
 
 def species_name(label: Optional[str]) -> str:
@@ -87,6 +87,29 @@ def open_bio(signals: int, genera: Iterable[str], analysed: Iterable[Dict[str, A
         seen_only = [g for g in seen_by if g not in done]
         n = max(0, int(signals or 0) - len(done) - len(seen_only)) + len(open_species)
     return {"open": n, "open_species": open_species, "multi": multi}
+
+
+def species_per_signal(finds: Iterable[Iterable[str]]) -> Dict[str, Any]:
+    """
+    BT2 (5.0): how many species of a multi-species genus one signal stood
+    for, from the bodies where species of it were found (codex entries and
+    samples) - one entry per body, the species names found there.
+
+    Returns {"n": bodies, "mean", "lo", "hi", "dist": {species: bodies}}
+    (mean None without a body). A lower bound: species growing out of
+    sight of the commander are not in it. Measured on the developer's
+    journals, 17.11.2026: Brain Trees 1 species on 2 bodies, 2 on 3, 3 on 2
+    - mean 2.0, range 1-3, n = 7.
+    """
+    counts = [len({species_name(s) for s in f if species_name(s)}) for f in finds]
+    counts = [c for c in counts if c > 0]
+    dist: Dict[int, int] = {}
+    for c in counts:
+        dist[c] = dist.get(c, 0) + 1
+    if not counts:
+        return {"n": 0, "mean": None, "lo": None, "hi": None, "dist": {}}
+    return {"n": len(counts), "mean": round(sum(counts) / len(counts), 2), "lo": min(counts),
+            "hi": max(counts), "dist": dict(sorted(dist.items()))}
 
 
 def _open_in_genus(g: str, done: Dict[str, Set[str]], seen_by: Dict[str, Set[str]]) -> int:

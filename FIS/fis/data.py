@@ -204,6 +204,33 @@ class Database:
                           "b.genuses, b.bio_species, 1 count, s.name sys_name, s.x, s.y, s.z, " + codex +
                           " FROM bodies b " + self._BEST_SYS + "b.sys_id64 WHERE b.sig_bio > 0")
 
+    def genus_finds(self, genus: str, suffix: str) -> List[List[str]]:
+        """
+        BT2: per body where species of `genus` were found, their names -
+        from codex entries and analysed species (all commanders on this PC:
+        what grows on a body is shared knowledge). `suffix` is how the
+        species names end ("Brain Tree").
+        """
+        import json as _json
+        by: Dict[Any, set] = {}
+        like = "%" + suffix + "%"
+        if self.has_table("signals"):
+            for g in self.query("SELECT sys_id64, body_id, label FROM signals WHERE kind LIKE 'codex:%' "
+                                "AND label LIKE ?", (like,)):
+                by.setdefault((g["sys_id64"], g["body_id"]), set()).add(g["label"])
+        tables = ["bodies"] + (["cmdr_bodies"] if self.has_table("cmdr_bodies") else [])
+        for tb in tables:
+            for r in self.query("SELECT sys_id64, body_id, bio_species FROM " + tb +
+                                " WHERE bio_species LIKE ?", (like,)):
+                try:
+                    names = [a.get("species") for a in _json.loads(r["bio_species"] or "[]")]
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                for nm in names:
+                    if nm and suffix in nm:
+                        by.setdefault((r["sys_id64"], r["body_id"]), set()).add(nm)
+        return [sorted(v) for v in by.values()]
+
     def codex_species(self, id64: int, body_id: Optional[int] = None) -> Dict[int, List[str]]:
         """body id -> the organics the codex named there (Brain Trees)."""
         out: Dict[int, List[str]] = {}

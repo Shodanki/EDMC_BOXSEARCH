@@ -104,5 +104,12 @@ with tempfile.TemporaryDirectory() as d:
     check(p["bio_signals_open"] == 0 and p["bio_open"] == [], "both analysed: done")
     db.cx.close()
 
+# BT2: species per signal from the bodies found so far (a lower bound)
+sps = biosig.species_per_signal([["Lividum Brain Tree", "Roseum Brain Tree"], ["Roseum Brain Tree - Teal"],
+                                 ["Gypseeum Brain Tree", "Lividum Brain Tree", "Roseum Brain Tree"], []])
+check(sps == {"n": 3, "mean": 2.0, "lo": 1, "hi": 3, "dist": {1: 1, 2: 1, 3: 1}},
+      "species per signal: 3 bodies, 1-3, mean 2.0, variants count once %r" % (sps,))
+check(biosig.species_per_signal([])["mean"] is None, "species per signal: no body, no mean")
+
 print("biosig: %s" % ("all OK" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)

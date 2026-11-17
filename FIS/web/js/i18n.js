@@ -171,6 +171,8 @@ const DE = /*DE*/{
   "(formula, not calibrated yet)": "(Formel, noch nicht geeicht)",
   "from {n} sales": "aus {n} Verkäufen",
   "{n} species": "{n} Arten",
+  "so far ~{m} species per signal ({lo}–{hi}, {n} bodies)": "bisher ~{m} Arten je Signal ({lo}–{hi}, {n} Körper)",
+  "Species per signal on the bodies found so far (codex and samples) - trees out of sight are missing, so it is a lower bound.": "Arten je Signal auf den bisher gefundenen Körpern (Codex und Proben) - Bäume außer Sicht fehlen, es ist also eine Untergrenze.",
   "{n} systems": "{n} Systeme",
   "Last loss {d}: {w}": "Letzter Verlust {d}: {w}",
   "OPEN": "OFFEN",

@@ -367,7 +367,14 @@ function renderSide() {
       }
       for (const g of b.missing) { nOpen++; rows.push(el("div", { class: "bio-sp c-violet", text: "? " + t("{g} – not found yet", { g }) })); }
       // 4.11.1: Brain Trees report one signal, but a body can carry several species
-      for (const g of b.multi || []) rows.push(el("div", { class: "bio-sp c-dim small", text: "ⓘ " + t("{g}: one signal, can be several species - scan the trees nearby", { g }) }));
+      for (const g of b.multi || []) {
+        rows.push(el("div", { class: "bio-sp c-dim small", text: "ⓘ " + t("{g}: one signal, can be several species - scan the trees nearby", { g }) }));
+        // BT2: how many it was on the bodies found so far - a lower bound
+        const ms = (sys.bio_multi || {})[g];
+        if (ms && ms.n) rows.push(el("div", { class: "bio-sp c-dim small",
+          title: t("Species per signal on the bodies found so far (codex and samples) - trees out of sight are missing, so it is a lower bound."),
+          text: "  " + t("so far ~{m} species per signal ({lo}–{hi}, {n} bodies)", { m: fmt(ms.mean, 1), lo: ms.lo, hi: ms.hi, n: ms.n }) }));
+      }
       if (done.length) rows.push(el("div", { class: "bio-sp c-green" + (rows.length ? " small" : ""), title: done.map(s => s.species).join(", "),
         text: "✔ " + (done.length === 1 ? done[0].species : t("{n} analysed", { n: done.length })) }));
       if (!b.species.length && !b.missing.length)

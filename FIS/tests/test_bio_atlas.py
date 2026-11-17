@@ -85,6 +85,15 @@ class TestBioAtlas(unittest.TestCase):
         b2 = by["Brain 2"]
         self.assertEqual((b2["open"], b2["open_species"], b2["multi"]), (1, ["Roseum Brain Tree"], ["Brain Trees"]))
 
+    def test_species_per_signal(self):
+        """BT2: Brain Trees were found on one body (Brain 2: Lividum
+        analysed, Roseum in the codex) - the SYSTEM record says how many
+        species one signal stood for so far."""
+        finds = self.db.genus_finds("Brain Trees", "Brain Tree")
+        self.assertEqual(finds, [["Lividum Brain Tree", "Roseum Brain Tree"]])
+        s = self.model.build_system(self.db, fx.SYS_ID, None, ["all"])
+        self.assertEqual(s["bio_multi"]["Brain Trees"], {"n": 1, "mean": 2.0, "lo": 2, "hi": 2, "dist": {2: 1}})
+
     def test_planet_info_and_system_name_the_open_species(self):
         from fis import science
         b = self.model.build_body(self.db, fx.SYS_ID, 44)
