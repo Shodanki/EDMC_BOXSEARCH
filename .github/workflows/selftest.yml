@@ -30,6 +30,8 @@ jobs:
         run: python tests/overlay_selftest.py
       - name: in-system route self test
         run: python tests/sysroute_selftest.py
+      - name: Kepler positions against the game's DistanceFromArrivalLS (real scans, every orbit in its parent's frame)
+        run: python tests/kepler_reality.py
       - name: database backup self test
         run: python tests/sysdb_selftest.py
       - name: network gateway self test (no network)

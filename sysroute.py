@@ -25,6 +25,18 @@ at "1090 LS" and still be nowhere near each other.
 Positions are resolved recursively through the Parents chain, so a moon is
 placed relative to its planet and the planet relative to its star.
 
+Each level has its own frame (5.0, K1): the angles of an orbit are measured
+in the orbital frame of its parent, not in one frame shared by the whole
+system. The frame of an orbit is
+
+    B = B(parent) * Rz(-AscendingNode) * Rx(Inclination) * Rz(-Periapsis)
+
+and the body sits at B * (x, y, 0), its place in its own orbital plane.
+Measured against the game's DistanceFromArrivalLS on 1,980 bodies of the
+developer's journals, this puts 74 % of all bodies within 1 % of their own
+orbit (one shared frame up to 4.12: 40 %), the planets of a companion star
+98 % (1 %). See tests/kepler_reality.py.
+
 Cost model
 ----------
 Supercruise time is dominated by acceleration and deceleration, not by cruise
@@ -53,7 +65,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 __all__ = ["Body", "Stop", "SystemRoute", "plan_route", "DEFAULT_MODEL",
            "CostModel", "group_label", "is_moon", "bodies_from_rows",
-           "calibrate_from_journal", "shorten", "resolve_positions"]
+           "calibrate_from_journal", "shorten", "resolve_positions",
+           "orbit_basis", "orbit_points"]
 
 LS_PER_METRE = 1.0 / 299792458.0
 
@@ -185,6 +198,55 @@ def orbital_position(sma_m: float, ecc: float, inc_deg: float,
     return (x * LS_PER_METRE, y * LS_PER_METRE, z * LS_PER_METRE)
 
 
+Matrix = Tuple[Tuple[float, float, float], Tuple[float, float, float], Tuple[float, float, float]]
+IDENTITY: Matrix = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+
+
+def _mat_mul(a: Matrix, b: Matrix) -> Matrix:
+    rows = []
+    for i in range(3):
+        rows.append(tuple(a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j] for j in range(3)))
+    return (rows[0], rows[1], rows[2])  # type: ignore[return-value]
+
+
+def _mat_vec(m: Matrix, v: Sequence[float]) -> Tuple[float, float, float]:
+    return (m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+            m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+            m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2])
+
+
+def _rot_z(deg: float) -> Matrix:
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return ((c, -s, 0.0), (s, c, 0.0), (0.0, 0.0, 1.0))
+
+
+def _rot_x(deg: float) -> Matrix:
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return ((1.0, 0.0, 0.0), (0.0, c, -s), (0.0, s, c))
+
+
+def orbit_basis(inc_deg: float, peri_deg: float, node_deg: float,
+                parent: Matrix = IDENTITY) -> Matrix:
+    """
+    The frame of one orbit, chained onto the frame of its parent (5.0, K1).
+
+    The game measures the angles of an orbit in the orbital frame of the
+    parent body: parent * Rz(-node) * Rx(inc) * Rz(-periapsis). For a flat
+    orbit of a planet of the arrival star this is the same distance as
+    before; for moons and for the planets of a companion star it is what
+    puts them where DistanceFromArrivalLS says (tests/kepler_reality.py).
+    """
+    m = _mat_mul(parent, _rot_z(-(node_deg or 0.0)))
+    m = _mat_mul(m, _rot_x(inc_deg or 0.0))
+    return _mat_mul(m, _rot_z(-(peri_deg or 0.0)))
+
+
+def _plane_point(sma_m: float, ecc: float, mean_anom_deg: float,
+                 period_s: Optional[float] = None, seconds_since: float = 0.0) -> Tuple[float, float, float]:
+    """Place on the orbit in its own plane (periapsis on +x), in LS."""
+    return orbital_position(sma_m, ecc, 0.0, 0.0, 0.0, mean_anom_deg, period_s, seconds_since)
+
+
 # ---------------------------------------------------------------------------
 # Bodies
 # ---------------------------------------------------------------------------
@@ -204,7 +266,8 @@ class Body:
     __slots__ = ("body_id", "name", "short", "kind", "planet_class", "terraform",
                  "landable", "arrival_ls", "parent_id", "pos", "rel",
                  "scanned", "mapped", "was_discovered", "was_mapped",
-                 "sig_bio", "sig_geo", "organics", "rings", "bio_hint")
+                 "sig_bio", "sig_geo", "organics", "rings", "bio_hint",
+                 "orbit", "basis")
 
     def __init__(self, body_id: int, name: str, **kw):
         self.body_id = body_id
@@ -217,6 +280,11 @@ class Body:
         self.arrival_ls = float(kw.get("arrival_ls") or 0.0)
         self.parent_id = kw.get("parent_id")
         self.rel = kw.get("rel") or (0.0, 0.0, 0.0)
+        # orbital elements (sma, ecc, inc, peri, node, mean_anom, period,
+        # seconds since the scan); with them resolve_positions places the
+        # body in its parent's frame and sets rel and basis (5.0, K1)
+        self.orbit: Optional[Tuple[float, ...]] = kw.get("orbit")
+        self.basis: Optional[Matrix] = None
         self.pos: Optional[Tuple[float, float, float]] = None
         self.scanned = bool(kw.get("scanned"))
         self.mapped = bool(kw.get("mapped"))
@@ -298,9 +366,22 @@ def resolve_positions(bodies: Dict[int, Body]) -> None:
     _trust_arrival(bodies)
 
 
+def _chain_orbit(b: Body, frame: Matrix) -> None:
+    """rel and basis of a body in the frame of its parent (5.0, K1). A body
+    without orbital elements (hand-built, a barycentre never scanned) keeps
+    its rel and hands its parent's frame on."""
+    if not b.orbit or not b.orbit[0]:
+        b.basis = frame
+        return
+    sma, ecc, inc, peri, node, mean_anom, period, since = b.orbit
+    b.basis = orbit_basis(inc, peri, node, frame)
+    b.rel = _mat_vec(b.basis, _plane_point(sma, ecc, mean_anom, period, since))
+
+
 def _resolve_orbits(bodies: Dict[int, Body]) -> None:
-    """Absolute positions from parent-relative orbits; a body without its
-    parent sits at its arrival distance on one axis."""
+    """Absolute positions from parent-relative orbits, every orbit in the
+    frame of its parent; a body without its parent sits at its arrival
+    distance on one axis."""
     done: Dict[int, Tuple[float, float, float]] = {}
 
     def resolve(bid: int, depth: int = 0) -> Tuple[float, float, float]:
@@ -310,12 +391,15 @@ def _resolve_orbits(bodies: Dict[int, Body]) -> None:
         if b is None or depth > 8:
             return (0.0, 0.0, 0.0)
         done[bid] = (0.0, 0.0, 0.0)      # guard against orbital cycles
+        frame = IDENTITY
         if b.parent_id is None or b.parent_id not in bodies:
             base = (0.0, 0.0, 0.0)
             if b.parent_id is not None and b.rel == (0.0, 0.0, 0.0):
                 base = (b.arrival_ls, 0.0, 0.0)
         else:
             base = resolve(b.parent_id, depth + 1)
+            frame = bodies[b.parent_id].basis or IDENTITY
+        _chain_orbit(b, frame)
         p = (base[0] + b.rel[0], base[1] + b.rel[1], base[2] + b.rel[2])
         done[bid] = p
         b.pos = p
@@ -327,6 +411,23 @@ def _resolve_orbits(bodies: Dict[int, Body]) -> None:
     for b in bodies.values():
         if b.pos is None:
             b.pos = (b.arrival_ls or 0.0, 0.0, 0.0)
+
+
+def orbit_points(b: Body, centre: Sequence[float], n: int = 72) -> Optional[List[List[float]]]:
+    """
+    The orbit of a body as n + 1 points around `centre` (its parent's place),
+    in the same chained frame as its position - call resolve_positions first.
+    None for a body without orbital elements.
+    """
+    if not b.orbit or not b.orbit[0]:
+        return None
+    basis = b.basis or IDENTITY
+    sma, ecc = b.orbit[0], b.orbit[1]
+    pts = []
+    for k in range(n + 1):
+        x, y, z = _mat_vec(basis, _plane_point(sma, ecc, 360.0 * k / n))
+        pts.append([centre[0] + x, centre[1] + y, centre[2] + z])
+    return pts
 
 
 def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
@@ -906,6 +1007,24 @@ def calibrate_from_journal(segments: Iterable[Tuple[float, float]],
 # Building bodies from the database
 # ---------------------------------------------------------------------------
 
+def _row_orbit(r, now: Optional[float]) -> Tuple[Tuple[float, float, float], Optional[Tuple[float, ...]]]:
+    """The orbit of one database row: the place in one shared frame (the
+    fallback while the parent is unknown) and the elements for the chained
+    frames, advanced to `now`."""
+    try:
+        if not r["sma"]:
+            return (0.0, 0.0, 0.0), None
+        elapsed = 0.0
+        ts = _get(r, "scan_ts")
+        if now is not None and ts:
+            elapsed = max(0.0, now - float(ts))
+        orbit = (float(r["sma"]), r["ecc"] or 0.0, r["inc"] or 0.0, r["peri"] or 0.0,
+                 r["node"] or 0.0, r["mean_anom"] or 0.0, r["period"], elapsed)
+        return orbital_position(*orbit), orbit
+    except (KeyError, IndexError, TypeError, ValueError):
+        return (0.0, 0.0, 0.0), None
+
+
 def bodies_from_rows(rows: Iterable, now: Optional[float] = None
                      ) -> Dict[int, Body]:
     """
@@ -917,25 +1036,12 @@ def bodies_from_rows(rows: Iterable, now: Optional[float] = None
     """
     out: Dict[int, Body] = {}
     for r in rows:
-        rel = (0.0, 0.0, 0.0)
-        try:
-            if r["sma"]:
-                elapsed = 0.0
-                if now is not None:
-                    ts = _get(r, "scan_ts")
-                    if ts:
-                        elapsed = max(0.0, now - float(ts))
-                rel = orbital_position(r["sma"], r["ecc"] or 0.0,
-                                       r["inc"] or 0.0, r["peri"] or 0.0,
-                                       r["node"] or 0.0, r["mean_anom"] or 0.0,
-                                       r["period"], elapsed)
-        except (KeyError, IndexError, TypeError):
-            pass
+        rel, orbit = _row_orbit(r, now)
         b = Body(r["body_id"], r["name"] or "",
                  kind=r["kind"], planet_class=r["planet_class"],
                  terraform=r["terraform"], landable=r["landable"],
                  arrival_ls=_get(r, "arrival_ls"), parent_id=_get(r, "parent_id"),
-                 rel=rel, scanned=r["scanned"], mapped=r["mapped"],
+                 rel=rel, orbit=orbit, scanned=r["scanned"], mapped=r["mapped"],
                  was_discovered=r["was_discovered"], was_mapped=r["was_mapped"],
                  sig_bio=r["sig_bio"], sig_geo=r["sig_geo"], organics=r["organics"])
         out[b.body_id] = b

@@ -186,20 +186,14 @@ def boost_kind(star_type: Optional[str]) -> Optional[str]:
 # system (TAKTIK)
 # ---------------------------------------------------------------------------
 
-def _orbit_points(row, parent_pos: Sequence[float], n: int = 72
+def _orbit_points(sr: Any, b: Any, parent_pos: Sequence[float], n: int = 72
                   ) -> Optional[List[List[float]]]:
-    sma = row["sma"]
-    if not sma:
+    """The orbit line of a body, in the same chained frame as its position
+    (5.0, K1: every orbit in the frame of its parent)."""
+    pts = sr.orbit_points(b, parent_pos, n)
+    if not pts:
         return None
-    sr = plugin().sysroute
-    pts = []
-    for k in range(n + 1):
-        x, y, z = sr.orbital_position(sma, row["ecc"] or 0.0, row["inc"] or 0.0,
-                                      row["peri"] or 0.0, row["node"] or 0.0,
-                                      360.0 * k / n)
-        pts.append([round(parent_pos[0] + x, 3), round(parent_pos[1] + y, 3),
-                    round(parent_pos[2] + z, 3)])
-    return pts
+    return [[round(v, 3) for v in q] for q in pts]
 
 
 def _rings(row, hotspots: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> List[Dict[str, Any]]:
@@ -557,7 +551,7 @@ def _body_entry(sr: Any, bid: int, b: Any, r: Any, bodies: Any,
         "pos": [round(v, 3) for v in pos],
         # where the orbit is centred (parent body or unscanned barycentre)
         "ppos": [round(v, 3) for v in ppos],
-        "orbit": _orbit_points(r, ppos) if r["kind"] != "Ring" else None,
+        "orbit": _orbit_points(sr, b, ppos) if r["kind"] != "Ring" else None,
         "radius_km": _r(radius / 1000.0, 1) if radius else None,
         "radius_ls": (radius * LS_PER_M) if radius else None,
         "arrival_ls": _r(r["arrival_ls"], 1),
