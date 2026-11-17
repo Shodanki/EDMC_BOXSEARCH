@@ -3003,6 +3003,35 @@ class SystemDB:
                                 -h["count"]))
         return out[:limit]
 
+    def bodies_without_physics(self) -> List[Tuple[int, int]]:
+        """5.0: (system, body) of the stars and planets that were stored without
+        their physics (no radius and no axial tilt) - e.g. from a source that
+        knew only the orbit. Their moons are placed without the equator then."""
+        return [(r[0], r[1]) for r in self.cx.execute(
+            "SELECT sys_id64, body_id FROM bodies WHERE kind IN ('Star','Planet') "
+            "AND radius IS NULL AND axial_tilt IS NULL")]
+
+    def fill_missing_physics(self, entries: Iterable[dict]) -> int:
+        """5.0: take the physics of older Scan lines (journal or EDDiscovery's
+        archive) into body rows - only into columns that are still empty, a
+        value already stored is never overwritten. Returns the rows filled."""
+        n = 0
+        for e in entries:
+            a, bid = e.get("SystemAddress"), e.get("BodyID")
+            if a is None or bid is None:
+                continue
+            vals = {k: v for k, v in _scan_physics(e).items() if v is not None}
+            if not vals:
+                continue
+            cur = self.cx.execute(
+                "UPDATE bodies SET %s WHERE sys_id64=? AND body_id=? AND (%s)" % (
+                    ",".join("%s=COALESCE(%s,?)" % (k, k) for k in vals),
+                    " OR ".join("%s IS NULL" % k for k in vals)),
+                list(vals.values()) + [a, bid])
+            n += cur.rowcount
+        self.cx.commit()
+        return n
+
     def bodies_of(self, sys_id64: int) -> List[sqlite3.Row]:
         """The shared body rows of a system (no commander view)."""
         return self.cx.execute("SELECT * FROM bodies WHERE sys_id64=?",

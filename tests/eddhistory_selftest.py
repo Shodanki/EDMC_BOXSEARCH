@@ -24,6 +24,7 @@ from SHBOXSEARCH import eddhistory  # noqa: E402
 from SHBOXSEARCH.journalscan import read_events, replay_fuel_events  # noqa: E402
 from SHBOXSEARCH.deepspace import FuelState  # noqa: E402
 from SHBOXSEARCH.miningstat import RockYield  # noqa: E402
+from SHBOXSEARCH.sysdb import SystemDB  # noqa: E402
 
 LOAD = {"event": "Loadout", "Ship": "explorer_nx", "ShipID": 5, "UnladenMass": 400.0, "FuelCapacity":
         {"Main": 32.0, "Reserve": 0.5}, "MaxJumpRange": 60.0, "CargoCapacity": 0,
@@ -101,6 +102,9 @@ def main() -> int:
                                              "MiningRefined", "Docked"), cut))
         finally:
             eddhistory.connect = real
+        everything = list(eddhistory.lines(db, ("FSDJump",)))
+        check(len([e for e in everything if e["event"] == "FSDJump"]) == 7,
+              "without a time limit every line from the login on (%d jumps)" % len(everything))
         check(cut == 1794297540.0, "first_time: the first line of the oldest journal (%s)" % cut)
         jumps = [e for e in got if e["event"] == "FSDJump"]
         check(len(jumps) == 6, "six older jumps: none before the login, none the journal has (%d)" % len(jumps))
@@ -125,6 +129,25 @@ def main() -> int:
             y.feed(e)
         n = sum(len(v) for v in y.bins.values())
         check(n == 1, "tonnes per rock: the archived rock counts (%d)" % n)
+
+        # body rows stored without physics get it from archived Scan lines -
+        # only empty columns, a stored value stays
+        sdb = SystemDB(os.path.join(tmp, "sys.sqlite"))
+        try:
+            sdb._body_upsert(7, 5, kind="Planet", sma=1.0e9)                  # orbit only
+            sdb._body_upsert(7, 6, kind="Planet", radius=2.0e6, axial_tilt=0.5)
+            check(sdb.bodies_without_physics() == [(7, 5)], "a planet without radius and tilt is found")
+            scan = {"event": "Scan", "SystemAddress": 7, "BodyID": 5, "Radius": 3.0e6, "AxialTilt": -0.2,
+                    "RotationPeriod": 9.0e4, "PlanetClass": "Icy body"}
+            other = dict(scan, BodyID=6, Radius=9.9e6, AxialTilt=1.5)
+            filled = sdb.fill_missing_physics([scan, other])
+            r5 = sdb.cx.execute("SELECT radius, axial_tilt, rotation FROM bodies WHERE body_id=5").fetchone()
+            r6 = sdb.cx.execute("SELECT radius, axial_tilt FROM bodies WHERE body_id=6").fetchone()
+            check(tuple(r5) == (3.0e6, -0.2, 9.0e4), "missing radius, tilt and rotation filled (%s)" % (tuple(r5),))
+            check(tuple(r6) == (2.0e6, 0.5) and filled == 2, "a stored value is never overwritten (%s)" % (tuple(r6),))
+            check(sdb.bodies_without_physics() == [], "nothing left without physics")
+        finally:
+            sdb.cx.close()
     print("eddhistory selftest: %s" % ("OK" if not fails else "%d FAILED" % fails))
     return 1 if fails else 0
 

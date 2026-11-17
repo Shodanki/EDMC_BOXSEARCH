@@ -159,6 +159,10 @@ def _bootstrap_session() -> None:
     except Exception:
         logger.exception("rock yield bootstrap failed")
     try:
+        _bootstrap_body_physics()
+    except Exception:
+        logger.exception("body physics bootstrap failed")
+    try:
         updater._check_for_update()
     except Exception:
         logger.exception("update check failed")
@@ -205,6 +209,24 @@ def _archive_lines(names: Tuple[str, ...], files: List[str], what: str) -> List[
         return []
     logger.info("EDDiscovery archive | %d older lines for the %s", len(got), what)
     return got
+
+
+def _bootstrap_body_physics() -> None:
+    """5.0 (worker): body rows stored without radius and axial tilt get them
+    from EDDiscovery's archive, when it is switched on - only empty columns
+    are filled. Without the tilt a planet's moons miss its equator."""
+    with ST.lock:
+        todo = set(ST.db.bodies_without_physics()) if ST.db else set()
+    if not todo:
+        return
+    lines = _archive_lines(("Scan",), [], "body physics")
+    found = [e for e in lines if (e.get("SystemAddress"), e.get("BodyID")) in todo]
+    if not found:
+        logger.info("body physics | %d bodies without radius and tilt, none in the archive", len(todo))
+        return
+    with ST.lock:
+        n = ST.db.fill_missing_physics(found)
+    logger.info("body physics | %d of %d bodies without radius and tilt filled from the archive", n, len(todo))
 
 
 def _bootstrap_rock_yield() -> None:

@@ -63,7 +63,9 @@ def lines(path: str, names: Iterable[str], before: Optional[float] = None) -> It
     ``before`` (Unix time; None: all), commander by commander, each in its
     order. A commander's lines count from its first login line on."""
     wanted = sorted(set(names) | set(LOGIN))
-    cut = time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime(before)) if before is not None else "9999"
+    # a full date string either way: EventTime has numeric affinity, a bare "9999"
+    # would be compared as a number and no text row is ever below it
+    cut = time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime(before)) if before is not None else "9999-12-31 23:59:59Z"
     con = connect(path)
     try:
         # Id only: the same table holds the EDSM API key
