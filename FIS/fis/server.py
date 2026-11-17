@@ -1101,6 +1101,14 @@ class Handler(BaseHTTPRequestHandler):
                                                       out.get("since"))
         return self._json(out)
 
+    def _get_trade(self, qs: Dict[str, Any]) -> None:
+        """TRADE (HD1): your sale prices per commodity, the galactic mean and
+        - docked - what this market pays."""
+        app = self.app
+        from . import trade
+        app.archive.refresh()
+        return self._json(trade.build_trade(app.archive, app.live_state(), app.cfg.journal_dir))
+
     def _get_statistics(self, qs: Dict[str, Any]) -> None:
         """STATISTICS, with what the FIS has learnt so far."""
         app = self.app
@@ -1273,6 +1281,7 @@ _GET_ROUTES = {
     "/api/mining": Handler._get_mining,
     "/api/statistics": Handler._get_statistics,
     "/api/ledger": Handler._get_ledger,
+    "/api/trade": Handler._get_trade,
     "/api/galaxy": Handler._get_galaxy,
     "/api/survey/export": Handler._get_survey_export,
     "/api/survey": Handler._get_survey,

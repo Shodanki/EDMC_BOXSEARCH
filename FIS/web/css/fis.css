@@ -936,3 +936,7 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
   :root[data-theme="industrial"] body.motion .frame.appear,
   :root[data-theme="station"] body.motion .frame.appear { animation: none; }
 }
+/* HD1: TRADE - one wide table */
+.trade-grid { grid-template-columns: 1fr; }
+.trade-table th { text-align: left; font-weight: normal; color: var(--dim, inherit); }
+.trade-table td.num { white-space: nowrap; }
