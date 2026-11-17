@@ -52,6 +52,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "Statistics", "Rank", "Progress", "Reputation", "MarketSell", "CargoTransfer",
           # raw materials (jumponium)
           "Materials", "MaterialCollected", "MaterialDiscarded", "Synthesis", "EngineerCraft",
+          # 5.0 EN1: which engineers are unlocked, at which rank
+          "EngineerProgress",
           "MaterialTrade", "TechnologyBroker", "MissionCompleted", "ScientificResearch",
           # hazard log and where it happened
           "UnderAttack", "Interdicted", "EscapeInterdiction", "HullDamage", "HeatWarning", "HeatDamage",
@@ -488,6 +490,64 @@ def _fit_entry(it: Dict[str, Any], lo: Dict[str, Any], vehicles: Iterable[str]) 
     it["cargo"] = lo.get("CargoCapacity")
     it["rating"] = rate_loadout(lo, it["vehicles"])
     it["modules"] = len([m for m in lo.get("Modules") or [] if slot_group(m.get("Slot")) != "cosmetic"])
+    it["fsd"] = fsd_of(lo)
+
+
+def fsd_of(lo: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """EN1: the frame shift drive of a fitting - module, blueprint, grade,
+    engineer and experimental effect (None for a grade means not engineered)."""
+    for m in lo.get("Modules") or []:
+        if m.get("Slot") == "FrameShiftDrive":
+            g = m.get("Engineering") or {}
+            return {"item": m.get("Item"), "blueprint": g.get("BlueprintName"), "grade": g.get("Level"),
+                    "engineer": g.get("Engineer"), "experimental": g.get("ExperimentalEffect_Localised")
+                    or g.get("ExperimentalEffect")}
+    return None
+
+
+def fsd_engineers(evs: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    EN1: who has engineered a frame shift drive for you, which blueprint up
+    to which grade (EngineerCraft on the FSD slot and the Engineering of
+    your FSD fittings), and whether they are unlocked now (the last
+    EngineerProgress). Only your own data - no table of what an engineer
+    could do: an engineer that never worked on your drive is not listed.
+    """
+    best: Dict[Tuple[str, str], int] = {}
+    progress: Dict[str, Dict[str, Any]] = {}
+    for e in evs:
+        ev = e.get("event")
+        if ev == "EngineerProgress" and e.get("Engineers"):
+            progress = {x.get("Engineer"): x for x in e["Engineers"] if x.get("Engineer")}
+        elif ev == "EngineerCraft" and e.get("Slot") == "FrameShiftDrive":
+            k = (e.get("Engineer") or "", e.get("BlueprintName") or "")
+            best[k] = max(best.get(k, 0), int(e.get("Level") or 0))
+        elif ev == "Loadout":
+            f = fsd_of(e)
+            if f and f["engineer"] and f["blueprint"] and f["grade"]:
+                k = (f["engineer"], f["blueprint"])
+                best[k] = max(best.get(k, 0), int(f["grade"]))
+    out = []
+    for (eng, bp), lvl in best.items():
+        p = progress.get(eng) or {}
+        out.append({"engineer": eng, "blueprint": bp, "max_grade": lvl,
+                    "unlocked": p.get("Progress") == "Unlocked", "rank": p.get("Rank")})
+    return sorted(out, key=lambda x: (-x["max_grade"], x["engineer"]))
+
+
+def fsd_hint(fsd: Optional[Dict[str, Any]], engineers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """EN1, only a hint: a drive below the highest grade an unlocked engineer
+    already gave you for that blueprint (Increased Range when it is not
+    engineered) - {"to": grade, "engineers": [names]} or None."""
+    if not fsd:
+        return None
+    bp = fsd.get("blueprint") or "FSD_LongRange"
+    have = int(fsd.get("grade") or 0)
+    can = [e for e in engineers if e["blueprint"] == bp and e["unlocked"] and e["max_grade"] > have]
+    if not can:
+        return None
+    top = max(e["max_grade"] for e in can)
+    return {"to": top, "blueprint": bp, "engineers": [e["engineer"] for e in can if e["max_grade"] == top]}
 
 
 class _CarrierLog:
@@ -740,8 +800,11 @@ class Archive:
             ships.setdefault(sid, {"id": sid})["type"] = (lo.get("Ship") or "").lower()
             fits[sid] = lo
         vehicles = _launched_vehicles(evs)
+        engineers = fsd_engineers(evs)
         for sid, lo in fits.items():
             _fit_entry(ships[sid], lo, vehicles.get(sid, ()))
+            if ships[sid].get("fsd"):
+                ships[sid]["fsd"]["hint"] = fsd_hint(ships[sid]["fsd"], engineers)
         if current is not None and current in ships:
             ships[current]["current"] = True
         for it in ships.values():
@@ -751,7 +814,7 @@ class Archive:
                        if stored else None)
         order = sorted(ships.values(), key=lambda s: (not s.get("current"), s.get("stored_at") != "here",
                                                       s.get("type_name") or ""))
-        return {"ships": order, "hangar": stored_info, "names": names}
+        return {"ships": order, "hangar": stored_info, "names": names, "fsd_engineers": engineers}
 
     def dss(self, sys_id64: int, body_id: int) -> Optional[Dict[str, Any]]:
         """Last surface scan of a body: probes used against the efficiency target."""

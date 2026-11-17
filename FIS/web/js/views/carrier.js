@@ -443,12 +443,24 @@ function airWing() {
       ...ROLES.map(([k]) => el("td", { class: "rd" + (r && r.primary === k ? " prim" : ""), title: r ? r.why[k] : "",
         text: r ? dots(r.roles[k]) : "" })),
       el("td", { class: "num", text: s.hull !== undefined && s.hull !== null ? Math.round(s.hull * 100) + "%" : "–" }),
-      el("td", { class: "num", text: s.jump ? fmt(s.jump, 1) : "–" }),
+      el("td", { class: "num", text: s.jump ? fmt(s.jump, 1) : "–" }, fsdBadge(s.fsd)),
       el("td", { class: "num", text: s.cargo !== undefined && s.cargo !== null ? fmt(s.cargo, 0) : "–" }),
       el("td", { class: "c-dim small", text: s.loadout_ts ? day(s.loadout_ts) : t("unknown") }));
   });
+  const fsdNote = el("div", { class: "c-dim small", text: t("FSD: the grade of the drive's engineering; ↑ an unlocked engineer already took your drive higher (hover). Only a hint from your own engineering.") });
   const note = el("div", { class: "c-dim small", text: t("Ratings 0–5 from the last known fitting (hover for the reasons). Ships without a fitting were not flown since your journals begin – fly or outfit them once.") });
   const hang = data.hangar;
   return frame(t("AIR WING"), hang ? t("{n} ships · hangar list of {d}", { n: ships.length, d: day(hang.ts) }) : String(ships.length),
-    [board, tools, el("div", { class: "scroll cag-list" }, el("table", { class: "ns-tab cag" }, head, ...rows)), note], { cls: "ns-cag", appear: false });
+    [board, tools, el("div", { class: "scroll cag-list" }, el("table", { class: "ns-tab cag" }, head, ...rows)), note, fsdNote], { cls: "ns-cag", appear: false });
+}
+
+// EN1: the FSD's grade under the jump range, with an arrow when an unlocked
+// engineer already engineered your drive higher - a hint, never advice
+function fsdBadge(f) {
+  if (!f) return null;
+  const g = f.grade ? "G" + f.grade : t("stock");
+  const h = f.hint;
+  const tip = (f.grade ? t("FSD {g} by {e}", { g, e: f.engineer || "?" }) + (f.experimental ? " · " + f.experimental : "") : t("FSD not engineered"))
+    + (h ? "\n" + t("{n} gave your drive G{to} before - unlocked", { n: h.engineers.join(", "), to: h.to }) : "");
+  return el("div", { class: "small " + (h ? "c-amber" : "c-dim"), title: tip, text: g + (h ? " ↑" : "") });
 }

@@ -245,5 +245,34 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(s["master"], "warning")
 
 
+class FsdHintTest(unittest.TestCase):
+    """EN1: FSD grade per ship against the engineers that worked on your drive."""
+
+    def _lo(self, ts, sid, level=None, eng=None):
+        fsd = {"Slot": "FrameShiftDrive", "Item": "int_hyperdrive_size5_class5"}
+        if level:
+            fsd["Engineering"] = {"Engineer": eng, "BlueprintName": "FSD_LongRange", "Level": level}
+        return {"timestamp": ts, "event": "Loadout", "Ship": "asp", "ShipID": sid, "Modules": [fsd]}
+
+    def test_engineers_and_hint(self):
+        from fis.fleet import fsd_engineers, fsd_hint, fsd_of
+        evs = [{"timestamp": "2026-01-01T10:00:00Z", "event": "EngineerProgress", "Engineers": [
+                   {"Engineer": "Felicity Farseer", "Progress": "Unlocked", "Rank": 5},
+                   {"Engineer": "Elvira Martuuk", "Progress": "Known"}]},
+               self._lo("2026-01-01T11:00:00Z", 1, 5, "Felicity Farseer"),
+               {"timestamp": "2026-01-02T10:00:00Z", "event": "EngineerCraft", "Engineer": "Elvira Martuuk",
+                "Slot": "FrameShiftDrive", "BlueprintName": "FSD_LongRange", "Level": 3},
+               self._lo("2026-01-03T10:00:00Z", 2, 2, "Felicity Farseer"),
+               self._lo("2026-01-03T11:00:00Z", 3)]
+        eng = fsd_engineers(evs)
+        self.assertEqual([(e["engineer"], e["max_grade"], e["unlocked"]) for e in eng],
+                         [("Felicity Farseer", 5, True), ("Elvira Martuuk", 3, False)])
+        self.assertEqual(fsd_hint(fsd_of(evs[3]), eng), {"to": 5, "blueprint": "FSD_LongRange",
+                                                        "engineers": ["Felicity Farseer"]})
+        self.assertEqual(fsd_hint(fsd_of(evs[4]), eng)["to"], 5)          # not engineered: Increased Range
+        self.assertIsNone(fsd_hint(fsd_of(evs[1]), eng))                 # already G5
+        self.assertIsNone(fsd_of({"Modules": []}))
+
+
 if __name__ == "__main__":
     unittest.main()
