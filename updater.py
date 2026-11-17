@@ -24,15 +24,36 @@ from . import survey
 from . import uithread
 
 
-def _version_tuple(v: str) -> Tuple[int, ...]:
-    """'v4.1.0' -> (4, 1, 0). Anything unparseable sorts lowest. Only the
-    leading digits of a part count: '5.0.0-beta1' is (5, 0, 0), not newer
-    than 5.0.0 (up to 5.0 the digits of 'beta1' made it (5, 0, 1))."""
+def _version_tuple(v: str) -> Tuple[Any, ...]:
+    """
+    A sort key for a version after SemVer 2.0.0: 'v4.1.0' -> (4, 1, 0, 1).
+
+    A pre-release sorts before its release: '5.0.0-beta1' < '5.0.0' (up to
+    4.12 both were (5, 0, 0), so a beta running saw the final release as
+    "current"). Pre-release identifiers compare one by one, numbers as
+    numbers and below words ('beta.2' < 'beta.11' < 'rc.1'). Build metadata
+    after '+' is ignored. Only the leading digits of a core part count, a
+    missing part is 0 ('4.1' == '4.1.0'), anything unparseable sorts lowest.
+    """
+    text = (v or "").strip().lstrip("vV").split("+", 1)[0]
+    core, _, pre = text.partition("-")
     parts = []
-    for chunk in (v or "").lstrip("vV").split(".")[:4]:
+    for chunk in core.split(".")[:3]:
         m = re.match(r"\s*(\d+)", chunk)
         parts.append(int(m.group(1)) if m else 0)
-    return tuple(parts) or (0,)
+    if not any(re.match(r"\s*\d", c) for c in core.split(".")):
+        return (0,)
+    parts += [0] * (3 - len(parts))
+    if not pre:
+        return tuple(parts) + (1,)
+    return tuple(parts) + (0,) + _pre_release_key(pre)
+
+
+def _pre_release_key(pre: str) -> Tuple[Tuple[int, Any], ...]:
+    """SemVer pre-release identifiers as comparable pairs: a number (0, n)
+    sorts below a word (1, 'beta'); a shorter list of equal identifiers
+    sorts first."""
+    return tuple((0, int(p)) if p.isdigit() else (1, p) for p in pre.split("."))
 
 
 def _check_for_update(force: bool = False) -> None:

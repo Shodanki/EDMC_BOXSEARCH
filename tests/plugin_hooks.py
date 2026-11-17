@@ -378,10 +378,28 @@ try:
         ST.update_version = None
         updater._check_for_update(force=True)
         check(ST.update_version is None, "a server error is swallowed")
-        check(updater._version_tuple("v4.10.0") > updater._version_tuple("4.9.1")
-              and updater._version_tuple("5.0.0-beta1") == (5, 0, 0)
-              and updater._version_tuple("garbage") == (0,),
-              "version compare: numeric, not text (%r)" % (updater._version_tuple("5.0.0-beta1"),))
+        vt = updater._version_tuple
+        check(vt("v4.10.0") > vt("4.9.1") and vt("garbage") == (0,) and vt("garbage") < vt("0.0.1"),
+              "version compare: numeric, not text (%r)" % (vt("4.10.0"),))
+        # N1 (5.0): SemVer - a pre-release sorts before its release
+        order = ["4.12.1", "5.0.0-alpha", "5.0.0-alpha.1", "5.0.0-beta", "5.0.0-beta.2", "5.0.0-beta.11",
+                 "5.0.0-rc.1", "5.0.0", "5.0.1", "5.1.0"]
+        check(all(vt(a) < vt(b) for a, b in zip(order, order[1:])),
+              "SemVer order: %r" % [(a, b) for a, b in zip(order, order[1:]) if not vt(a) < vt(b)])
+        check(vt("v5.0.0-beta1") < vt("5.0.0") and vt("4.1") == vt("4.1.0") and vt("5.0.0+build.7") == vt("5.0.0")
+              and vt("5.0.0-1") < vt("5.0.0-beta"),
+              "SemVer details: v-prefix, short version, build metadata ignored, number below word")
+        real_version = updater.VERSION
+        updater.VERSION = "5.0.0-beta1"
+        Net.answer = R(200, {"tag_name": "v5.0.0", "body": "final"})
+        updater._check_for_update(force=True)
+        check(ST.update_version == "v5.0.0", "a beta running: the final release is offered as newer")
+        Net.answer = R(200, {"tag_name": "v5.0.0-beta1", "body": "same"})
+        ST.update_version = None
+        updater._check_for_update(force=True)
+        check(ST.update_version is None, "the same pre-release is current")
+        updater.VERSION = real_version
+        ST.update_version = None
         ST.net, planning._flush_net_log = real_net, real_flush
         panel._set_status = lambda m: None
 
