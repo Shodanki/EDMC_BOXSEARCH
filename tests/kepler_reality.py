@@ -19,11 +19,11 @@ way: journal -> database -> bodies_from_rows -> resolve_positions.
 
 Up to 4.12 every orbit was placed in one shared frame, so moons and the
 planets of a companion star came out on the wrong side (median 94 % of the
-orbit off). Since 5.0 every level is placed in the frame of its parent.
-
-The moons of a few planets keep a fixed offset in that frame (El Tio 4,
-Lalande 11206 A 1, Synuefe OW-V c18-2 A 3): known, open (K2), they run as
-expected failures.
+orbit off). Since 5.0 every level is placed in the frame of its parent (K1),
+and moons in the equator of their planet (K2: the frame turned by the
+planet's AxialTilt). Before K2 the moons of tilted planets kept what looked
+like a fixed offset per planet (El Tio 4, tilt -170 degrees: -34; Lalande
+11206 A 1, -164: -50; Synuefe OW-V c18-2 A 3, 104.5: +5).
 
     python tests/kepler_reality.py      (from the plugin folder)
 """
@@ -103,8 +103,14 @@ class KeplerReality(unittest.TestCase):
         self.check(LHS_129, "LHS 129", ["6 a", "6 b", "6 c", "6 d", "6 e", "6 f"])
 
     def test_moons_el_tio_3(self):
-        """Six moons, one of them inclined by 5 degrees."""
-        self.check(EL_TIO, "El Tio", ["3 a", "3 b", "3 c", "3 d", "3 e", "3 f"])
+        """Six moons, one of them inclined by 5 degrees, and 3 e a, a moon of a
+        moon inclined by 24 degrees."""
+        self.check(EL_TIO, "El Tio", ["3 a", "3 b", "3 c", "3 d", "3 e", "3 f", "3 e a"])
+
+    def test_moon_of_a_moon_and_a_pair(self):
+        """El Tio 5 a a (a moon of a moon, inclined by 60 degrees), and 5 b/5 c
+        around a barycentre that orbits planet 5."""
+        self.check(EL_TIO, "El Tio", ["5 a", "5 a a", "5 b", "5 c", "5 d"])
 
     def test_planets_of_a_companion_star(self):
         """The arrival star and star B orbit barycentre 0; B's planets are 159,000 LS away."""
@@ -137,18 +143,16 @@ class KeplerReality(unittest.TestCase):
             with self.subTest(body=name):
                 self.assertLess(near, ring * 0.02)
 
-    # -- known offset per parent planet (K2, open) --------------------------
-    @unittest.expectedFailure
+    # -- moons of tilted planets (K2) ---------------------------------------
     def test_moons_el_tio_4(self):
-        """El Tio 4: about -34 degrees for all its moons."""
-        self.check(EL_TIO, "El Tio", ["4 a", "4 b", "4 e", "4 f", "4 g"])
+        """El Tio 4 (tilt -170 degrees), with 4 h inclined by 53 degrees and the
+        moon pair 4 c/4 d around a barycentre."""
+        self.check(EL_TIO, "El Tio", ["4 a", "4 b", "4 c", "4 d", "4 e", "4 f", "4 g", "4 h"])
 
-    @unittest.expectedFailure
     def test_moons_lalande_11206_a_1(self):
-        """Lalande 11206 A 1: about -50 degrees."""
-        self.check(LALANDE, "Lalande 11206", ["A 1 a", "A 1 b"])
+        """Lalande 11206 A 1 (tilt -164 degrees); A 1 c is inclined by 80 degrees."""
+        self.check(LALANDE, "Lalande 11206", ["A 1 a", "A 1 b", "A 1 c"])
 
-    @unittest.expectedFailure
     def test_moons_ow_v_a_3(self):
         """Synuefe OW-V c18-2 A 3 with its moons a-f (A 3 b and A 3 d, 16.11.)."""
         self.check(OW_V, "Synuefe OW-V c18-2", ["A 3 a", "A 3 b", "A 3 c", "A 3 d", "A 3 e", "A 3 f"])

@@ -32,10 +32,12 @@ system. The frame of an orbit is
     B = B(parent) * Rz(-AscendingNode) * Rx(Inclination) * Rz(-Periapsis)
 
 and the body sits at B * (x, y, 0), its place in its own orbital plane.
+The children of a body (moons) orbit in its equator, not in its orbital
+plane: their frame is B * Rx(AxialTilt) of the parent (K2).
 Measured against the game's DistanceFromArrivalLS on 1,980 bodies of the
-developer's journals, this puts 74 % of all bodies within 1 % of their own
+developer's journals, this puts 93 % of all bodies within 1 % of their own
 orbit (one shared frame up to 4.12: 40 %), the planets of a companion star
-98 % (1 %). See tests/kepler_reality.py.
+100 % (1 %), the moons 87 % (2 %). See tests/kepler_reality.py.
 
 Cost model
 ----------
@@ -267,7 +269,7 @@ class Body:
                  "landable", "arrival_ls", "parent_id", "pos", "rel",
                  "scanned", "mapped", "was_discovered", "was_mapped",
                  "sig_bio", "sig_geo", "organics", "rings", "bio_hint",
-                 "orbit", "basis")
+                 "orbit", "basis", "tilt")
 
     def __init__(self, body_id: int, name: str, **kw):
         self.body_id = body_id
@@ -285,6 +287,9 @@ class Body:
         # body in its parent's frame and sets rel and basis (5.0, K1)
         self.orbit: Optional[Tuple[float, ...]] = kw.get("orbit")
         self.basis: Optional[Matrix] = None
+        # AxialTilt in radians as the journal writes it: the equator its
+        # moons orbit in is tilted against its own orbit by this (5.0, K2)
+        self.tilt = float(kw.get("tilt") or 0.0)
         self.pos: Optional[Tuple[float, float, float]] = None
         self.scanned = bool(kw.get("scanned"))
         self.mapped = bool(kw.get("mapped"))
@@ -378,6 +383,17 @@ def _chain_orbit(b: Body, frame: Matrix) -> None:
     b.rel = _mat_vec(b.basis, _plane_point(sma, ecc, mean_anom, period, since))
 
 
+def _child_frame(parent: Body) -> Matrix:
+    """The frame the children of a body orbit in (5.0, K2): its orbital
+    frame turned by its axial tilt, so moons lie in the planet's equator. A
+    barycentre has no equator; a body without an orbit of its own (the main
+    star) hands on the frame it got."""
+    frame = parent.basis or IDENTITY
+    if parent.tilt and parent.orbit and parent.orbit[0] and parent.kind != "BaryCentre":
+        frame = _mat_mul(frame, _rot_x(math.degrees(parent.tilt)))
+    return frame
+
+
 def _resolve_orbits(bodies: Dict[int, Body]) -> None:
     """Absolute positions from parent-relative orbits, every orbit in the
     frame of its parent; a body without its parent sits at its arrival
@@ -398,7 +414,7 @@ def _resolve_orbits(bodies: Dict[int, Body]) -> None:
                 base = (b.arrival_ls, 0.0, 0.0)
         else:
             base = resolve(b.parent_id, depth + 1)
-            frame = bodies[b.parent_id].basis or IDENTITY
+            frame = _child_frame(bodies[b.parent_id])
         _chain_orbit(b, frame)
         p = (base[0] + b.rel[0], base[1] + b.rel[1], base[2] + b.rel[2])
         done[bid] = p
@@ -1041,7 +1057,7 @@ def bodies_from_rows(rows: Iterable, now: Optional[float] = None
                  kind=r["kind"], planet_class=r["planet_class"],
                  terraform=r["terraform"], landable=r["landable"],
                  arrival_ls=_get(r, "arrival_ls"), parent_id=_get(r, "parent_id"),
-                 rel=rel, orbit=orbit, scanned=r["scanned"], mapped=r["mapped"],
+                 rel=rel, orbit=orbit, tilt=_get(r, "axial_tilt"), scanned=r["scanned"], mapped=r["mapped"],
                  was_discovered=r["was_discovered"], was_mapped=r["was_mapped"],
                  sig_bio=r["sig_bio"], sig_geo=r["sig_geo"], organics=r["organics"])
         out[b.body_id] = b
