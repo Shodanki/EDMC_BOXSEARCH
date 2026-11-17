@@ -135,7 +135,7 @@ function render() {
   // the learning status in a column of its own on the right - no scrolling down to it (11.11.)
   const lr = learning();
   root.append(el("div", { class: "stat-wrap" + (lr ? "" : " solo") },
-    el("div", { class: "stat-grid scroll" }, head, ranks(), ...CARDS.map(card)),
+    el("div", { class: "stat-grid scroll" }, head, ranks(), overTime(), firstFinds(), surfaceMaps(), ...CARDS.map(card)),
     lr ? el("div", { class: "stat-side scroll" }, lr) : null));
 }
 
@@ -219,6 +219,72 @@ function ranks() {
   if (rep.length) rows.push(el("div", { class: "c-dim small", text: t("Reputation") + ": "
     + rep.map(([k, v]) => t(REP_LABEL[k] || k) + " " + fmt(v, 0) + " %").join(" · ") }));
   return frame(t("RANKS"), "", rows, { cls: "st-ranks", appear: false });
+}
+
+// ---------------------------------------------------------------- ST1
+// one value per day over the chosen period: a single line each (the label
+// names it), hover a point for the day and the value
+const SERIES = [["Exploration.Systems_Visited", N_("systems visited"), "n"], ["Exploration.Exploration_Profits", N_("exploration data sold"), "cr"],
+  ["Exploration.Planets_Scanned_To_Level_3", N_("bodies scanned"), "n"], ["Exobiology.Organic_Data_Profits", N_("exobiology earned"), "cr"],
+  ["Mining.Quantity_Mined", N_("tonnes mined"), "t"], ["Bank_Account.Current_Wealth", N_("wealth"), "cr"]];
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function spark(pts, kind) {
+  const W = 220, H = 44, P = 6;
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const X = (x) => P + (x1 > x0 ? (x - x0) / (x1 - x0) : 0.5) * (W - 2 * P);
+  const Y = (y) => H - P - (y1 > y0 ? (y - y0) / (y1 - y0) : 0.5) * (H - 2 * P);
+  const line = pts.map(p => X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join(" ");
+  const dots = pts.map(p => '<circle class="sp-hit" cx="' + X(p[0]).toFixed(1) + '" cy="' + Y(p[1]).toFixed(1) + '" r="7"><title>'
+    + esc(new Date(p[0] * 1000).toLocaleDateString() + ": " + value(p[1], kind)) + "</title></circle>").join("");
+  const last = pts[pts.length - 1];
+  const box = el("span", { class: "st-spark" });
+  box.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + esc(t("trend")) + '"><polyline points="' + line
+    + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'
+    + '<circle cx="' + X(last[0]).toFixed(1) + '" cy="' + Y(last[1]).toFixed(1) + '" r="4" fill="currentColor"/>' + dots + "</svg>";
+  return box;
+}
+
+function overTime() {
+  const S = data.series || {};
+  const rows = SERIES.filter(([k]) => S[k]).map(([k, label, kind]) => {
+    const pts = S[k];
+    return el("div", { class: "st-trend" }, el("span", { class: "c-dim", text: t(label) }), spark(pts, kind),
+      el("span", { class: "num c-green small", text: (pts[pts.length - 1][1] - pts[0][1] >= 0 ? "+" : "") + value(pts[pts.length - 1][1] - pts[0][1], kind) }));
+  });
+  if (!rows.length) return null;
+  rows.push(el("div", { class: "c-dim small", text: t("The game's numbers at the last login of each day; hover a point for the day.") }));
+  return frame(t("OVER TIME"), "", rows, { cls: "st-card", appear: false });
+}
+
+// first discoveries per month: bodies you scanned first, as a share of all you scanned
+function firstFinds() {
+  const F = data.first_discoveries || [];
+  if (!F.length) return null;
+  const max = Math.max(1, ...F.map(f => f.first));
+  const rows = F.map(f => el("div", { class: "st-row st-month", title: t("{f} of {n} bodies you scanned were undiscovered", { f: f.first, n: f.scanned }) },
+    el("span", { class: "c-dim", text: f.month }),
+    el("span", { class: "lbar" }, el("i", { style: { width: (100 * f.first / max).toFixed(1) + "%" } })),
+    el("span", { class: "num", text: fmt(f.first, 0) + " · " + fmt(f.pct, 1) + " %" })));
+  rows.push(el("div", { class: "c-dim small", text: t("Your own scans (no nav beacon), each body once; only the active commander. Yours for good once sold.") }));
+  return frame(t("FIRST DISCOVERIES PER MONTH"), "", rows, { cls: "st-card", appear: false });
+}
+
+function surfaceMaps() {
+  const D = data.dss;
+  if (!D) return null;
+  const mm = (s) => s === null || s === undefined ? "–" : Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") + " min";
+  const rows = [
+    el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("surface maps") }), el("span", { class: "num", text: fmt(D.maps, 0) })),
+    el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("efficient") }),
+      el("span", { class: "num", text: D.efficient_pct === null ? "–" : fmt(D.efficient_pct, 1) + " % (" + fmt(D.efficient, 0) + "/" + fmt(D.rated, 0) + ")" })),
+    el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("probes per map (median)") }), el("span", { class: "num", text: D.probes_median === null ? "–" : fmt(D.probes_median, 0) })),
+    el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("time per map") }),
+      el("span", { class: "num", text: "~" + mm(D.gap_median_s) + " (" + mm(D.gap_q1_s) + " – " + mm(D.gap_q3_s) + ", n " + fmt(D.gap_n, 0) + ")" })),
+    el("div", { class: "c-dim small", text: t("Time per map: between two maps in one system less than 15 minutes apart - flying there and mapping; median with the middle half.") }),
+  ];
+  return frame(t("SURFACE MAPS"), "", rows, { cls: "st-card", appear: false });
 }
 
 function card([key, title, fields]) {

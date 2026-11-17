@@ -70,5 +70,41 @@ class StatsTest(unittest.TestCase):
             self.assertTrue(stats.build_statistics(fl.Archive(d))["empty"])
 
 
+class OverTimeTest(unittest.TestCase):
+    """ST1: series per day, first discoveries per month, surface map tiles."""
+
+    def test_series_last_login_of_the_day(self):
+        st = [_stat("2026-01-01T08:00:00Z", 100, 0, 0), _stat("2026-01-01T20:00:00Z", 110, 0, 0),
+              _stat("2026-01-03T09:00:00Z", 130, 0, 7)]
+        s = stats.series(st, None)
+        day = parse_ts("2026-01-01T00:00:00Z")
+        self.assertEqual(s["Exploration.Systems_Visited"], [[day, 110], [day + 2 * 86400, 130]])
+        self.assertNotIn("Mining.Quantity_Mined", s)                   # not in the events
+        self.assertEqual(stats.series(st, parse_ts("2026-01-02T00:00:00Z")), {})   # one day left: no line
+
+    def test_first_discoveries_per_month(self):
+        def scan(ts, body, disc, typ="Detailed"):
+            return {"timestamp": ts, "event": "Scan", "SystemAddress": 1, "BodyID": body,
+                    "ScanType": typ, "WasDiscovered": disc}
+        evs = [scan("2026-07-01T10:00:00Z", 1, False), scan("2026-07-02T10:00:00Z", 1, False),   # the same body
+               scan("2026-07-03T10:00:00Z", 2, True), scan("2026-08-01T10:00:00Z", 3, True),
+               scan("2026-08-02T10:00:00Z", 4, False, "NavBeaconDetail")]
+        self.assertEqual(stats.first_discoveries(evs), [
+            {"month": "2026-07", "scanned": 2, "first": 1, "pct": 50.0},
+            {"month": "2026-08", "scanned": 1, "first": 0, "pct": 0.0}])
+
+    def test_dss_tiles(self):
+        def saa(ts, addr, probes, target=6):
+            return {"timestamp": ts, "event": "SAAScanComplete", "SystemAddress": addr,
+                    "ProbesUsed": probes, "EfficiencyTarget": target}
+        evs = [saa("2026-07-01T10:00:00Z", 1, 3), saa("2026-07-01T10:03:00Z", 1, 4),
+               saa("2026-07-01T10:08:00Z", 1, 8), saa("2026-07-01T11:00:00Z", 1, 3),          # 52 min: no gap
+               saa("2026-07-01T11:01:00Z", 2, 2)]                                               # another system
+        d = stats.dss_tiles(evs)
+        self.assertEqual((d["maps"], d["efficient"], d["efficient_pct"], d["probes_median"]), (5, 4, 80.0, 3))
+        self.assertEqual((d["gap_n"], d["gap_median_s"]), (2, 300))
+        self.assertIsNone(stats.dss_tiles([]))
+
+
 if __name__ == "__main__":
     unittest.main()
