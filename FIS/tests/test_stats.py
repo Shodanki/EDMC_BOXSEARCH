@@ -106,5 +106,33 @@ class OverTimeTest(unittest.TestCase):
         self.assertIsNone(stats.dss_tiles([]))
 
 
+class SessionsTest(unittest.TestCase):
+    """RT1: systems and gathered value per hour, per session."""
+
+    def test_sessions(self):
+        from tests.test_unsold import _bodyvalue
+        bv = _bodyvalue()
+
+        def e(ts, ev, **kw):
+            return dict({"timestamp": "2026-07-01T%sZ" % ts, "event": ev}, **kw)
+        hmc = dict(PlanetClass="High metal content body", MassEM=1.0, TerraformState="", WasDiscovered=True,
+                   WasMapped=True, ScanType="Detailed", SystemAddress=1)
+        evs = [e("10:00:00", "LoadGame"), e("10:10:00", "FSDJump"), e("10:20:00", "FSDJump"),
+               e("10:25:00", "Scan", BodyID=1, **hmc), e("10:26:00", "SAAScanComplete", SystemAddress=1, BodyID=1),
+               e("10:40:00", "ScanOrganic", ScanType="Analyse", Species_Localised="Bacterium Aurasus"),
+               e("11:00:00", "FSDJump"),
+               e("13:00:00", "FSDJump"), e("13:05:00", "Scan", BodyID=1, **hmc)]      # after a pause; seen before
+        out = stats.play_sessions(evs, bv, {"Bacterium Aurasus": {"value": 1000000}})
+        self.assertEqual(len(out["sessions"]), 2)
+        first = out["sessions"][1]
+        mapped = bv.planet_value("High metal content body", "", 1.0, mapped=True)
+        self.assertEqual((first["minutes"], first["jumps"], first["bodies"], first["bio"]), (60, 3, 1, 1000000))
+        self.assertEqual(first["explo"], int(mapped))
+        self.assertEqual((first["jumps_h"], first["value_h"]), (3.0, int(mapped + 1000000)))
+        self.assertEqual((out["sessions"][0]["jumps"], out["sessions"][0]["bodies"]), (1, 0))
+        self.assertEqual((out["n"], out["jumps_h"]), (1, 3.0))      # only the hour-long session counts
+        self.assertFalse(stats.play_sessions(evs)["valued"])
+
+
 if __name__ == "__main__":
     unittest.main()

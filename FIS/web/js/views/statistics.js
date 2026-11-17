@@ -135,7 +135,7 @@ function render() {
   // the learning status in a column of its own on the right - no scrolling down to it (11.11.)
   const lr = learning();
   root.append(el("div", { class: "stat-wrap" + (lr ? "" : " solo") },
-    el("div", { class: "stat-grid scroll" }, head, ranks(), overTime(), firstFinds(), surfaceMaps(), bioRates(), ...CARDS.map(card)),
+    el("div", { class: "stat-grid scroll" }, head, ranks(), overTime(), firstFinds(), surfaceMaps(), bioRates(), perSession(), ...CARDS.map(card)),
     lr ? el("div", { class: "stat-side scroll" }, lr) : null));
 }
 
@@ -308,6 +308,22 @@ function bioRates() {
     { n: B.v0.bodies, r: fmt(100 * B.v0.recall_top3, 0), f: fmt(100 * B.v0.top1_right, 0) }) }));
   rows.push(el("div", { class: "c-dim small", text: t("Every landable planet scanned on this PC; groups from {m} planets on. A rate, not a promise: hover for the interval.", { m: B.min_n }) }));
   return frame(t("BIO RATES"), t("{b} of {n} with life", { b: fmt(B.with_bio, 0), n: fmt(B.planets, 0) }), rows, { cls: "st-card", appear: false });
+}
+
+// RT1: systems and gathered value per hour, per game session
+function perSession() {
+  const P = data.sessions;
+  if (!P || !P.sessions.length) return null;
+  const rows = [el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("median of {n} sessions of 30 min or more", { n: P.n }) }),
+    el("span", { class: "num", text: (P.jumps_h === null ? "–" : fmt(P.jumps_h, 1)) + " " + t("systems/h") }),
+    el("span", { class: "num c-green", text: P.valued && P.value_h !== null ? "~" + value(P.value_h, "cr") + "/h" : "" }))];
+  for (const s of P.sessions) rows.push(el("div", { class: "st-row",
+    title: t("{m} min · {j} jumps · {b} bodies · exploration ~{e} · bio {o}", { m: s.minutes, j: s.jumps, b: s.bodies, e: value(s.explo, "cr"), o: value(s.bio, "cr") }) },
+    el("span", { class: "c-dim", text: new Date(s.start * 1000).toLocaleDateString() + " · " + s.minutes + " min" }),
+    el("span", { class: "num", text: fmt(s.jumps_h, 1) + " " + t("systems/h") }),
+    el("span", { class: "num small", text: P.valued ? "~" + value(s.value_h, "cr") + "/h" : "" })));
+  rows.push(el("div", { class: "c-dim small", text: t("Value gathered, not sold: the formula's estimate of the bodies you scanned first (mapped ones mapped) plus your own prices of the species analysed - hence ~. A pause of 30 min or a login starts a new session.") }));
+  return frame(t("PER SESSION"), "", rows, { cls: "st-card", appear: false });
 }
 
 function card([key, title, fields]) {

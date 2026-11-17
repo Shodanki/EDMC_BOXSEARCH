@@ -131,6 +131,91 @@ def dss_tiles(evs: List[Dict[str, Any]], since: Optional[float] = None) -> Optio
             "gap_q1_s": round(q(gaps, 0.25)) if q else None, "gap_q3_s": round(q(gaps, 0.75)) if q else None}
 
 
+SESSION_GAP_S = 30 * 60     # RT1: no event for this long ends a session
+SESSION_MIN_S = 30 * 60     # ... and only sessions this long go into the medians
+
+
+def _median(xs: List[float]) -> Optional[float]:
+    xs = sorted(xs)
+    n = len(xs)
+    return None if not n else (xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0)
+
+
+class _Session:
+    """One game session of play_sessions: time, jumps, bodies, value."""
+
+    def __init__(self, t: float) -> None:
+        self.start = self.end = t
+        self.jumps = 0
+        self.bodies: Dict[Any, Dict[str, Any]] = {}
+        self.explo = 0.0
+        self.bio = 0.0
+
+    def out(self) -> Dict[str, Any]:
+        """The session as the view shows it, with systems and value per hour."""
+        h = max(1e-9, (self.end - self.start) / 3600.0)
+        value = self.explo + self.bio
+        return {"start": self.start, "minutes": round((self.end - self.start) / 60.0), "jumps": self.jumps,
+                "bodies": len(self.bodies), "explo": int(self.explo), "bio": int(self.bio),
+                "jumps_h": round(self.jumps / h, 1), "value_h": int(value / h)}
+
+
+def play_sessions(evs: List[Dict[str, Any]], body_value: Any = None,
+                  bio_values: Optional[Dict[str, Dict[str, int]]] = None, keep: int = 12) -> Dict[str, Any]:
+    """
+    RT1 (5.0): systems and value per hour, per game session - a LoadGame,
+    or a pause of SESSION_GAP_S, starts a new one. Value is what you
+    gathered, not what you sold: the bodyvalue estimate of the bodies you
+    scanned first in it (mapped ones at their mapped value) plus your own
+    prices of the species you analysed (unsold.BONUS_FACTOR left out) - so
+    "~". Medians over the sessions of at least SESSION_MIN_S.
+    """
+    from .unsold import _row_values, _scan_row
+    seen: set = set()
+    cur: Optional[_Session] = None
+    done: List[_Session] = []
+    for e in evs:
+        t = parse_ts(e.get("timestamp"))
+        if t is None:
+            continue
+        if cur is None or e.get("event") == "LoadGame" or t - cur.end > SESSION_GAP_S:
+            if cur is not None:
+                done.append(cur)
+            cur = _Session(t)
+        cur.end = t
+        _session_event(cur, e, seen, body_value, bio_values or {}, _row_values, _scan_row)
+    if cur is not None:
+        done.append(cur)
+    rows = [s.out() for s in done if s.jumps or s.bodies or s.bio]
+    long_ = [r for r in rows if r["minutes"] * 60 >= SESSION_MIN_S]
+    return {"sessions": list(reversed(rows[-keep:])), "n": len(long_),
+            "jumps_h": _median([r["jumps_h"] for r in long_]), "value_h": _median([r["value_h"] for r in long_]),
+            "valued": body_value is not None}
+
+
+def _session_event(cur: "_Session", e: Dict[str, Any], seen: set, bv: Any, bio_values: Dict[str, Dict[str, int]],
+                   row_values: Any, scan_row: Any) -> None:
+    """One event into a session: a jump, a first scan, a map, an analysis."""
+    ev = e.get("event")
+    if ev == "FSDJump":
+        cur.jumps += 1
+    elif ev == "Scan" and e.get("ScanType") != "NavBeaconDetail" and bv is not None:
+        key = (e.get("SystemAddress"), e.get("BodyID"))
+        if key not in seen:
+            seen.add(key)
+            r = scan_row(e)
+            cur.bodies[key] = r
+            cur.explo += row_values(bv, r)[0]
+    elif ev == "SAAScanComplete" and bv is not None:
+        r = cur.bodies.get((e.get("SystemAddress"), e.get("BodyID")))
+        if r is not None:
+            scan, full = row_values(bv, r)
+            cur.explo += full - scan
+    elif ev == "ScanOrganic" and e.get("ScanType") == "Analyse":
+        v = bio_values.get(e.get("Species_Localised") or e.get("Species") or "")
+        cur.bio += (v or {}).get("value") or 0
+
+
 def rank_name(kind: str, n: Optional[int]) -> Optional[str]:
     """The name of a rank number (Elite ranks), or the number when unknown."""
     names = RANKS.get(kind) or []
