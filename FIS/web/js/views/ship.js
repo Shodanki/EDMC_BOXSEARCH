@@ -183,7 +183,7 @@ function unsold() {
     el("span", { class: "c-dim", text: " · " + t("moderate from {m} M, high from {h} M Cr", { m: fmt(U.risk_cr.moderate / 1e6, 0), h: fmt(U.risk_cr.high / 1e6, 0) }) })));
   rows.push(...lostRows(U));
   if (U.first_systems || U.footfall_bio) rows.push(el("div", { class: "c-violet" }, "★ " + [
-    U.first_systems ? t("{n} systems discovered first by you", { n: U.first_systems }) : null,
+    U.first_systems ? t("{n} systems you may be first to discover - yours only once sold", { n: U.first_systems }) : null,
     U.footfall_bio ? t("{n} species on bodies of your first footfall", { n: U.footfall_bio }) : null].filter(Boolean).join(" · ")));
   rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; the ×5 bonus only on bodies of your first footfall; exploration data only counted.") }));
   if (U.advice === "sell") rows.push(el("div", { class: "c-red", text: t("A lot at stake - consider selling at the next station or carrier with Vista Genomics / Universal Cartographics.") }));

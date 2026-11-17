@@ -222,7 +222,7 @@ const DE = /*DE*/{
   "Composition scanner": "Zusammensetzungs-Scanner",
   "Flashlight": "Taschenlampe",
   "Interact": "Interagieren",
-  "{n} systems discovered first by you": "{n} Systeme von dir erstentdeckt",
+  "{n} systems you may be first to discover - yours only once sold": "{n} Systeme mit möglicher Erstentdeckung - erst mit dem Verkauf deine",
   "{n} species on bodies of your first footfall": "{n} Arten auf Körpern mit deinem Erst-Fußabdruck",
   "VEHICLE": "FAHRZEUG",
   "HIGH BEAM": "FERNLICHT",
