@@ -31,7 +31,27 @@ const toScene = (p) => [p[0], p[2], -p[1]];
 // log scale: units per decade of light seconds, by hierarchy level
 const F0 = (r) => 12 * Math.log10(1 + r);               // around the arrival star
 const FSTAR = (r) => 8 * Math.log10(1 + r);             // around a distant star
-const FMOON = (r) => 0.9 + 2.2 * Math.log10(1 + 20 * r); // around a planet
+// around a planet (5.0): linear up to 20 LS outside the planet's sphere and
+// rings, so 3 LS more is the same step for every moon (the log steps of 4.x
+// drew 3 and 6 LS only 13 % apart); beyond 20 LS the old log steps go on.
+// `a` is where 0 LS lies: clear of the planet, its drawn rings and the moon.
+const MOON_LIN = 20, MOON_K = 0.33;
+const moonScale = (a) => (r) => a + (r <= MOON_LIN ? MOON_K * r
+  : MOON_K * MOON_LIN + 2.2 * Math.log10((1 + 20 * r) / (1 + 20 * MOON_LIN)));
+
+// display size of a body in scene units (log mode)
+function sizeOf(b) {
+  const rk = b.radius_km || (b.kind === "Star" ? 500000 : 2000);
+  const size = Math.min(2.6, Math.max(0.28, 0.22 + 0.36 * Math.log10(1 + rk / 1000)));
+  return b.kind === "Star" ? size * 1.35 : size;
+}
+
+// how far a planet reaches in the drawing: its sphere or its widest ring
+function reachOf(b) {
+  const size = sizeOf(b);
+  const rings = (b.rings || []).filter((r) => !r.belt && r.outer_km && b.radius_km);
+  return Math.max(size, ...rings.map((r) => size * ringRatio(r.outer_km / b.radius_km)));
+}
 
 // ring radius in planet radii; very wide rings (some reach 15 LS) are
 // compressed beyond 2.5 radii so they do not swallow the whole system
@@ -55,11 +75,20 @@ export function buildScene(sys, mode = "log") {
   const LIN = 60 / maxR;
   const memo = new Map();
 
+  const moonFns = new Map();
+  function moonFn(b, parent) {
+    if (!moonFns.has(b.body_id)) {
+      const clear = (parent && parent.kind === "Planet" ? reachOf(parent) : 0) + sizeOf(b) + 0.15;
+      moonFns.set(b.body_id, moonScale(clear));
+    }
+    return moonFns.get(b.body_id);
+  }
+
   function levelFn(b, anchorLen, relLen) {
     const parent = byId.get(b.parent_id);
-    if (parent && parent.kind === "Planet") return FMOON;
+    if (parent && parent.kind === "Planet") return moonFn(b, parent);
     if (anchorLen < 1e-3 || relLen > anchorLen) return F0;
-    if (relLen < 50) return FMOON;
+    if (relLen < 50) return moonFn(b, parent);
     return FSTAR;
   }
 
@@ -101,9 +130,7 @@ export function buildScene(sys, mode = "log") {
     // only stars and planets are drawn; belt clusters and barycentres have
     // no orbit of their own and would pile up on their parent
     if (b.kind !== "Star" && b.kind !== "Planet") continue;
-    const rk = b.radius_km || (b.kind === "Star" ? 500000 : 2000);
-    let size = Math.min(2.6, Math.max(0.28, 0.22 + 0.36 * Math.log10(1 + rk / 1000)));
-    if (b.kind === "Star") size *= 1.35;
+    let size = sizeOf(b);
     if (mode === "lin") size *= 0.6;
     const ring = (b.rings || []).filter((r) => !r.belt && r.outer_km && b.radius_km);
     bodies.push({
