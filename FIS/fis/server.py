@@ -1036,10 +1036,16 @@ class Handler(BaseHTTPRequestHandler):
             live = dict(live, fuel_warning=m._fuel_state(live).warning() if live.get("ship") else None)
         except Exception:
             pass
-        return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
-                                                    lost_hidden=app.lost_hidden,
-                                                    unsold_limits=app.cfg.unsold,
-                                                    value_since=app._learn_marks().get("value")))
+        out = shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
+                                        lost_hidden=app.lost_hidden,
+                                        unsold_limits=app.cfg.unsold,
+                                        value_since=app._learn_marks().get("value"))
+        try:
+            from . import synthesis
+            out["synthesis"] = synthesis.build_synthesis(app.archive, ship=True)      # V2
+        except Exception:
+            out["synthesis"] = None
+        return self._json(out)
 
     def _get_carrier(self, qs: Dict[str, Any]) -> None:
         """CARRIER: the own carrier, its jumps and hold."""

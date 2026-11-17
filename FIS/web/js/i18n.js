@@ -181,6 +181,8 @@ const DE = /*DE*/{
   "FSD not engineered": "FSD nicht modifiziert",
   "{n} gave your drive G{to} before - unlocked": "{n} hat deinen Antrieb schon auf G{to} gebracht - freigeschaltet",
   "exobiology earned": "Exobiologie verdient",
+  "Learnt from your own synthesis in the ship - a recipe appears once you have made it. Per row: material need/on board. Stock as of {d}.": "Aus deinen eigenen Synthesen im Schiff gelernt - ein Rezept erscheint, sobald du es einmal gemacht hast. Je Zeile: Material Bedarf/an Bord. Bestand vom {d}.",
+  "No synthesis in the ship yet - make limpets, a heat sink or an FSD injection once; its recipe and how often you can make it again follow here.": "Noch keine Synthese im Schiff - mach einmal Drohnen, einen Kühlkörper oder eine FSD-Injektion; das Rezept und wie oft du es wieder machen kannst, folgen hier.",
   "median of {n} sessions of 30 min or more": "Median aus {n} Sitzungen ab 30 min",
   "systems/h": "Systeme/h",
   "{m} min · {j} jumps · {b} bodies · exploration ~{e} · bio {o}": "{m} min · {j} Sprünge · {b} Körper · Kartendaten ~{e} · Bio {o}",

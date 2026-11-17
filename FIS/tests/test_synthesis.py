@@ -127,5 +127,28 @@ class SynthesisTest(unittest.TestCase):
         self.assertEqual(Ar.calls, 2)
 
 
+class ShipSynthesisTest(unittest.TestCase):
+    """V2: the ship's own recipes - made with no vehicle out, not the vehicle's."""
+
+    def test_learn_ship(self):
+        from fis import synthesis
+
+        def e(ts, ev, **kw):
+            return dict({"timestamp": "2026-11-12T%sZ" % ts, "event": ev}, **kw)
+        mats = [{"Name": "iron", "Count": 10}, {"Name": "nickel", "Count": 10}]
+        evs = [e("10:00:00", "Synthesis", Name="Limpet Basic", Materials=mats),
+               e("10:01:00", "Synthesis", Name="Fuel Basic", Materials=[{"Name": "sulphur", "Count": 1}]),  # the SRV's
+               e("10:02:00", "LaunchSRV", SRVType="testbuggy"),
+               e("10:03:00", "Synthesis", Name="Mining Rig Basic", Materials=[{"Name": "iron", "Count": 2}]),
+               e("10:04:00", "DockSRV"),
+               e("10:05:00", "Synthesis", Name="Limpet Basic", Materials=mats)]
+        r = synthesis.learn_ship(evs)
+        self.assertEqual(list(r), ["limpet basic"])
+        self.assertEqual((r["limpet basic"]["made"], r["limpet basic"]["materials"]), (2, [("iron", 10), ("nickel", 10)]))
+        p = synthesis.plan(r, {"iron": 35, "nickel": 100})
+        self.assertEqual((p["recipes"][0]["can"], p["recipes"][0]["limit"]), (3, "iron"))
+        self.assertIn("mining rig basic", synthesis.learn(evs))       # the vehicle tab keeps its own
+
+
 if __name__ == "__main__":
     unittest.main()

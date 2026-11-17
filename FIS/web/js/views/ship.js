@@ -51,7 +51,7 @@ let controls = null;          // FG1: key bindings, asked when the view is shown
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
 // more lost systems than this: a summary line in UNSOLD DATA, the list in its own tab
 const LOST_INLINE = 10;
-let tab = store("fis.ship.tab") === "lost" ? "lost" : "ship";
+let tab = ["lost", "synth"].includes(store("fis.ship.tab")) ? store("fis.ship.tab") : "ship";
 const lostMany = () => !!(data && data.unsold && (data.unsold.lost_systems || []).length > LOST_INLINE);
 
 export function mount(r) {
@@ -114,6 +114,30 @@ function stamp(ts) {
   return new Date(ts * 1000).toLocaleString(undefined, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+// V2: what you synthesised in the ship (limpets, heat sinks, FSD injections ...)
+// and how often the materials on board make it again - learnt, not looked up
+function shipSynthesis() {
+  const S = data.synthesis;
+  const rows = [];
+  for (const r of (S && S.recipes) || []) {
+    const byKey = Object.fromEntries(r.materials.map((m) => [m.key, m]));
+    const note = r.missing.length ? t("missing: {m}", { m: r.missing.map((k) => byKey[k].name).join(", ") })
+      : r.limit ? t("limited by {m} ({n})", { m: byKey[r.limit].name, n: byKey[r.limit].have }) : "";
+    rows.push(el("div", { class: "vh-syn sh-syn" },
+      el("span", { class: "c-dim", text: r.name }),
+      el("span", { class: "vh-syn-n " + (r.can ? "c-green" : "c-amber"), text: r.can === null ? "–" : fmt(r.can, 0) }),
+      el("span", { class: "small" },
+        el("span", { text: r.materials.map((m) => m.name + " " + m.need + "/" + m.have).join(" · ") }),
+        note ? el("span", { class: "c-dim", text: " · " + note }) : null,
+        el("span", { class: "c-dim", text: " · " + t("made {n}× · last {d}", { n: r.made, d: r.last ? new Date(r.last).toLocaleDateString() : "?" }) }))));
+  }
+  rows.push(el("div", { class: "c-dim small", text: rows.length
+    ? t("Learnt from your own synthesis in the ship - a recipe appears once you have made it. Per row: material need/on board. Stock as of {d}.",
+      { d: S && S.base_ts ? new Date(S.base_ts).toLocaleString() : "–" })
+    : t("No synthesis in the ship yet - make limpets, a heat sink or an FSD injection once; its recipe and how often you can make it again follow here.") }));
+  return el("div", { class: "sh-grid" }, frame(t("SYNTHESIS"), t("your own recipes"), rows, { appear: false, cls: "vh-synth" }));
+}
+
 function render() {
   if (!root) return;
   root.replaceChildren();
@@ -123,14 +147,14 @@ function render() {
     return;
   }
   root.append(annunciator());
-  // many crash losses: SHIP | LOST DATA, the same sub-tabs as CARRIER
-  if (lostMany()) {
-    const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
-      onclick: () => { tab = k; store("fis.ship.tab", k); render(); } });
-    root.append(el("div", { class: "kc-tabs" }, tb("ship", t("SHIP")),
-      tb("lost", t("LOST DATA") + " · " + data.unsold.lost_systems.length)));
-    if (tab === "lost") { root.append(lostData()); return; }
-  }
+  // sub-tabs as in CARRIER: SHIP | SYNTHESIS (V2) | LOST DATA (many crash losses)
+  const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
+    onclick: () => { tab = k; store("fis.ship.tab", k); render(); } });
+  if (tab === "lost" && !lostMany()) tab = "ship";
+  root.append(el("div", { class: "kc-tabs" }, tb("ship", t("SHIP")), tb("synth", t("SYNTHESIS")),
+    lostMany() ? tb("lost", t("LOST DATA") + " · " + data.unsold.lost_systems.length) : null));
+  if (tab === "lost") { root.append(lostData()); return; }
+  if (tab === "synth") { root.append(shipSynthesis()); return; }
   // left: the picture and the hold; right (the wide side): report and the
   // engineer's module list, which needs the room (user, 05.11.2026)
   root.append(el("div", { class: "sh-grid" },
