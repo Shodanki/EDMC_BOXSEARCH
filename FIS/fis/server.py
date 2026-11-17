@@ -1024,6 +1024,25 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(mining.build_mining(app.archive, app.db, app.live_state(), app.cfg.journal_dir,
                                               capi_path=capi.path_for(app.cfg.plugin_dir)))
 
+    def _get_ledger(self, qs: Dict[str, Any]) -> None:
+        """5.0 GAIN / LOSS of the active commander, per ship, over ?days= (0: all)."""
+        app = self.app
+        from . import ledger
+        try:
+            days = float((qs.get("days") or ["0"])[0]) or None
+        except ValueError:
+            days = None
+        app.archive.refresh()
+        evs = app.archive.events()
+        bal = ((app.live_state() or {}).get("status") or {}).get("balance")
+        out = ledger.build_ledger(evs, days, balance_now=bal)
+        names = app.archive.ship_names(evs)
+        for s in out["ships"]:
+            s["type_name"] = names.get(str(s.get("type") or "").lower())
+        for d in out["deaths"]:
+            d["type_name"] = names.get(str(d.get("type") or "").lower())
+        return self._json(out)
+
     def _get_statistics(self, qs: Dict[str, Any]) -> None:
         """STATISTICS, with what the FIS has learnt so far."""
         app = self.app
@@ -1189,6 +1208,7 @@ _GET_ROUTES = {
     "/api/mining/live": Handler._get_mining_live,
     "/api/mining": Handler._get_mining,
     "/api/statistics": Handler._get_statistics,
+    "/api/ledger": Handler._get_ledger,
     "/api/galaxy": Handler._get_galaxy,
     "/api/survey/export": Handler._get_survey_export,
     "/api/survey": Handler._get_survey,

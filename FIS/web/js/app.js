@@ -20,10 +20,11 @@ import * as vehicle from "./views/vehicle.js";
 import * as carrier from "./views/carrier.js";
 import * as galaxy from "./views/galaxy.js";
 import * as statistics from "./views/statistics.js";
+import * as ledger from "./views/ledger.js";
 import * as mining from "./views/mining.js";
 import * as settings from "./views/settings.js";
 
-const VIEWS = { briefing, tactical, planet, surface, atlas, ship, vehicle, carrier, galaxy, statistics, mining, settings };
+const VIEWS = { briefing, tactical, planet, surface, atlas, ship, vehicle, carrier, galaxy, statistics, ledger, mining, settings };
 // ?solo=ship: one view alone in its own window (second screen, tablet)
 // ?system=<id64> pins another system (detail window from GALAXY, review)
 const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];
@@ -188,7 +189,7 @@ function show(name) {
 for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => show(b.dataset.view));
 // hand-edited URL hash / bookmarks (#briefing, #tactical, #planet)
 // the names on the tabs work as addresses too (#system, #planetinfo)
-const ALIAS = { system: "tactical", planetinfo: "planet", stats: "statistics", srv: "vehicle", nomad: "vehicle" };
+const ALIAS = { system: "tactical", planetinfo: "planet", stats: "statistics", pnl: "ledger", guv: "ledger", srv: "vehicle", nomad: "vehicle" };
 window.addEventListener("hashchange", () => {
   const name = ALIAS[location.hash.slice(1)] || location.hash.slice(1);
   if (!SOLO && VIEWS[name] && name !== store.view) show(name);

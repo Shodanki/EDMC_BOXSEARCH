@@ -70,6 +70,14 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "Scan",
           # which ring the rocks were prospected in (fis/prospect.py)
           "SupercruiseEntry",
+          # 5.0 GAIN / LOSS (fis/ledger.py): what was earned, spent and invested
+          "ModuleBuy", "ModuleBuyAndStore", "ModuleSell", "ModuleSellRemote", "FetchRemoteModule",
+          "BuySuit", "BuyWeapon", "UpgradeSuit", "UpgradeWeapon", "BuyMicroResources", "SellSuit",
+          "SellWeapon", "SellMicroResources", "CarrierBuy", "Repair", "RepairAll", "RefuelAll",
+          "RefuelPartial", "BuyAmmo", "RestockVehicle", "BuyDrones", "SellDrones", "PayFines",
+          "PayBounties", "PayLegacyFines", "NpcCrewPaidWage", "CrewHire", "BuyExplorationData",
+          "BuyTradeData", "RedeemVoucher", "MarketBuy", "SearchAndRescue", "CommunityGoalReward",
+          "PowerplaySalary",
           # first footfall (unsold data: the x5 bonus is paid only there)
           "Disembark")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
