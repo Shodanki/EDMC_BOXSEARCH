@@ -176,6 +176,7 @@ def _tab_overlay(r: _Rows) -> None:
     r.check("overlay_brief", "overlay_brief", True, "briefing on target selection and arrival")
     r.check("overlay_nav", "overlay_nav", True, "surface compass: parked SRV, open samples, known points")
     r.check("overlay_mining", "overlay_mining", True, "mining: last rock, hold, rate, session, limpets (5 lines)")
+    r.check("overlay_state", "overlay_state", True, "out of supercruise: gear, lights, hardpoints still out (left)")
     # 4.12: the situation column in the opposite corner (cockpitinfo)
     r.head("Situation column (the opposite corner)")
     r.check("overlay_info_warn", "overlay_info_warn", True, "warnings: dangerous star ahead, unsold data at stake")
@@ -296,6 +297,7 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["overlay_brief"], bool(_p["overlay_brief"].get()))
         cfg_set(CFG["overlay_nav"], bool(_p["overlay_nav"].get()))
         cfg_set(CFG["overlay_mining"], bool(_p["overlay_mining"].get()))
+        cfg_set(CFG["overlay_state"], bool(_p["overlay_state"].get()))
         for key in ("overlay_info_warn", "overlay_info_place", "overlay_info_session"):
             cfg_set(CFG[key], bool(_p[key].get()))
         if "fis_autostart" in _p:

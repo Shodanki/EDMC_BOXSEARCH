@@ -223,6 +223,8 @@ class CockpitOverlay:
         self._mute_why: set = set()          # 4.12: why ("mining", "surface") - each lifts its own
         self._pending_brief: Optional[Tuple[List[Line], int, float]] = None
         self._targets_t = 0.0                # when the targets block was last sent
+        self._last_state: List[Line] = []    # 5.0 (own-3): gear, lights, hardpoints
+        self._state_t = 0.0
 
     # -- game screens ------------------------------------------------------
     def set_focus(self, focus: Optional[int]) -> None:
@@ -292,6 +294,11 @@ class CockpitOverlay:
         x, y = ANCHORS.get(self.position, ANCHORS["top-left"])
         if group == "info":
             return self._info_origin()
+        if group == "state":
+            # 5.0 (own-3): always on the left, in the corner the other
+            # blocks leave free (the bottom while they start at the top)
+            corner = "bottom-left" if self.position.startswith("top") else "top-left"
+            return ANCHORS[corner]
         if group in ("brief", "bio", "nav", "mine"):
             lh = LINE_H.get(self.size, 16)
             down = (self._drawn.get("targets", 0) + 1) * lh
@@ -382,6 +389,26 @@ class CockpitOverlay:
                 or now - self._targets_t < self.TARGETS_REFRESH):
             return False
         return self.draw("targets", self._last_targets, ttl=self.TARGETS_TTL)
+
+    STATE_TTL = 600         # s; sent again after half of it while unchanged
+
+    def show_state(self, lines: Sequence[Line]) -> bool:
+        """5.0 (own-3): what is still out (shipstate.reminder_lines) - drawn
+        when it changes, blanked when nothing is out or a game screen is in
+        front. True while it is on screen."""
+        lines = list(lines)
+        if self.hidden or not lines:
+            if self._drawn.get("state"):
+                self.clear("state")
+            self._last_state = []
+            return False
+        now = time.time()
+        if lines == self._last_state and self._drawn.get("state") and now - self._state_t < self.STATE_TTL / 2:
+            return True
+        if not self.draw("state", lines, ttl=self.STATE_TTL):
+            return False
+        self._last_state, self._state_t = lines, now
+        return True
 
     def show_bio(self, lines: Sequence[Line], seconds: int = 8) -> bool:
         """Exobiology distance line while sampling; held back like a briefing."""

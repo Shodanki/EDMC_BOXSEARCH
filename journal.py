@@ -23,6 +23,7 @@ from . import journalgap
 from . import journalscan
 from . import miningstat
 from . import overlay
+from . import shipstate
 from . import surfacenav
 from .biopredict import COLONY_RANGE_M, surface_distance_m
 from .procgen import star_pos
@@ -636,6 +637,7 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
         cockpitinfo.dashboard(entry)         # 4.12: danger - unsold data at stake
         journalgap.status_tick()             # 4.12.1: EDMC quiet, the journal not?
         _mining_overlay()                    # rate and ages move on; at most every 5 s
+        _state_overlay(entry)                # 5.0 (own-3): gear, lights, hardpoints
     except Exception:
         logger.debug("mining overlay failed", exc_info=True)
     if not ST.db or not cfg_bool(CFG["harvest_destination"], True):
@@ -645,6 +647,16 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
         _status_destination(entry)
     except Exception:
         logger.exception("dashboard_entry failed")
+
+
+def _state_overlay(entry: Dict[str, Any]) -> None:
+    """Out of supercruise: gear, lights, hardpoints still out, on the left
+    (shipstate; setting "overlay_state")."""
+    ov = getattr(ST, "overlay", None)
+    if ov is None or "Flags" not in entry:
+        return
+    on = ov.enabled and cfg_bool(CFG["overlay_state"], True)
+    ov.show_state(shipstate.reminder_lines(entry["Flags"]) if on else [])
 
 
 def _status_fuel(entry: Dict[str, Any]) -> None:

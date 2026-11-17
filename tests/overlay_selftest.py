@@ -15,7 +15,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import plugin_pkg  # noqa: E402
 plugin_pkg.package()
-from SHBOXSEARCH.overlay import (COL, CockpitOverlay, briefing_lines)  # noqa: E402
+from SHBOXSEARCH.overlay import (ANCHORS, COL, CockpitOverlay, briefing_lines)  # noqa: E402
+from SHBOXSEARCH import shipstate as ss  # noqa: E402
 
 
 def _selftest() -> int:
@@ -71,6 +72,28 @@ def _selftest() -> int:
     check("REGION  Inner Orion Spur" in texts(region="Inner Orion Spur")
           and not any(t.startswith("REGION") for t in texts()),
           "4.10: the codex region when known, nothing otherwise")
+    # 5.0 (own-3): gear, lights, hardpoints still out - left, out of supercruise
+    ship = ss.IN_SHIP
+    rl = ss.reminder_lines
+    check(rl(ship | ss.GEAR | ss.LIGHTS | ss.HARDPOINTS)[0][0] == "SHIP GEAR DOWN · HARDPOINTS OUT · LIGHTS ON",
+          "own-3: in orbit, all named: %r" % rl(ship | ss.GEAR | ss.LIGHTS | ss.HARDPOINTS))
+    check(all(not rl(ship | ss.GEAR | x) for x in (ss.SUPERCRUISE, ss.FSD_JUMP, ss.DOCKED, ss.LANDED)),
+          "own-3: nothing in supercruise, jumping, docked or landed")
+    check(not rl(ship) and not rl(None) and not rl("x"), "own-3: nothing out, nothing shown")
+    check(rl(ss.IN_SRV | ss.LIGHTS)[0][0] == "SRV  LIGHTS ON"
+          and rl(ss.IN_SRV | ss.LIGHTS | ss.SRV_HIGH_BEAM)[0][0] == "SRV  HIGH BEAM" and not rl(ss.IN_SRV),
+          "own-3: SRV lights and high beam")
+    sent.clear()
+    ov.hidden = False
+    check(ov.show_state(rl(ship | ss.GEAR)) and sent and sent[-1][0].endswith("state-0")
+          and ov._origin("state") == ANCHORS["bottom-left"], "own-3: drawn bottom left while the blocks start at the top")
+    n = len(sent)
+    check(ov.show_state(rl(ship | ss.GEAR)) and len(sent) == n, "own-3: unchanged - not sent again")
+    check(not ov.show_state([]) and sent[-1][1] == "" and not ov._drawn.get("state"), "own-3: gear up - blanked")
+    ov.position = "bottom-left"
+    check(ov._origin("state") == ANCHORS["top-left"], "own-3: blocks at the bottom - top left")
+    ov.hidden = True
+    check(not ov.show_state(rl(ship | ss.GEAR)), "own-3: not over a map screen")
     print("failures: %d" % fails)
     return fails
 

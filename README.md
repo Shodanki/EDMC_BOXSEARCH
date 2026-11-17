@@ -187,6 +187,7 @@ on first run and is **your data** - never overwrite it on an update.
 | `bodyvalue.py` | 157 | What a body's exploration data is worth - an estimate from the community formula | — |
 | `situation.py` | 478 | The overlay's situation column: the board and its short texts (warnings, landing card, system value, ring, boxel, route fuel, carrier, session) | — |
 | `cockpitinfo.py` | 507 | Feeds the situation column from the journal and Status.json, draws it every 5 s | `situation`, `bodyvalue` |
+| `shipstate.py` | 50 | Out of supercruise: landing gear, lights, hardpoints, cargo scoop still out - one overlay line on the left | — |
 | `biosig.py` | 97 | Open biological signals: one signal per genus, but Brain Trees can be several species on one body | — |
 | `journalscan.py` | 325 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay | — |
 | `edts_pgnames/` | | Sector names computed with EDTS's algorithm, hand-authored sector table (third-party, BSD 3-Clause, see its `SOURCE.md`) | — |
@@ -1760,8 +1761,15 @@ DSS  3 to map ~+9.8 M Cr · 3 first
 What you were paid is read once from your journals at the start; nothing
 leaves your computer.
 
+**Still out (5.0).** Out of supercruise and neither docked nor landed, one
+amber line on the left names what is still out - `SHIP GEAR DOWN ·
+HARDPOINTS OUT · LIGHTS ON` (and an open cargo scoop), in the SRV its
+lights or high beam. The game shows these as small icons; this is the
+second look. On/off in the settings.
+
 *Preferences -> SHBOXSEARCH -> Overlay*: on/off, briefing on/off,
 the situation column's warnings, places and session tally each on/off,
+the "still out" line on/off,
 position (four corners). The preferences show whether an overlay plugin was
 found. Without one nothing happens. The overlay is a separate transparent
 window drawn by the overlay plugin - it only displays, nothing is sent to the
