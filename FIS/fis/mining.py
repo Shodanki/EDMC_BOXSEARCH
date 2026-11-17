@@ -252,8 +252,98 @@ def _summary(run: List[Dict[str, Any]], now: Optional[float] = None) -> Dict[str
 # hold ended at 305 of 322 t - the old split r C / (1 + r) would have run
 # out at ~228 t.)
 DEFAULT_RATIO = 0.4          # laser mining, until your own sessions say better
+# ML1: collector limpets expire, but the journal writes no event for it. A
+# launch wave (collection launches less than WAVE_GAP_S apart) keeps
+# working as long as tonnes are refined before the next wave or the end of
+# the session - "seen working up to", per limpet controller. Measured on the
+# developer's journals, 17.11.2026 (mining multi-limpet controller 5A):
+# median 108 s, 90 % 258 s, max 730 s (80 waves).
+WAVE_GAP_S = 60.0
+_GRADE = {"1": "E", "2": "D", "3": "C", "4": "B", "5": "A"}
 LIMPET_RESERVE = 0.10
 MIN_TONNES = 20              # sessions shorter than this tell nothing
+
+
+def controller_of(loadout: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The limpet controller that launches collectors (a collector or a
+    multi-limpet controller), as its Loadout item - None without one."""
+    for m in (loadout or {}).get("Modules") or []:
+        it = (m.get("Item") or "").lower()
+        if "dronecontrol_collection" in it or "multidronecontrol_mining" in it or "multidronecontrol_universal" in it:
+            return it
+    return None
+
+
+def controller_label(item: Optional[str]) -> Optional[Dict[str, str]]:
+    """{"kind": collector / mining multi / universal multi, "grade": "5A"}."""
+    if not item:
+        return None
+    kind = "collector" if "collection" in item else "universal" if "universal" in item else "mining"
+    size = item.split("_size")[-1].split("_")[0] if "_size" in item else "?"
+    cls = item.split("_class")[-1][:1] if "_class" in item else "?"
+    return {"kind": kind, "grade": size + _GRADE.get(cls, "?")}
+
+
+def _waves(run: List[Dict[str, Any]]) -> Tuple[List[float], Optional[float]]:
+    """Collector waves of one session: seconds from the wave's launch to the
+    last tonne refined before the next wave or the end, and when the last
+    wave was launched."""
+    out: List[float] = []
+    start = last_launch = last_refine = None
+    for e in run:
+        t = parse_ts(e.get("timestamp"))
+        if t is None:
+            continue
+        if e["event"] == "LaunchDrone" and (e.get("Type") or "").lower() == "collection":
+            if last_launch is None or t - last_launch > WAVE_GAP_S:
+                if start is not None and last_refine is not None:
+                    out.append(last_refine - start)
+                start, last_refine = t, None
+            last_launch = t
+        elif e["event"] == "MiningRefined" and start is not None and not e.get("_vehicle"):
+            last_refine = t
+    if start is not None and last_refine is not None:
+        out.append(last_refine - start)
+    return out, start
+
+
+def _spread(xs: List[float]) -> Optional[Dict[str, Any]]:
+    """n, median, 90 % and max of durations in seconds."""
+    if not xs:
+        return None
+    xs = sorted(xs)
+    n = len(xs)
+    med = xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
+    return {"n": n, "median_s": round(med), "p90_s": round(xs[min(n - 1, int(0.9 * n))]), "max_s": round(xs[-1])}
+
+
+def collector_life(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    ML1: how long collector waves were seen working, per limpet controller
+    (the Loadout before each session) - {item: {n, median_s, p90_s, max_s,
+    label}}. Only what was seen: the journal writes no expiry, so neither
+    when a wave died nor how long it would have worked on is known.
+    """
+    ctrl: Optional[str] = None
+    marks: List[Tuple[float, Optional[str]]] = []
+    for e in events:
+        if e.get("event") == "Loadout":
+            ctrl = controller_of(e)
+            t = parse_ts(e.get("timestamp"))
+            if t is not None:
+                marks.append((t, ctrl))
+    by: Dict[str, List[float]] = {}
+    for run in _runs(events):
+        t0 = parse_ts(run[0].get("timestamp")) or 0.0
+        c = next((c for t, c in reversed(marks) if t <= t0), None)
+        if c:
+            by.setdefault(c, []).extend(_waves(run)[0])
+    out = {}
+    for c, xs in by.items():
+        s = _spread(xs)
+        if s:
+            out[c] = dict(s, label=controller_label(c))
+    return out
 
 
 def limpet_load(cargo: int, ratio: float, reserve: float = LIMPET_RESERVE) -> Dict[str, int]:
@@ -375,6 +465,7 @@ def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
         out["best_share"] = best
         out["session"] = {k: s[k] for k in ("start", "total", "per_hour", "minutes", "drones", "asteroids")}
     # how far cargo space and limpets go (limpets per refined tonne from your sessions)
+    out["collectors"] = _collectors_now(evs, runs, lo, s, now)
     rat = limpet_ratio(sessions(evs, now))
     typ = (lo.get("Ship") or "").lower()
     basis = rat["by_type"].get(typ) or rat["all"]
@@ -388,6 +479,19 @@ def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
         if out.get("rate_h"):
             out["full_in_min"] = round(min(out["room_t"], out["limpets_for_t"] or out["room_t"]) / out["rate_h"] * 60)
     return out
+
+
+def _collectors_now(evs: List[Dict[str, Any]], runs: List[List[Dict[str, Any]]], lo: Dict[str, Any],
+                    s: Optional[Dict[str, Any]], now: float) -> Optional[Dict[str, Any]]:
+    """ML1 live: the current controller's waves seen so far, and when the
+    last wave of the running session went out."""
+    c = controller_of(lo)
+    if not c:
+        return None
+    life = collector_life(evs).get(c)
+    last = _waves(runs[-1])[1] if runs and s and s.get("active") else None
+    return {"life": life, "label": controller_label(c),
+            "last_wave_ago": round(now - last) if last is not None else None}
 
 
 def _ly(a, b) -> Optional[float]:
@@ -462,7 +566,8 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     # ---------------------------------------------------------- limpet load per mining ship
     rat = limpet_ratio(hist)
     out["limpet_plan"] = {"ratio": rat, "default": DEFAULT_RATIO, "reserve": LIMPET_RESERVE,
-                          "ships": _limpet_plans(rat, out["ships"], out["limpets"])}
+                          "ships": _limpet_plans(rat, out["ships"], out["limpets"]),
+                          "collector_life": list(collector_life(evs).values())}
     return out
 
 

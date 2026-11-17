@@ -106,6 +106,15 @@ function liveStatus() {
     est.push(short ? t("limpets last for ~{t} t - room for {f} t", { t: fmt(L.limpets_for_t, 0), f: fmt(L.room_t, 0) })
       : t("room for ~{f} t, limpets last for ~{t} t - enough", { f: fmt(L.room_t, 0), t: fmt(L.limpets_for_t, 0) }));
   if (est.length) rows.push(el("div", { class: "small " + (short ? "c-amber" : "c-dim"), text: est.join(" · ") }));
+  // ML1: collectors out - how long waves were seen working so far
+  const CL = L.collectors;
+  if (CL && CL.life && CL.last_wave_ago !== null && CL.last_wave_ago !== undefined) {
+    const old = CL.last_wave_ago > CL.life.max_s;
+    rows.push(el("div", { class: "small " + (old ? "c-amber" : "c-dim"),
+      text: t("collectors out for {a} - waves seen working up to {m} (median {d}, {n} waves)",
+        { a: mmss(CL.last_wave_ago), m: mmss(CL.life.max_s), d: mmss(CL.life.median_s), n: CL.life.n })
+        + (old ? " · " + t("longer than ever seen - they may be gone") : "") }));
+  }
   // prospector reports: the last one large, a few before it
   const rocks = L.rocks || [];
   if (rocks.length) {
@@ -150,6 +159,18 @@ function session() {
   ], { appear: false });
 }
 
+const mmss = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0") + " min";
+const CTRL = { collector: N_("collector limpet controller"), mining: N_("mining multi-limpet controller"),
+  universal: N_("universal multi-limpet controller") };
+
+// ML1: collector waves seen working, per controller - no expiry event exists
+function collectorLife(P) {
+  return (P.collector_life || []).map(c => el("div", { class: "c-dim small",
+    title: t("From a launch wave to the last tonne refined before the next wave or the end of the session. The journal writes no expiry, so this is only what was seen."),
+    text: t("Collectors ({c} {g}): seen working up to {m}, median {d}, 90 % {p} ({n} waves)",
+      { c: c.label ? t(CTRL[c.label.kind]) : "?", g: c.label ? c.label.grade : "", m: mmss(c.max_s), d: mmss(c.median_s), p: mmss(c.p90_s), n: c.n }) }));
+}
+
 // ------------------------------------------------------------ limpet load
 // cargo = limpets + ore; your sessions say how many limpets a tonne takes
 function limpets() {
@@ -171,6 +192,7 @@ function limpets() {
       text: t("On board {h}", { h: cur.on_board }) + " · " + (Math.abs(cur.diff) <= 2 ? t("about right")
         : cur.diff > 0 ? t("take {n} more", { n: cur.diff }) : t("{n} too many - room for ore", { n: -cur.diff })) }) : null,
     el("div", { class: "c-dim small", text: basis }),
+    ...collectorLife(P),
     el("div", { class: "c-dim small", text: t("Limpets = r × cargo + {p} % reserve: every limpet launched frees its tonne, so the hold can end full of ore. Ore = what the hold holds at the end. * no session with this hull - your average.",
       { p: Math.round(P.reserve * 100) }) }),
   ], { appear: false });

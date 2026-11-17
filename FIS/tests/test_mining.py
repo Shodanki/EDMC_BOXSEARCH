@@ -122,5 +122,55 @@ class MiningTest(unittest.TestCase):
         self.assertLessEqual(abs(fl.carrier_trip(4000, 5000, short["need"])["need"] - short["need"]), 1)
 
 
+def _sec(t):
+    """An event time t seconds after 08:00."""
+    return "2026-05-30T08:%02d:%02dZ" % divmod(t, 60)
+
+
+MULTI = "int_multidronecontrol_miningv2_size5_class5"
+
+
+class CollectorLife(unittest.TestCase):
+    """ML1: collector waves seen working - the journal writes no expiry."""
+
+    def _events(self):
+        def e(t, name, **kw):
+            return dict({"timestamp": _sec(t), "event": name}, **kw)
+        return [e(0, "Loadout", Ship="type9", Modules=[{"Slot": "Slot01", "Item": MULTI}]),
+                e(5, "LaunchDrone", Type="Prospector"),
+                e(10, "LaunchDrone", Type="Collection"), e(40, "LaunchDrone", Type="Collection"),   # one wave
+                e(60, "MiningRefined", Type_Localised="Tritium"), e(130, "MiningRefined", Type_Localised="Tritium"),
+                e(300, "LaunchDrone", Type="Collection"),                                       # the next wave
+                e(400, "MiningRefined", Type_Localised="Tritium"),
+                e(500, "LaunchDrone", Type="Collection")]                                        # nothing refined yet
+
+    def test_waves_per_controller(self):
+        life = mining.collector_life(self._events())
+        self.assertEqual(list(life), [MULTI])
+        c = life[MULTI]
+        self.assertEqual((c["n"], c["median_s"], c["p90_s"], c["max_s"]), (2, 110, 120, 120))
+        self.assertEqual(c["label"], {"kind": "mining", "grade": "5A"})
+        self.assertEqual(mining.controller_label("int_dronecontrol_collection_size3_class2"),
+                         {"kind": "collector", "grade": "3D"})
+        self.assertIsNone(mining.controller_of({"Modules": [{"Item": "int_dronecontrol_prospector_size1_class5"}]}))
+
+    def test_no_controller_no_waves(self):
+        evs = [dict(x) for x in self._events() if x["event"] != "Loadout"]
+        self.assertEqual(mining.collector_life(evs), {})
+
+    def test_live_line(self):
+        class A:
+            def refresh(self, force=False):
+                pass
+
+            def events(self):
+                return evs
+        evs = self._events()
+        now = parse_ts(_sec(560))
+        out = mining.build_live(A(), {"loadout": None}, None, now)
+        cl = out["collectors"]
+        self.assertEqual((cl["last_wave_ago"], cl["life"]["max_s"], cl["label"]["grade"]), (60, 120, "5A"))
+
+
 if __name__ == "__main__":
     unittest.main()
