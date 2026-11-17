@@ -64,7 +64,7 @@ b475caea449c2edd0cf69b9a083a4e6fbd5dca77ebd45a51e6f92d22a61a91fe  FIS/web/js/vie
 340d68cfba4c9caf76b7655b2af9175b54051878442eede068e52286e4d3daf2  FIS/web/js/views/render2d.js
 dc492bbf0487c68d206c83b218695a1f7ecf0ad9e34bf49b96065d92351b62ed  FIS/web/js/views/render3d.js
 514dbd693baa9700607a6eb80e414747b536e05709f16bf72cd2fb480a0a0375  FIS/web/js/views/rhino.js
-ca808b6d81c3778c03e75fc869ec3db754d2cf426055b91718859ef247b7c57f  FIS/web/js/views/scene.js
+17e6074fe6b691e4222e9b13d24788d274cd7ced39b4e9b96a6ad30a41d8eb1c  FIS/web/js/views/scene.js
 d6d038199e89e9df00441cba4dcf370745c48e6d2b61bfbdf46ade30f5421214  FIS/web/js/views/settings.js
 01fef371e4e06cbc2d959c1bf06dd4f16b86adf210f1f91357b35f731a396618  FIS/web/js/views/ship.js
 1ea8842443ef8082f8095612caf04d9f00562fb7259691da7f765e9f01179b11  FIS/web/js/views/statistics.js

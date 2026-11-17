@@ -30,14 +30,20 @@ const toScene = (p) => [p[0], p[2], -p[1]];
 
 // log scale: units per decade of light seconds, by hierarchy level
 const F0 = (r) => 12 * Math.log10(1 + r);               // around the arrival star
-const FSTAR = (r) => 8 * Math.log10(1 + r);             // around a distant star
+// around a distant star: spread from 10 LS on (own-5, 17.11.: 8·log10(1+r)
+// drew 325 and 529 LS 1.7 units apart - two groups 203 LS apart nearly
+// touched; now 2.9)
+const FSTAR = (r) => 14 * Math.log10(1 + r / 10);
 // around a planet (5.0): linear up to 20 LS outside the planet's sphere and
 // rings, so 3 LS more is the same step for every moon (the log steps of 4.x
 // drew 3 and 6 LS only 13 % apart); beyond 20 LS the old log steps go on.
 // `a` is where 0 LS lies: clear of the planet, its drawn rings and the moon.
-const MOON_LIN = 20, MOON_K = 0.33;
-const moonScale = (a) => (r) => a + (r <= MOON_LIN ? MOON_K * r
-  : MOON_K * MOON_LIN + 2.2 * Math.log10((1 + 20 * r) / (1 + 20 * MOON_LIN)));
+// own-5 (17.11.): plus 0.3·log10(1 + distance / planet radius) - a moon at
+// 31 planet radii (C 2 a, 0.31 LS) nearly touched its planet; monotone, so
+// the order and the linear steps between moons stay
+const MOON_LIN = 20, MOON_K = 0.33, LS_KM = 299792.458;
+const moonScale = (a, rp) => (r) => a + (rp ? 0.3 * Math.log10(1 + r * LS_KM / rp) : 0)
+  + (r <= MOON_LIN ? MOON_K * r : MOON_K * MOON_LIN + 2.2 * Math.log10((1 + 20 * r) / (1 + 20 * MOON_LIN)));
 
 // display size of a body in scene units (log mode)
 function sizeOf(b) {
@@ -79,7 +85,7 @@ export function buildScene(sys, mode = "log") {
   function moonFn(b, parent) {
     if (!moonFns.has(b.body_id)) {
       const clear = (parent && parent.kind === "Planet" ? reachOf(parent) : 0) + sizeOf(b) + 0.15;
-      moonFns.set(b.body_id, moonScale(clear));
+      moonFns.set(b.body_id, moonScale(clear, parent && parent.kind === "Planet" ? parent.radius_km : 0));
     }
     return moonFns.get(b.body_id);
   }
