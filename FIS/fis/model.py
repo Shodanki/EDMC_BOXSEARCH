@@ -75,6 +75,7 @@ def plugin():
         p.biosig = biosig
         p.groundmine = groundmine
         p.learnreset = _optional("learnreset")     # plugin 5.0+: model resets (SK3)
+        p.bodyvalue = _optional("bodyvalue")       # plugin 4.12+: what exploration data is worth (B6)
         _plugin = p
     return _plugin
 

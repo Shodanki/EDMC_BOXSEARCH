@@ -39,22 +39,23 @@ class LearnReset(unittest.TestCase):
 
     def test_missing_and_broken_file(self):
         """No file or a broken one: nothing was reset."""
-        self.assertEqual(lr.load(self.path), {"version": 1, "route": None, "work": None, "fuel": {}})
+        self.assertEqual(lr.load(self.path), {"version": 1, "route": None, "work": None, "value": None, "fuel": {}})
         with open(self.path, "w", encoding="utf-8") as fh:
             fh.write("{not json")
         self.assertIsNone(lr.since(lr.load(self.path), "route"))
         with open(self.path, "w", encoding="utf-8") as fh:
             json.dump({"route": "yesterday", "fuel": {"x": "y"}}, fh)
-        self.assertEqual(lr.load(self.path), {"version": 1, "route": None, "work": None, "fuel": {}})
+        self.assertEqual(lr.load(self.path), {"version": 1, "route": None, "work": None, "value": None, "fuel": {}})
         self.assertEqual(lr.plugin_path("P"), os.path.join("P", "FIS", "learn_reset.json"))
 
     def test_marks(self):
         """A mark per model, the fuel mark per ship; the file is replaced whole."""
         lr.mark(self.path, "route", 100.0)
+        lr.mark(self.path, "value", 150.0)                     # B6: the exploration values
         lr.mark(self.path, "fuel", 200.0, ship=("Cmdr", 9, 37))
         lr.mark(self.path, "fuel", 300.0, ship=("Cmdr", 3, 33))
         got = lr.load(self.path)
-        self.assertEqual((lr.since(got, "route"), lr.since(got, "work")), (100.0, None))
+        self.assertEqual((lr.since(got, "route"), lr.since(got, "work"), lr.since(got, "value")), (100.0, None, 150.0))
         self.assertEqual(lr.fuel_since(got), {("Cmdr", 9, 37): 200.0, ("Cmdr", 3, 33): 300.0})
         self.assertFalse(os.path.exists(self.path + ".tmp"))
         with self.assertRaises(ValueError):

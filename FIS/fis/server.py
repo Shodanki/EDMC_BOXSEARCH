@@ -678,7 +678,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _post_learning_reset(self, raw: bytes) -> None:
         """
-        SK3, POST /api/learning/reset {"part": "route" | "work" | "fuel"}:
+        SK3, POST /api/learning/reset {"part": "route" | "work" | "fuel" | "value"}:
         forget what a model learnt - measurements before now are left out
         from then on, here and in the plugin at its next start. Same locks
         as a favourite (the FIS page only; with LAN the token).
@@ -1038,7 +1038,8 @@ class Handler(BaseHTTPRequestHandler):
             pass
         return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
                                                     lost_hidden=app.lost_hidden,
-                                                    unsold_limits=app.cfg.unsold))
+                                                    unsold_limits=app.cfg.unsold,
+                                                    value_since=app._learn_marks().get("value")))
 
     def _get_carrier(self, qs: Dict[str, Any]) -> None:
         """CARRIER: the own carrier, its jumps and hold."""
@@ -1081,6 +1082,12 @@ class Handler(BaseHTTPRequestHandler):
         evs = app.archive.events()
         bal = ((app.live_state() or {}).get("status") or {}).get("balance")
         out = ledger.build_ledger(evs, days, balance_now=bal)
+        # B6: the open block - unsold data as UNSOLD DATA values it
+        from . import shipview
+        un = shipview._unsold(app.archive, app.cfg.unsold, app._learn_marks().get("value"))
+        out["open"] = ({"bio": un["bio"]["value"], "bio_count": un["bio"]["count"],
+                        "systems": un["exploration"]["systems"], "explo": un["exploration"].get("value")}
+                       if un else None)
         names = app.archive.ship_names(evs)
         for s in out["ships"]:
             s["type_name"] = names.get(str(s.get("type") or "").lower())
@@ -1104,6 +1111,9 @@ class Handler(BaseHTTPRequestHandler):
             # SK3: the route, work and fuel models with what they rest on
             out["learning"]["models"] = learn.model_status(app.calib.info, app.live_state(),
                                                            app.calib.model)
+            from . import shipview
+            un = shipview._unsold(app.archive, app.cfg.unsold, app._learn_marks().get("value"))
+            out["learning"]["models"]["value"] = un["exploration"].get("calibration") if un else None
         except Exception:
             out["learning"] = None
         return self._json(out)

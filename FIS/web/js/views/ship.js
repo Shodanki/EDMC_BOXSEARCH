@@ -156,15 +156,33 @@ function sellWhere(U, X) {
 
 // ------------------------------------------------------------ unsold data (M4)
 // What a destroyed ship would cost in data: exobiology since it was sold
-// (valued from your own sales), exploration data only counted.
+// (valued from your own sales), exploration data at the formula's estimate
+// calibrated on your own sales (B6: ~value, range, number of sales).
+const Mcr = (v) => fmt(v / 1e6, 1) + " M Cr";
+
+function exploValue(V) {
+  if (!V || !V.est) return "";
+  if (!V.calibrated) return " · ~" + Mcr(V.mid) + " " + t("(formula, not calibrated yet)");
+  return " · ~" + Mcr(V.mid) + " (" + fmt(V.lo / 1e6, 1) + "–" + fmt(V.hi / 1e6, 1) + ", " + t("from {n} sales", { n: V.n }) + ")";
+}
+
+// B6: the last loss in a crash, with what it was worth
+function lastLoss(U) {
+  const L = U.lost_last;
+  if (!L || (!L.bio && !L.systems)) return null;
+  const bits = [];
+  if (L.bio) bits.push(t("{n} species", { n: L.bio }) + (L.bio_value ? " ≈ " + Mcr(L.bio_value) : ""));
+  if (L.systems) bits.push(t("{n} systems", { n: L.systems }) + exploValue(L.explo));
+  return el("div", { class: "c-red small", text: "✖ " + t("Last loss {d}: {w}", { d: L.ts ? new Date(L.ts * 1000).toLocaleDateString() : "?", w: bits.join(" · ") }) });
+}
+
 function unsold() {
   const U = data.unsold;
   if (!U) return null;
   const B = U.bio, X = U.exploration;
   // after a crash nothing is unsold any more - the lost systems still show
   if (!B.count && !X.systems) return frame(t("UNSOLD DATA"), "", [el("div", { class: "c-dim", text: t("Nothing unsold - all data is cashed in.") }),
-    ...lostRows(U)], { appear: false, kind: U.lost_systems && U.lost_systems.length ? "warn" : "" });
-  const Mcr = (v) => fmt(v / 1e6, 1) + " M Cr";
+    lastLoss(U), ...lostRows(U)], { appear: false, kind: U.lost_systems && U.lost_systems.length ? "warn" : "" });
   const rows = [];
   if (B.count) {
     rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exobiology") + " " }),
@@ -175,20 +193,21 @@ function unsold() {
       el("span", { class: "c-dim", text: (x.system ? " · " + x.system : "") + (x.value ? " · " + Mcr(x.value) : "") })));
   }
   if (X.systems) rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exploration") + " " }),
-    el("span", { text: t("{s} systems · {b} bodies · {m} mapped", { s: X.systems, b: X.bodies, m: X.mapped }) })));
+    el("span", { text: t("{s} systems · {b} bodies · {m} mapped", { s: X.systems, b: X.bodies, m: X.mapped }) + exploValue(X.value) })));
   // risk: low, moderate, high by the limits on the settings page (4.11; default 50 / 100 M);
   // first discoveries and first-footfall biology are what cannot be had again
   const RISK = { low: [N_("RISK LOW"), "c-green"], moderate: [N_("RISK MODERATE"), "c-amber"], high: [N_("RISK HIGH"), "c-red"] };
   if (U.risk && RISK[U.risk]) rows.unshift(el("div", { class: "pl-line" }, el("span", { class: RISK[U.risk][1], text: t(RISK[U.risk][0]) }),
     el("span", { class: "c-dim", text: " · " + t("moderate from {m} M, high from {h} M Cr", { m: fmt(U.risk_cr.moderate / 1e6, 0), h: fmt(U.risk_cr.high / 1e6, 0) }) })));
-  rows.push(...lostRows(U));
+  rows.push(lastLoss(U), ...lostRows(U));
   if (U.first_systems || U.footfall_bio) rows.push(el("div", { class: "c-violet" }, "★ " + [
     U.first_systems ? t("{n} systems you may be first to discover - yours only once sold", { n: U.first_systems }) : null,
     U.footfall_bio ? t("{n} species on bodies of your first footfall", { n: U.footfall_bio }) : null].filter(Boolean).join(" · ")));
-  rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; the ×5 bonus only on bodies of your first footfall; exploration data only counted.") }));
+  rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; the ×5 bonus only on bodies of your first footfall; exploration data at the formula's estimate, calibrated on your own sales of at least 1 M Cr.") }));
   if (U.advice === "sell") rows.push(el("div", { class: "c-red", text: t("A lot at stake - consider selling at the next station or carrier with Vista Genomics / Universal Cartographics.") }));
   rows.push(...sellWhere(U, X));
-  return frame(t("UNSOLD DATA"), B.value ? "≈ " + Mcr(B.value) : "", rows, { cls: "sh-unsold", appear: false,
+  const head = (U.total || B.value) ? "~ " + Mcr(U.total || B.value) : "";
+  return frame(t("UNSOLD DATA"), head, rows, { cls: "sh-unsold", appear: false,
     kind: U.risk === "high" ? "alert" : U.advice || U.risk === "moderate" ? "warn" : "" });
 }
 

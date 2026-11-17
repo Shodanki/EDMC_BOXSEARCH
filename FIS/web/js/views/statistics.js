@@ -171,7 +171,8 @@ function learning() {
 }
 
 // SK3: the route, work and fuel models - what each learnt from, since when, and a reset
-const MODEL_PARTS = { route: N_("route minutes"), work: N_("scan and sample times"), fuel: N_("fuel model of this ship") };
+const MODEL_PARTS = { route: N_("route minutes"), work: N_("scan and sample times"), fuel: N_("fuel model of this ship"),
+  value: N_("exploration values") };
 
 async function resetModel(part) {
   if (!window.confirm(t("Reset the {m}? What it learnt is forgotten; only journals from now on count - here and in the plugin at its next start.",
@@ -197,6 +198,10 @@ function modelRows(M, line, head) {
   if (f) rows.push(line(t("Fuel") + " · " + (f.ship || "?"), f.source === "fit"
     ? t("~{x}^{b}, ±{s} % · learned from {n} jumps", { x: f.mass ? t("(distance × mass)") : t("distance"), b: fmt(f.power, 2), s: fmt(f.spread_pct, 1), n: f.n })
     : t("~distance^{b} from the FSD · {n} of 4 jumps", { b: fmt(f.power, 2), n: f.n }), f.source !== "fit"), reset("fuel", null));
+  const v = M.value;      // B6
+  if (v) rows.push(line(t("Exploration values"), v.factor !== null && v.factor !== undefined
+    ? t("~{f} × formula ({lo}–{hi}) · learned from {n} sales", { f: fmt(v.factor, 2), lo: fmt(v.lo, 2), hi: fmt(v.hi, 2), n: v.n })
+    : t("formula only · {n} of 3 sales over 1 M Cr", { n: v.n }), v.factor === null || v.factor === undefined), reset("value", v.since));
   return rows;
 }
 

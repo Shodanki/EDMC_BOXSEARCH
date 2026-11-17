@@ -64,7 +64,7 @@ function render() {
   root.append(el("div", { class: "stat-wrap" },
     el("div", { class: "stat-grid scroll" }, head, balance(), block("income", t("INCOME")), block("costs", t("RUNNING COSTS")),
       block("invest", t("INVESTMENT")), weeks()),
-    el("div", { class: "stat-side scroll" }, ships(), commander(), losses(), carrier())));
+    el("div", { class: "stat-side scroll" }, open(), ships(), commander(), losses(), carrier())));
 }
 
 function row(label, value, cls) {
@@ -124,6 +124,19 @@ function commander() {
     row(t("Investment"), cr(C.invest), "c-dim"),
     el("div", { class: "c-dim small", text: t("Not tied to a ship: community goals, crew, fines, stored modules, on-foot gear, the balance rest.") })];
   return frame(t("COMMANDER"), "", rows, { cls: "st-card", appear: false });
+}
+
+// B6: what is earned but not booked yet - unsold data, valued like UNSOLD DATA
+function open() {
+  const O = data.open;
+  if (!O || (!O.bio_count && !O.systems)) return null;
+  const rows = [];
+  if (O.bio_count) rows.push(row(t("Exobiology (own prices)"), O.bio ? "~ " + cr(O.bio) : "–", "c-amber"));
+  const V = O.explo;
+  if (O.systems) rows.push(row(t("Exploration data"), V && V.est ? "~ " + cr(V.mid) + (V.calibrated ? " (" + cr(V.lo) + " – " + cr(V.hi) + ")" : "") : "–", "c-amber"));
+  if (V && V.est) rows.push(el("div", { class: "c-dim small", text: V.calibrated ? t("from {n} sales", { n: V.n }) : t("(formula, not calibrated yet)") }));
+  rows.push(el("div", { class: "c-dim small", text: t("Unsold, not booked yet: what the data would bring - and what a crash would cost.") }));
+  return frame(t("OPEN"), "", rows, { cls: "st-card", appear: false });
 }
 
 function losses() {

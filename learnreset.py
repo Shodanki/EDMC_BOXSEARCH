@@ -12,6 +12,8 @@ The plugin and the FIS learn three models from the commander's journals:
     route   supercruise minutes per leg (sysroute.CostModel: entry, k)
     work    the time a detailed surface scan and a bio sample take
     fuel    fuel per jump, per ship (deepspace.FuelState)
+    value   the calibration of exploration values on your own sales (B6,
+            FIS UNSOLD DATA)
 
 Both read the journals again at every start, so forgetting a model means
 remembering WHEN it was reset: measurements before that moment are left
@@ -37,7 +39,7 @@ from typing import Any, Dict, Optional, Tuple
 __all__ = ["FILE_NAME", "PARTS", "load", "mark", "since", "fuel_since", "ship_key", "plugin_path"]
 
 FILE_NAME = "learn_reset.json"
-PARTS = ("route", "work", "fuel")
+PARTS = ("route", "work", "fuel", "value")
 _LOCK = threading.Lock()
 
 
@@ -47,7 +49,7 @@ def plugin_path(plugin_dir: str) -> str:
 
 
 def _empty() -> Dict[str, Any]:
-    return {"version": 1, "route": None, "work": None, "fuel": {}}
+    return {"version": 1, "route": None, "work": None, "value": None, "fuel": {}}
 
 
 def load(path: Optional[str]) -> Dict[str, Any]:
@@ -62,7 +64,7 @@ def load(path: Optional[str]) -> Dict[str, Any]:
         return out
     if not isinstance(got, dict):
         return out
-    for part in ("route", "work"):
+    for part in ("route", "work", "value"):
         if isinstance(got.get(part), (int, float)):
             out[part] = float(got[part])
     if isinstance(got.get("fuel"), dict):
@@ -97,7 +99,7 @@ def mark(path: str, part: str, ts: Optional[float] = None, ship: Any = None) -> 
 
 
 def since(data: Dict[str, Any], part: str) -> Optional[float]:
-    """When the route or work model was reset, None when never."""
+    """When the route, work or value model was reset, None when never."""
     v = (data or {}).get(part)
     return float(v) if isinstance(v, (int, float)) else None
 

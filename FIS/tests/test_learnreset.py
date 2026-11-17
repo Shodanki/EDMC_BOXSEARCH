@@ -135,6 +135,12 @@ class TestResetEndpoint(_Base):
             st = json.loads(r.read())
         self.assertIn("models", st["learning"])
         self.assertEqual(st["learning"]["models"]["fuel"]["n"], 1)
+        self.assertIn("value", st["learning"]["models"])          # B6: the exploration values
+        # the value calibration can be reset too; GAIN / LOSS carries the open block
+        self.assertEqual(self._post({"part": "value"}, {"X-FIS-Settings": "1"})[0], 200)
+        self.assertIsNotNone(lr.since(lr.load(path), "value"))
+        with urllib.request.urlopen(self.base + "/api/ledger", timeout=10) as r:
+            self.assertIn("open", json.loads(r.read()))
 
 
 if __name__ == "__main__":

@@ -3,11 +3,13 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025-2026 Shodanki
-"""M4: unsold data at risk - exobiology valued from own sales, exploration counted."""
+"""M4: unsold data at risk - exobiology valued from own sales, exploration
+at the bodyvalue estimate calibrated on own sales (B6)."""
 
 import unittest
 
 from fis import unsold
+from tests import fixtures as fx
 
 
 def ev(ts, name, **kw):
@@ -181,6 +183,88 @@ class TestWhereToSell(unittest.TestCase):
                ev("08:01", "Scan", StarSystem="Blank", SystemAddress=9, BodyID=1, ScanType="Detailed")]
         s = unsold.build_unsold(self._trip() + evs)["sell"]
         self.assertEqual(s["no_position"], 1)
+
+
+def _bodyvalue():
+    """The plugin's bodyvalue, as the FIS loads it."""
+    from fis.config import Config
+    cfg = Config()
+    cfg.plugin_dir = fx.PLUGIN_DIR
+    cfg.use_plugin_path()
+    from fis import model
+    return model.plugin().bodyvalue
+
+
+def _hmc(t, sysname, addr, body, first=False):
+    """A scanned high-metal-content planet (mass 1 EM)."""
+    return ev(t, "Scan", StarSystem=sysname, SystemAddress=addr, BodyID=body, BodyName="%s %d" % (sysname, body),
+              ScanType="Detailed", PlanetClass="High metal content body", MassEM=1.0, TerraformState="",
+              WasDiscovered=not first, WasMapped=True, DistanceFromArrivalLS=100.0 + body)
+
+
+def _sale(t, names, earned):
+    return ev(t, "MultiSellExplorationData", Discovered=[{"SystemName": n, "NumBodies": 1} for n in names],
+              BaseValue=earned, Bonus=0, TotalEarnings=earned)
+
+
+class TestExplorationValue(unittest.TestCase):
+    """B6: the exploration data valued and calibrated on the own sales."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bv = _bodyvalue()
+        cls.one = cls.bv.planet_value("High metal content body", "", 1.0)     # one scan, ~15 k
+        cls.mapped = cls.bv.planet_value("High metal content body", "", 1.0, mapped=True)
+
+    def test_calibration(self):
+        sales = [(1.0, 2e6, 1.8e6), (2.0, 4e6, 4.4e6), (3.0, 1e6, 0.8e6), (4.0, 5e5, 5e6)]    # the last: too small
+        c = unsold.calibration(sales)
+        self.assertEqual((c["n"], c["sales"], c["factor"], c["lo"], c["hi"]), (3, 4, 0.9, 0.8, 1.1))
+        later = unsold.calibration(sales, since=1.5)
+        self.assertEqual((later["n"], later["factor"]), (2, None))          # below three: no factor
+
+    def _system(self, t, name, addr, n, first=False):
+        evs = [ev(t, "FSDJump", StarSystem=name, SystemAddress=addr)]
+        evs += [_hmc(t, name, addr, b, first) for b in range(1, n + 1)]
+        return evs
+
+    def test_unsold_valued_with_the_own_factor(self):
+        evs = []
+        per = 80                                   # bodies per system: 80 x ~15 k = above 1 M estimated
+        for i, f in enumerate((0.8, 0.9, 1.2)):
+            nm = "Sold%d" % i
+            evs += self._system("08:0%d" % i, nm, 10 + i, per)
+            evs.append(_sale("08:3%d" % i, [nm], int(per * self.one * f)))
+        evs += self._system("09:00", "Pending", 20, 10)
+        evs += [ev("09:10", "SAAScanComplete", SystemAddress=20, BodyID=1, BodyName="Pending 1",
+                   ProbesUsed=5, EfficiencyTarget=6)]
+        u = unsold.build_unsold(evs, {}, body_value=self.bv)
+        c = u["exploration"]["calibration"]
+        self.assertEqual((c["n"], c["factor"], c["lo"], c["hi"]), (3, 0.9, 0.8, 1.2))
+        v = u["exploration"]["value"]
+        est = 9 * self.one + self.mapped
+        self.assertEqual(v["est"], est)
+        self.assertTrue(v["calibrated"])
+        self.assertEqual((v["mid"], v["lo"], v["hi"], v["n"]), (round(est * 0.9), round(est * 0.8), round(est * 1.2), 3))
+        self.assertEqual(u["total"], v["mid"])                   # no bio: the loss is the exploration data
+        # a reset of the value model leaves the older sales out
+        u2 = unsold.build_unsold(evs, {}, body_value=self.bv, value_since=10 ** 10)
+        self.assertFalse(u2["exploration"]["value"]["calibrated"])
+        self.assertEqual(u2["total"], 0)                         # not calibrated: not counted in the risk
+
+    def test_loss_in_a_crash_has_a_value(self):
+        evs = self._system("08:00", "Gone", 30, 3) + [analyse("08:10", "Bacterium Aurasus"), ev("08:20", "Died")]
+        u = unsold.build_unsold(evs, VALUES, body_value=self.bv)
+        L = u["lost_last"]
+        self.assertEqual((L["systems"], L["bio"], L["bio_value"]), (1, 1, 1000000))
+        self.assertEqual(L["explo"]["est"], 3 * self.one)
+        self.assertFalse(L["explo"]["calibrated"])
+        self.assertEqual(u["exploration"]["systems"], 0)
+
+    def test_only_counted_without_bodyvalue(self):
+        u = unsold.build_unsold(self._system("08:00", "X", 40, 2), {})
+        self.assertIsNone(u["exploration"]["value"])
+        self.assertEqual(u["exploration"]["bodies"], 2)
 
 
 if __name__ == "__main__":

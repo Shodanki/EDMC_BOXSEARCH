@@ -659,6 +659,9 @@ class Archive:
             # first discovery / first footfall (unsold risk) - only when present
             slim.update({k: e[k] for k in ("DistanceFromArrivalLS", "WasDiscovered",
                                            "WasFootfalled", "Landable") if k in e})
+            # B6: what the data is worth (bodyvalue) - class, mass, terraforming
+            slim.update({k: e[k] for k in ("StarType", "StellarMass", "PlanetClass", "MassEM",
+                                           "TerraformState", "WasMapped") if k in e})
             e = slim
         elif e.get("event") == "Disembark":
             e = {k: e.get(k) for k in ("event", "timestamp", "SystemAddress", "Body",
