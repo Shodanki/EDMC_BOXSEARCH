@@ -16,6 +16,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import plugin_pkg  # noqa: E402
 plugin_pkg.package()
+from SHBOXSEARCH.deepspace import FuelState  # noqa: E402
 from SHBOXSEARCH.journalscan import (WorkMeter, approached_bodies, journal_files, last_body,  # noqa: E402
                                      newest_location, replay_fuel, replay_work)
 
@@ -69,18 +70,7 @@ def _selftest() -> int:
         check(m.sc_legs == [(11, "Js A 1", "Js A 2", 1_800_000_300.0, 60.0)],
               "one body-to-body supercruise leg")
 
-        class Fuel:
-            def __init__(self):
-                self.ship, self.jumps, self.level = None, [], None
-                self.max_jump = self.capacity = None
-
-            def set_ship(self, s):
-                self.ship = s
-
-            def add_jump(self, dist, used):
-                self.jumps.append((dist, used))
-
-        fu = replay_fuel(files, Fuel())
+        fu = replay_fuel(files, FuelState())
         check(fu.ship == ("Tester", 3) and fu.capacity == 32.0 and fu.max_jump == 55.0
               and fu.jumps == [(40.0, 4.0)] and fu.level == 28.0, "fuel replay")
         check(approached_bodies(d, 11) == [("Js A 1", 1_800_000_100.0),

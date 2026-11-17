@@ -167,6 +167,17 @@ def suit_from(e: Dict[str, Any]) -> Dict[str, Any]:
             "loadout": e.get("LoadoutName"), "weapons": weapons}
 
 
+def _jump_point(ship: Dict[str, Any], d: float, u: float, level_after: Any) -> List[float]:
+    """One jump for the fuel model: [ly, t] and, with the Loadout's unladen
+    mass, the ship's mass before the jump (unladen + fuel before + cargo, SK2)."""
+    try:
+        if ship.get("unladen") and level_after is not None:
+            return [d, u, float(ship["unladen"]) + float(level_after) + u + float(ship.get("cargo_t") or 0.0)]
+    except (TypeError, ValueError):
+        pass
+    return [d, u]
+
+
 class LiveTracker:
     """Owns the live state. `feed()` and `feed_status()` are pure enough to
     unit-test; `start()` runs the polling thread against real files."""
@@ -200,10 +211,17 @@ class LiveTracker:
     # ---------------------------------------------------------------- api
     def _fuel_ship(self, e: Dict[str, Any]) -> None:
         """The fuel model learns per ship: the jumps of another ship - or of
-        the other commander's - burn differently (caller holds the lock)."""
+        the other commander's - burn differently (caller holds the lock).
+        SK2: a Loadout adds the unladen-mass step (50 t), as the plugin's
+        deepspace.FuelState does; a LoadGame keeps the step of the same ship."""
         name = e.get("Commander") if e.get("event") == "LoadGame" else None
-        key = (name or self.state.get("commander"), e.get("ShipID"))
+        key: tuple = (name or self.state.get("commander"), e.get("ShipID"))
         cur = getattr(self, "_jump_ship", None)
+        unladen = e.get("UnladenMass") if e.get("event") == "Loadout" else None
+        if unladen:
+            key = key + (int(round(float(unladen) / 50.0)),)
+        elif cur is not None and tuple(cur[:2]) == key:
+            return
         if key == cur:
             return
         if cur is not None:
@@ -231,6 +249,8 @@ class LiveTracker:
             s["last_event"], s["last_event_ts"] = ev, ts
             if ev in ("LoadGame", "Loadout") and e.get("ShipID") is not None:
                 self._fuel_ship(e)
+            elif ev == "Cargo" and e.get("Vessel", "Ship") == "Ship" and e.get("Count") is not None:
+                s["ship"]["cargo_t"] = e.get("Count")        # SK2: the mass of a jump
             handler = _FEED.get(ev)
             if handler is not None:
                 out = handler(self, s, e, ev, ts)
@@ -285,8 +305,10 @@ class LiveTracker:
         out: Optional[str] = None
         s["loadout"] = e
         fc = e.get("FuelCapacity") or {}
+        fsd = next((m.get("Item") for m in e.get("Modules") or [] if m.get("Slot") == "FrameShiftDrive"), None)
         s["ship"].update(type=e.get("Ship"), name=e.get("ShipName"),
                          ident=e.get("ShipIdent"),
+                         unladen=e.get("UnladenMass"), fsd=fsd,
                          max_jump=e.get("MaxJumpRange"),
                          hull=e.get("HullHealth"),
                          fuel_capacity=fc.get("Main") if isinstance(fc, dict) else fc,
@@ -306,7 +328,7 @@ class LiveTracker:
                 s["fuel"]["main"] = e.get("FuelLevel")
             d, u = e.get("JumpDist"), e.get("FuelUsed")
             if d and u:
-                s["jumps"].append([float(d), float(u)])
+                s["jumps"].append(_jump_point(s["ship"], float(d), float(u), e.get("FuelLevel")))
                 del s["jumps"][:-60]
         s["jumping"] = None
         s["ship_target"] = None      # a lock never survives a jump

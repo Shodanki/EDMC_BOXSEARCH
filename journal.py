@@ -197,13 +197,16 @@ def _system_time(ev: str) -> None:
 
 
 def _fuel_on_jump(ev: str, entry: Dict[str, Any]) -> None:
-    """Fuel used per jump, the level after it, and a warning when low."""
+    """Fuel used per jump with the ship's mass (SK2), the level after it,
+    the hold (Cargo), and a warning when low."""
+    if ev == "Cargo":
+        try:
+            ST.fuel.feed(entry)
+        except (TypeError, ValueError):
+            pass
     if ev == "FSDJump" and entry.get("FuelUsed") is not None:
         try:
-            ST.fuel.add_jump(entry.get("JumpDist"),
-                             entry.get("FuelUsed"))
-            if entry.get("FuelLevel") is not None:
-                ST.fuel.level = float(entry["FuelLevel"])
+            ST.fuel.feed(entry, ts=journalscan.event_time(entry))
             w = ST.fuel.warning()
             if w:
                 logger.info("fuel | %s", w)
@@ -274,16 +277,14 @@ def _on_approach(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, Any
 
 
 def _on_loadout(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, Any]) -> None:
-    """Loadout: the ship, its jump range and tank."""
-    if entry.get("ShipID") is not None:
-        ST.fuel.set_ship((cmdr, entry.get("ShipID")))
+    """Loadout: the ship, its mass step and FSD, its jump range and tank."""
+    try:
+        ST.fuel.feed(entry, cmdr)
+    except (TypeError, ValueError, AttributeError):
+        pass
     mj = entry.get("MaxJumpRange")
     if mj:
         ST.max_jump = float(mj)
-        ST.fuel.max_jump = float(mj)
-    cap = (entry.get("FuelCapacity") or {}).get("Main")
-    if cap:
-        ST.fuel.capacity = float(cap)
 
 
 def _on_startup(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, Any]) -> None:

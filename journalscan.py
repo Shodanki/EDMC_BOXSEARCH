@@ -300,26 +300,15 @@ def replay_work(files: Iterable[str]) -> WorkMeter:
 
 
 def replay_fuel(files: Iterable[str], fuel: Any) -> Any:
-    """Ship, tank, jump range and fuel per jump into a deepspace.FuelState."""
+    """Ship, tank, jump range, mass and fuel per jump into a
+    deepspace.FuelState (its feed(), as the plugin does live)."""
     cmdr: Optional[str] = None
     for e in read_events(files):
         v = e.get("event")
         try:
             if v in ("Commander", "LoadGame"):
                 cmdr = e.get("Name") or e.get("Commander") or cmdr
-            if v in ("LoadGame", "Loadout") and e.get("ShipID") is not None:
-                fuel.set_ship((cmdr, e.get("ShipID")))
-            if v == "Loadout":
-                if e.get("MaxJumpRange"):
-                    fuel.max_jump = float(e["MaxJumpRange"])
-                cap = (e.get("FuelCapacity") or {}).get("Main")
-                if cap:
-                    fuel.capacity = float(cap)
-            elif v == "FSDJump":
-                if e.get("FuelUsed") is not None:
-                    fuel.add_jump(e.get("JumpDist"), e.get("FuelUsed"))
-                if e.get("FuelLevel") is not None:
-                    fuel.level = float(e["FuelLevel"])
-        except (TypeError, ValueError):
+            fuel.feed(e, cmdr, event_time(e))
+        except (TypeError, ValueError, AttributeError):
             continue
     return fuel

@@ -19,7 +19,8 @@ Three things that decide how far out you can operate:
 
 Every input is measured from the journal rather than assumed:
 
-    Loadout        MaxJumpRange, FuelCapacity
+    Loadout        MaxJumpRange, FuelCapacity, UnladenMass, the FSD module
+    Cargo          Count (the ship's hold)
     FSDJump        FuelUsed, FuelLevel, JumpDist
     Scan           Rings[].RingClass, StarType
     Status.json    Fuel.FuelMain
@@ -30,10 +31,11 @@ Standard library only.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 __all__ = [
-    "SCOOPABLE", "RING_TRITIUM", "FuelState", "ring_summary",
+    "SCOOPABLE", "RING_TRITIUM", "FuelState", "fsd_power", "mass_tier", "ring_summary",
     "tritium_systems", "score_staging", "best_staging",
 ]
 
@@ -56,6 +58,33 @@ RING_LABEL = {
 # Ship fuel
 # ---------------------------------------------------------------------------
 
+# The fuel power of a frame shift drive by its size. The game's drive burns
+# fuel = l * (dist * mass / optimal mass) ** power, so with the mass the
+# power is the only shape constant. Measured on the developer's journals
+# (SK2, 17.11.2026, fit over dist * mass): size 5 2.45 (n = 48), size 7
+# 2.75 (n = 71, both the normal and the SCO drive), size 8 SCO Mk II 2.50
+# (n = 56); sizes 2-4 and 6 follow the same steps. Only a prior: from 4
+# jumps on, the ship's own fit wins.
+FSD_POWER = {2: 2.0, 3: 2.15, 4: 2.3, 5: 2.45, 6: 2.6, 7: 2.75, 8: 2.5}
+_FSD_SIZE = re.compile(r"int_hyperdrive(?:_overcharge)?_size(\d)_class", re.I)
+MASS_TIER_T = 50.0       # a refit that changes the unladen mass by this is another ship
+
+
+def fsd_power(item: Optional[str]) -> Optional[float]:
+    """The fuel power of an FSD module (Loadout Item), None when unknown."""
+    m = _FSD_SIZE.search(item or "")
+    return FSD_POWER.get(int(m.group(1))) if m else None
+
+
+def mass_tier(unladen: Optional[float]) -> Optional[int]:
+    """The unladen-mass step a ship's fuel history belongs to (50 t steps)."""
+    try:
+        u = float(unladen or 0.0)
+    except (TypeError, ValueError):
+        return None
+    return int(round(u / MASS_TIER_T)) if u > 0 else None
+
+
 class FuelState:
     """
     How far the ship can go before it has to scoop.
@@ -65,57 +94,162 @@ class FuelState:
     does. Averaging the last few jumps is therefore useless on its own - after
     a run of short hops it would claim thousands of jumps of range.
 
-    Instead a curve `used = a * dist ** b` is fitted to the commander's own
-    (JumpDist, FuelUsed) pairs in log space. On the test journals that gives
-    b = 2.75, which matches the drive's documented fuel power of 2.6 to 2.8 -
-    a good sign the fit is measuring the real thing. Range is then quoted for
-    two cases: jumping at full range, and at the distance actually being flown.
+    Since 5.0 (SK2) the curve is `used = a * (dist * mass) ** b`, fitted in
+    log space on the ship's own jumps, mass = unladen mass + fuel before the
+    jump + cargo. The mass matters: a Panther Mk II that hauls 1,200 t
+    scattered by 32 % around a curve over the distance alone and by 0-12 %
+    with the mass; an Explorer NX by 3 % and 0.1-0.7 % (17.11.2026, own
+    journals). The history is kept per commander, ship and unladen-mass step.
+    With fewer than 4 jumps the power comes from the FSD (fsd_power), and
+    without any mass (old data) the curve over the distance alone is used as
+    up to 4.12. Range is then quoted for two cases: jumping at full range,
+    and at the distance actually being flown.
     """
 
     FALLBACK_POWER = 2.75
+    MIN_FIT = 4
 
     def __init__(self, capacity: float = 0.0, level: float = 0.0,
                  max_jump: float = 0.0,
-                 jumps: Optional[List[Tuple[float, float]]] = None):
+                 jumps: Optional[List[Tuple[float, ...]]] = None):
         self.capacity = capacity
         self.level = level
         self.max_jump = max_jump
-        self.jumps: List[Tuple[float, float]] = list(jumps or [])  # (ly, tonnes)
+        # (ly, tonnes) or (ly, tonnes, mass before the jump)
+        self.jumps: List[Tuple[float, ...]] = [tuple(j) for j in jumps or []]
         # the jumps belong to one ship of one commander: another ship (or
         # the other commander's) burns differently - mixing them made the
         # fit claim a Caspian at 68 ly needs 29 t a jump (11.11.2026)
         self.ship: Any = None
-        self._by_ship: Dict[Any, List[Tuple[float, float]]] = {}
+        self._by_ship: Dict[Any, List[Tuple[float, ...]]] = {}
+        self.unladen = 0.0        # Loadout UnladenMass (hull and modules, empty tanks)
+        self.cargo = 0.0          # tonnes in the hold (Cargo, Vessel Ship)
+        self.fsd: Optional[str] = None     # the FSD module, for the prior power
+        # SK2: a reset of the model, per ship: jumps before it are not learned
+        self.since: Dict[Any, float] = {}
 
-    def set_ship(self, key: Any) -> bool:
-        """Switch to the jump history of this ship (commander, ShipID);
-        the previous ship's history is kept for when it comes back. True
-        when the ship changed."""
-        if key is None or key == self.ship:
+    def set_ship(self, key: Any, unladen: Optional[float] = None) -> bool:
+        """Switch to the jump history of this ship (commander, ShipID) and,
+        with the Loadout's unladen mass, its mass step; the previous ship's
+        history is kept for when it comes back. Without a mass (LoadGame)
+        the same ship keeps its step. True when the ship changed."""
+        if key is None:
+            return False
+        tier = mass_tier(unladen)
+        if tier is None:
+            if self.ship is not None and tuple(self.ship[:len(key)]) == tuple(key):
+                return False
+            full = tuple(key)
+        else:
+            full = tuple(key) + (tier,)
+            self.unladen = float(unladen)
+        if full == self.ship:
             return False
         if self.ship is not None:
             self._by_ship[self.ship] = self.jumps
-        self.ship = key
-        self.jumps = list(self._by_ship.get(key, []))
+        self.ship = full
+        self.jumps = list(self._by_ship.get(full, []))
         return True
 
-    def add_jump(self, dist_ly: Optional[float], used_t: Optional[float]) -> None:
-        """Remember the fuel one jump used (the last 60 jumps), for the cost
-        per jump."""
+    def feed(self, e: Dict[str, Any], cmdr: Any = None, ts: Optional[float] = None) -> bool:
+        """
+        One journal event for the fuel model (SK2): Loadout (ship, mass
+        step, FSD, tank, range), LoadGame (ship), Cargo of the ship (hold)
+        and FSDJump (the jump with its mass, the level after). True when a
+        jump was learnt. The plugin and the journal replay use the same.
+        """
+        v = e.get("event")
+        if v == "Loadout":
+            self._loadout(e, cmdr)
+        elif v == "LoadGame" and e.get("ShipID") is not None:
+            self.set_ship((cmdr, e.get("ShipID")))
+        elif v == "Cargo" and e.get("Vessel", "Ship") == "Ship" and e.get("Count") is not None:
+            self.cargo = float(e["Count"])
+        elif v == "FSDJump":
+            learnt = False
+            if e.get("FuelUsed") is not None:
+                learnt = self.add_jump(e.get("JumpDist"), e.get("FuelUsed"),
+                                       self.jump_mass(e.get("FuelUsed"), e.get("FuelLevel")), ts)
+            if e.get("FuelLevel") is not None:
+                self.level = float(e["FuelLevel"])
+            return learnt
+        return False
+
+    def _loadout(self, e: Dict[str, Any], cmdr: Any) -> None:
+        """Loadout: ship and mass step, FSD, tank size, jump range."""
+        if e.get("ShipID") is not None:
+            self.set_ship((cmdr, e.get("ShipID")), e.get("UnladenMass"))
+        for m in e.get("Modules") or []:
+            if m.get("Slot") == "FrameShiftDrive":
+                self.fsd = m.get("Item")
+        if e.get("MaxJumpRange"):
+            self.max_jump = float(e["MaxJumpRange"])
+        fc = e.get("FuelCapacity")
+        cap = fc.get("Main") if isinstance(fc, dict) else fc
+        if cap:
+            self.capacity = float(cap)
+
+    def jump_mass(self, used_t: Optional[float], level_after: Optional[float]) -> Optional[float]:
+        """The ship's mass when it jumped: unladen + fuel before + cargo,
+        None without an unladen mass."""
+        try:
+            if self.unladen <= 0 or level_after is None or float(level_after) < 0:
+                return None
+            return self.unladen + float(level_after) + float(used_t or 0.0) + max(0.0, float(self.cargo or 0.0))
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def mass_now(self) -> Optional[float]:
+        """The mass now (unladen + tank + cargo), None without an unladen mass."""
+        return self.jump_mass(0.0, self.level) if self.level and self.level > 0 else None
+
+    def add_jump(self, dist_ly: Optional[float], used_t: Optional[float],
+                 mass_t: Optional[float] = None, ts: Optional[float] = None) -> bool:
+        """Remember the fuel one jump used (the last 60 jumps), with the
+        ship's mass before it when known. A jump from before the ship's
+        model was reset (ts < since) is not learned. True when learnt."""
         try:
             d, u = float(dist_ly or 0.0), float(used_t or 0.0)
+            m = float(mass_t) if mass_t else None
         except (TypeError, ValueError):
-            return
+            return False
+        cut = self.since.get(self.ship)
+        if cut is not None and ts is not None and ts < cut:
+            return False
         if d > 0.1 and u > 0.0:
-            self.jumps.append((d, u))
+            self.jumps.append((d, u, m) if m else (d, u))
             del self.jumps[:-60]
+            return True
+        return False
+
+    def reset(self, ts: float) -> None:
+        """Forget what the current ship has learnt; jumps before ts stay
+        unlearnt when the journals are read again (keep `since`)."""
+        self.since[self.ship] = float(ts)
+        self.jumps = []
 
     # -- the fitted curve ---------------------------------------------------
+    def _points(self) -> Tuple[List[Tuple[float, float]], bool]:
+        """(x, used) for the fit: x = dist * mass when at least MIN_FIT jumps
+        carry a mass, else dist alone. True when it is the mass."""
+        massed = [(j[0] * j[2], j[1]) for j in self.jumps
+                  if len(j) > 2 and j[2] and j[0] > 0.5 and j[1] > 0.0]
+        if len(massed) >= self.MIN_FIT:
+            return massed, True
+        return [(j[0], j[1]) for j in self.jumps if j[0] > 0.5 and j[1] > 0.0], False
+
     def _fit(self) -> Optional[Tuple[float, float]]:
-        pts = [(d, u) for d, u in self.jumps if d > 0.5 and u > 0.0]
-        if len(pts) < 4:
+        fit = self._fit_full()
+        return (fit[0], fit[1]) if fit else None
+
+    def _fit_full(self) -> Optional[Tuple[float, float, bool, float, int]]:
+        """(a, b, with mass, rms scatter as a factor - 1, n), None below
+        MIN_FIT jumps or for an implausible power."""
+        pts, massed = self._points()
+        if len(pts) < self.MIN_FIT:
             return None
-        xs = [math.log(d) for d, _ in pts]
+        xs = [math.log(x) for x, _ in pts]
         ys = [math.log(u) for _, u in pts]
         n = len(xs)
         mx, my = sum(xs) / n, sum(ys) / n
@@ -125,19 +259,51 @@ class FuelState:
         b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den
         if not (1.5 <= b <= 4.0):        # implausible fit, fall back
             return None
-        return (math.exp(my - b * mx), b)
+        a = my - b * mx
+        rms = math.sqrt(sum((y - a - b * x) ** 2 for x, y in zip(xs, ys)) / n)
+        return (math.exp(a), b, massed, math.exp(rms) - 1.0, n)
 
-    def cost_of(self, dist_ly: float) -> Optional[float]:
-        """Fuel for one jump of that length, in tonnes."""
-        f = self._fit()
+    def prior_power(self) -> float:
+        """The power without a fit: from the FSD, else FALLBACK_POWER."""
+        return fsd_power(self.fsd) or self.FALLBACK_POWER
+
+    def learned(self) -> Dict[str, Any]:
+        """What the model stands on, for the panel and the FIS: source
+        ("fit", "prior" or "none"), power, mass in the curve, scatter in %,
+        and n, the jumps it learnt from."""
+        f = self._fit_full()
+        if f is not None:
+            return {"source": "fit", "power": round(f[1], 3), "mass": f[2],
+                    "spread_pct": round(100.0 * f[3], 1), "n": f[4]}
+        return {"source": "prior" if self.jumps else "none", "power": self.prior_power(),
+                "mass": False, "spread_pct": None, "n": len(self.jumps)}
+
+    def cost_of(self, dist_ly: float, mass_t: Optional[float] = None) -> Optional[float]:
+        """Fuel for one jump of that length, in tonnes, at mass_t (default:
+        the mass now)."""
+        f = self._fit_full()
+        m = mass_t or self.mass_now
         if f is None:
-            pts = [(d, u) for d, u in self.jumps if d > 0.5 and u > 0.0]
-            if not pts:
-                return None
-            d0, u0 = pts[-1]
-            return u0 * (dist_ly / d0) ** self.FALLBACK_POWER
-        a, b = f
-        return a * (dist_ly ** b)
+            return self._cost_prior(dist_ly, m)
+        a, b, massed = f[0], f[1], f[2]
+        if not massed:
+            return a * (dist_ly ** b)
+        if not m:
+            ms = [j[2] for j in self.jumps if len(j) > 2 and j[2]]
+            m = sum(ms) / len(ms)
+        return a * ((dist_ly * m) ** b)
+
+    def _cost_prior(self, dist_ly: float, mass_t: Optional[float]) -> Optional[float]:
+        """Below MIN_FIT jumps: the last jump scaled by the prior power, with
+        the mass when both are known."""
+        pts = [j for j in self.jumps if j[0] > 0.5 and j[1] > 0.0]
+        if not pts:
+            return None
+        last = pts[-1]
+        p = self.prior_power()
+        if len(last) > 2 and last[2] and mass_t:
+            return last[1] * ((dist_ly * mass_t) / (last[0] * last[2])) ** p
+        return last[1] * (dist_ly / last[0]) ** p
 
     def jumps_at(self, dist_ly: float) -> Optional[int]:
         """How many jumps of dist_ly the fuel in the tank lasts, or None
@@ -150,7 +316,7 @@ class FuelState:
     @property
     def typical_jump(self) -> float:
         """The distance actually being flown lately."""
-        pts = [d for d, _ in self.jumps[-15:]]
+        pts = [j[0] for j in self.jumps[-15:]]
         return (sum(pts) / len(pts)) if pts else (self.max_jump or 0.0)
 
     @property
@@ -189,9 +355,13 @@ class FuelState:
             jt = self.jumps_at(typ)
             if jt is not None:
                 bits.append("%d at your usual %.0f ly" % (jt, typ))
-        f = self._fit()
-        if f:
-            bits.append("burn ~dist^%.1f (%d jumps)" % (f[1], self.samples))
+        lm = self.learned()
+        if lm["source"] == "fit":
+            bits.append("burn ~%s^%.2f, ±%.1f%% (learned from %d jumps)"
+                        % ("(dist*mass)" if lm["mass"] else "dist", lm["power"], lm["spread_pct"], lm["n"]))
+        else:
+            bits.append("burn ~dist^%.2f from the FSD (%d of %d jumps to learn)"
+                        % (lm["power"], lm["n"], self.MIN_FIT))
         return " | ".join(bits)
 
     def warning(self) -> Optional[str]:

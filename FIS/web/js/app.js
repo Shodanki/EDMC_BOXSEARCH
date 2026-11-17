@@ -253,6 +253,15 @@ const FOCUS = { "NONE": N_("COCKPIT"), "GALAXY MAP": N_("GALAXY MAP"), "SYSTEM M
   "INTERNAL": N_("INTERNAL"), "EXTERNAL": N_("EXTERNAL"), "COMMS": N_("COMMS"), "ROLE": N_("ROLE"),
   "STATION": "STATION", "ORRERY": "ORRERY", "FSS": "FSS", "SAA": "DSS", "CODEX": N_("CODEX") };
 
+// SK2: what the fuel forecast stands on - the ship's own fit with its
+// scatter and the jumps it learnt from, or the FSD's power as a prior
+function fuelModelText(m) {
+  if (!m || m.source === "none") return "";
+  if (m.source === "fit") return t("fuel model: ~{x}^{b}, ±{s} % · learned from {n} jumps",
+    { x: m.mass ? t("(distance × mass)") : t("distance"), b: fmt(m.power, 2), s: fmt(m.spread_pct, 1), n: m.n });
+  return t("fuel model: ~distance^{b} from the FSD · {n} of 4 jumps to learn", { b: fmt(m.power, 2), n: m.n });
+}
+
 function renderShipBar() {
   const s = store.ship || {};
   const sys = s.system || {};
@@ -266,7 +275,7 @@ function renderShipBar() {
   if (f.jumps_left !== null && f.jumps_left !== undefined) txt += " · " + t("{n} jmp", { n: f.jumps_left });
   const fv = document.getElementById("sb-fuel");
   fv.textContent = txt;
-  fv.title = f.summary || "";
+  fv.title = fuelModelText(f.model) || f.summary || "";
   fv.className = "v " + (f.warning ? (f.jumps_left <= 2 ? "c-red" : "c-amber") : "c-green");
   const tgt = s.target;
   const tEl = document.getElementById("sb-target");

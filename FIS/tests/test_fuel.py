@@ -70,6 +70,58 @@ class TestFuelPerShip(unittest.TestCase):
         self.assertEqual(len(fs.jumps), 8)
 
 
+def _burn(d, mass):
+    """A size 7 drive: 1.2e-12 * (d * mass) ** 2.75 (20 ly at 1,921 t ~ 4.8 t)."""
+    return 1.2e-12 * (d * mass) ** 2.75
+
+
+def _panther(unladen=1857.0):
+    return _e("14:00:01", "Loadout", Ship="panthermkii", ShipID=9, MaxJumpRange=30.0, UnladenMass=unladen,
+              FuelCapacity={"Main": 64.0, "Reserve": 1.0},
+              Modules=[{"Slot": "FrameShiftDrive", "Item": "int_hyperdrive_overcharge_size7_class5"}])
+
+
+class TestFuelMass(unittest.TestCase):
+    """SK2: every jump carries the ship's mass; the model fits dist * mass."""
+
+    def _tracker(self):
+        lt = LiveTracker(".")
+        lt.feed(_e("14:00:00", "Commander", FID="F1", Name="Main"))
+        lt.feed(_panther())
+        for i, (d, cargo) in enumerate([(20.0, 0), (24.0, 0), (14.0, 1200), (16.0, 1200), (18.0, 1200)]):
+            lt.feed(_e("14:%02d:00" % (i + 1), "Cargo", Vessel="Ship", Count=cargo))
+            used = _burn(d, 1857.0 + 64.0 + cargo)
+            lt.feed(_jump("14:%02d:30" % (i + 1), d, used, 64.0 - used))
+        return lt
+
+    def test_mass_per_jump(self):
+        s = self._tracker().snapshot()
+        self.assertEqual(len(s["jumps"]), 5)
+        self.assertAlmostEqual(s["jumps"][0][2], 1857.0 + 64.0, places=6)
+        self.assertAlmostEqual(s["jumps"][2][2], 1857.0 + 64.0 + 1200.0, places=6)
+
+    def test_model_learnt_with_mass(self):
+        cfg_tmp = tempfile.mkdtemp()
+        make_cfg(fx.make_db(os.path.join(cfg_tmp, "db.sqlite")), cfg_tmp)
+        from fis import model
+        live = self._tracker().snapshot()
+        m = model.build_ship(live)["fuel"]["model"]
+        self.assertEqual((m["source"], m["mass"], m["n"]), ("fit", True, 5))
+        self.assertAlmostEqual(m["power"], 2.75, places=3)
+        fs = model._fuel_state(live)
+        self.assertAlmostEqual(fs.cost_of(20.0), _burn(20.0, 1857.0 + fs.level + 1200.0),
+                               delta=0.01 * _burn(20.0, 3121.0))
+
+    def test_refit_is_another_history(self):
+        lt = self._tracker()
+        lt.feed(_panther(unladen=1757.0))          # 100 t lighter: another mass step
+        self.assertEqual(lt.snapshot()["jumps"], [])
+        lt.feed(_e("15:00:00", "LoadGame", Commander="Main", Ship="panthermkii", ShipID=9))
+        self.assertEqual(lt.snapshot()["jumps"], [])  # LoadGame keeps the step
+        lt.feed(_panther(unladen=1860.0))
+        self.assertEqual(len(lt.snapshot()["jumps"]), 5)
+
+
 class TestScoopableTarget(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

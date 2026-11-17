@@ -1691,10 +1691,18 @@ def _fuel_state(live: Dict[str, Any]):
     ds = plugin().deepspace
     ship = live.get("ship") or {}
     fuel = live.get("fuel") or {}
-    return ds.FuelState(capacity=float(ship.get("fuel_capacity") or 0.0),
-                        level=float(fuel.get("main") or 0.0),
-                        max_jump=float(ship.get("max_jump") or 0.0),
-                        jumps=[tuple(j) for j in live.get("jumps") or []])
+    fs = ds.FuelState(capacity=float(ship.get("fuel_capacity") or 0.0),
+                      level=float(fuel.get("main") or 0.0),
+                      max_jump=float(ship.get("max_jump") or 0.0),
+                      jumps=[tuple(j) for j in live.get("jumps") or []])
+    # SK2: the mass now and the FSD's power for the prior
+    try:
+        fs.unladen = float(ship.get("unladen") or 0.0)
+        fs.cargo = float(ship.get("cargo_t") or 0.0)
+    except (TypeError, ValueError):
+        pass
+    fs.fsd = ship.get("fsd")
+    return fs
 
 
 def boxel_info(db: Database, name: str) -> Optional[Dict[str, Any]]:
@@ -2139,7 +2147,8 @@ def build_ship(live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         fs = _fuel_state(live)
         out["fuel"].update(pct=_r(fs.pct, 1), jumps_left=fs.jumps_left,
                            range_ly=_r(fs.range_left, 0), warning=fs.warning(),
-                           summary=fs.summary(), samples=fs.samples)
+                           summary=fs.summary(), samples=fs.samples,
+                           model=fs.learned() if hasattr(fs, "learned") else None)
     return out
 
 
