@@ -134,5 +134,30 @@ class SessionsTest(unittest.TestCase):
         self.assertFalse(stats.play_sessions(evs)["valued"])
 
 
+class StatsLayoutTest(unittest.TestCase):
+    """Test findings f-tip and st-bio (17.11.2026): long texts overlapped
+    their neighbours in STATISTICS - checked by eye in headless Chrome at
+    1600 x 900 in German, held here by the rules that fixed it."""
+
+    WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+
+    def _read(self, *parts):
+        with open(os.path.join(self.WEB, *parts), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_bio_rates_and_learning_rows(self):
+        js, css = self._read("js", "views", "statistics.js"), self._read("css", "fis.css")
+        # BIO RATES: not the month row's fixed 64 px name column
+        self.assertIn('class: "st-row st-month st-rate"', js)
+        self.assertIn(".st-rate { grid-template-columns: minmax(0, 1.2fr)", css)
+        self.assertGreater(css.index(".st-rate {"), css.index(".st-month {"))
+        # LEARNING STATUS: the label keeps a minimum, the value wraps, the
+        # reset row is a plain line with its button at the end
+        self.assertIn(".st-learning .st-row { grid-template-columns: minmax(110px, 1fr)", css)
+        self.assertIn(".st-learning .st-row > span { min-width: 0; overflow-wrap: anywhere; }", css)
+        self.assertIn('class: "c-dim small st-row st-reset"', js)
+        self.assertIn(".st-learning .st-reset { display: flex;", css)
+
+
 if __name__ == "__main__":
     unittest.main()

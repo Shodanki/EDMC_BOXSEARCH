@@ -184,7 +184,7 @@ async function resetModel(part) {
 
 function modelRows(M, line, head) {
   const rows = [head(t("Route and fuel models (learnt from your journals)"))];
-  const reset = (part, since) => el("div", { class: "c-dim small st-row" },
+  const reset = (part, since) => el("div", { class: "c-dim small st-row st-reset" },
     el("span", { text: since ? t("reset {d}", { d: new Date(since * 1000).toLocaleString() }) : t("never reset") }), el("span"),
     el("button", { class: "small", text: t("reset"), title: t("Forget what this model learnt"), onclick: () => resetModel(part) }));
   const r = M.route;
@@ -296,7 +296,7 @@ function bioRates() {
   const sect = (title, list) => {
     if (!list.length) return;
     rows.push(el("div", { class: "c-cyan small st-learn-h", text: title }));
-    for (const g of list) rows.push(el("div", { class: "st-row st-month", title: t("{b} of {n} landable planets with biological signals; 95 % interval {lo}–{hi} %", { b: g.bio, n: g.n, lo: fmt(g.lo, 1), hi: fmt(g.hi, 1) }) },
+    for (const g of list) rows.push(el("div", { class: "st-row st-month st-rate", title: t("{b} of {n} landable planets with biological signals; 95 % interval {lo}–{hi} %", { b: g.bio, n: g.n, lo: fmt(g.lo, 1), hi: fmt(g.hi, 1) }) },
       el("span", { class: "c-dim", text: g.key === "none" ? t("no atmosphere") : g.key }),
       el("span", { class: "lbar" }, el("i", { style: { width: Math.min(100, g.pct) + "%" } })),
       el("span", { class: "num", text: fmt(g.pct, 0) + " % · n " + fmt(g.n, 0) })));
