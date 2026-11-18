@@ -999,22 +999,65 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 :root[data-theme="console"] .stat-view .meter:not(.st-rank .meter) { border-radius: 999px; overflow: hidden; }
 :root[data-theme="console"] .stat-view .meter i { border-radius: 999px; }
 
-/* -- Belt industrial: hazard head, stencil titles, segmented meters, readout boxes, toggle tabs */
-:root[data-theme="industrial"] .stat-view .st-head > .frame-in { border-top: 6px solid transparent;
-  border-image: repeating-linear-gradient(-45deg, var(--amber) 0 9px, var(--ink) 9px 18px) 6; }
-:root[data-theme="industrial"] .stat-view .st-tabs button { border-radius: 0; border: 2px solid rgba(var(--dim-rgb), .5); letter-spacing: .14em; }
-:root[data-theme="industrial"] .stat-view .st-tabs button.on { background: var(--amber); color: var(--ink); border-color: var(--amber); }
-:root[data-theme="industrial"] .stat-view .frame-title h2 { font-family: Impact, "Arial Narrow", "Segoe UI", sans-serif; font-weight: 400;
-  letter-spacing: .22em; font-size: 17px; }
-:root[data-theme="industrial"] .stat-view .meter { height: 12px; border: 0;
-  background: repeating-linear-gradient(90deg, rgba(var(--dim-rgb), .25) 0 8px, transparent 8px 10px); }
-:root[data-theme="industrial"] .stat-view .meter i { background: repeating-linear-gradient(90deg, var(--amber) 0 8px, transparent 8px 10px); }
-:root[data-theme="industrial"] .stat-view .st-card .st-row { border-bottom: 1px dashed rgba(var(--dim-rgb), .35); }
-:root[data-theme="industrial"] .stat-view .st-card:not(.st-learning) .st-row > .num:not(.small) { background: rgba(0, 0, 0, .35);
-  border: 1px solid rgba(var(--dim-rgb), .35); padding: 0 6px; font-weight: 700; }
-:root[data-theme="industrial"] .stat-view .st-card:not(.st-learning) .st-row > .num.small:not(:empty) { background: rgba(var(--green-rgb), .14);
-  color: var(--green); padding: 0 4px; text-align: center; }
-:root[data-theme="industrial"] .stat-view .st-rank > span:nth-child(2) { font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+/* -- Belt industrial (TH1b, 18.11.): a working ship's retrofit console - steel bezels with
+   rivets and stencil plates (the hardware, amber) around dark inset screens with corner
+   brackets (the readout, teal). Warm metal against cold screen; thin lines, small caps,
+   segmented meters with an amber end cap, chevron marks. Own design, static (no blinking). */
+:root[data-theme="industrial"] .stat-view { --scr: 95, 211, 196; --scr-c: rgb(var(--scr)); }
+/* the bezel: brushed steel plate, rivets on the plate, the screen sunk in */
+:root[data-theme="industrial"] .stat-view .frame { padding: 5px; background:
+  radial-gradient(circle at left 4px top 50%, rgba(var(--dim-rgb), .9) 0 1.4px, transparent 2.2px),
+  radial-gradient(circle at right 4px top 50%, rgba(var(--dim-rgb), .9) 0 1.4px, transparent 2.2px),
+  repeating-linear-gradient(90deg, rgba(var(--white-rgb), .025) 0 1px, transparent 1px 3px),
+  linear-gradient(180deg, #2a2f31, #1b1f21); background-repeat: no-repeat, no-repeat, repeat, no-repeat; }
+:root[data-theme="industrial"] body:not(.obs) .stat-view .frame > .frame-in { background:
+  linear-gradient(var(--scr-c), var(--scr-c)) left 4px top 4px / 10px 1px,
+  linear-gradient(var(--scr-c), var(--scr-c)) left 4px top 4px / 1px 10px,
+  linear-gradient(var(--scr-c), var(--scr-c)) right 4px top 4px / 10px 1px,
+  linear-gradient(var(--scr-c), var(--scr-c)) right 4px top 4px / 1px 10px,
+  linear-gradient(var(--scr-c), var(--scr-c)) left 4px bottom 4px / 10px 1px,
+  linear-gradient(var(--scr-c), var(--scr-c)) left 4px bottom 4px / 1px 10px,
+  linear-gradient(var(--scr-c), var(--scr-c)) right 4px bottom 4px / 10px 1px,
+  linear-gradient(var(--scr-c), var(--scr-c)) right 4px bottom 4px / 1px 10px,
+  repeating-linear-gradient(0deg, rgba(var(--scr), .025) 0 1px, transparent 1px 4px),
+  linear-gradient(180deg, #071113, #050b0c);
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, repeat, no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(var(--scr), .22), inset 0 6px 14px rgba(0, 0, 0, .55); }
+/* the title is a stencilled plate riveted above the screen, with chevrons running to its edge */
+:root[data-theme="industrial"] .stat-view .frame-title { background: linear-gradient(180deg, #33393b, #262b2d);
+  margin: -2px -2px 6px; padding: 3px 10px; border-bottom: 1px solid rgba(var(--amber-rgb), .45); }
+:root[data-theme="industrial"] .stat-view .frame-title h2 { font-family: Impact, "Arial Narrow", "Segoe UI", sans-serif;
+  font-weight: 400; letter-spacing: .24em; font-size: 15px; color: var(--amber); }
+:root[data-theme="industrial"] .stat-view .frame-title::after { content: "\203A\203A\203A"; margin-left: auto; padding-left: 10px;
+  color: rgba(var(--amber-rgb), .55); letter-spacing: -.05em; font-size: 15px; }
+:root[data-theme="industrial"] .stat-view .frame-title .tag { color: rgba(var(--scr), .8); font-size: 10px; letter-spacing: .08em; }
+/* the head: hazard stripes along the top of its plate */
+:root[data-theme="industrial"] .stat-view .st-head { padding-top: 8px; background:
+  repeating-linear-gradient(-45deg, rgba(var(--amber-rgb), .85) 0 8px, #15191a 8px 16px) top / 100% 5px no-repeat,
+  linear-gradient(180deg, #2a2f31, #1b1f21); }
+/* sub-tabs: switch plates; the active one lit on the screen colour with a chevron */
+:root[data-theme="industrial"] .stat-view .st-tabs button { border-radius: 0; border: 1px solid rgba(var(--amber-rgb), .45);
+  background: linear-gradient(180deg, #2f3537, #222729); color: var(--text); letter-spacing: .14em; font-size: 11px; }
+:root[data-theme="industrial"] .stat-view .st-tabs button.on { background: rgba(var(--scr), .18); color: var(--scr-c);
+  border-color: var(--scr-c); box-shadow: inset 3px 0 0 var(--amber); }
+:root[data-theme="industrial"] .stat-view .st-tabs button.on::before { content: "\00BB  "; color: var(--amber); }
+/* rows: labels on the screen, figures in the screen colour, faint scan separators */
+:root[data-theme="industrial"] .stat-view .st-row { border-bottom: 1px dotted rgba(var(--scr), .16); }
+/* labels stay in normal lettering: small caps fell under the 11 px minimum (checked 18.11.) */
+:root[data-theme="industrial"] .stat-view .st-row > span:first-child { color: rgba(var(--text-rgb), .78); letter-spacing: .02em; }
+:root[data-theme="industrial"] .stat-view .st-card:not(.st-learning) .st-row > .num:not(.small) { color: var(--scr-c);
+  border-left: 2px solid rgba(var(--amber-rgb), .5); padding-left: 6px; }
+:root[data-theme="industrial"] .stat-view .st-card:not(.st-learning) .st-row > .num.small:not(:empty) {
+  color: var(--green); border: 1px solid rgba(var(--green-rgb), .35); padding: 0 4px; text-align: center; font-size: 10px; align-self: center; }
+/* meters: screen-colour segments in a dark slot, an amber cap where the share ends */
+:root[data-theme="industrial"] .stat-view .meter { height: 10px; border: 1px solid rgba(var(--scr), .25);
+  background: repeating-linear-gradient(90deg, rgba(var(--scr), .10) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .stat-view .meter i { background: repeating-linear-gradient(90deg, var(--scr-c) 0 6px, transparent 6px 8px);
+  box-shadow: 2px 0 0 var(--amber); }
+:root[data-theme="industrial"] .stat-view .st-rank > span:nth-child(2) { color: var(--scr-c); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .1em; }
+:root[data-theme="industrial"] .stat-view .st-spark { color: var(--scr-c); }
+:root[data-theme="industrial"] .stat-view .st-learn-h { color: var(--amber); font-variant: all-small-caps; letter-spacing: .1em; }
 
 /* -- Station era: phosphor, prompt titles (no blinking cursor - user 18.11.), dot meters, glowing traces */
 :root[data-theme="station"] .stat-view .frame-title h2::before { content: "> "; color: var(--dim); }

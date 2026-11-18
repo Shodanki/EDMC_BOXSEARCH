@@ -169,10 +169,11 @@ class StatsLayoutTest(unittest.TestCase):
         rules = [r for r in re.findall(r"^(:root[^{]*)\{", block, re.M)]
         self.assertTrue(rules)
         for r in rules:
-            self.assertRegex(r, r':root\[data-theme="(console|industrial|station|next)"\] \.stat-view ')
+            self.assertRegex(r, r':root\[data-theme="(console|industrial|station|next)"\] (body:not\(\.obs\) )?\.stat-view ')
         self.assertNotIn('data-theme="standard"', block)
         for theme, mark in (("console", "conic-gradient(var(--cyan) calc(var(--p, 0) * 1%)"),
-                            ("industrial", "repeating-linear-gradient(90deg, var(--amber) 0 8px"),
+                            ("industrial", "repeating-linear-gradient(90deg, var(--scr-c) 0 6px"),          # TH1b: teal screen, amber cap
+                            ("industrial", "box-shadow: 2px 0 0 var(--amber)"),
                             ("station", 'content: "> "'), ("next", ".st-lead > .num:not(.small) { font: 600 26px")):
             self.assertIn(mark, block, theme)
         # no blinking cursor in any statistics theme (user 18.11.: it irritates)
