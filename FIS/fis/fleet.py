@@ -845,7 +845,9 @@ class Archive:
             out.append({"event": "Commander", "timestamp": e.get("timestamp"),
                         "_fid": fid, "Name": e.get("Name") or e.get("Commander")})
             if e.get("event") == "LoadGame":      # session start (hazard log)
-                out.append({"event": "LoadGame", "timestamp": e.get("timestamp"), "_fid": fid})
+                # GAIN / LOSS needs the balance and the ship at login (AU1, 18.11.)
+                out.append({"event": "LoadGame", "timestamp": e.get("timestamp"), "_fid": fid,
+                            **{k: e[k] for k in ("Credits", "ShipID", "Ship", "ShipName") if k in e}})
             return fid
         slim = Archive._slim(e)
         if slim is not None:

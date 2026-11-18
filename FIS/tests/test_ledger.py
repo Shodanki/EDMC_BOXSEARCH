@@ -87,6 +87,21 @@ class TestLedger(unittest.TestCase):
     def test_the_archive_keeps_every_money_event(self):
         self.assertEqual([e for e in ledger.EVENTS if e not in fleet.EVENTS], [])
 
+    def test_the_archive_keeps_the_login_balance(self):
+        """AU1 (18.11.): the archive slimmed LoadGame to its time, so the
+        ledger never saw the balance or the ship at login - the balance
+        check only had the carrier transfers. Through the archive the books
+        must come out as from the raw journal."""
+        out, fid = [], None
+        for e in TRIP:
+            fid = fleet.Archive._take(e, fid, out)
+        lg = next(e for e in out if e["event"] == "LoadGame")
+        self.assertEqual((lg["Credits"], lg["ShipID"], lg["ShipName"]), (1_000_000, 1, "SCOUT"))
+        raw, archived = ledger.build_ledger(TRIP), ledger.build_ledger(out)
+        self.assertEqual(archived["totals"], raw["totals"])
+        self.assertEqual(archived["rest"], raw["rest"])
+        self.assertEqual([s["id"] for s in archived["ships"]], [s["id"] for s in raw["ships"]])
+
 
 if __name__ == "__main__":
     unittest.main()
