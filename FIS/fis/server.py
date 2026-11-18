@@ -183,6 +183,57 @@ class App:
             out["jumps"] = None
         return out
 
+    def kepler_check(self) -> Optional[Dict[str, Any]]:
+        """V0: the Kepler watch over every system with two scanned bodies or
+        more - a few seconds, so kept until 25 more bodies are scanned."""
+        from . import realitycheck
+        n = (self.db.one("SELECT COUNT(*) AS n FROM bodies WHERE scanned = 1") or {"n": 0})["n"]
+
+        def build() -> Optional[Dict[str, Any]]:
+            m = self.model
+            p = m.plugin()
+            sr = p.sysroute
+            ids = [r["sys_id64"] for r in self.db.query(
+                "SELECT sys_id64 FROM bodies WHERE scanned = 1 GROUP BY sys_id64 HAVING COUNT(*) >= 2")]
+            now = time.time()
+
+            def summary(id64: int) -> Optional[Dict[str, int]]:
+                rows = self.db.bodies_for(id64, None)
+                srow = self.db.system_by_id64(id64)
+                bodies, _by = m._system_bodies(p, self.db, rows, (srow["name"] if srow else "") or "", now)
+                if not any(b.pos for b in bodies.values()):
+                    sr.resolve_positions(bodies)
+                return sr.check_summary(bodies)
+            return realitycheck.kepler(ids, summary)
+        return self.cached("kepler_check", int(n) // 25, build)
+
+    def reality(self, stats_out: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """V0: one error value per learning model, from what the statistics
+        payload already holds plus the fuel and Kepler checks."""
+        from . import realitycheck
+        L = stats_out.get("learning") or {}
+        models = L.get("models") or {}
+        parts: Dict[str, Any] = {"route": stats_out.get("systime"), "work": models.get("work"),
+                                 "value": models.get("value"),
+                                 "finds": realitycheck.finds(L.get("finds")),
+                                 "bio": (stats_out.get("bio_rates") or {}).get("v0")}
+        try:
+            live = self.live_state()
+            base = self.model._fuel_state(live)
+
+            def make(js: List[Any]) -> Any:
+                fs = self.model._fuel_state(dict(live, jumps=js))
+                fs.unladen, fs.cargo, fs.fsd = getattr(base, "unladen", 0.0), getattr(base, "cargo", 0.0), base.fsd
+                return fs
+            parts["fuel"] = realitycheck.fuel(live.get("jumps") or [], make)
+        except Exception:
+            parts["fuel"] = None
+        try:
+            parts["kepler"] = self.kepler_check()
+        except Exception:
+            parts["kepler"] = None
+        return realitycheck.build(parts)
+
     def cached(self, key: str, sig: Any, build) -> Any:
         """Rebuild only when the database or the relevant live data moved."""
         with self._cache_lock:
@@ -1248,6 +1299,7 @@ class Handler(BaseHTTPRequestHandler):
             out["systime"] = app.cached("systime", (len(evs), evs[-1].get("timestamp") if evs else None,
                                                     app.db.mtime()),
                                         lambda: systime.build(evs, app.db, app.archive.commander()[0]))
+            out["learning"]["reality"] = app.reality(out)                # V0: every model against reality
         except Exception:
             out["learning"] = None
         return self._json(out)

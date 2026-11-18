@@ -52,6 +52,13 @@ export function applyStatic(root = document) {
 }
 
 const DE = /*DE*/{
+  "Kepler positions": "Kepler-Positionen",
+  "Fuel per jump": "Treibstoff je Sprung",
+  "Time per system vs. route estimate": "Zeit je System gegen Routenschätzung",
+  "Exploration value vs. sales": "Explorationswert gegen Verkäufe",
+  "Chance of a find vs. scans": "Fundchance gegen Scans",
+  "Bio prediction (genera in top 3)": "Bio-Vorhersage (Gattungen in den Top 3)",
+  "Reality check: each model against what happened": "Realitätscheck: jedes Modell gegen das, was geschah",
   "over all landable planets": "über alle landbaren Planeten",
   "forecast": "Prognose",
   "Chance of life": "Chance auf Leben",

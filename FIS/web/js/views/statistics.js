@@ -188,6 +188,7 @@ function learning() {
   if (L.models) rows.push(...modelRows(L.models, line, head));
   if (L.finds) rows.push(...findRows(L.finds, line, head));
   if (L.forecast) rows.push(...forecastRows(L.forecast, line, head));
+  if (L.reality) rows.push(...realityRows(L.reality, head));
   if (L.rocks.length) {
     rows.push(head(t("Prospected rocks per ring class and hotspot (needs {n})", { n: L.min_rocks })));
     for (const r of L.rocks) rows.push(line(r.cls + (r.hotspot ? " · " + r.hotspot : " · " + t("all")),
@@ -235,6 +236,23 @@ function findRows(F, line, head) {
       { p: pc(b.predicted), r: pc(b.rate), lo: fmt(b.low * 100, 0), hi: fmt(b.high * 100, 0), n: b.n }), b.thin));
   }
   rows.push(el("div", { class: "c-dim small", text: t("{l} predictions kept, {w} wait for a completed FSS", { l: F.logged, w: F.waiting }) }));
+  return rows;
+}
+
+// V0: every learning model against your own journals - one error value each
+const REALITY = { kepler: N_("Kepler positions"), fuel: N_("Fuel per jump"), route: N_("Time per system vs. route estimate"),
+  work: N_("Surface scan / bio sample"), value: N_("Exploration value vs. sales"), finds: N_("Chance of a find vs. scans"),
+  bio: N_("Bio prediction (genera in top 3)") };
+
+function realityRows(R, head) {
+  const rows = [head(t("Reality check: each model against what happened"))];
+  for (const r of R) {
+    const mark = r.good === true ? "✓" : r.good === false ? "✗" : t("thin");
+    rows.push(el("div", { class: "st-row" + (r.value ? "" : " c-dim") },
+      el("span", { text: t(REALITY[r.key] || r.label) }),
+      el("span", { class: "num", text: (r.value || t("no data yet")) + (r.n ? " · n " + fmt(r.n, 0) : "") }),
+      el("span", { class: "num small " + (r.good === true ? "c-green" : r.good === false ? "c-amber" : "c-dim"), text: mark })));
+  }
   return rows;
 }
 
