@@ -82,6 +82,8 @@ jobs:
         run: python tests/biosig.py
       - name: EDMC passes on no journal events (warning, missed events stored, track positions)
         run: python tests/journal_gap.py
+      - name: chance of a find (FX3, kept at the first arrival, set against the scans)
+        run: python tests/findodds.py
       - name: package import (relative imports, both of EDMC's ways to load a plugin)
         run: python tests/package_import.py
       - name: code style (flake8 with EDMC's line length, see .flake8)
@@ -97,7 +99,7 @@ jobs:
       - name: complexity (EDMC's limit 15, every function of the plugin and the FIS)
         run: python tests/complexity.py
       - name: plain-python modules import without EDMC
-        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan, biosig, bodyvalue, situation, groundmine, learnreset, shipstate, suittemp, edts_pgnames, regionmap; assert procgen._edts is not None; assert regionmap.find_region(0, 0, 0)[1] == 'Inner Orion Spur'; print('imports ok')"
+        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan, biosig, bodyvalue, situation, groundmine, learnreset, findodds, shipstate, suittemp, edts_pgnames, regionmap; assert procgen._edts is not None; assert regionmap.find_region(0, 0, 0)[1] == 'Inner Orion Spur'; print('imports ok')"
       - name: FIS tests (flight information system)
         working-directory: FIS
         run: python -m unittest discover -s tests -t .

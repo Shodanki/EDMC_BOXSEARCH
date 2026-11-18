@@ -33,6 +33,7 @@ from .sysroute import calibrate_from_journal, leg_distance_ls
 from .state import CFG, POSITION_EVENTS, ST, cfg_bool, logger
 from . import cockpit
 from . import cockpitinfo
+from . import findlog
 from . import panel
 from . import planning
 from . import routewin
@@ -244,6 +245,7 @@ def _on_arrival(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, Any]
     if ev == "FSDJump":
         cockpit._overlay_briefing("arrival", ST.cur_system, ST.cur_id64,
                                   entry.get("StarClass") or None)
+        findlog.on_jump(entry)           # FX3: V0 prediction of a find
         if ST.active:
             threading.Thread(target=planning._update_route_targets, daemon=True,
                              name="SHBOX-navroute").start()

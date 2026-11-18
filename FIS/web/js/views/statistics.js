@@ -186,6 +186,7 @@ function learning() {
     el("span", { text: label }), el("span", { class: "num", text: value }), el("span", { class: "num small " + (thin ? "c-amber" : "c-green"), text: thin ? t("thin") : "✓" }));
   const head = (s) => el("div", { class: "c-cyan small st-learn-h", text: s });
   if (L.models) rows.push(...modelRows(L.models, line, head));
+  if (L.finds) rows.push(...findRows(L.finds, line, head));
   if (L.rocks.length) {
     rows.push(head(t("Prospected rocks per ring class and hotspot (needs {n})", { n: L.min_rocks })));
     for (const r of L.rocks) rows.push(line(r.cls + (r.hotspot ? " · " + r.hotspot : " · " + t("all")),
@@ -218,6 +219,22 @@ async function resetModel(part) {
   try { await postJSON("/api/learning/reset", { part }); } catch (e) { window.alert(t("Reset failed: {e}", { e: e.message })); return; }
   update(null, "data");
   setTimeout(() => update(null, "data"), 2500);      // the route and work models are measured again in the background
+}
+
+// FX3: the chance of a find predicted at each first arrival, against what the scans showed (V0)
+function findRows(F, line, head) {
+  const pc = (v) => v === null || v === undefined ? "–" : fmt(100 * v, 0) + " %";
+  const base = (k) => F.base && F.base[k] ? t("{h} of {n}", { h: F.base[k].hits, n: F.base[k].n }) : "–";
+  const rows = [head(t("Finds: predicted at arrival vs. scans (learnt from {n} systems)", { n: F.learnt }))];
+  rows.push(line(t("Systems with an undiscovered body"), t("procgen {pg} · named {nm}", { pg: base("pg"), nm: base("named") }), F.learnt < 10));
+  for (const b of F.bands) {
+    if (!b.n) continue;
+    const label = t("predicted {a}–{b}", { a: fmt(100 * b.from, 0), b: b.to === null ? "100" : fmt(100 * b.to, 0) }) + " %";
+    rows.push(line(label, t("~{p} predicted · {r} found ({lo}–{hi} %) · n {n}",
+      { p: pc(b.predicted), r: pc(b.rate), lo: fmt(b.low * 100, 0), hi: fmt(b.high * 100, 0), n: b.n }), b.thin));
+  }
+  rows.push(el("div", { class: "c-dim small", text: t("{l} predictions kept, {w} wait for a completed FSS", { l: F.logged, w: F.waiting }) }));
+  return rows;
 }
 
 function modelRows(M, line, head) {

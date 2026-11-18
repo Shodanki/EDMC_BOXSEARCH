@@ -326,6 +326,24 @@ CREATE TABLE IF NOT EXISTS route_estimates (
     stops     INTEGER,
     PRIMARY KEY (fid, sys_id64)
 );
+-- 5.0 FX3 (V0): the chance of a find predicted on the first arrival in a
+-- system (findodds), to set against what the scans then showed (FIS
+-- STATISTICS > LEARNING STATUS). level = shells.info_level before arrival
+CREATE TABLE IF NOT EXISTS find_log (
+    fid       TEXT NOT NULL,
+    sys_id64  INTEGER NOT NULL,
+    ts        TEXT NOT NULL,           -- arrival (journal time, UTC ISO)
+    name      TEXT,
+    kind      TEXT,                    -- mass code a-h or 'named'
+    star      TEXT,                    -- arrival star class group
+    level     TEXT,                    -- known / checked / unchecked / inhabited
+    height    TEXT,                    -- low / high (|y| 100 ly) / ?
+    p         REAL NOT NULL,
+    low       REAL,
+    high      REAL,
+    n         INTEGER,                 -- visits the deciding cell had
+    PRIMARY KEY (fid, sys_id64)
+);
 CREATE TABLE IF NOT EXISTS cmdr_bodies (
     fid            TEXT NOT NULL,
     sys_id64       INTEGER NOT NULL,
@@ -1804,6 +1822,26 @@ class SystemDB:
         cur = self.cx.execute("INSERT OR IGNORE INTO route_estimates (fid, sys_id64, ts, total_s, travel_s, "
                               "work_s, stops) VALUES (?, ?, ?, ?, ?, ?, ?)",
                               (fid, sys_id64, _now(), float(total_s), float(travel_s), float(work_s), int(stops)))
+        self.cx.commit()
+        return cur.rowcount > 0
+
+    def has_own_scans(self, fid: Optional[str], sys_id64: int) -> bool:
+        """True when this commander has scanned a body of the system."""
+        return bool(self.cx.execute("SELECT 1 FROM cmdr_bodies WHERE fid=? AND sys_id64=? AND scanned=1 LIMIT 1",
+                                    (fid, sys_id64)).fetchone())
+
+    def keep_find_prediction(self, fid: Optional[str], sys_id64: int, ts: str, name: str,
+                             pred: Dict[str, Any]) -> bool:
+        """FX3 (V0): the find prediction of a commander's first visit to a
+        system (the caller checks has_own_scans at the jump); a second one
+        for the same system is not kept. True when stored."""
+        if not fid or not sys_id64:
+            return False
+        cur = self.cx.execute("INSERT OR IGNORE INTO find_log (fid, sys_id64, ts, name, kind, star, level, "
+                              "height, p, low, high, n) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              (fid, sys_id64, ts or _now(), name, pred.get("kind"), pred.get("star"),
+                               pred.get("level"), pred.get("height"), float(pred["p"]), pred.get("low"),
+                               pred.get("high"), int(pred.get("n") or 0)))
         self.cx.commit()
         return cur.rowcount > 0
 

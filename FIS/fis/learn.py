@@ -328,6 +328,20 @@ def model_status(calib_info: Dict[str, Any], live: Dict[str, Any], cost_model: A
     return out
 
 
+def find_odds(db: Any) -> Optional[Dict[str, Any]]:
+    """FX3 for STATISTICS > LEARNING STATUS: the plugin's find predictions
+    (findodds.calibration, table find_log) against what the scans showed;
+    None when the plugin is older or the database lacks the table."""
+    try:
+        from .model import plugin
+        fo = getattr(plugin(), "findodds", None)
+        if fo is None:
+            return None
+        return fo.calibration(lambda q, a: db.query(q, tuple(a)))
+    except Exception:
+        return None
+
+
 def wilson(k: int, n: int, z: float = 1.96) -> Tuple[Optional[float], Optional[float]]:
     """The 95 % Wilson interval of k in n, in percent (None, None for n = 0)."""
     if n <= 0:
