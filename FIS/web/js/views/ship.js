@@ -583,6 +583,9 @@ function logistics() {
       el("span", { text: fmt(L.used, 0) + " / " + fmt(L.capacity, 0) + " t" })),
     el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Fuel") }), bar(f.main, f.capacity, (f.main / (f.capacity || 1)) < 0.25 ? "warn" : ""),
       el("span", { text: fmt(f.main, 1) + " / " + fmt(f.capacity, 0) + " t" })),
+    f.jumps ? el("div", { class: "lg-row", title: t("At the {d} ly you jump lately; the range is the fuel model's scatter.", { d: fmt(f.jumps.ly, 1) }) },
+      el("span", { class: "c-dim", text: t("Jumps") }), el("span", { class: "c-dim small", text: t("learned from {n}", { n: f.jumps.n }) }),
+      el("span", { class: f.jumps.thin ? "c-amber" : "", text: "~" + f.jumps.mid + " (" + f.jumps.lo + "–" + f.jumps.hi + ")" })) : null,
     el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Reservoir") }), bar(f.reservoir, f.reserve_cap),
       el("span", { text: fmt(f.reservoir, 2) + " / " + fmt(f.reserve_cap, 2) + " t" })),
     el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Limpets") }), el("span"), el("span", { text: fmt(L.limpets, 0) })),
@@ -594,5 +597,5 @@ function logistics() {
   const locker = el("div", { class: "c-dim small", text: t("Ship locker: {i} items · {c} components · {u} consumables · {d} data",
     { i: lk.Items, c: lk.Components, u: lk.Consumables, d: lk.Data }) });
   const bal = L.balance !== null && L.balance !== undefined ? el("div", { class: "small", text: t("Credits") + ": " + fmt(L.balance, 0) + " Cr" }) : null;
-  return frame(t("LOGISTICS"), L.free !== null ? t("{n} t free", { n: fmt(L.free, 0) }) : "", [...rows, inv, locker, bal], { cls: "sh-log", appear: false });
+  return frame(t("LOGISTICS"), L.free !== null ? t("{n} t free", { n: fmt(L.free, 0) }) : "", [...rows.filter(Boolean), inv, locker, bal], { cls: "sh-log", appear: false });
 }

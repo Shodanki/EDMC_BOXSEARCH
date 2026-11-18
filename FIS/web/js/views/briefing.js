@@ -223,6 +223,20 @@ function approach(a, appear) {
   return frame(t("APPROACH"), a.short || a.body, rows, { cls: "br-approach", appear });
 }
 
+// B-24: the sphere's rest - hours, value and finds ahead, each with its range and n
+function forecastRows(F) {
+  if (!F || !F.open || !F.hours) return null;
+  const h = (v) => fmt(v, v < 10 ? 1 : 0) + " h";
+  const parts = [t("{n} open", { n: F.open }), "~" + h(F.hours.mid) + " (" + h(F.hours.lo) + "–" + h(F.hours.hi) + ")"];
+  if (F.value) parts.push("~" + fmt(F.value.mid / 1e6, 0) + " M Cr (" + fmt(F.value.lo / 1e6, 0) + "–" + fmt(F.value.hi / 1e6, 0) + ")");
+  if (F.finds) parts.push(t("~{f} finds", { f: fmt(F.finds.mid, 0) }));
+  const from = (F.minutes_from === "sphere" ? t("{n} systems of this sphere", { n: F.hours.n }) : t("{n} of your systems", { n: F.hours.n }))
+    + (F.value ? " · " + t("{n} sessions", { n: F.value.n }) : "") + (F.finds ? " · " + t("{n} first visits", { n: F.finds.n }) : "");
+  return el("div", { class: "sv-forecast" },
+    el("div", { class: F.thin ? "c-amber" : "c-cyan", text: t("AHEAD") + "  " + parts.join(" · ") }),
+    el("div", { class: "c-dim small", text: t("learned from {s}", { s: from }) }));
+}
+
 function surveyTile(s, appear) {
   if (!s || !s.center || !s.systems) return null;
   const n = s.systems;
@@ -235,6 +249,8 @@ function surveyTile(s, appear) {
   ];
   if (s.boxels && s.boxels.total)
     body.push(hbar("BOXEL ✓", s.boxels.complete, s.boxels.total, s.boxels.complete + "/" + s.boxels.total));
+  const fc = forecastRows(s.forecast);
+  if (fc) body.push(fc);
   const extra = [];
   // C1: the survey counts for the main commander
   if (s.commander) extra.push(el("span", { class: "c-dim", text: t("for {n}", { n: s.commander }) +

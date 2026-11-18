@@ -1367,6 +1367,8 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
         _body_journal(out, archive, id64, body_id)
     if (r["sig_bio"] or 0) > 0 or r["landable"]:
         _body_prediction(out, db, p, r)
+    if r["landable"] and not (r["sig_bio"] or 0):
+        out["bio"]["chance"] = _bio_chance(db, r)         # B-24: no signal known yet
     from . import science
     try:
         _ring_mining(db, out["rings"], archive)    # rocks per ring, what to expect at a hotspot
@@ -1900,6 +1902,22 @@ def _sphere_of(db: Database, pos: Optional[Sequence[float]]) -> Optional[Dict[st
     return {"name": s["start_system"], "radius": _r(s["radius"], 1),
             "from_centre_ly": _r(d, 1), "inside": d <= s["radius"],
             "active": bool(s["active"])}
+
+
+_BIO_RATES: Dict[str, Any] = {}
+
+
+def _bio_chance(db: Database, r: Any) -> Optional[Dict[str, Any]]:
+    """B-24: the chance that this landable planet carries life, from BQ1's
+    rates (kept while the database stands still)."""
+    try:
+        from . import forecast, learn
+        key = (id(db), db.mtime())
+        if _BIO_RATES.get("key") != key:
+            _BIO_RATES.update(key=key, rates=learn.bio_rates(db))
+        return forecast.bio_chance(dict(r), _BIO_RATES["rates"])
+    except Exception:
+        return None
 
 
 FIND_KINDS = ("codex", "settlement", "screenshot", "material")

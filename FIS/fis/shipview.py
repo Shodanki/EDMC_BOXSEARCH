@@ -291,12 +291,20 @@ def _ship_logistics(live: Dict[str, Any], st: Dict[str, Any], lo: Dict[str, Any]
     limpets = sum(c["count"] for c in inv if (c["key"] or "").lower() == "drones")
     locker = _read_json(os.path.join(journal_dir, "ShipLocker.json")) or {}
     fuel = live.get("fuel") or {}
+    jumps = None
+    try:                                     # B-24: jumps until the tank is empty
+        from . import forecast
+        from .model import _fuel_state
+        jumps = forecast.jumps(_fuel_state(live)) if ship.get("fuel_capacity") else None
+    except Exception:
+        jumps = None
     return {
         "cargo": inv, "used": used, "capacity": lo.get("CargoCapacity"),
         "free": (lo.get("CargoCapacity") or 0) - used if lo.get("CargoCapacity") is not None else None,
         "limpets": limpets, "cargo_ts": parse_ts(cargo.get("timestamp")),
         "fuel": {"main": fuel.get("main"), "reservoir": fuel.get("reservoir"),
-                 "capacity": ship.get("fuel_capacity"), "reserve_cap": ship.get("reserve_capacity")},
+                 "capacity": ship.get("fuel_capacity"), "reserve_cap": ship.get("reserve_capacity"),
+                 "jumps": jumps},
         "locker": {k: sum(i.get("Count") or 0 for i in locker.get(k) or [])
                    for k in ("Items", "Components", "Consumables", "Data")},
         "balance": st.get("balance"),

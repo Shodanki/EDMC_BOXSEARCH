@@ -6,7 +6,7 @@
 // PLANET – datasheet of one body.
 
 import { getJSON } from "../api.js";
-import { el, frame, fmt, num, chip, hbar, tile, countUp, classDe } from "../ui.js";
+import { el, frame, fmt, num, chip, hbar, tile, countUp, classDe, meter } from "../ui.js";
 import { t, N_, lang } from "../i18n.js";
 
 let root = null;
@@ -248,6 +248,14 @@ function render(ctx) {
       bio.push(el("div", { class: "c-dim small", text: (b.bio.model || "") + " – " + t("rule based on your own finds, no AI.") }));
     }
     right.push(frame(t("BIOLOGY"), "", bio, { kind: b.bio.signals > b.bio.analysed ? "warn" : "" }));
+  } else if (b.bio.chance) {
+    // B-24: no signal known yet - how often a planet like this carried life
+    const c = b.bio.chance;
+    const by = { atmosphere: t("by atmosphere"), "planet class": t("by planet class"), all: t("over all landable planets") }[c.basis] || "";
+    right.push(frame(t("BIOLOGY"), t("forecast"), [
+      el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("Chance of life") }), meter(c.pct, 100),
+        el("span", { class: "num", text: "~" + fmt(c.pct, 0) + " % (" + fmt(c.lo, 0) + "–" + fmt(c.hi, 0) + ")" })),
+      el("div", { class: "c-dim small", text: by + " · " + c.key + " · " + t("learned from {n} planets", { n: c.n }) })]));
   }
 
   if (b.materials.length) {

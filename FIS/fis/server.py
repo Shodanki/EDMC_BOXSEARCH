@@ -133,6 +133,56 @@ class App:
         """A copy of the live state."""
         return self.live.snapshot()
 
+    def forecast_inputs(self) -> Dict[str, Any]:
+        """B-24: your minutes per worked system (own-4) and value per hour of
+        your sessions of at least 30 min (RT1/FX0), cached while the
+        journals and the database stand still."""
+        evs = self.archive.events()
+        sig = (len(evs), evs[-1].get("timestamp") if evs else None, self.db.mtime())
+
+        def build() -> Dict[str, Any]:
+            from . import stats, systime
+            from .shipview import _bodyvalue
+            st = systime.build(evs, self.db, self.archive.commander()[0], keep=1 << 30)
+            ses = stats.play_sessions(evs, _bodyvalue(), self.archive.organic_values(), keep=1 << 30)
+            long_ = [r for r in ses["sessions"] if r["minutes"] * 60 >= stats.SESSION_MIN_S]
+            return {"minutes": {r["id64"]: r["minutes"] for r in st["systems"]},
+                    "value_h": [r["value_h"] for r in long_ if r["value_h"] is not None]}
+        return self.cached("forecast_inputs", sig, build)
+
+    def sphere_forecast(self, survey: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """B-24: hours, value and finds still ahead in the active sphere -
+        minutes from the sphere's own worked systems once there are three,
+        else from all of yours."""
+        if not survey or not survey.get("center") or not survey.get("systems"):
+            return None
+        from . import forecast, learn
+        inp = self.forecast_inputs()
+        c = survey["center"]
+        ids = {int(r["id64"]) for r in self.db.systems_in_sphere(c[0], c[1], c[2], survey.get("radius") or 0.0)
+               if r["visited"] and r["id64"] is not None}
+        own = [v for k, v in inp["minutes"].items() if k in ids]
+        mins = own if len(own) >= forecast.MIN_N else list(inp["minutes"].values())
+        out = forecast.sphere(survey["systems"], mins, inp["value_h"], learn.find_odds(self.db))
+        if out:
+            out["minutes_from"] = "sphere" if mins is own else "all"
+        return out
+
+    def forecasts(self) -> Dict[str, Any]:
+        """B-24 for STATISTICS > LEARNING STATUS: the sphere's rest and the
+        tank in jumps."""
+        out: Dict[str, Any] = {"sphere": None, "jumps": None}
+        try:
+            out["sphere"] = self.sphere_forecast(self.model.build_survey(self.db))
+        except Exception:
+            out["sphere"] = None
+        try:
+            from . import forecast
+            out["jumps"] = forecast.jumps(self.model._fuel_state(self.live_state()))
+        except Exception:
+            out["jumps"] = None
+        return out
+
     def cached(self, key: str, sig: Any, build) -> Any:
         """Rebuild only when the database or the relevant live data moved."""
         with self._cache_lock:
@@ -1188,6 +1238,7 @@ class Handler(BaseHTTPRequestHandler):
             un = shipview._unsold(app.archive, app.cfg.unsold, app._learn_marks().get("value"))
             out["learning"]["models"]["value"] = un["exploration"].get("calibration") if un else None
             out["learning"]["finds"] = learn.find_odds(app.db)       # FX3: predicted finds vs scans
+            out["learning"]["forecast"] = app.forecasts()               # B-24
             out["bio_rates"] = app.cached("bio_rates", (app.db.mtime(), app.archive.rev),    # BQ1, EA2
                                           lambda: learn.bio_rates(app.db, extra=app.archive_planets()))
             from .shipview import _bodyvalue
@@ -1240,11 +1291,16 @@ class Handler(BaseHTTPRequestHandler):
             "Content-Disposition": 'attachment; filename="shbox-survey-%s.%s"' % (day, fmt)})
 
     def _get_survey(self, qs: Dict[str, Any]) -> None:
-        """The survey state (cached while the database does not change)."""
+        """The survey state (cached while the database does not change),
+        with B-24's forecast of the sphere's rest."""
         app = self.app
         m = app.model
-        return self._json(app.cached("survey", app.db.mtime(),
-                                     lambda: m.build_survey(app.db)))
+        out = dict(app.cached("survey", app.db.mtime(), lambda: m.build_survey(app.db)))
+        try:
+            out["forecast"] = self.app.sphere_forecast(out)
+        except Exception:
+            out["forecast"] = None
+        return self._json(out)
 
     PING_S = 15.0                            # quiet game: a ping at least this often
 

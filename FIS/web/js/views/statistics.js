@@ -187,6 +187,7 @@ function learning() {
   const head = (s) => el("div", { class: "c-cyan small st-learn-h", text: s });
   if (L.models) rows.push(...modelRows(L.models, line, head));
   if (L.finds) rows.push(...findRows(L.finds, line, head));
+  if (L.forecast) rows.push(...forecastRows(L.forecast, line, head));
   if (L.rocks.length) {
     rows.push(head(t("Prospected rocks per ring class and hotspot (needs {n})", { n: L.min_rocks })));
     for (const r of L.rocks) rows.push(line(r.cls + (r.hotspot ? " · " + r.hotspot : " · " + t("all")),
@@ -234,6 +235,23 @@ function findRows(F, line, head) {
       { p: pc(b.predicted), r: pc(b.rate), lo: fmt(b.low * 100, 0), hi: fmt(b.high * 100, 0), n: b.n }), b.thin));
   }
   rows.push(el("div", { class: "c-dim small", text: t("{l} predictions kept, {w} wait for a completed FSS", { l: F.logged, w: F.waiting }) }));
+  return rows;
+}
+
+// B-24: what is still ahead, from your own data - each with "~", range and n
+function forecastRows(F, line, head) {
+  const rows = [head(t("Forecasts (from your own data)"))];
+  const S = F.sphere, J = F.jumps;
+  const hrs = (v) => fmt(v, v < 10 ? 1 : 0);
+  if (S && S.hours) rows.push(line(t("Rest of the sphere"), t("{o} systems · ~{h} h ({lo}–{hi}) · learned from {n}",
+    { o: S.open, h: hrs(S.hours.mid), lo: hrs(S.hours.lo), hi: hrs(S.hours.hi), n: S.hours.n }), S.thin));
+  if (S && S.value) rows.push(line(t("Value still to gather"), t("~{v} M Cr ({lo}–{hi}) · ~{h} M Cr/h · learned from {n} sessions",
+    { v: fmt(S.value.mid / 1e6, 0), lo: fmt(S.value.lo / 1e6, 0), hi: fmt(S.value.hi / 1e6, 0), h: fmt(S.value_h / 1e6, 2), n: S.value.n }), S.value.n < 3));
+  if (S && S.finds) rows.push(line(t("Finds still to expect"), t("~{f} ({lo}–{hi}) · learned from {n} first visits",
+    { f: fmt(S.finds.mid, 0), lo: fmt(S.finds.lo, 0), hi: fmt(S.finds.hi, 0), n: S.finds.n }), S.finds.n < 10));
+  if (J) rows.push(line(t("Jumps until the tank is empty"), t("~{m} ({lo}–{hi}) at {d} ly · learned from {n} jumps",
+    { m: J.mid, lo: J.lo, hi: J.hi, d: fmt(J.ly, 1), n: J.n }), J.thin));
+  if (rows.length === 1) rows.push(el("div", { class: "c-dim small", text: t("No active sphere and no fuel data yet.") }));
   return rows;
 }
 
