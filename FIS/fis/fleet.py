@@ -39,7 +39,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "ShipyardSell", "ShipyardTransfer", "SellShipOnRebuy", "CarrierStats",
           "CarrierLocation", "CarrierJump", "CarrierJumpRequest", "CarrierJumpCancelled",
           "CarrierDepositFuel", "CarrierBankTransfer", "CarrierFinance", "CarrierCrewServices",
-          "CarrierNameChange", "CarrierTradeOrder", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
+          "CarrierNameChange", "CarrierTradeOrder", "CarrierDecommission", "CarrierCancelDecommission",
+          "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
           "SAAScanComplete", "SellOrganicData",
           # unsold data at risk (M4)
           "ScanOrganic", "FSSDiscoveryScan", "MultiSellExplorationData", "SellExplorationData",
@@ -1037,7 +1038,8 @@ def type_label(names: Dict[str, str], typ: Optional[str]) -> str:
 
 
 def upkeep_between(balances: List[Tuple[float, int]], transfers: List[Dict[str, Any]],
-                   since: Optional[float], min_days: float = 3.0) -> Optional[Dict[str, Any]]:
+                   since: Optional[float], min_days: float = 3.0,
+                   until: Optional[float] = None) -> Optional[Dict[str, Any]]:
     """
     PL2: what the carrier cost over a period - its balance (CarrierStats)
     at the first and the last reading from `since` on, your own transfers
@@ -1045,7 +1047,8 @@ def upkeep_between(balances: List[Tuple[float, int]], transfers: List[Dict[str, 
     commanders at the carrier cannot be told apart, so it can come out too
     low; positive drift gives no cost. None below min_days of readings.
     """
-    pts = [(t, b) for t, b in balances if since is None or t >= since]
+    # `until` (GV1) ends the period: readings from then on are left out
+    pts = [(t, b) for t, b in balances if (since is None or t >= since) and (until is None or t < until)]
     if len(pts) < 2 or (pts[-1][0] - pts[0][0]) / 86400.0 < min_days:
         return None
     (t0, b0), (t1, b1) = pts[0], pts[-1]

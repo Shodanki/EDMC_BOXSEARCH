@@ -758,6 +758,22 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .st-pane { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .st-cols { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 10px; align-items: start; }
 .st-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* 5.0 GV1: the books of GAIN / LOSS - statement tables and charts drawn with the theme's colours, nothing moves */
+.gv-tab td, .gv-tab th { padding: 1px 6px; }
+.gv-tab .gv-line td { color: var(--text); padding-top: 5px; }
+.gv-tab .gv-sub td:first-child { padding-left: 18px; color: var(--dim); }
+.gv-tab .gv-sum td { border-top: 1px solid var(--line); font-weight: 600; padding-top: 4px; }
+.gv-chart { width: 100%; height: auto; display: block; }
+.gv-chart .gv-pos { fill: rgba(var(--green-rgb), .75); }
+.gv-chart .gv-neg { fill: rgba(var(--red-rgb), .75); }
+.gv-chart .gv-res { fill: var(--cyan); }
+.gv-chart .gv-axis { stroke: var(--line-dim); stroke-width: 1; }
+.gv-chart .gv-lbl { fill: var(--dim); font: 11px var(--font-mono); }
+.gv-chart .gv-val { fill: var(--text); font: 10px var(--font-mono); }
+.gv-chart .gv-l1 { fill: none; stroke: var(--cyan); stroke-width: 1.6; }
+.gv-chart .gv-l2 { fill: none; stroke: var(--amber); stroke-width: 1.6; }
+.gv-legend { display: flex; gap: 14px; flex-wrap: wrap; }
+.gv-l1-key { color: var(--cyan); } .gv-l2-key { color: var(--amber); }
 /* BIO RATES side by side: atmosphere | planet class | main star */
 .st-rate-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 16px; }
 /* TIME PER SYSTEM across the pane: the work beside the system, one line each */

@@ -1136,6 +1136,21 @@ class Handler(BaseHTTPRequestHandler):
         out["carrier"]["money"] = carriermoney.build(capi.path_for(app.cfg.plugin_dir), car, evs, out.get("since"))
         return self._json(out)
 
+    def _get_statement(self, qs: Dict[str, Any]) -> None:
+        """5.0 GV1: GAIN / LOSS as an annual statement - income statement per
+        week, month and year, balance sheet, segments, outlook."""
+        app = self.app
+        from . import capi, carriermoney, ledger, shipview, statement
+        app.archive.refresh()
+        evs = app.archive.events()
+        bal = ((app.live_state() or {}).get("status") or {}).get("balance")
+        led = ledger.build_ledger(evs, None, balance_now=bal)
+        un = shipview._unsold(app.archive, app.cfg.unsold, app._learn_marks().get("value"))
+        open_ = {"bio": un["bio"]["value"], "explo": un["exploration"].get("value")} if un else None
+        return self._json(statement.build(led, app.archive.carrier(),
+                                          carriermoney.frontier(capi.path_for(app.cfg.plugin_dir)),
+                                          app.archive.fleet()["ships"], evs, bal, open_))
+
     def _get_trade(self, qs: Dict[str, Any]) -> None:
         """TRADE (HD1): your sale prices per commodity, the galactic mean and
         - docked - what this market pays."""
@@ -1334,6 +1349,7 @@ _GET_ROUTES = {
     "/api/mining": Handler._get_mining,
     "/api/statistics": Handler._get_statistics,
     "/api/ledger": Handler._get_ledger,
+    "/api/ledger/statement": Handler._get_statement,
     "/api/trade": Handler._get_trade,
     "/api/galaxy": Handler._get_galaxy,
     "/api/survey/export": Handler._get_survey_export,

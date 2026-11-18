@@ -11,6 +11,7 @@ import { getJSON } from "../api.js";
 import { el, frame, fmt, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 import { carrierMoneyRows } from "../carriermoney.js";
+import { balancePane, outlookPane, segmentsPane, statementPane } from "../ledgerbook.js";
 
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
 const LABEL = {
@@ -19,14 +20,20 @@ const LABEL = {
     rescue: N_("Search and rescue"), community_goals: N_("Community goals"), combat: N_("Bounties and bonds"),
     sales: N_("Sales (limpets, gear)"), other: N_("Other"), from_balance: N_("From the balance (missions and more)") },
   costs: { ship_loss: N_("Ship lost (rebuy)"), repairs: N_("Repairs"), fuel: N_("Fuel"),
-    ammo: N_("Ammunition and vehicles"), limpets: N_("Limpets"), crew: N_("Crew"), fines: N_("Fines"),
+    ammo: N_("Ammunition and vehicles"), limpets: N_("Limpets"), tritium: N_("Tritium"), crew: N_("Crew"), fines: N_("Fines"),
     other: N_("Other"), from_balance: N_("From the balance (not booked)") },
   invest: { ships: N_("Ships"), modules: N_("Modules"), transfers: N_("Transfers"), onfoot: N_("On-foot gear"),
     carrier: N_("Carrier") },
 };
 
-let root = null, data = null, busy = false;
+let root = null, data = null, busy = false, book = null;
 let days = Number(localStorage.getItem("fis.ledger.days") || "0");
+// GV1 (18.11.): the books of a company in sub-tabs - the overview stays first
+const SUBS = [["overview", N_("OVERVIEW")], ["statement", N_("INCOME STATEMENT")], ["balance", N_("BALANCE SHEET")],
+  ["segments", N_("SEGMENTS")], ["outlook", N_("OUTLOOK")]];
+const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
+let sub = store("fis.ledger.sub") || "overview";
+const bookState = { gran: store("fis.ledger.gran") || "month", idx: 0, seg: "all" };
 
 export function mount(r) { root = r; root.classList.add("stat-view"); }
 
@@ -35,8 +42,30 @@ export async function update(ctx, reason) {
   if (reason !== "show" && reason !== "data" && data) return;
   busy = true;
   try { data = await getJSON("/api/ledger" + (days ? "?days=" + days : "")); } catch (e) { data = null; }
+  if (sub !== "overview") await loadBook();
+  else book = null;           // fetched again when a book tab is opened
   busy = false;
   render();
+}
+
+async function loadBook() {
+  try { book = await getJSON("/api/ledger/statement"); } catch (e) { book = null; }
+}
+
+function tabs() {
+  return el("div", { class: "kc-tabs st-tabs" }, ...SUBS.map(([k, label]) => el("button", { class: sub === k ? "on" : "",
+    "aria-pressed": sub === k ? "true" : "false", "data-sub": k, text: t(label),
+    onclick: async () => { sub = k; store("fis.ledger.sub", k); if (k !== "overview" && !book) await loadBook(); render(); } })));
+}
+
+function rerender() { store("fis.ledger.gran", bookState.gran); render(); }
+
+function bookPane() {
+  if (!book) return frame(t("GAIN / LOSS"), "", el("div", { class: "empty" }, t("Nothing booked in this period.")));
+  if (sub === "statement") return statementPane(book, bookState, rerender);
+  if (sub === "balance") return balancePane(book);
+  if (sub === "segments") return segmentsPane(book, bookState, rerender);
+  return outlookPane(book);
 }
 
 function cr(v, sign) {
@@ -53,10 +82,16 @@ function render() {
     days = Number(e.target.value); localStorage.setItem("fis.ledger.days", String(days)); update(null, "data");
   } }, ...SPANS.map(([v, l]) => el("option", { value: String(v), text: t(l) })));
   sel.value = String(days);
+  if (!SUBS.some(([k]) => k === sub)) sub = "overview";
   const head = withPopout(frame(t("GAIN / LOSS"), data && data.first ? t("journals since {d}", { d: new Date(data.first * 1000).toLocaleDateString() }) : "", [
-    el("div", { class: "gal-row" }, el("span", { class: "c-dim", text: t("Period") }), sel),
+    el("div", { class: "gal-row st-headrow" }, sub === "overview" ? el("span", { class: "c-dim", text: t("Period") }) : null,
+      sub === "overview" ? sel : null, tabs()),
     el("div", { class: "c-dim small", text: t("Only the active commander. Booked from the journal to the ship flown at the time; what belongs to no ship is the commander's. \"From the balance\" is what the booked events do not explain - missions, or journals missing for a stretch.") }),
   ], { appear: false }), "ledger");
+  if (sub !== "overview") {
+    root.append(el("div", { class: "stat-wrap solo" }, el("div", { class: "stat-main" }, head, bookPane())));
+    return;
+  }
   if (!data || data.empty) {
     root.append(el("div", { class: "stat-wrap solo" }, el("div", { class: "stat-grid scroll" }, head,
       frame(t("BALANCE"), "", el("div", { class: "empty" }, t("Nothing booked in this period."))))));

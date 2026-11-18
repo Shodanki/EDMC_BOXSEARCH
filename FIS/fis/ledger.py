@@ -10,7 +10,8 @@ journal alone, "like in real life" (user, 17.11.).
 Three kinds of money, kept apart:
 - income: data sold (exobiology, exploration, codex), goods (mining sold at
   AvgPricePaid 0, trade as its profit over the price paid), rewards;
-- running costs: repairs, fuel, ammunition and vehicles, limpets, a ship
+- running costs: repairs, fuel, ammunition and vehicles, limpets, tritium
+  bought for the carrier (GV1: its fuel, used up), a ship
   lost (the rebuy), crew, fines;
 - investment: ships, modules, transfers, on-foot gear, a carrier - buying
   counts here, selling gives it back (a negative investment).
@@ -64,6 +65,10 @@ class _Ledger:
         self.flow = 0                                        # booked cash since the last known balance
         self.rest = {"plus": 0, "minus": 0, "gaps": 0}
         self.carrier = {"deposit": 0, "withdraw": 0}
+        # GV1: every amount also per ISO week, month and year (all time, the
+        # statement picks its period), and the balances the game stated
+        self.periods: Dict[str, Dict[str, Dict[str, Dict[str, float]]]] = {"week": {}, "month": {}, "year": {}}
+        self.balances: List[Tuple[float, int]] = []
 
     # ---------------------------------------------------------------- booking
     def book(self, ts: Optional[float], kind: str, key: str, cr: float, ship: Any = "current") -> None:
@@ -71,6 +76,8 @@ class _Ledger:
         the period, the sums of the ship or the commander."""
         cr = float(cr or 0)
         self.flow += cr if kind == INCOME else -cr
+        if ts is not None and cr:
+            self._period(ts, kind, key, cr)
         if ts is None or (self.since is not None and ts < self.since) or not cr:
             return
         sid = self.ship if ship == "current" else ship
@@ -84,6 +91,14 @@ class _Ledger:
             wk = self.weeks.setdefault("%d-W%02d" % (y, w), {INCOME: 0.0, COSTS: 0.0})
             wk[kind] += cr
 
+    def _period(self, ts: float, kind: str, key: str, cr: float) -> None:
+        d = datetime.fromtimestamp(ts, timezone.utc)
+        y, w, _d = d.isocalendar()
+        for gran, label in (("week", "%d-W%02d" % (y, w)), ("month", "%d-%02d" % (d.year, d.month)),
+                            ("year", "%d" % d.year)):
+            acc = self.periods[gran].setdefault(label, {INCOME: {}, COSTS: {}, INVEST: {}})
+            acc[kind][key] = acc[kind].get(key, 0.0) + cr
+
     def cash(self, cr: float) -> None:
         """Money that moves without gain or loss (goods bought, carrier transfers)."""
         self.flow += float(cr or 0)
@@ -95,6 +110,8 @@ class _Ledger:
             bal = int(bal)
         except (TypeError, ValueError):
             return
+        if ts is not None:
+            self.balances.append((ts, bal))
         if self.balance is not None:
             rest = bal - self.balance - self.flow
             if abs(rest) >= 1:
@@ -202,7 +219,10 @@ def _resurrect(L: _Ledger, e: Dict[str, Any], ts: Optional[float]) -> None:
 
 def _market_sell(L: _Ledger, e: Dict[str, Any], ts: Optional[float]) -> None:
     sale, paid = _num(e, "TotalSale"), _num(e, "AvgPricePaid") * _num(e, "Count")
-    if paid:
+    if paid and _tritium(e):
+        # GV1: bought tritium was booked as material - its sale is all income
+        L.book(ts, INCOME, "trade", sale)
+    elif paid:
         # trade: the profit; what was paid went out with MarketBuy
         L.cash(paid)
         L.book(ts, INCOME, "trade", sale - paid)
@@ -243,8 +263,16 @@ def _mission(L: _Ledger, e: Dict[str, Any], ts: Optional[float]) -> None:
     L.book(ts, COSTS, "other", _num(e, "Donated"))
 
 
+def _tritium(e: Dict[str, Any]) -> bool:
+    return str(e.get("Type") or "").lower() == "tritium"
+
+
 def _buy_goods(L: _Ledger, e: Dict[str, Any], ts: Optional[float]) -> None:
-    L.cash(-_num(e, "TotalCost"))
+    # GV1: tritium is the carrier's fuel - material used up, not goods to sell
+    if _tritium(e):
+        L.book(ts, COSTS, "tritium", _num(e, "TotalCost"), CMDR)
+    else:
+        L.cash(-_num(e, "TotalCost"))
 
 
 HANDLERS: Dict[str, Callable[[_Ledger, Dict[str, Any], Optional[float]], None]] = {
@@ -313,6 +341,14 @@ def build_ledger(events: Iterable[Dict[str, Any]], days: Optional[float] = None,
     return _result(L, since, first, last)
 
 
+def _thin(pts: List[Tuple[float, int]], keep: int = 400) -> List[Tuple[float, int]]:
+    """At most `keep` points of a course, the last one always kept."""
+    if len(pts) <= keep:
+        return list(pts)
+    step = len(pts) / float(keep - 1)
+    return [pts[int(i * step)] for i in range(keep - 1)] + [pts[-1]]
+
+
 def _rows(acc: Dict[str, List[float]]) -> List[Dict[str, Any]]:
     return sorted(({"key": k, "cr": round(v[0]), "n": v[1]} for k, v in acc.items() if round(v[0])),
                   key=lambda r: -abs(r["cr"]))
@@ -338,6 +374,10 @@ def _result(L: _Ledger, since: Optional[float], first: Optional[float], last: Op
     weeks = [{"week": k, "income": round(v[INCOME]), "costs": round(v[COSTS])}
              for k, v in sorted(L.weeks.items())][-WEEKS:]
     tot = _summary(L.totals)
-    return {"since": since, "first": first, "last": last, "empty": not (tot["income"] or tot["costs"] or tot["invest"]),
+    periods = {g: [{"label": k, **{kind: {key: round(v) for key, v in acc[kind].items() if round(v)}
+                                   for kind in (INCOME, COSTS, INVEST)}}
+                   for k, acc in sorted(per.items())] for g, per in L.periods.items()}
+    return {"periods": periods, "balances": _thin(L.balances),
+            "since": since, "first": first, "last": last, "empty": not (tot["income"] or tot["costs"] or tot["invest"]),
             "totals": tot, "cmdr": _summary(L.cmdr), "ships": ships, "deaths": L.deaths, "weeks": weeks,
             "rest": {k: round(v) for k, v in L.rest.items()}, "carrier": {k: round(v) for k, v in L.carrier.items()}}
