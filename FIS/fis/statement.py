@@ -16,6 +16,10 @@ balance sheet after § 266). Nerdy on purpose, honest throughout:
 - balance sheet now: ships at the game's own value, the carrier, its cargo,
   unsold data, cash and carrier bank; provisions; equity as the rest;
 - segments: result per segment, the time spent on it, credits per hour;
+  GV2: trade with its cost of goods, and every running cost of a ship given
+  to the segment the commander mainly ran with that ship in that session
+  (~, by activity time; no clear segment: unallocated) - the statement's
+  totals stay, the allocation only splits them;
 - outlook: how long the carrier is financed, the weekly burn against the
   income run rate, when money must come in, what a decommission returns.
 
@@ -38,9 +42,9 @@ from .live import parse_ts
 SEGMENTS: List[Tuple[str, Tuple[str, ...], Tuple[str, ...]]] = [
     ("exploration", ("exploration", "codex"), ()),
     ("exobiology", ("exobiology",), ()),
-    ("mining", ("mining",), ("limpets",)),
+    ("mining", ("mining",), ()),
     ("trade", ("trade",), ("cogs",)),
-    ("combat", ("combat",), ("ammo",)),
+    ("combat", ("combat",), ()),
     ("missions", ("missions", "rescue", "community_goals"), ()),
     ("carrier", (), ("tritium",)),
 ]
@@ -52,6 +56,8 @@ WRITE_DOWNS = ("ship_loss",)
 KEEP = {"week": 12, "month": 12, "year": 10}
 RUN_WEEKS = 4                      # the run rate: the last complete weeks
 GAP_S = 15 * 60                    # activity time: longer pauses are not counted
+MAIN_SHARE = 0.5                   # GV2: a session's ship runs "mainly" in a segment with more than half its time
+UNALLOCATED = "unallocated"
 
 # which segment an event puts you in (activity time, ~)
 ACTIVITY = {
@@ -179,6 +185,46 @@ def statements(periods: Dict[str, List[Dict[str, Any]]], carrier: Optional[Dict[
 
 
 # ------------------------------------------------------------------ activity time
+# the events that name the ship flown from then on (as ledger.fly)
+SHIP_ID = {"LoadGame": "ShipID", "Loadout": "ShipID", "ShipyardSwap": "ShipID", "ShipyardNew": "NewShipID"}
+
+
+def _ship_id(v: Any, cur: Optional[int]) -> Optional[int]:
+    try:
+        return int(v) if v is not None else cur
+    except (TypeError, ValueError):
+        return cur
+
+
+def _spans(events: Iterable[Dict[str, Any]], since: Optional[float], gap: float
+           ) -> Iterable[Tuple[str, float, Optional[float], Optional[int]]]:
+    """(segment, seconds, session, ship) for each counted stretch: the time
+    after an event goes to the segment that event puts you in, until the
+    next one. Session: the LoadGame's time; ship: as the ledger flies it."""
+    seg: Optional[str] = None
+    last: Optional[float] = None
+    session: Optional[float] = None
+    ship: Optional[int] = None
+    for e in events:
+        ts = parse_ts(e.get("timestamp"))
+        if ts is None:
+            continue
+        ev = e.get("event")
+        if last is not None and seg and 0 < ts - last <= gap and (since is None or ts > since):
+            yield seg, ts - last, session, ship
+        if last is not None and ts - last > gap:
+            seg = None                    # after a pause: in no segment until the next such event
+        if ev == "LoadGame":
+            seg, session = None, ts
+        if ev in SHIP_ID:
+            ship = _ship_id(e.get(SHIP_ID[ev]), ship)
+        if ev == "MarketSell":
+            seg = "trade" if e.get("AvgPricePaid") else "mining"
+        elif ev in ACTIVITY:
+            seg = ACTIVITY[ev]
+        last = ts
+
+
 def activity_time(events: Iterable[Dict[str, Any]], since: Optional[float] = None,
                   gap: float = GAP_S) -> Dict[str, float]:
     """Seconds per segment (~): the time after an event goes to the segment
@@ -187,47 +233,74 @@ def activity_time(events: Iterable[Dict[str, Any]], since: Optional[float] = Non
     no segment.
     A sale at AvgPricePaid 0 is mining, with a price paid trade."""
     out: Dict[str, float] = {}
-    seg: Optional[str] = None
-    last: Optional[float] = None
-    for e in events:
-        ts = parse_ts(e.get("timestamp"))
-        if ts is None:
+    for seg, sec, _se, _sh in _spans(events, since, gap):
+        out[seg] = out.get(seg, 0.0) + sec
+    return out
+
+
+def main_segments(events: Iterable[Dict[str, Any]], gap: float = GAP_S) -> Dict[Tuple[Optional[float], int], str]:
+    """GV2: per (session, ship) the segment the commander mainly ran with
+    that ship - more than MAIN_SHARE of its activity time; none: no entry."""
+    per: Dict[Tuple[Optional[float], int], Dict[str, float]] = {}
+    for seg, sec, session, ship in _spans(events, None, gap):
+        if ship is not None:
+            acc = per.setdefault((session, ship), {})
+            acc[seg] = acc.get(seg, 0.0) + sec
+    out = {}
+    for key, acc in per.items():
+        seg, sec = max(acc.items(), key=lambda kv: kv[1])
+        if sec > MAIN_SHARE * sum(acc.values()):
+            out[key] = seg
+    return out
+
+
+def allocate(ship_costs: Iterable[Dict[str, Any]], mains: Dict[Tuple[Optional[float], int], str],
+             weeks: Optional[set] = None) -> Dict[str, Dict[str, int]]:
+    """GV2: the ships' running costs (ledger ship_costs) per segment - each
+    session's ship to its main segment, the rest UNALLOCATED. `weeks`: only
+    these ISO weeks (a period); None: all."""
+    out: Dict[str, Dict[str, int]] = {}
+    for r in ship_costs:
+        if weeks is not None and r["week"] not in weeks:
             continue
-        ev = e.get("event")
-        if last is not None and seg and 0 < ts - last <= gap and (since is None or ts > since):
-            out[seg] = out.get(seg, 0.0) + ts - last
-        if last is not None and ts - last > gap:
-            seg = None                    # after a pause: in no segment until the next such event
-        if ev == "LoadGame":
-            seg = None
-        elif ev == "MarketSell":
-            seg = "trade" if e.get("AvgPricePaid") else "mining"
-        elif ev in ACTIVITY:
-            seg = ACTIVITY[ev]
-        last = ts
+        acc = out.setdefault(mains.get((r["session"], r["ship"]), UNALLOCATED), {})
+        for k, v in r["costs"].items():
+            acc[k] = acc.get(k, 0) + v
     return out
 
 
 def segments(entry: Dict[str, Any], upkeep: Optional[Dict[str, Any]],
-             seconds: Dict[str, float]) -> List[Dict[str, Any]]:
-    """Result per segment: its revenue, the costs that belong to it (the
-    carrier: tritium and ~upkeep), the time spent, credits per hour."""
+             seconds: Dict[str, float], alloc: Optional[Dict[str, Dict[str, int]]] = None) -> List[Dict[str, Any]]:
+    """Result per segment: its revenue, the cost of goods (trade), its own
+    costs (the carrier: tritium and ~upkeep), the ships' running costs
+    given to it (GV2, ~: `alloc` from allocate()), the time spent, credits
+    per hour after all of them. What no segment got is the row UNALLOCATED,
+    last."""
     inc, cost = entry.get("income") or {}, entry.get("costs") or {}
+    alloc = alloc or {}
     rows = []
     for seg, rkeys, ckeys in SEGMENTS:
         rev = sum(inc.get(k, 0) for k in rkeys)
-        c = sum(cost.get(k, 0) for k in ckeys)
+        cogs = cost.get("cogs", 0) if "cogs" in ckeys else 0
+        c = sum(cost.get(k, 0) for k in ckeys if k != "cogs")
         est = False
         if seg == "carrier" and upkeep and upkeep.get("cost"):
             c += upkeep["cost"]
             est = True
+        ship = sum((alloc.get(seg) or {}).values())
         h = seconds.get(seg, 0.0) / 3600.0
-        if not (rev or c or h):
+        if not (rev or c or ship or h):
             continue
-        net = rev - c
-        rows.append({"seg": seg, "revenue": rev, "costs": c, "net": net, "hours": round(h, 1),
-                     "per_hour": round(net / h) if h >= 0.5 else None, "est": est})
+        net = rev - cogs - c - ship
+        rows.append({"seg": seg, "revenue": rev, "cogs": cogs, "costs": c, "ship_costs": ship,
+                     "ship_rows": alloc.get(seg) or {}, "net": net, "hours": round(h, 1),
+                     "per_hour": round(net / h) if h >= 0.5 else None, "est": est or bool(ship)})
     rows.sort(key=lambda r: -r["net"])
+    rest = alloc.get(UNALLOCATED) or {}
+    if rest:
+        ship = sum(rest.values())
+        rows.append({"seg": UNALLOCATED, "revenue": 0, "cogs": 0, "costs": 0, "ship_costs": ship, "ship_rows": rest,
+                     "net": -ship, "hours": None, "per_hour": None, "est": False})
     return rows
 
 
@@ -353,8 +426,13 @@ def build(ledger: Dict[str, Any], carrier: Optional[Dict[str, Any]], frontier: O
     every = _merge(periods.get("year") or [], "all")
     d30 = now - 30 * 86400
     recent = _merge([e for e in periods.get("week") or [] if bounds("week", e["label"])[1] > d30], "30d")
-    seg = {"all": segments(every, upkeep_between(bals, trs, None) if bals else None, activity_time(events)),
-           "recent": segments(recent, upkeep_between(bals, trs, d30) if bals else None, activity_time(events, d30))}
+    mains = main_segments(events)
+    sc = ledger.get("ship_costs") or []
+    rweeks = {e["label"] for e in periods.get("week") or [] if bounds("week", e["label"])[1] > d30}
+    seg = {"all": segments(every, upkeep_between(bals, trs, None) if bals else None, activity_time(events),
+                           allocate(sc, mains)),
+           "recent": segments(recent, upkeep_between(bals, trs, d30) if bals else None, activity_time(events, d30),
+                              allocate(sc, mains, rweeks))}
     carrier_price = ((ledger.get("totals") or {}).get("invest_rows") or [])
     carrier_price = next((r["cr"] for r in carrier_price if r["key"] == "carrier"), None)
     return {"generated": now, "share_services": share, "statements": sts, "segments": seg,

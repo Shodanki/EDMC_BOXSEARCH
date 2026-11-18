@@ -124,11 +124,49 @@ class StatementTest(unittest.TestCase):
 
     def test_segments(self):
         every = statement._merge(self.led["periods"]["year"], "all")
-        rows = {r["seg"]: r for r in statement.segments(every, {"cost": 7_000_000}, {"mining": 7200.0})}
-        self.assertEqual(rows["mining"]["net"], 5_000_000 - 10_000)
+        rows = {r["seg"]: r for r in statement.segments(every, {"cost": 7_000_000}, {"mining": 7200.0},
+                                                       {"mining": {"limpets": 10_000}})}
+        self.assertEqual(rows["mining"]["net"], 5_000_000 - 10_000)   # GV2: limpets as allocated ship costs
+        self.assertEqual((rows["mining"]["ship_costs"], rows["mining"]["est"]), (10_000, True))
         self.assertEqual(rows["mining"]["per_hour"], round((5_000_000 - 10_000) / 2))
         self.assertEqual((rows["carrier"]["costs"], rows["carrier"]["est"]), (5_000_000 + 7_000_000, True))
         self.assertIsNone(rows["exobiology"]["per_hour"])             # no time: no rate
+
+    def test_ship_costs_to_the_main_segment(self):
+        """GV2: a ship's running costs go to the segment the commander mainly
+        ran with it in that session (more than half its activity time);
+        the 02.11. session is split (10/15/20 min): unallocated. The sums
+        stay those of the statement."""
+        trip = JOURNAL + [
+            ev("2026-11-11T08:00:00Z", "LoadGame", ShipID=2, Ship="anaconda", Credits=1),
+            ev("2026-11-11T08:05:00Z", "FSDJump"),
+            ev("2026-11-11T08:15:00Z", "FSDJump"),
+            ev("2026-11-11T08:20:00Z", "RefuelAll", Cost=5_000),                 # still exploring
+            ev("2026-11-11T08:25:00Z", "ScanOrganic"),                          # 20 min explo, 5 bio
+            ev("2026-11-11T08:30:00Z", "RepairAll", Cost=20_000),
+            ev("2026-11-11T08:35:00Z", "ShipyardSwap", ShipID=3, ShipType="python"),
+            ev("2026-11-11T09:00:00Z", "BuyAmmo", Cost=7_000),                   # ship 3, after a pause: no activity
+        ]
+        led = ledger.build_ledger(trip, now=NOW)
+        mains = statement.main_segments(trip)
+        self.assertEqual(mains[(ts("2026-11-11T08:00:00Z"), 2)], "exploration")
+        self.assertNotIn((ts("2026-11-02T08:00:00Z"), 1), mains)              # 20 of 45 min mining: not more than half
+        al = statement.allocate(led["ship_costs"], mains)
+        self.assertEqual(al["exploration"], {"fuel": 5_000, "repairs": 20_000})
+        self.assertEqual(al["unallocated"], {"limpets": 10_000, "repairs": 200_000, "ship_loss": 1_000_000,
+                                             "ammo": 7_000})
+        every = statement._merge(led["periods"]["year"], "all")
+        ship_keys = ("fuel", "repairs", "ammo", "limpets", "ship_loss")
+        self.assertEqual(sum(sum(v.values()) for v in al.values()), sum(every["costs"].get(k, 0) for k in ship_keys))
+        rows = statement.segments(every, None, statement.activity_time(trip), al)
+        self.assertEqual(rows[-1]["seg"], "unallocated")                     # last, not ranked
+        ex = next(r for r in rows if r["seg"] == "exploration")
+        self.assertEqual((ex["ship_costs"], ex["net"], ex["est"]), (25_000, 3_000_000 - 25_000, True))
+        # one week only: the allocation follows the period
+        self.assertEqual(statement.allocate(led["ship_costs"], mains, {"2026-W46"}), {
+            "exploration": {"fuel": 5_000, "repairs": 20_000}, "unallocated": {"ammo": 7_000}})
+        # the statement keeps its totals
+        self.assertEqual(statement.statement(every)["result"], led["totals"]["net"])
 
     def test_balance_sheet_balances(self):
         ships = [{"value": 100_000_000}, {"value": None}]

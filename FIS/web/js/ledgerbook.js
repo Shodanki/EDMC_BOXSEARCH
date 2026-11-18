@@ -12,7 +12,8 @@ import { el, frame, fmt } from "./ui.js";
 import { t, N_ } from "./i18n.js";
 
 export const SEG = { exploration: N_("Exploration"), exobiology: N_("Exobiology"), mining: N_("Mining"), trade: N_("Trade"),
-  combat: N_("Bounties and bonds"), missions: N_("Contracts and missions"), carrier: N_("Carrier") };
+  combat: N_("Bounties and bonds"), missions: N_("Contracts and missions"), carrier: N_("Carrier"),
+  unallocated: N_("Unallocated ship costs") };
 const LINE = { revenue: N_("1. Revenue"), other_income: N_("2. Other operating income"), material: N_("3. Cost of materials"),
   personnel: N_("4. Personnel expenses"), write_downs: N_("5. Write-downs and losses"), other_costs: N_("6. Other operating expenses") };
 const COST_SIDE = { material: true, personnel: true, write_downs: true, other_costs: true };
@@ -196,18 +197,25 @@ export function segmentsPane(B, state, rerender) {
   const pick = el("select", { class: "lay-pick", onchange: (e) => { state.seg = e.target.value; rerender(); } },
     el("option", { value: "all", text: t("all time") }), el("option", { value: "recent", text: t("last 30 days") }));
   pick.value = key;
-  const head = el("tr", {}, ...[t("segment"), t("revenue"), t("costs"), t("result"), t("hours"), t("Cr / h")].map((h, i) => el("th", { class: i ? "num" : "", text: h })));
-  const body = rows.map(r => el("tr", {}, el("td", { text: t(SEG[r.seg] || r.seg) }), cell(r.revenue, false), cell(r.costs, true, r.est),
+  const head = el("tr", {}, ...[t("segment"), t("revenue"), t("cost of goods"), t("own costs"), t("ship costs"), t("result"), t("hours"), t("Cr / h")]
+    .map((h, i) => el("th", { class: i ? "num" : "", text: h })));
+  const body = rows.map(r => el("tr", { class: r.seg === "unallocated" ? "gv-sub" : "" }, el("td", { text: t(SEG[r.seg] || r.seg) }),
+    cell(r.revenue, false), cell(r.cogs, true), cell(r.costs, true, r.seg === "carrier" && r.costs && r.est),
+    cell(r.ship_costs, true, r.seg !== "unallocated"),
     el("td", { class: "num " + (r.net >= 0 ? "c-green" : "c-red"), text: mark(r.est) + crBook(r.net) }),
     el("td", { class: "num", text: r.hours ? "~ " + fmt(r.hours, 1) : "–" }),
     el("td", { class: "num", text: r.per_hour !== null ? "~ " + crBook(r.per_hour) : "–" })));
-  const best = rows[0], worst = rows[rows.length - 1];
+  // best and worst: only real segments, not what no segment got
+  const real = rows.filter(r => r.seg !== "unallocated");
+  const best = real[0], worst = real[real.length - 1];
   const sel = frame(t("SEGMENTS"), "", [el("div", { class: "gal-row" }, el("span", { class: "c-dim", text: t("Period") }), pick),
     rows.length ? el("table", { class: "ns-tab gv-tab" }, head, ...body) : el("div", { class: "c-dim", text: t("Nothing booked in this period.") }),
-    best ? el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("Best segment") }), el("span", { class: "c-green", text: t(SEG[best.seg]) + " · " + crBook(best.net) })) : null,
+    best ? el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("Best segment") }), el("span", { class: "c-green", text: t(SEG[best.seg]) + " · " + mark(best.est) + crBook(best.net) })) : null,
     worst && worst !== best ? el("div", { class: "st-row" }, el("span", { class: "c-dim", text: worst.net < 0 ? t("Where money goes in") : t("Weakest segment") }),
       el("span", { class: worst.net < 0 ? "c-red" : "c-amber", text: t(SEG[worst.seg]) + " · " + mark(worst.est) + crBook(worst.net) })) : null,
-    el("div", { class: "c-dim small", text: t("Time (~): what follows an event of the segment (a jump, a scan, a prospected rock, a trade, a mission, carrier management) until the next, pauses over 15 minutes left out. Costs: limpets to mining, ammunition to combat, tritium and the upkeep (~) to the carrier; fuel, repairs and ships lost belong to no single segment.") }),
+    el("div", { class: "c-dim small", text: t("Time (~): what follows an event of the segment (a jump, a scan, a prospected rock, a trade, a mission, carrier management) until the next, pauses over 15 minutes left out.") }),
+    el("div", { class: "c-dim small", text: t("Ship costs (~): every running cost of a ship (fuel, repairs, ammunition and vehicles, limpets, a ship lost, other) goes to the segment you mainly ran with that ship in that session - more than half its activity time. Without such a segment it stays unallocated. The income statement keeps its totals; this only splits them.") }),
+    el("div", { class: "c-dim small", text: t("Cost of goods: what was paid for the goods sold in trade. Own costs: tritium and the upkeep (~) of the carrier. Ships bought are investment, outside the result.") }),
   ], { cls: "st-card", appear: false });
   const chart = rows.length ? frame(t("RESULT PER SEGMENT"), key === "all" ? t("all time") : t("last 30 days"), [segmentBars(rows)], { cls: "st-card", appear: false }) : null;
   return cols([sel], [chart]);

@@ -9,6 +9,7 @@ the commander, and the rest the credit balance shows."""
 import unittest
 
 from fis import fleet, ledger
+from fis.live import parse_ts
 
 
 def ev(day, hm, name, **kw):
@@ -90,6 +91,18 @@ class TestLedger(unittest.TestCase):
         self.assertEqual(ledger.build_ledger(bought)["totals"]["costs"], 0)
         mined = [ev(10, "08:00", "MarketSell", Type="painite", Count=5, TotalSale=1_000_000, AvgPricePaid=0)]
         self.assertNotIn("cogs", rows(ledger.build_ledger(mined)["totals"]["cost_rows"]))
+
+    def test_ship_costs_per_session(self):
+        """GV2: the running costs booked to a ship, per session (LoadGame),
+        ship and week - for the segments; the cost of goods is not among
+        them, it belongs to trade."""
+        r = ledger.build_ledger(TRIP, now=1e10)
+        by = {(x["ship"], x["week"]): x for x in r["ship_costs"]}
+        self.assertEqual(by[(1, "2026-W46")]["costs"], {"fuel": 500, "repairs": 1_500})
+        self.assertEqual(by[(2, "2026-W46")]["costs"], {"ship_loss": 750_000})     # no cogs
+        self.assertEqual({x["session"] for x in r["ship_costs"]}, {parse_ts("2026-11-10T08:00:00Z")})
+        total = sum(sum(x["costs"].values()) for x in r["ship_costs"])
+        self.assertEqual(total, 500 + 1_500 + 750_000)
 
     def test_period(self):
         late = TRIP + [ev(20, "08:00", "RepairAll", Cost=99)]

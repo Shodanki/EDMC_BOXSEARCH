@@ -22,6 +22,11 @@ ShipyardSwap, ShipyardNew; module events name their ShipID). What belongs to
 no ship (community goals, fines, crew, stored modules, on-foot gear) is the
 commander's.
 
+GV2: every running cost booked to a ship is also kept per session (the
+LoadGame it followed), ship and ISO week - so the statement can give it to
+the segment the commander mainly ran with that ship in that session
+(statement.allocate). The cost of goods sold stays with trade.
+
 Missions and anything else the journal does not book (no MissionCompleted
 in many journals) come from the credit balance: between two known balances
 (LoadGame Credits, CarrierBankTransfer PlayerBalance, Status.json at the
@@ -70,6 +75,9 @@ class _Ledger:
         # statement picks its period), and the balances the game stated
         self.periods: Dict[str, Dict[str, Dict[str, Dict[str, float]]]] = {"week": {}, "month": {}, "year": {}}
         self.balances: List[Tuple[float, int]] = []
+        # GV2: running costs per (session, ship, week) - session: the LoadGame's time
+        self.session: Optional[float] = None
+        self.ship_costs: Dict[Tuple[Optional[float], int, str], Dict[str, float]] = {}
 
     # ---------------------------------------------------------------- booking
     def book(self, ts: Optional[float], kind: str, key: str, cr: float, ship: Any = "current") -> None:
@@ -82,6 +90,8 @@ class _Ledger:
         if ts is None or (self.since is not None and ts < self.since) or not cr:
             return
         sid = self.ship if ship == "current" else ship
+        if kind == COSTS and sid is not None and key != "cogs":
+            self._ship_cost(ts, sid, key, cr)
         acc = self.cmdr if sid is None else self._ship(sid)["acc"]
         for a in (acc, self.totals):
             row = a[kind].setdefault(key, [0.0, 0])
@@ -99,6 +109,11 @@ class _Ledger:
                             ("year", "%d" % d.year)):
             acc = self.periods[gran].setdefault(label, {INCOME: {}, COSTS: {}, INVEST: {}})
             acc[kind][key] = acc[kind].get(key, 0.0) + cr
+
+    def _ship_cost(self, ts: float, sid: int, key: str, cr: float) -> None:
+        y, w, _d = datetime.fromtimestamp(ts, timezone.utc).isocalendar()
+        acc = self.ship_costs.setdefault((self.session, sid, "%d-W%02d" % (y, w)), {})
+        acc[key] = acc.get(key, 0.0) + cr
 
     def cash(self, cr: float) -> None:
         """Money that moves without gain or loss (goods bought, carrier transfers)."""
@@ -165,6 +180,7 @@ def _num(e: Dict[str, Any], *keys: str) -> float:
 # each: (ledger, event, timestamp)
 
 def _load(L: _Ledger, e: Dict[str, Any], ts: Optional[float]) -> None:
+    L.session = ts
     L.fly(e.get("ShipID"), e.get("Ship"), e.get("ShipName"))
     L.known_balance(ts, e.get("Credits"))
 
@@ -381,7 +397,9 @@ def _result(L: _Ledger, since: Optional[float], first: Optional[float], last: Op
     periods = {g: [{"label": k, **{kind: {key: round(v) for key, v in acc[kind].items() if round(v)}
                                    for kind in (INCOME, COSTS, INVEST)}}
                    for k, acc in sorted(per.items())] for g, per in L.periods.items()}
-    return {"periods": periods, "balances": _thin(L.balances),
+    ship_costs = [{"session": se, "ship": sid, "week": wk, "costs": {k: round(v) for k, v in c.items() if round(v)}}
+                  for (se, sid, wk), c in L.ship_costs.items()]
+    return {"periods": periods, "balances": _thin(L.balances), "ship_costs": [r for r in ship_costs if r["costs"]],
             "since": since, "first": first, "last": last, "empty": not (tot["income"] or tot["costs"] or tot["invest"]),
             "totals": tot, "cmdr": _summary(L.cmdr), "ships": ships, "deaths": L.deaths, "weeks": weeks,
             "rest": {k: round(v) for k, v in L.rest.items()}, "carrier": {k: round(v) for k, v in L.carrier.items()}}
