@@ -155,11 +155,12 @@ function render() {
     lostMany() ? tb("lost", t("LOST DATA") + " · " + data.unsold.lost_systems.length) : null));
   if (tab === "lost") { root.append(lostData()); return; }
   if (tab === "synth") { root.append(shipSynthesis()); return; }
-  // left: the picture and the hold; right (the wide side): report and the
-  // engineer's module list, which needs the room (user, 05.11.2026)
+  // left: the picture, the hold and - when switched on - the key bindings (there is room
+  // under the hold, user 18.11.); right (the wide side): report and the engineer's module
+  // list, which needs the room (user, 05.11.2026)
   root.append(el("div", { class: "sh-grid" },
-    el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), jumponium()),
-    el("div", { class: "sh-col sh-right" }, target(), unsold(), report(), hazards(), engineer(), controlsFrame())));
+    el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), jumponium(), controlsFrame()),
+    el("div", { class: "sh-col sh-right" }, target(), unsold(), report(), hazards(), engineer())));
 }
 
 // 5.0: where the exploration data can be sold - a station only takes systems

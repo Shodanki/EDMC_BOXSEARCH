@@ -229,6 +229,14 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertNotIn("animation", block)
         self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view, .mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view, .settings-view) .frame { padding: 5px;', css)
 
+    def test_ship_controls_on_the_left(self):
+        """User 18.11.2026: the key bindings (CONTROLS, when switched on) sit in the left column
+        under the hold, where there is room - not at the end of the long right column."""
+        js = self._read("js", "views", "ship.js")
+        self.assertIn('el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), jumponium(), controlsFrame())', js)
+        right = js[js.index('el("div", { class: "sh-col sh-right" }'):]
+        self.assertNotIn("controlsFrame()", right[:right.index(chr(10))])
+
     def test_ship_status_is_one_compact_matrix(self):
         """User 18.11.2026: the SHIP status panel like a real annunciator - warnings, cautions and
         advisories in one compact matrix with aligned columns (no rows stretched over the width
