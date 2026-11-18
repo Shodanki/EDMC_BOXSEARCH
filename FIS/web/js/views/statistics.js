@@ -363,8 +363,8 @@ function perSession() {
     title: t("{m} min · {j} jumps · {b} bodies · exploration ~{e} · bio {o}", { m: s.minutes, j: s.jumps, b: s.bodies, e: value(s.explo, "cr"), o: value(s.bio, "cr") }) },
     el("span", { class: "c-dim", text: new Date(s.start * 1000).toLocaleDateString() + " · " + s.minutes + " min" }),
     el("span", { class: "num", text: fmt(s.jumps_h, 1) + " " + t("systems/h") }),
-    el("span", { class: "num small", text: P.valued ? "~" + value(s.value_h, "cr") + "/h" : "" })));
-  rows.push(el("div", { class: "c-dim small", text: t("Value gathered, not sold: the formula's estimate of the bodies you scanned first (mapped ones mapped) plus your own prices of the species analysed - hence ~. A pause of 30 min or a login starts a new session.") }));
+    el("span", { class: "num small", text: !P.valued ? "" : s.value_h === null ? "–" : "~" + value(s.value_h, "cr") + "/h" })));
+  rows.push(el("div", { class: "c-dim small", text: t("Value gathered, not sold: the formula's estimate of every body you scanned or mapped, first discoveries or not, plus your own prices of the species analysed - hence ~. The value median takes only sessions with scans in the journals ({n} of them; the EDD archive keeps hardly any scans before 2023). A pause of 30 min or a login starts a new session.", { n: P.n_value === undefined ? P.n : P.n_value }) }));
   return frame(t("PER SESSION"), "", rows, { cls: "st-card", appear: false });
 }
 

@@ -150,6 +150,13 @@ class _Session:
         self.bodies: Dict[Any, Dict[str, Any]] = {}
         self.explo = 0.0
         self.bio = 0.0
+        self.scans = 0      # FX0: Scan events of any body, seen before or not
+
+    def has_value(self) -> bool:
+        """FX0: whether the session's value is known - the EDD archive keeps
+        the jumps of 2020-22 but hardly any scans; such a session is left
+        out of the value median instead of counting as 0 Cr/h."""
+        return bool(self.scans or self.bio)
 
     def out(self) -> Dict[str, Any]:
         """The session as the view shows it, with systems and value per hour."""
@@ -157,7 +164,7 @@ class _Session:
         value = self.explo + self.bio
         return {"start": self.start, "minutes": round((self.end - self.start) / 60.0), "jumps": self.jumps,
                 "bodies": len(self.bodies), "explo": int(self.explo), "bio": int(self.bio),
-                "jumps_h": round(self.jumps / h, 1), "value_h": int(value / h)}
+                "jumps_h": round(self.jumps / h, 1), "value_h": int(value / h) if self.has_value() else None}
 
 
 def play_sessions(evs: List[Dict[str, Any]], body_value: Any = None,
@@ -168,10 +175,14 @@ def play_sessions(evs: List[Dict[str, Any]], body_value: Any = None,
     gathered, not what you sold: the bodyvalue estimate of the bodies you
     scanned first in it (mapped ones at their mapped value) plus your own
     prices of the species you analysed (unsold.BONUS_FACTOR left out) - so
-    "~". Medians over the sessions of at least SESSION_MIN_S.
+    "~". FX0 (user 18.11.2026, the whole picture): every scanned and mapped
+    body counts, discovered by others or not, and a body scanned in an
+    earlier session counts when you map it in this one. Medians over the
+    sessions of at least SESSION_MIN_S; the value median only over those
+    whose value is known (_Session.has_value).
     """
     from .unsold import _row_values, _scan_row
-    seen: set = set()
+    seen: Dict[Any, Dict[str, Any]] = {}       # every body scanned so far -> its row
     cur: Optional[_Session] = None
     done: List[_Session] = []
     for e in evs:
@@ -188,27 +199,32 @@ def play_sessions(evs: List[Dict[str, Any]], body_value: Any = None,
         done.append(cur)
     rows = [s.out() for s in done if s.jumps or s.bodies or s.bio]
     long_ = [r for r in rows if r["minutes"] * 60 >= SESSION_MIN_S]
-    return {"sessions": list(reversed(rows[-keep:])), "n": len(long_),
-            "jumps_h": _median([r["jumps_h"] for r in long_]), "value_h": _median([r["value_h"] for r in long_]),
+    worth = [r["value_h"] for r in long_ if r["value_h"] is not None]
+    return {"sessions": list(reversed(rows[-keep:])), "n": len(long_), "n_value": len(worth),
+            "jumps_h": _median([r["jumps_h"] for r in long_]), "value_h": _median(worth),
             "valued": body_value is not None}
 
 
-def _session_event(cur: "_Session", e: Dict[str, Any], seen: set, bv: Any, bio_values: Dict[str, Dict[str, int]],
-                   row_values: Any, scan_row: Any) -> None:
-    """One event into a session: a jump, a first scan, a map, an analysis."""
+def _session_event(cur: "_Session", e: Dict[str, Any], seen: Dict[Any, Dict[str, Any]], bv: Any,
+                   bio_values: Dict[str, Dict[str, int]], row_values: Any, scan_row: Any) -> None:
+    """One event into a session: a jump, a scan, a map, an analysis."""
     ev = e.get("event")
     if ev == "FSDJump":
         cur.jumps += 1
     elif ev == "Scan" and e.get("ScanType") != "NavBeaconDetail" and bv is not None:
+        cur.scans += 1
         key = (e.get("SystemAddress"), e.get("BodyID"))
         if key not in seen:
-            seen.add(key)
-            r = scan_row(e)
+            r = seen[key] = scan_row(e)
             cur.bodies[key] = r
             cur.explo += row_values(bv, r)[0]
     elif ev == "SAAScanComplete" and bv is not None:
-        r = cur.bodies.get((e.get("SystemAddress"), e.get("BodyID")))
-        if r is not None:
+        key = (e.get("SystemAddress"), e.get("BodyID"))
+        r = seen.get(key)
+        if r is not None and not r.get("mapped_once"):
+            r["mapped_once"] = True         # the game pays a map once
+            cur.scans += 1
+            cur.bodies[key] = r
             scan, full = row_values(bv, r)
             cur.explo += full - scan
     elif ev == "ScanOrganic" and e.get("ScanType") == "Analyse":

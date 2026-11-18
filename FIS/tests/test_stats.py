@@ -133,6 +133,35 @@ class SessionsTest(unittest.TestCase):
         self.assertEqual((out["n"], out["jumps_h"]), (1, 3.0))      # only the hour-long session counts
         self.assertFalse(stats.play_sessions(evs)["valued"])
 
+    def test_whole_picture_fx0(self):
+        """FX0 (user 18.11.2026): bodies others found count too, a body is mapped
+        in a later session, and archive sessions with jumps but no scans (EDD
+        keeps the jumps of 2020-22, hardly any scans) stay out of the value
+        median instead of pulling it to 0 - measured 0.59 M -> 0 before."""
+        from tests.test_unsold import _bodyvalue
+        bv = _bodyvalue()
+
+        def e(day, ts, ev, **kw):
+            return dict({"timestamp": "2026-07-%02dT%sZ" % (day, ts), "event": ev}, **kw)
+        hmc = dict(PlanetClass="High metal content body", MassEM=1.0, TerraformState="", WasDiscovered=True,
+                   WasMapped=True, ScanType="Detailed", SystemAddress=1, BodyID=1)
+        evs = [e(1, "10:00:00", "LoadGame"), e(1, "10:20:00", "Scan", **hmc), e(1, "10:40:00", "FSDJump"),
+               e(2, "10:00:00", "LoadGame"), e(2, "10:20:00", "SAAScanComplete", SystemAddress=1, BodyID=1),
+               e(2, "10:40:00", "FSDJump"),
+               e(2, "11:00:00", "SAAScanComplete", SystemAddress=1, BodyID=1)]       # paid once only
+        for d in (3, 4, 5):                       # archive: an hour of jumps, no scans kept
+            evs += [e(d, "10:00:00", "LoadGame")] + [e(d, "%s:00" % h, "FSDJump") for h in ("10:20", "10:40", "11:00")]
+        out = stats.play_sessions(evs, bv)
+        scan = bv.planet_value("High metal content body", "", 1.0)
+        full = bv.planet_value("High metal content body", "", 1.0, mapped=True)
+        old = list(reversed(out["sessions"]))
+        self.assertGreater(scan, 0)                                  # not a first discovery, still worth money
+        self.assertEqual((old[0]["explo"], old[1]["explo"], old[1]["bodies"]), (int(scan), int(full - scan), 1))
+        self.assertEqual([s["value_h"] for s in old[2:]], [None, None, None])
+        self.assertEqual((out["n"], out["n_value"]), (5, 2))
+        self.assertGreater(out["value_h"], 0)
+        self.assertEqual(out["value_h"], (int(scan * 1.5) + int(full - scan)) / 2.0)
+
 
 class StatsLayoutTest(unittest.TestCase):
     """Test findings f-tip and st-bio (17.11.2026): long texts overlapped

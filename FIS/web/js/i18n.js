@@ -186,7 +186,7 @@ const DE = /*DE*/{
   "median of {n} sessions of 30 min or more": "Median aus {n} Sitzungen ab 30 min",
   "systems/h": "Systeme/h",
   "{m} min · {j} jumps · {b} bodies · exploration ~{e} · bio {o}": "{m} min · {j} Sprünge · {b} Körper · Kartendaten ~{e} · Bio {o}",
-  "Value gathered, not sold: the formula's estimate of the bodies you scanned first (mapped ones mapped) plus your own prices of the species analysed - hence ~. A pause of 30 min or a login starts a new session.": "Gesammelter, nicht verkaufter Wert: die Formel-Schätzung der zuerst von dir gescannten Körper (kartierte kartiert) plus deine eigenen Preise der analysierten Arten - daher ~. Eine Pause von 30 min oder ein Login beginnt eine neue Sitzung.",
+  "Value gathered, not sold: the formula's estimate of every body you scanned or mapped, first discoveries or not, plus your own prices of the species analysed - hence ~. The value median takes only sessions with scans in the journals ({n} of them; the EDD archive keeps hardly any scans before 2023). A pause of 30 min or a login starts a new session.": "Gesammelter, nicht verkaufter Wert: die Formel-Schätzung jedes von dir gescannten oder kartierten Körpers, ob Erstfund oder nicht, plus deine eigenen Preise der analysierten Arten - daher ~. Der Wert-Median nimmt nur Sitzungen mit Scans in den Journalen ({n}; das EDD-Archiv hat vor 2023 kaum Scans). Eine Pause von 30 min oder ein Login beginnt eine neue Sitzung.",
   "PER SESSION": "JE SITZUNG",
   "{b} of {n} landable planets with biological signals; 95 % interval {lo}–{hi} %": "{b} von {n} landbaren Planeten mit Biosignalen; 95-%-Intervall {lo}–{hi} %",
   "no atmosphere": "keine Atmosphäre",
