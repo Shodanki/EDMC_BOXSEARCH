@@ -20,7 +20,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import plugin_pkg  # noqa: E402
 load = plugin_pkg.import_plugin()
-from SHBOXSEARCH import eddcheck, findlog, shells, state  # noqa: E402
+from SHBOXSEARCH import boxelplan, eddcheck, findlog, shells, state  # noqa: E402
 from SHBOXSEARCH.sysdb import CMDR_READY, Q_ESTIMATE, Q_JOURNAL, SystemDB  # noqa: E402
 
 fails = 0
@@ -154,6 +154,37 @@ pred = findlog.keep_prediction({"event": "FSDJump", "timestamp": "2027-01-15T08:
 row = db.cx.execute("SELECT level FROM find_log WHERE sys_id64=4000").fetchone()
 check(pred is not None and row is not None and row["level"] == "checked",
       "find_log: level checked (%s)" % (row["level"] if row else None))
+
+print("absence proofs: kept for good, counted as calibration hits")
+proofs = db.absence_names()
+check(proofs == {"Oochoxt HO-P b39-1", ABSENT}, "both checked as in no database have a proof (%s)" % sorted(proofs))
+check(level(ABSENT) == "known", "ABSENT is known now (EDD learnt it) - its proof stays: nobody had it then")
+db.cx.execute("UPDATE fetched_shells SET expires_at=0")
+db.cx.commit()
+check(db.absence_names() == proofs and level("Oochoxt HO-P b39-1") == "unchecked",
+      "the check expired, the proof stays")
+db.upsert("Oochoxt XX-A b1-0", 1300.0, -60.0, -1500.0, id64=4100, quality=Q_JOURNAL, source="navroute")
+db.upsert("Oochoxt XX-A b1-1", 1310.0, -60.0, -1500.0, id64=4101, quality=Q_JOURNAL, source="EDSM")
+db.upsert("Oochoxt XX-A b1-2", 1320.0, -60.0, -1500.0, id64=4102, quality=Q_JOURNAL, source="navroute")
+for x, svc, n in ((1300.0, "edd", 0), (1310.0, "edd", 0), (1320.0, "edd", 0), (1320.0, "edsm", 1)):
+    db.record_shell(svc, (x, -60.0, -1500.0), 0.0, 0.1, n, 86400)
+new = db.proofs_from_checks(boxelplan.CLIENT_SOURCES)
+check(new == 1 and "Oochoxt XX-A b1-0" in db.absence_names(), "a client-proved system in an empty check: proof")
+check("Oochoxt XX-A b1-1" not in db.absence_names(), "no client source (an EDSM row): no proof")
+check("Oochoxt XX-A b1-2" not in db.absence_names(), "EDD had nothing but EDSM had it: no proof")
+check(db.proofs_from_checks(boxelplan.CLIENT_SOURCES) == 0, "kept once")
+
+
+class Cx:
+    proof_boxels = {"Oochoxt XX-A b1"}
+    client_boxels = {"Oochoxt XX-A b1", "Synuefe AB-C b2"}
+    db_boxels = {"Oochoxt XX-A b1", "Synuefe AB-C b2"}
+
+
+check(boxelplan._calib_hit(Cx, ["Oochoxt XX-A b1"]), "a proof counts although a database knows the boxel now")
+check(not boxelplan._calib_hit(Cx, ["Synuefe AB-C b2"]), "client and database without a proof: no hit")
+Cx.db_boxels = set()
+check(boxelplan._calib_hit(Cx, ["Synuefe AB-C b2"]), "client only (no database at all): a hit as before")
 
 print("")
 print("FAILED: %d" % fails if fails else "all OK")

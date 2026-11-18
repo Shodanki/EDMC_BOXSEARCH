@@ -344,6 +344,18 @@ CREATE TABLE IF NOT EXISTS find_log (
     n         INTEGER,                 -- visits the deciding cell had
     PRIMARY KEY (fid, sys_id64)
 );
+
+-- 5.0 FX4: a system the game client proved that a check found in no
+-- database (I1 route check, EDD by id64). Kept for good: the databases
+-- learn the system later (EDSM, Spansh, EDD after the visit), the check's
+-- region expires - but at the time nobody had it. The planner counts its
+-- boxel as a hit of its prospect calibration (boxelplan).
+CREATE TABLE IF NOT EXISTS absence_proofs (
+    id64     INTEGER PRIMARY KEY,
+    name     TEXT NOT NULL,
+    service  TEXT,                     -- edd / edsm / spansh: who was asked
+    ts       REAL NOT NULL             -- when (Unix time)
+);
 CREATE TABLE IF NOT EXISTS cmdr_bodies (
     fid            TEXT NOT NULL,
     sys_id64       INTEGER NOT NULL,
@@ -1850,6 +1862,39 @@ class SystemDB:
         """True when this commander has scanned a body of the system."""
         return bool(self.cx.execute("SELECT 1 FROM cmdr_bodies WHERE fid=? AND sys_id64=? AND scanned=1 LIMIT 1",
                                     (fid, sys_id64)).fetchone())
+
+    def proofs_from_checks(self, client: Iterable[str], radius: float = 0.1) -> int:
+        """FX4: keep an absence proof for every system with a client source
+        (``client``) inside a still valid check region that held nothing
+        (r_max <= radius) - unless another service's check at the same place
+        had it (I1: EDD had nothing, EDSM had the name). Returns how many
+        were new."""
+        client = set(client)
+        new = 0
+        for sh in self.cx.execute("SELECT service, cx, cy, cz, fetched_at FROM fetched_shells "
+                                  "WHERE systems=0 AND r_max<=? AND expires_at>?",
+                                  (radius + 1e-9, time.time())).fetchall():
+            if self.cx.execute("SELECT 1 FROM fetched_shells WHERE systems>0 AND r_max<=? AND ABS(cx-?)<? "
+                               "AND ABS(cy-?)<? AND ABS(cz-?)<? LIMIT 1",
+                               (radius + 1e-9, sh[1], radius, sh[2], radius, sh[3], radius)).fetchone():
+                continue
+            for r in self.cx.execute("SELECT name, id64, sources FROM systems WHERE x BETWEEN ? AND ? "
+                                     "AND y BETWEEN ? AND ? AND z BETWEEN ? AND ? AND id64 IS NOT NULL",
+                                     (sh[1] - radius, sh[1] + radius, sh[2] - radius, sh[2] + radius,
+                                      sh[3] - radius, sh[3] + radius)).fetchall():
+                if set((r[2] or "").split(",")) & client:
+                    new += self.cx.execute("INSERT OR IGNORE INTO absence_proofs (id64, name, service, ts) "
+                                           "VALUES (?, ?, ?, ?)", (r[1], r[0], sh[0], sh[4])).rowcount
+        self.cx.commit()
+        return new
+
+    def absence_names(self) -> Set[str]:
+        """FX4: the names of the systems with an absence proof (none when
+        the table is missing - a read-only copy from before FX4)."""
+        try:
+            return {r[0] for r in self.cx.execute("SELECT name FROM absence_proofs")}
+        except sqlite3.OperationalError:
+            return set()
 
     def keep_find_prediction(self, fid: Optional[str], sys_id64: int, ts: str, name: str,
                              pred: Dict[str, Any]) -> bool:

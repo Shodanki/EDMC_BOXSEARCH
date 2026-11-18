@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import shells
 from .biopredict import BioModel
+from .boxelplan import CLIENT_SOURCES
 from .deepspace import is_scoopable, scoop_line, scoop_plan
 from .overlay import POSITIONS as OVERLAY_POSITIONS
 from .procgen import parse_name, star_pos
@@ -216,6 +217,9 @@ def _route_check(hops: List[Tuple[str, Any, Any]]) -> None:
     asked_edsm = _route_check_edsm(rest[:ROUTE_CHECK_MAX], ttl, known)
     if known:
         planning._store_rows(known)
+    if len(known) < len(todo):            # FX4: in no database - kept for good
+        with ST.lock:
+            ST.db.proofs_from_checks(CLIENT_SOURCES, ROUTE_CHECK_R)
     logger.info("route check | %d systems not checked before: %d known, %d asked EDSM in one "
                 "request, %d in no database", len(todo), len(known), asked_edsm,
                 len(todo) - len(known) if asked_edsm or len(rest) == 0 else 0)

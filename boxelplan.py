@@ -299,7 +299,7 @@ class ProspectCalibration:
 class _Context:
     """What Planner.build reads from the database once per plan."""
     __slots__ = ("absent", "known_rows", "known_names", "visited", "boxel_n2", "slots",
-                 "pmap", "observed", "ha_near", "client_boxels", "db_boxels")
+                 "pmap", "observed", "ha_near", "client_boxels", "db_boxels", "proof_boxels")
 
 
 class _Plan:
@@ -385,6 +385,17 @@ def _proof_boxels(known_rows: Sequence[Any]) -> Tuple[Set[str], Set[str]]:
         elif src & CLIENT_SOURCES:
             client_boxels.add(p.boxel_key)
     return client_boxels, db_boxels
+
+
+def _calib_hit(cx: "_Context", keys: Sequence[str]) -> bool:
+    """A hit of the prospect calibration: the client proved a system where
+    no database knew one - now, or (FX4) when a check asked before the
+    databases learnt it (absence proof). Up to FX4 the second never
+    counted: EDSM, Spansh and EDD learn a visited system within days, so
+    the hits stayed 0 (FX1 measurement, 18.11.2026)."""
+    if any(k in cx.proof_boxels for k in keys):
+        return True
+    return any(k in cx.client_boxels for k in keys) and not any(k in cx.db_boxels for k in keys)
 
 
 def _gaps_and_probes(acc: _Plan, b: _Boxel, bdist: float, bcenter: Tuple[float, float, float],
@@ -559,6 +570,9 @@ class Planner:
         cx.observed = _observed_labels(near_rows)
         cx.ha_near = ha_regions_near(center, margin)
         cx.client_boxels, cx.db_boxels = _proof_boxels(cx.known_rows)
+        # FX4: boxels a check found in no database before they were learnt
+        names = getattr(self.db, "absence_names", None)
+        cx.proof_boxels = {p.boxel_key for p in map(parse_name, names() if names else ()) if p}
         return cx
 
     @staticmethod
@@ -607,7 +621,7 @@ class Planner:
         for k in b.keys:
             acc.raw_score[k] = (mc, raw)
         probe0, key0, _ = b.variant(0)
-        if any(k in cx.client_boxels for k in b.keys) and not any(k in cx.db_boxels for k in b.keys):
+        if _calib_hit(cx, b.keys):
             acc.calib.add(mc, raw, True)
         elif not b.known and probe0 is None:
             acc.calib.add(mc, raw, False)

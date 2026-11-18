@@ -36,6 +36,7 @@ import threading
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import shells
+from .boxelplan import CLIENT_SOURCES
 from .state import CFG, ST, cfg_bool, logger
 from .sysdb import Q_ESTIMATE
 
@@ -120,6 +121,9 @@ def settle(rows: Sequence[Row], found: Sequence[Dict[str, Any]], source: str,
                     ST.db.record_shell("edd", pos, 0.0, CHECK_R, 0, ttl)
                     checked += 1
             ST.db.cx.commit()
+        if checked:
+            with ST.lock:
+                ST.db.proofs_from_checks(CLIENT_SOURCES, CHECK_R)
     return known, checked
 
 
@@ -143,6 +147,10 @@ def run_backfill() -> Optional[Tuple[int, int]]:
     try:
         if ST.sources is not None and ST.cur_id64 and ST.cur_pos:
             ST.sources.set_reference(ST.cur_id64, ST.cur_pos)
+        with ST.lock:                     # checks of earlier sessions (I1) too
+            kept = ST.db.proofs_from_checks(CLIENT_SOURCES, CHECK_R)
+        if kept:
+            logger.info("EDD check | %d absence proofs kept from earlier checks", kept)
         return _ask(unlooked(ST.db, lock=ST.lock), "backfill")
     except Exception:
         logger.exception("EDD check failed")
