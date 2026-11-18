@@ -911,9 +911,10 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 :root[data-theme="industrial"] #top {
   position: relative; clip-path: none; border-bottom: 2px solid rgba(var(--dim-rgb), .5);
   background: linear-gradient(180deg, var(--bg-2), var(--bg-1)); }
+/* (18.11., user: no yellow-black stripes at the top - a plain amber edge instead) */
 :root[data-theme="industrial"] #top::after {
-  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 5px; pointer-events: none;
-  background: repeating-linear-gradient(-45deg, rgba(var(--amber-rgb), .8) 0 10px, rgba(var(--bg-rgb), .9) 10px 20px); }
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; pointer-events: none;
+  background: rgba(var(--amber-rgb), .55); }
 :root[data-theme="industrial"] .tac-stage {
   clip-path: polygon(0 0, calc(100% - var(--notch)) 0, 100% var(--notch), 100% 100%, 0 100%); border-width: 2px; }
 :root[data-theme="industrial"] .hbar .track > i {
@@ -1000,7 +1001,7 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 :root[data-theme="console"] .stat-view .meter i { border-radius: 999px; }
 
 /* -- Belt industrial (TH1b, 18.11.): a working ship's retrofit console - steel bezels with
-   rivets and stencil plates (the hardware, amber) around dark inset screens with corner
+   rivets and stencil plates (the hardware, amber; no hazard stripes - user 18.11.) around dark inset screens with corner
    brackets (the readout, teal). Warm metal against cold screen; thin lines, small caps,
    segmented meters with an amber end cap, chevron marks. Own design, static (no blinking). */
 :root[data-theme="industrial"] .stat-view { --scr: 95, 211, 196; --scr-c: rgb(var(--scr)); }
@@ -1031,10 +1032,6 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 :root[data-theme="industrial"] .stat-view .frame-title::after { content: "\203A\203A\203A"; margin-left: auto; padding-left: 10px;
   color: rgba(var(--amber-rgb), .55); letter-spacing: -.05em; font-size: 15px; }
 :root[data-theme="industrial"] .stat-view .frame-title .tag { color: rgba(var(--scr), .8); font-size: 10px; letter-spacing: .08em; }
-/* the head: hazard stripes along the top of its plate */
-:root[data-theme="industrial"] .stat-view .st-head { padding-top: 8px; background:
-  repeating-linear-gradient(-45deg, rgba(var(--amber-rgb), .85) 0 8px, #15191a 8px 16px) top / 100% 5px no-repeat,
-  linear-gradient(180deg, #2a2f31, #1b1f21); }
 /* sub-tabs: switch plates; the active one lit on the screen colour with a chevron */
 :root[data-theme="industrial"] .stat-view .st-tabs button { border-radius: 0; border: 1px solid rgba(var(--amber-rgb), .45);
   background: linear-gradient(180deg, #2f3537, #222729); color: var(--text); letter-spacing: .14em; font-size: 11px; }
@@ -1086,3 +1083,86 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 @media (prefers-reduced-motion: reduce) {
   :root[data-theme="station"] .stat-view .meter i, :root[data-theme="station"] .stat-view .st-spark { filter: none; }
 }
+
+/* -- Federation bridge (TH2, 18.11.) ----------------------------------------------------------
+   The newest generation of starship panels, read as principles only - own design and name:
+   near-black glass, muted lavender frames that run thick down the side and thin across the
+   top, joined by one sweep; rounded caps end every bar and make the buttons; three type sizes,
+   two text colours (normal, highlight); a restrained palette - lavender for structure, warm
+   amber for what is active, ice blue for figures, coral only for alerts. Flat, no glow, static. */
+:root[data-theme="bridge"] {
+  --bg: #000000;
+  --bg-1: #07080D;
+  --bg-2: #0E1018;
+  --cyan: #8FC7EA;
+  --green: #8FD9B0;
+  --amber: #F2A65A;
+  --red: #F06A5A;
+  --violet: #A9A6D8;
+  --text: #DCE3F0;
+  --dim: #8E95AE;
+  --faint: #232838;
+  --blue: #8FA8F0;
+  --gold: #F2C46A;
+  --ink: #05060A;
+  --bg-glow: #090B12;
+  --panel: #06070B;
+  --white: #F4F6FB;
+  --cyan-rgb: 143, 199, 234;
+  --green-rgb: 143, 217, 176;
+  --amber-rgb: 242, 166, 90;
+  --red-rgb: 240, 106, 90;
+  --violet-rgb: 169, 166, 216;
+  --dim-rgb: 142, 149, 174;
+  --bg-rgb: 0, 0, 0;
+  --bg-1-rgb: 7, 8, 13;
+  --bg-2-rgb: 14, 16, 24;
+  --white-rgb: 244, 246, 251;
+  --text-rgb: 220, 227, 240;
+  --frame-c: #9EA5C4;            /* the structure: lavender */
+  --sweep: 22px;                 /* the outer radius where side and top meet */
+  --glow: none;
+}
+/* the frame: a thick side bar sweeping into a thin top bar, the side ending in a round cap */
+:root[data-theme="bridge"] .frame { clip-path: none; background: transparent; padding: 0; }
+:root[data-theme="bridge"] .frame > .frame-in { clip-path: none;
+  border-left: 12px solid var(--frame-c); border-top: 3px solid var(--frame-c);
+  border-radius: var(--sweep) 0 0 12px; padding: 6px 12px 8px 14px;
+  background: linear-gradient(180deg, rgba(var(--white-rgb), .035), rgba(var(--white-rgb), .015)); }
+:root[data-theme="bridge"] .frame.warn > .frame-in { border-color: var(--amber); }
+:root[data-theme="bridge"] .frame.alert > .frame-in { border-color: var(--red); }
+:root[data-theme="bridge"] .frame.disc > .frame-in { border-color: var(--violet); }
+/* the title right under the top bar, right-aligned, in the narrow face (on the bar itself it was
+   clipped by scrolling panes); the tag on the left of the same line */
+:root[data-theme="bridge"] .frame-title { border-bottom: 0; justify-content: flex-end; margin: 0 0 6px; padding: 0; }
+:root[data-theme="bridge"] .frame-title h2 { order: 2; color: var(--amber); font: 600 15px var(--font-display);
+  letter-spacing: .12em; text-transform: uppercase; text-shadow: none; }
+:root[data-theme="bridge"] .frame-title .tag { order: 1; margin-right: auto; color: var(--dim); }
+/* buttons and tabs: pills with round caps, structure colour; the active one warm */
+:root[data-theme="bridge"] button { clip-path: none; border: 0; border-radius: 999px; padding: 4px 14px;
+  background: rgba(var(--dim-rgb), .28); color: var(--text); font-family: var(--font-display); letter-spacing: .08em; }
+:root[data-theme="bridge"] button:hover { background: rgba(var(--dim-rgb), .45); }
+:root[data-theme="bridge"] #tabs button[aria-selected="true"] { background: var(--amber); color: var(--ink); text-shadow: none; box-shadow: none; }
+:root[data-theme="bridge"] #top { clip-path: none; background: var(--bg); border-bottom: 3px solid var(--frame-c);
+  border-radius: 0 0 0 var(--sweep); border-left: 12px solid var(--frame-c); }
+:root[data-theme="bridge"] .tac-stage { clip-path: none; border-radius: var(--sweep) 0 0 12px; }
+:root[data-theme="bridge"] .chip { border-radius: 999px; }
+:root[data-theme="bridge"] .hbar .track, :root[data-theme="bridge"] .lbar { border: 0; border-radius: 999px; height: 6px;
+  background: rgba(var(--dim-rgb), .22); }
+:root[data-theme="bridge"] .hbar .track > i, :root[data-theme="bridge"] .lbar i { border-radius: 999px; background: var(--cyan); }
+:root[data-theme="bridge"] .num { color: var(--cyan); }
+/* STATISTICS in the bridge look */
+:root[data-theme="bridge"] .stat-view .st-tabs { gap: 4px; }
+:root[data-theme="bridge"] .stat-view .st-tabs button { text-align: right; min-width: 92px; padding: 6px 12px 3px; font-size: 12px; }
+:root[data-theme="bridge"] .stat-view .st-tabs button.on { background: var(--amber); color: var(--ink); }
+:root[data-theme="bridge"] .stat-view .st-row { border-bottom: 0; padding: 1px 0; }
+:root[data-theme="bridge"] .stat-view .st-row:nth-child(odd) { background: rgba(var(--white-rgb), .025); }
+:root[data-theme="bridge"] .stat-view .st-row > span:first-child { color: var(--dim); }
+:root[data-theme="bridge"] .stat-view .st-row > .num.small:not(:empty) { color: var(--amber); }
+:root[data-theme="bridge"] .stat-view .st-rank > span:nth-child(2) { color: var(--text); font-family: var(--font-display); letter-spacing: .1em;
+  text-transform: uppercase; }
+:root[data-theme="bridge"] .stat-view .meter { height: 6px; }
+:root[data-theme="bridge"] .stat-view .st-lead > .num:not(.small) { font: 600 20px var(--font-display); color: var(--white); }
+:root[data-theme="bridge"] .stat-view .st-learn-h { color: var(--amber); font-family: var(--font-display); letter-spacing: .1em;
+  text-transform: uppercase; }
+:root[data-theme="bridge"] .stat-view .st-spark { color: var(--cyan); }

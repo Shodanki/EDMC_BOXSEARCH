@@ -158,6 +158,26 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertIn('class: "c-dim small st-row st-reset"', js)
         self.assertIn(".st-learning .st-reset { display: flex;", css)
 
+    def test_theme_lists_agree_and_bridge_is_complete(self):
+        """TH2 (user 18.11.2026): the old console look stays as "Federation classic",
+        "Federation bridge" is a new theme. Boot script and picker list the same
+        themes; the new one defines every palette token the other themes override."""
+        import re
+        boot, app, css, i18n = (self._read("js", "theme-boot.js"), self._read("js", "app.js"),
+                                self._read("css", "fis.css"), self._read("js", "i18n.js"))
+        boot_list = re.findall(r'"([a-z]+)"', boot[boot.index("var THEMES = ["):boot.index("];", boot.index("var THEMES = ["))])
+        app_block = app[app.index("const THEMES = ["):app.index("]];", app.index("const THEMES = ["))]
+        self.assertEqual(boot_list, re.findall(r'\["([a-z]+)", N_', app_block))
+        self.assertIn("bridge", boot_list)
+        for label in ("Theme: Federation classic", "Theme: Federation bridge"):
+            self.assertIn('N_("' + label + '")', app)
+            self.assertIn('"' + label + '": "', i18n)
+        # the palette every theme overrides (derived tokens such as --line follow from it)
+        std = css[css.index(':root[data-theme="industrial"] {'):css.index("}", css.index(':root[data-theme="industrial"] {'))]
+        bridge = css[css.index(':root[data-theme="bridge"] {'):css.index("}", css.index(':root[data-theme="bridge"] {'))]
+        for token in re.findall(r"(--[a-z0-9-]+):", std):
+            self.assertIn(token + ":", bridge, token)
+
     def test_themes_draw_statistics_their_own_way(self):
         """TH1 (user 18.11.2026): each theme its own STATISTICS - console rings and
         pills, industrial segments, station dots and prompt titles without a blinking
@@ -165,11 +185,11 @@ class StatsLayoutTest(unittest.TestCase):
         every new rule is bound to a theme other than standard."""
         import re
         css, js = self._read("css", "fis.css"), self._read("js", "views", "statistics.js")
-        block = css[css.index("/* 5.0 TH1: each theme's own STATISTICS"):]
+        block = css[css.index("/* 5.0 TH1: each theme's own STATISTICS"):css.index("/* -- Federation bridge (TH2")]
         rules = [r for r in re.findall(r"^(:root[^{]*)\{", block, re.M)]
         self.assertTrue(rules)
         for r in rules:
-            self.assertRegex(r, r':root\[data-theme="(console|industrial|station|next)"\] (body:not\(\.obs\) )?\.stat-view ')
+            self.assertRegex(r, r':root\[data-theme="(console|bridge|industrial|station|next)"\] (body:not\(\.obs\) )?\.stat-view ')
         self.assertNotIn('data-theme="standard"', block)
         for theme, mark in (("console", "conic-gradient(var(--cyan) calc(var(--p, 0) * 1%)"),
                             ("industrial", "repeating-linear-gradient(90deg, var(--scr-c) 0 6px"),          # TH1b: teal screen, amber cap

@@ -62,7 +62,8 @@ applyStatic();
 // H1: theme per browser - theme-boot.js applied it before the views loaded,
 // so a change reloads the page (canvas colours are read on load)
 {
-  const THEMES = [["standard", N_("Theme: standard")], ["console", N_("Theme: Federation console")],
+  const THEMES = [["standard", N_("Theme: standard")], ["console", N_("Theme: Federation classic")],
+    ["bridge", N_("Theme: Federation bridge")],
     ["industrial", N_("Theme: Belt industrial")], ["station", N_("Theme: Station era")],
     ["next", N_("Theme: Next (own accent)")]];
   const sel = document.getElementById("opt-theme"), acc = document.getElementById("opt-accent");

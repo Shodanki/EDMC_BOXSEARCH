@@ -9,7 +9,7 @@
 // first. The choice is per browser (localStorage), like the language; the
 // "next" theme takes its accent colour from the browser too.
 (function () {
-  var THEMES = ["standard", "console", "industrial", "station", "next"];
+  var THEMES = ["standard", "console", "bridge", "industrial", "station", "next"];
   var theme = "standard", accent = null;
   try {
     theme = localStorage.getItem("fis.theme") || "standard";
