@@ -415,9 +415,34 @@ def _gaps_and_probes(acc: _Plan, b: _Boxel, bdist: float, bcenter: Tuple[float, 
             acc.counts[K_PROBE] += 1
 
 
-def _queues(targets: List[Target], boxel_score: Dict[str, float]
+PROBE_WEIGHT = 10.0      # FX4: pseudo-probes a mass code needs to outweigh the average
+PROBE_MIN_HITS = 2       # below this every mass code probes alike
+
+
+def probe_factors(outcomes: Dict[int, Sequence[int]]) -> Dict[int, float]:
+    """
+    FX4 (5.0): how much better or worse than average a galaxy map probe of
+    each mass code paid, from the probes' own outcomes ({mc: [hits, n]},
+    SystemDB.probe_outcomes): rate_mc = (hits + W * rate) / (n + W),
+    factor = rate_mc / rate, W = PROBE_WEIGHT. {} (all alike) before
+    PROBE_MIN_HITS hits. Measured 18.11.2026: mass code a 2 of 319, b 2 of
+    13 - a probe in b paid about 25 times as often.
+    """
+    hits = sum(int(v[0]) for v in outcomes.values())
+    n = sum(int(v[1]) for v in outcomes.values())
+    if hits < PROBE_MIN_HITS or n <= 0:
+        return {}
+    rate = (hits + 1.0) / (n + 2.0)
+    return {mc: ((h + PROBE_WEIGHT * rate) / (k + PROBE_WEIGHT)) / rate
+            for mc, (h, k) in outcomes.items()}
+
+
+def _queues(targets: List[Target], boxel_score: Dict[str, float],
+            mc_factor: Optional[Dict[int, float]] = None
             ) -> Tuple[List[Target], List[Target], List[Target]]:
-    """The flight, probe and check queues of a sorted target list."""
+    """The flight, probe and check queues of a sorted target list; probes
+    ordered by distance per expected find (neighbourhood score and, FX4,
+    the mass code's own probe outcomes)."""
     flight = [t for t in targets if t.kind in FLIGHT_KINDS]
     # Probes are grouped per boxel: one galaxy map search shows the whole
     # boxel at once, so working boxel by boxel is far cheaper than hopping
@@ -432,10 +457,12 @@ def _queues(targets: List[Target], boxel_score: Dict[str, float]
     # promising the neighbourhood is. A boxel twice as far but three times
     # as likely wins.
 
-    def cost(key: str) -> float:
-        return boxel_rank.get(key, 0.0) / (1.0 + boxel_score.get(key, 0.0))
+    mcf = mc_factor or {}
 
-    probe.sort(key=lambda t: (cost(t.boxel_key or t.name),
+    def cost(key: str, mc: Optional[int]) -> float:
+        return boxel_rank.get(key, 0.0) / (1.0 + boxel_score.get(key, 0.0)) / mcf.get(mc, 1.0)
+
+    probe.sort(key=lambda t: (cost(t.boxel_key or t.name, t.mc),
                               t.boxel_key or "", t.n2 if t.n2 is not None else 0))
     for t in probe:
         t.score = boxel_score.get(t.boxel_key or "", 0.0)
@@ -485,7 +512,9 @@ class Planner:
                                     t.dist_origin, t.n2 if t.n2 is not None else 0))
         if len(targets) > limit:
             targets = targets[:limit]
-        flight, probe, check = _queues(targets, boxel_score)
+        outcomes = self.db.probe_outcomes() if hasattr(self.db, "probe_outcomes") else {}
+        mc_factor = probe_factors(outcomes)
+        flight, probe, check = _queues(targets, boxel_score, mc_factor)
 
         return {
             "center": center, "radius": radius,
@@ -504,6 +533,8 @@ class Planner:
             "prospect_learning": acc.calib.summary(),
             "prospect_outcomes": acc.calib.outcomes(),
             "prospect_active": acc.calib.active(),
+            "probe_outcomes": {MASSCODES[k]: list(v) for k, v in sorted(outcomes.items())},
+            "probe_factor": {MASSCODES[k]: round(v, 2) for k, v in sorted(mc_factor.items())},
             "masscodes": list(masscodes),
             "sectors_missing": sorted(acc.sectors_missing),
         }

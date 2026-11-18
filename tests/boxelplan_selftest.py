@@ -10,11 +10,14 @@ Self test of boxelplan.py (moved from the module in 4.12, N7 - verbatim).
 """
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import plugin_pkg  # noqa: E402
 plugin_pkg.package()
-from SHBOXSEARCH.boxelplan import (ProspectCalibration, _wilson, bundled_probe_prefix)  # noqa: E402
+from SHBOXSEARCH.boxelplan import (  # noqa: E402
+    K_PROBE, ProspectCalibration, Target, _queues, _wilson, bundled_probe_prefix, probe_factors)
+from SHBOXSEARCH.sysdb import Q_CONFIRMED, SystemDB  # noqa: E402
 
 
 def _selftest() -> int:
@@ -77,5 +80,39 @@ def _selftest() -> int:
     return fails
 
 
+def _probe_selftest() -> int:
+    """FX4: probes ordered by their mass code's own outcomes."""
+    fails = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal fails
+        print("  [%s] %s" % ("OK" if ok else "FAIL", what))
+        fails += 0 if ok else 1
+
+    check(probe_factors({0: [1, 300], 1: [0, 10]}) == {}, "one hit: every mass code alike")
+    f = probe_factors({0: [2, 319], 1: [2, 13], 2: [0, 2]})
+    check(f[1] > 5 > 1 > f[2] > f[0] > 0.3, "measured 18.11.: a %.2f, b %.2f, c %.2f" % (f[0], f[1], f[2]))
+    near_a = Target("Synuefe AA-A a1-5", K_PROBE, 10.0, mc=0, boxel_key="Synuefe AA-A a1")
+    far_b = Target("Synuefe AA-A b1-5", K_PROBE, 30.0, mc=1, boxel_key="Synuefe AA-A b1")
+    for t in (near_a, far_b):
+        t.dist_origin = t.dist
+    _f, probe, _c = _queues([near_a, far_b], {})
+    check(probe[0] is near_a, "without outcomes: the nearer probe first")
+    _f, probe, _c = _queues([near_a, far_b], {}, f)
+    check(probe[0] is far_b, "with outcomes: b three times as far, but first")
+
+    db = SystemDB(os.path.join(tempfile.mkdtemp(), "p.sqlite"))
+    for n in ("Synuefe AB-C a1-1", "Synuefe AB-C a1-2", "Synuefe AB-C b1-9", "Hambula"):
+        db.cx.execute("INSERT INTO absent (name, boxel, n2, ts) VALUES (?, '', 0, '')", (n,))
+    for n, src in (("Synuefe QD-B a13-0", "fsdtarget"), ("Synuefe XY-Z b2-0", "fsdtarget"),
+                   ("Synuefe XY-Z b2-1", "fsdtarget,EDSM"), ("Glaston", "fsdtarget")):
+        db.cx.execute("INSERT INTO systems (name, quality, sources) VALUES (?, ?, ?)", (n, Q_CONFIRMED, src))
+    db.cx.commit()
+    out = db.probe_outcomes()
+    check(out == {0: [1, 3], 1: [1, 2]}, "outcomes per mass code; named and database-known left out: %s" % out)
+    print("failures: %d" % fails)
+    return fails
+
+
 if __name__ == "__main__":
-    raise SystemExit(1 if _selftest() else 0)
+    raise SystemExit(1 if (_selftest() + _probe_selftest()) else 0)

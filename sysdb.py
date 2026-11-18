@@ -1134,6 +1134,27 @@ class SystemDB:
         """Every name the galaxy map said does not exist."""
         return {r[0] for r in self.cx.execute("SELECT name FROM absent")}
 
+    def probe_outcomes(self) -> Dict[int, List[int]]:
+        """FX4: the galaxy map's own verdicts per mass code, [hits, n]:
+        hits are procgen systems it confirmed (target selected, quality
+        confirmed, no database source), misses the names it ruled out
+        (absent). A probe later flown to counts no more (its quality rose) -
+        a bias towards misses, the same for every mass code."""
+        out: Dict[int, List[int]] = {}
+        for (name,) in self.cx.execute("SELECT name FROM absent"):
+            p = parse_name(name)
+            if p is not None:
+                out.setdefault(p.mc, [0, 0])[1] += 1
+        ext = set(self.EXTERNAL_SOURCES) | {"external"}
+        for name, src in self.cx.execute("SELECT name, sources FROM systems WHERE quality=?", (Q_CONFIRMED,)):
+            p = parse_name(name)
+            if p is None or {v for v in (src or "").split(",") if v} & ext:
+                continue
+            c = out.setdefault(p.mc, [0, 0])
+            c[0] += 1
+            c[1] += 1
+        return out
+
     # ------------------------------------------------------------------ boxel
     def _touch_boxel(self, name: str, n2_end: Optional[int] = None) -> None:
         p = parse_name(name)
