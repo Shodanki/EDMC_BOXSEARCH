@@ -1131,6 +1131,9 @@ class Handler(BaseHTTPRequestHandler):
         if car:
             out["carrier"]["upkeep"] = upkeep_between(car.get("balances") or [], car.get("transfers") or [],
                                                       out.get("since"))
+        # CT2: the carrier's money - Frontier's figures and the journal's
+        from . import capi, carriermoney
+        out["carrier"]["money"] = carriermoney.build(capi.path_for(app.cfg.plugin_dir), car, evs, out.get("since"))
         return self._json(out)
 
     def _get_trade(self, qs: Dict[str, Any]) -> None:
@@ -1151,6 +1154,14 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             days = None
         out = stats.build_statistics(app.archive, days)
+        try:
+            # CT2: the carrier's money over the period
+            from . import capi, carriermoney
+            out["carrier_money"] = carriermoney.build(capi.path_for(app.cfg.plugin_dir), app.archive.carrier(),
+                                                      app.archive.events(),
+                                                      time.time() - days * 86400 if days else None)
+        except Exception:
+            out["carrier_money"] = None
         try:
             from . import learn
             # L4: what the FIS has learnt from your own data so far

@@ -320,9 +320,10 @@ class StatsLayoutTest(unittest.TestCase):
         for k in panes:                     # each pane id once; "learning" is a pane and its frame
             frames.remove(k)
         cards = re.findall(r'^  \["([A-Z]+)", N_\(', js, re.M)
-        expected = ["ranks", "overTime", "firstFinds", "surfaceMaps", "bioRates", "perSession", "timePerSystem", "learning"] + cards
+        expected = ["ranks", "overTime", "firstFinds", "surfaceMaps", "bioRates", "perSession", "timePerSystem", "learning",
+                    "carrierMoney"] + cards          # CT2: the carrier's money in OVERVIEW
         self.assertEqual(sorted(frames), sorted(expected))          # each once, none missing
-        for k in expected[:8]:
+        for k in expected[:9]:
             self.assertIn(k + ": () => " + k + "()", js)
         for label in ("OVERVIEW", "HISTORY", "RATES & TIMES", "LEARNING STATUS", "Nothing here yet."):
             self.assertIn('N_("' + label + '")' if label != "Nothing here yet." else 't("' + label + '")', js)

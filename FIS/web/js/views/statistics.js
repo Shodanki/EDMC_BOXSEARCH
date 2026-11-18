@@ -11,6 +11,7 @@
 import { getJSON, postJSON } from "../api.js";
 import { el, frame, fmt, meter, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
+import { carrierMoneyRows } from "../carriermoney.js";
 
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
 const RANK_LABEL = { Explore: N_("Exploration"), Exobiologist: N_("Exobiology"), Trade: N_("Trade"),
@@ -95,7 +96,7 @@ let days = Number(localStorage.getItem("fis.stat.days") || "30");
 // a list of columns, each column a list of frames: fixed columns that stack
 // their frames, so a short frame no longer stretches to its tall neighbour.
 const PANES = [
-  ["overview", N_("OVERVIEW"), [[["ranks", "EXPLORATION"], ["EXOBIOLOGY", "WEALTH"], ["CARRIER", "MINING", "OTHER"]]]],
+  ["overview", N_("OVERVIEW"), [[["ranks", "EXPLORATION"], ["EXOBIOLOGY", "WEALTH"], ["CARRIER", "carrierMoney", "MINING", "OTHER"]]]],
   ["trends", N_("HISTORY"), [[["overTime", "surfaceMaps"], ["firstFinds"], ["perSession"]]]],
   ["rates", N_("RATES & TIMES"), [[["bioRates"]], [["timePerSystem"]]]],
   ["learning", N_("LEARNING STATUS"), [[["learning"]]]],
@@ -153,7 +154,8 @@ function render() {
 }
 
 const BUILD = { ranks: () => ranks(), overTime: () => overTime(), firstFinds: () => firstFinds(), surfaceMaps: () => surfaceMaps(),
-  bioRates: () => bioRates(), perSession: () => perSession(), timePerSystem: () => timePerSystem(), learning: () => learning() };
+  bioRates: () => bioRates(), perSession: () => perSession(), timePerSystem: () => timePerSystem(), learning: () => learning(),
+  carrierMoney: () => carrierMoney() };
 for (const c of CARDS) BUILD[c[0]] = () => card(c);
 
 /** One sub-tab: its rows of columns; empty frames and columns drop out. */
@@ -165,6 +167,14 @@ function pane(key) {
   }).filter(Boolean);
   return el("div", { class: "st-pane st-pane-" + key + " scroll" },
     ...(rows.length ? rows : [el("div", { class: "empty c-dim", text: t("Nothing here yet.") })]));
+}
+
+// CT2: the carrier's income and costs, Frontier's figures and the journal's
+function carrierMoney() {
+  const M = data.carrier_money;
+  if (!M) return null;
+  return frame(t("CARRIER MONEY"), M.frontier ? t("Frontier") : t("journal"), carrierMoneyRows(M, { crew: false }),
+    { cls: "st-card", appear: false });
 }
 
 // L4: what the FIS has learnt from your own data - and where it is still thin

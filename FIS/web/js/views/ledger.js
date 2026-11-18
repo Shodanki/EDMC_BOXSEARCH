@@ -10,6 +10,7 @@
 import { getJSON } from "../api.js";
 import { el, frame, fmt, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
+import { carrierMoneyRows } from "../carriermoney.js";
 
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
 const LABEL = {
@@ -150,6 +151,8 @@ function losses() {
 function carrier() {
   const K = data.carrier;
   const U = K.upkeep;
+  // CT2: Frontier's figures and the journal's, in one frame
+  if (K.money) return frame(t("CARRIER"), K.money.frontier ? t("Frontier") : t("journal"), carrierMoneyRows(K.money), { cls: "st-card", appear: false });
   if (!K.deposit && !K.withdraw && !U) return null;
   const rows = [row(t("Paid in"), cr(K.deposit)), row(t("Taken out"), cr(K.withdraw))];
   // PL2: upkeep from the carrier's balance, your transfers taken out - an estimate
