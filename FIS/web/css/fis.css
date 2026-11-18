@@ -1012,14 +1012,14 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
    rivets and stencil plates (the hardware, amber; no hazard stripes - user 18.11.) around dark inset screens with corner
    brackets (the readout, teal; no line texture - user 18.11.). Warm metal against cold screen; thin lines, small caps,
    segmented meters with an amber end cap, chevron marks. Own design, static (no blinking). */
-:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view) { --scr: 95, 211, 196; --scr-c: rgb(var(--scr)); }
-/* the bezel: brushed steel plate, rivets on the plate, the screen sunk in (STATISTICS, SHIP, SYSTEM and BRIEFING, TH3-TH5) */
-:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view) .frame { padding: 5px; background:
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view) { --scr: 95, 211, 196; --scr-c: rgb(var(--scr)); }
+/* the bezel: brushed steel plate, rivets on the plate, the screen sunk in (STATISTICS, SHIP, SYSTEM, BRIEFING and CARRIER, TH3-TH6) */
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view) .frame { padding: 5px; background:
   radial-gradient(circle at left 4px top 50%, rgba(var(--dim-rgb), .9) 0 1.4px, transparent 2.2px),
   radial-gradient(circle at right 4px top 50%, rgba(var(--dim-rgb), .9) 0 1.4px, transparent 2.2px),
   repeating-linear-gradient(90deg, rgba(var(--white-rgb), .025) 0 1px, transparent 1px 3px),
   linear-gradient(180deg, #2a2f31, #1b1f21); background-repeat: no-repeat, no-repeat, repeat, no-repeat; }
-:root[data-theme="industrial"] body:not(.obs) :is(.stat-view, .ship-view, .tac-view, .briefing-view) .frame > .frame-in { background:
+:root[data-theme="industrial"] body:not(.obs) :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view) .frame > .frame-in { background:
   linear-gradient(var(--scr-c), var(--scr-c)) left 4px top 4px / 10px 1px,
   linear-gradient(var(--scr-c), var(--scr-c)) left 4px top 4px / 1px 10px,
   linear-gradient(var(--scr-c), var(--scr-c)) right 4px top 4px / 10px 1px,
@@ -1032,13 +1032,13 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
   background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
   box-shadow: inset 0 0 0 1px rgba(var(--scr), .22), inset 0 6px 14px rgba(0, 0, 0, .55); }
 /* the title is a stencilled plate riveted above the screen, with chevrons running to its edge */
-:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view) .frame-title { background: linear-gradient(180deg, #33393b, #262b2d);
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view) .frame-title { background: linear-gradient(180deg, #33393b, #262b2d);
   margin: -2px -2px 6px; padding: 3px 10px; border-bottom: 1px solid rgba(var(--amber-rgb), .45); }
-:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view) .frame-title h2 { font-family: Impact, "Arial Narrow", "Segoe UI", sans-serif;
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view) .frame-title h2 { font-family: Impact, "Arial Narrow", "Segoe UI", sans-serif;
   font-weight: 400; letter-spacing: .24em; font-size: 15px; color: var(--amber); }
-:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view) .frame-title::after { content: "\203A\203A\203A"; margin-left: auto; padding-left: 10px;
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view) .frame-title::after { content: "\203A\203A\203A"; margin-left: auto; padding-left: 10px;
   color: rgba(var(--amber-rgb), .55); letter-spacing: -.05em; font-size: 15px; }
-:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view) .frame-title .tag { color: rgba(var(--scr), .8); font-size: 10px; letter-spacing: .08em; }
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view) .frame-title .tag { color: rgba(var(--scr), .8); font-size: 10px; letter-spacing: .08em; }
 /* sub-tabs: switch plates; the active one lit on the screen colour with a chevron */
 :root[data-theme="industrial"] .stat-view .st-tabs button { border-radius: 0; border: 1px solid rgba(var(--amber-rgb), .45);
   background: linear-gradient(180deg, #2f3537, #222729); color: var(--text); letter-spacing: .14em; font-size: 11px; }
@@ -1353,4 +1353,70 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 :root[data-theme="next"] .briefing-view .navlist li.cur { background: rgba(255, 255, 255, .04); box-shadow: inset 3px 0 0 var(--cyan); color: var(--cyan); }
 @media (prefers-reduced-motion: reduce) {
   :root[data-theme="station"] .briefing-view .hbar .track > i { filter: none; }
+}
+
+/* -- TH6 (18.11.): CARRIER per theme - lines, tritium tank, hold, services, last jumps, air wing */
+/* Federation classic: keys as violet pills, the tank and hold as capsules, services as pills */
+:root[data-theme="console"] .carrier-view .ns-row { border-bottom: 0; }
+:root[data-theme="console"] .carrier-view .ns-k { background: rgba(var(--violet-rgb), .24); color: var(--text); border-radius: 999px;
+  padding: 1px 10px; text-align: center; align-self: center; }
+:root[data-theme="console"] .carrier-view .meter, :root[data-theme="console"] .carrier-view .hold-stack { border-radius: 999px; overflow: hidden; }
+:root[data-theme="console"] .carrier-view .meter i { border-radius: 999px; }
+:root[data-theme="console"] .carrier-view .svc .chip { border-radius: 999px; }
+:root[data-theme="console"] .carrier-view .cag-role { border-radius: 16px; }
+
+/* Federation bridge: keys as lavender blocks, thin round tank and hold, services as pills (on: amber) */
+:root[data-theme="bridge"] .carrier-view .ns-row { border-bottom: 0; grid-template-columns: 150px 1fr; }
+:root[data-theme="bridge"] .carrier-view .ns-k { background: var(--frame-c); color: var(--ink); text-align: right; padding: 2px 10px 0;
+  border-radius: 999px 0 0 999px; align-self: center; font-family: var(--font-display); }
+:root[data-theme="bridge"] .carrier-view .ns-name { font-family: var(--font-display); text-transform: uppercase; }
+:root[data-theme="bridge"] .carrier-view .ns-sub { color: var(--amber); font-family: var(--font-display); text-align: right; }
+:root[data-theme="bridge"] .carrier-view .hold-stack { border: 0; height: 8px; border-radius: 999px; overflow: hidden; background: rgba(var(--dim-rgb), .22); }
+:root[data-theme="bridge"] .carrier-view .svc .chip { border-radius: 999px; border: 0; background: rgba(var(--dim-rgb), .22); color: var(--dim); }
+:root[data-theme="bridge"] .carrier-view .svc .chip.mapped { background: var(--frame-c); color: var(--ink); }
+:root[data-theme="bridge"] .carrier-view .svc .chip.warn { background: var(--amber); color: var(--ink); }
+:root[data-theme="bridge"] .carrier-view .ns-tab tr:nth-child(even) td { background: rgba(var(--white-rgb), .025); }
+:root[data-theme="bridge"] .carrier-view .ns-tab td { border-bottom: 0; }
+:root[data-theme="bridge"] .carrier-view .cag-role { border: 0; border-radius: 22px 6px 6px 22px; background: rgba(var(--dim-rgb), .16); }
+:root[data-theme="bridge"] .carrier-view .cag-role.sel { background: var(--amber); color: var(--ink); }
+:root[data-theme="bridge"] .carrier-view .cag-role.sel .cr-v, :root[data-theme="bridge"] .carrier-view .cag-role.sel .cr-b { color: var(--ink); }
+
+/* Belt industrial: amber stencil keys, teal figures, the tank as segments with an amber cap,
+   services as switch plates (on: lit teal), readout cells in the jump table */
+:root[data-theme="industrial"] .carrier-view .ns-k { color: var(--amber); letter-spacing: .2em; }
+:root[data-theme="industrial"] .carrier-view .ns-row { border-bottom: 1px dotted rgba(95, 211, 196, .16); }
+:root[data-theme="industrial"] .carrier-view .ns-v .big { color: rgb(95, 211, 196); }
+:root[data-theme="industrial"] .carrier-view .meter { height: 10px; border: 1px solid rgba(95, 211, 196, .25);
+  background: repeating-linear-gradient(90deg, rgba(95, 211, 196, .10) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .carrier-view .meter i { background: repeating-linear-gradient(90deg, rgb(95, 211, 196) 0 6px, transparent 6px 8px);
+  box-shadow: 2px 0 0 var(--amber); }
+:root[data-theme="industrial"] .carrier-view .meter.warn i { background: repeating-linear-gradient(90deg, var(--amber) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .carrier-view .svc .chip { border-radius: 0; border-width: 2px; background: linear-gradient(180deg, #2f3537, #222729);
+  letter-spacing: .08em; }
+:root[data-theme="industrial"] .carrier-view .svc .chip.mapped { border-color: rgb(95, 211, 196); color: rgb(95, 211, 196);
+  box-shadow: inset 3px 0 0 var(--amber); }
+:root[data-theme="industrial"] .carrier-view .ns-tab td.num { color: rgb(95, 211, 196); }
+:root[data-theme="industrial"] .carrier-view .ns-sub { color: var(--amber); letter-spacing: .2em; }
+:root[data-theme="industrial"] .carrier-view .cag-role { border-radius: 0; border-width: 2px; background: linear-gradient(180deg, #262b2d, #1c2022); }
+:root[data-theme="industrial"] .carrier-view .cag-role.sel { border-color: rgb(95, 211, 196); box-shadow: inset 3px 0 0 var(--amber); }
+
+/* Station era: keys after a prompt, the tank as phosphor dots, services glowing when on */
+:root[data-theme="station"] .carrier-view .ns-k::before { content: "> "; }
+:root[data-theme="station"] .carrier-view .ns-row { border-bottom: 1px dotted rgba(var(--cyan-rgb), .18); }
+:root[data-theme="station"] .carrier-view .meter { border: 0; height: 8px;
+  background: repeating-linear-gradient(90deg, rgba(var(--cyan-rgb), .18) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] .carrier-view .meter i { background: repeating-linear-gradient(90deg, var(--green) 0 3px, transparent 3px 6px);
+  filter: drop-shadow(0 0 3px rgba(var(--green-rgb), .8)); }
+:root[data-theme="station"] .carrier-view .svc .chip.mapped { color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), .7); }
+:root[data-theme="station"] .carrier-view .ns-tab td { border-bottom: 1px dotted rgba(var(--cyan-rgb), .15); }
+:root[data-theme="station"] .carrier-view .ns-sub::before { content: "> "; }
+
+/* Next: the range and the name large in the accent, flat tank and hold, quiet tags */
+:root[data-theme="next"] .carrier-view .ns-name { font: 600 24px "Segoe UI", system-ui, sans-serif; letter-spacing: .02em; }
+:root[data-theme="next"] .carrier-view .ns-v .big { font: 600 26px "Segoe UI", system-ui, sans-serif; color: var(--cyan); }
+:root[data-theme="next"] .carrier-view .ns-row { border-bottom-color: rgba(255, 255, 255, .05); }
+:root[data-theme="next"] .carrier-view .meter, :root[data-theme="next"] .carrier-view .hold-stack { border: 0; height: 6px; background: rgba(255, 255, 255, .07); }
+:root[data-theme="next"] .carrier-view .svc .chip { border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="station"] .carrier-view .meter i { filter: none; }
 }

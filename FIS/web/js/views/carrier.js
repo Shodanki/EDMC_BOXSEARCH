@@ -12,7 +12,7 @@
 // from the balance over time and says so.
 
 import { getJSON, postJSON } from "../api.js";
-import { el, frame, fmt, withPopout, copyText } from "../ui.js";
+import { copyText, el, fmt, frame, meter, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const ROLES = [["combat", N_("Combat")], ["mining", N_("Mining")], ["transport", N_("Transport")],
@@ -303,7 +303,7 @@ function tritium() {
   const pctTank = Math.round(100 * (tr.tank || 0) / tr.tank_max);
   return frame(t("TRITIUM & RANGE"), pctTank + " %", [
     el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Tank") }),
-      el("span", { class: "lbar " + (pctTank < 25 ? "warn" : "") }, el("i", { style: { width: pctTank + "%" } })),
+      meter(pctTank, 100, pctTank < 25 ? "warn" : ""),          // TH6: the tank's share for the themes
       el("span", { text: fmt(tr.tank, 0) + " / " + fmt(tr.tank_max, 0) + " t" })),
     line(t("Range"), el("span", { class: "big c-green", text: fmt(r.ly, 0) + " ly" }),
       el("span", { class: "c-dim", text: "  " + t("{n} full jumps of 500 ly", { n: r.jumps }) })),
