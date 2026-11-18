@@ -31,9 +31,42 @@ def on_jump(entry: Dict[str, Any]) -> None:
     # decided now, before the arrival star's scan is stored: a first visit?
     with ST.lock:
         if ST.db.has_own_scans(ST.db.fid, sid):
+            threading.Thread(target=refresh, daemon=True, name="SHBOX-findodds").start()
             return
     threading.Thread(target=keep_prediction, args=(dict(entry),), daemon=True,
                      name="SHBOX-findodds").start()
+
+
+def refresh() -> None:
+    """FX5: count the model again for the briefing (worker thread): the
+    overlay reads ST.find_model, and nothing is counted on the main
+    thread. Never raises."""
+    try:
+        with ST.lock:
+            ST.find_model = findodds.model(lambda q, a: ST.db.cx.execute(q, a).fetchall())
+    except Exception:
+        logger.exception("find odds failed")
+
+
+def warm() -> None:
+    """Once per session, at the first arrival: count the model, so a target
+    selected before the first jump has its odds too."""
+    if ST.db and getattr(ST, "find_model", None) is None and not getattr(ST, "find_warming", False):
+        ST.find_warming = True
+        threading.Thread(target=refresh, daemon=True, name="SHBOX-findodds").start()
+
+
+def odds_for(name: Optional[str], star_class: Optional[str], level: str,
+             y: Optional[float]) -> Optional[Dict[str, Any]]:
+    """FX5: the briefing's chance of a find from the counted model, with
+    its reason; None before the model was counted (main thread: lookups
+    only)."""
+    m = getattr(ST, "find_model", None)
+    if m is None or not name:
+        return None
+    pred = m.predict(name, star_class, level, y)
+    pred["reason"] = findodds.reason(pred)
+    return pred
 
 
 def level_before(name: str, pos: Optional[Any]) -> str:
@@ -54,9 +87,9 @@ def keep_prediction(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             fid = ST.db.fid
             pos = star_pos(entry.get("StarPos"))
             level = level_before(name, pos)
-            pred = findodds.model(lambda q, a: ST.db.cx.execute(q, a).fetchall(),
-                                  skip=(fid, sid)).predict(name, entry.get("StarClass"), level,
-                                                           pos[1] if pos else None)
+            m = findodds.model(lambda q, a: ST.db.cx.execute(q, a).fetchall(), skip=(fid, sid))
+            ST.find_model = m             # FX5: the briefing's odds (a first visit is not settled yet)
+            pred = m.predict(name, entry.get("StarClass"), level, pos[1] if pos else None)
             kept = ST.db.keep_find_prediction(fid, sid, entry.get("timestamp") or "", name, pred)
         if kept:
             logger.info("find odds | %s: %.0f %% (%.0f-%.0f %%, %s, from %d visits)", name, 100 * pred["p"],

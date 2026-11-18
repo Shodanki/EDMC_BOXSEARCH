@@ -244,6 +244,7 @@ def _on_arrival(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, Any]
         survey._resort_queues()
         uithread._ui(survey._copy_flight)
     eddcheck.backfill()                  # FX4: once per session, local
+    findlog.warm()                       # FX5: the briefing's find odds
     if ev == "FSDJump":
         cockpit._overlay_briefing("arrival", ST.cur_system, ST.cur_id64,
                                   entry.get("StarClass") or None)

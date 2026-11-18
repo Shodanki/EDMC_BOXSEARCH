@@ -156,6 +156,9 @@ class State:
         self.edd_asked: Set[int] = set()
         # FX4: systems never looked up were asked in EDD's file this session
         self.edd_backfilled = False
+        # FX5: the counted find odds (findodds.FindOdds) for the briefing
+        self.find_model: Any = None
+        self.find_warming = False
         self.planner: Optional[Planner] = None
 
         self.active = False

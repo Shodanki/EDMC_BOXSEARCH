@@ -73,6 +73,14 @@ def _selftest() -> int:
     check("REGION  Inner Orion Spur" in texts(region="Inner Orion Spur")
           and not any(t.startswith("REGION") for t in texts()),
           "4.10: the codex region when known, nothing otherwise")
+    od = briefing_lines(dict(name="X", kind="target", known_sources=["EDSM"], level="known",
+                             odds={"p": 0.137, "n": 131, "reason": "off-plane, mc b"}))
+    check(("FIND ~14 % (131)  off-plane, mc b", COL["data"]) in od, "FX5: the chance of a find and why")
+    hi = briefing_lines(dict(name="X", odds={"p": 0.2, "n": 40, "reason": "off-plane"}))
+    check(("FIND ~20 % (40)  off-plane", COL["new"]) in hi, "FX5: from 15 % (findodds band) it stands out")
+    check(not any(t.startswith("FIND") for t in texts()), "FX5: no odds, no line")
+    lo = briefing_lines(dict(name="X", odds={"p": 0.02, "n": 0, "reason": "no own data yet"}))
+    check(("FIND ~2 % (0)  no own data yet", COL["dim"]) in lo, "FX5: a low chance is dim")
     # 5.0 (own-3): gear, lights, hardpoints still out - left, out of supercruise
     ship = ss.IN_SHIP
     rl = ss.reminder_lines

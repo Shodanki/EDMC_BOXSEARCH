@@ -190,6 +190,30 @@ def model(query: Query, skip: Optional[Tuple[Any, Any]] = None) -> FindOdds:
     return m
 
 
+_REASON = {"high": "off-plane", "low": "near plane", "known": "in a DB", "checked": "in no DB",
+           "unchecked": "not checked", "inhabited": "inhabited", "named": "named", "rest": "other star"}
+
+
+def reason(pred: Dict[str, Any]) -> str:
+    """FX5: the cell that decided a prediction in a few words (English, for
+    the in-game overlay; the FIS builds its own text from the fields):
+    "off-plane, mc b, M star" - or "no own data yet" for the prior."""
+    why = str(pred.get("why") or "prior").split("/")
+    if why == ["prior"]:
+        return "no own data yet"
+    parts = []
+    for i, w in enumerate(why[1:], 1):
+        if w == "?":
+            continue
+        if i == 2 and w != "named":
+            parts.append("mc %s" % w)
+        elif i == 3 and w not in _REASON:
+            parts.append("%s star" % w)
+        else:
+            parts.append(_REASON.get(w, w))
+    return ", ".join(parts) or "all own visits"
+
+
 def band(p: float) -> int:
     """The calibration band of a predicted chance (BANDS)."""
     return sum(1 for e in BANDS if p >= e)

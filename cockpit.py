@@ -25,6 +25,7 @@ from .overlay import POSITIONS as OVERLAY_POSITIONS
 from .procgen import parse_name, star_pos
 from .sysdb import CURRENT, Q_ESTIMATE
 from .state import CFG, ST, cfg_bool, cfg_str, logger
+from . import findlog
 from . import overlaywin
 from . import panel
 from . import planning
@@ -110,6 +111,9 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     except Exception:
         regions = {}
     info["level"], info["checked_by"] = shells.info_level(srcs, pos, regions)
+    # FX5: the chance of a find there, from the own settled visits
+    info["odds"] = findlog.odds_for(name, star_class or (row["star_class"] if row is not None else None),
+                                    info["level"], row["y"] if row is not None else None)
     _briefing_region(info, row, id64)
     if row is not None and kind == "target":
         _briefing_visits(info, row)

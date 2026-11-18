@@ -123,7 +123,9 @@ all_found(3, A, 101, 2)
 check(findlog.keep_prediction(started[0]["args"][0]) is None, "a second prediction for A is not kept")
 started.clear()
 findlog.on_jump(jump(4, A, 101, (500.0, -140.0, -115.0)))
-check(not started, "a revisit (own scans there) predicts nothing")
+check(len(started) == 1 and started[0]["target"] is findlog.refresh,
+      "a revisit (own scans there) predicts nothing, only counts the model again")
+started.clear()
 findlog.on_jump(jump(5, B, 102, (505.0, -200.0, -103.0)))
 pb = findlog.keep_prediction(started[0]["args"][0])
 check(pb is not None and pb["learnt"] == 1 and pb["p"] > findodds.PRIOR["pg"],
@@ -166,6 +168,30 @@ for i in range(60):
 findodds.model = lambda q, skip=None: even
 check(findlog.height_hint(-40.0) is None, "off-plane only a little better (10 vs 8 %): no hint")
 findodds.model = real_model
+
+print("FX5: the briefing's odds and their reason")
+check(findodds.reason({"why": "prior"}) == "no own data yet", "prior: no own data yet")
+check(findodds.reason({"why": "pg/high/b/M/checked"}) == "off-plane, mc b, M star, in no DB",
+      "the deciding cell in words: %s" % findodds.reason({"why": "pg/high/b/M/checked"}))
+check(findodds.reason({"why": "named/low"}) == "near plane" and findodds.reason({"why": "pg/?/c"}) == "mc c",
+      "named / unknown height")
+ST.find_model = None
+check(findlog.odds_for("Synuefe XT-Q c21-13", "K", "known", 250.0) is None, "no model counted yet: no odds")
+ST.find_model = hm
+od = findlog.odds_for("Synuefe XT-Q c21-13", "K", "known", 250.0)
+check(od is not None and abs(od["p"] - hi_["p"]) < 1e-9 and od["reason"] == "off-plane, mc c, K star",
+      "odds from the counted model: %.2f, %s" % (od["p"] if od else -1, od["reason"] if od else ""))
+started.clear()
+findlog.refresh()
+check(isinstance(ST.find_model, findodds.FindOdds) and ST.find_model.n == cal["learnt"],
+      "refresh counts the settled visits (%s)" % getattr(ST.find_model, "n", None))
+ST.find_model = None
+ST.find_warming = False
+findlog.warm()
+findlog.warm()
+check(len(started) == 1 and started[0]["target"] is findlog.refresh, "warm: counted once per session")
+findlog.on_jump(jump(8, A, 101, (500.0, -140.0, -115.0)))
+check(len(started) == 2 and started[1]["target"] is findlog.refresh, "a revisit refreshes the model")
 
 print("%d failure(s)" % fails)
 sys.exit(1 if fails else 0)

@@ -132,6 +132,14 @@ def _known_lines(info: Dict[str, Any]) -> List[Line]:
     return []
 
 
+def _odds_line(odds: Dict[str, Any]) -> Line:
+    """FX5: the chance of a find (findodds), how many visits it is learnt
+    from, and the cell that decided it."""
+    p = float(odds.get("p") or 0.0)
+    text = "FIND ~%.0f %% (%d)  %s" % (100 * p, int(odds.get("n") or 0), odds.get("reason") or "")
+    return (text[:44], COL["new"] if p >= 0.15 else COL["data"] if p >= 0.05 else COL["dim"])
+
+
 def _lost_line(lost: Dict[str, Any]) -> Line:
     """Visited, yes - but what you did there went down with the ship."""
     bits = [b for b in ("%d scan" % lost["scan"] if lost.get("scan") else "",
@@ -150,7 +158,8 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
       level ('known' | 'inhabited' | 'checked' | 'unchecked', shells.info_level),
       lost ({scan, map, bio} - data lost there in a crash, not redone yet),
       checked_by (list of sources that covered the position),
-      region (codex region name)
+      region (codex region name),
+      odds ({p, n, reason} - FX5, the chance of a find, findlog.odds_for)
     """
     name = info.get("name") or "?"
     kind = info.get("kind") or "target"
@@ -163,6 +172,8 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
         # 4.10: codex region (klightspeed's region map)
         out.append((("REGION  %s" % info["region"])[:44], COL["dim"]))
     out += _known_lines(info)
+    if info.get("odds"):
+        out.append(_odds_line(info["odds"]))
     if info.get("visited"):
         out.append(("visited before", COL["dim"]))
     lost = info.get("lost")
