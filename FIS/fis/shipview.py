@@ -529,4 +529,7 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
                       "enabled": x.get("Enabled"), "crew": x.get("CrewName")}
                      for x in s.get("Crew") or []],
     })
+    # CT1: what the carrier buys and sells, and what is still wanted
+    from . import carriertrade
+    out["trade"] = carriertrade.build_trade(capi_path, archive.events(), own_id, now)
     return out

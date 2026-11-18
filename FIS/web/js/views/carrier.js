@@ -36,7 +36,8 @@ let root = null, data = null, known = null, knownQuery = "", knownMsg = "", show
 let sortKey = store("fis.cag.sort") || "", sortDir = store("fis.cag.dir") === "asc" ? 1 : -1;
 let shipQuery = "", onBoardOnly = store("fis.cag.here") === "1";
 // with a carrier of your own, the known carriers get a tab of their own (11.11.)
-let tab = store("fis.carrier.tab") === "known" ? "known" : "own";
+// CT1 (18.11.): the own carrier's trade gets a tab of its own, before the known carriers
+let tab = ["known", "trade"].includes(store("fis.carrier.tab")) ? store("fis.carrier.tab") : "own";
 // what a visited carrier offered when you docked (StationServices, lower case)
 const KC_SERVICE = { refuel: N_("Refuel"), repair: N_("Repair"), rearm: N_("Rearm"), commodities: N_("Commodities"),
   shipyard: N_("Shipyard"), outfitting: N_("Outfitting"), blackmarket: N_("Secure warehouse"),
@@ -255,13 +256,15 @@ function render() {
     if (data && data.fleet && data.fleet.length) root.append(airWing());
     return;
   }
-  if (known) {
+  if (known || data.trade) {
     const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
       onclick: () => { tab = k; store("fis.carrier.tab", k); render(); } });
     root.append(el("div", { class: "kc-tabs" }, tb("own", t("MY CARRIER")),
-      tb("known", t("KNOWN CARRIERS") + " · " + known.counts.known)));
+      data.trade ? tb("trade", t("CARRIER TRADE")) : null,
+      known ? tb("known", t("KNOWN CARRIERS") + " · " + known.counts.known) : null));
   }
   if (known && tab === "known") { root.append(knownCarriers()); return; }
+  if (data.trade && tab === "trade") { root.append(trade()); return; }
   root.append(el("div", { class: "ns-grid" },
     el("div", { class: "ns-col" }, ident(), position(), tritium()),
     el("div", { class: "ns-col" }, hold(), finance(), services())));
@@ -374,6 +377,98 @@ function services() {
   return frame(t("SERVICES"), "", el("div", { class: "svc" }, ...data.services.map(s => el("span", {
     class: "chip " + (s.active ? (s.enabled === false ? "warn" : "mapped") : "off"),
     title: s.crew || "", text: SERVICE[s.role] ? t(SERVICE[s.role]) : s.role }))), { appear: false });
+}
+
+// ------------------------------------------------------------ CT1: carrier trade
+const CR = (v) => v === null || v === undefined ? "–" : v >= 1e6 ? fmt(v / 1e6, 1) + " M Cr" : fmt(v, 0) + " Cr";
+const SVC = { ok: N_("open"), unmanned: N_("not manned"), unavailable: N_("not installed"), closed: N_("closed") };
+function svc(st) { return st ? el("span", { class: st === "ok" ? "c-green" : "c-dim", text: SVC[st] ? t(SVC[st]) : st }) : null; }
+
+function trade() {
+  const T = data.trade, C = T.capi;
+  const left = [demand(T), C ? tradeMarket(C.market) : null];
+  const right = [C ? tradeBar(C.bar) : null, C ? tradeYard(C) : null, tradeHistory(T.history)];
+  if (!C) left.push(frame(t("MARKET"), "", el("div", { class: "c-dim", text: t("Orders, stock, the bar, shipyard and outfitting come with EDMC's Frontier data (Companion API) - none yet. Below: the orders from your journal.") }), { appear: false }));
+  return el("div", { class: "ns-grid ct-grid" }, el("div", { class: "ns-col" }, ...left), el("div", { class: "ns-col" }, ...right));
+}
+
+// what is still wanted: open purchase orders, market and bar
+function demand(T) {
+  const D = T.demand, C = T.capi;
+  if (!C) return null;
+  const rows = [line(t("Still wanted"), el("span", { class: D.units ? "c-amber" : "c-dim", text: D.units ? fmt(D.units, 0) + " " + t("units") : t("nothing") }),
+    D.cr ? el("span", { class: "c-dim", text: "  · " + CR(D.cr) }) : null)];
+  for (const r of D.rows) rows.push(el("div", { class: "lg-row" }, el("span", { text: r.name + (r.where === "bar" ? " · " + t("bar") : "") }),
+    meter(r.delivered, r.total || 1), el("span", { class: "num", text: fmt(r.delivered, 0) + " / " + fmt(r.total, 0) + " · " + CR(r.price) })));
+  rows.push(el("div", { class: "c-dim small", text: t("Frontier data, {a}. Purchase orders with what is delivered so far; the rest is reserved from the carrier's balance.", { a: age(C.age_s) }) }));
+  return frame(t("OPEN DEMAND"), D.cr ? CR(D.cr) : "", rows, { appear: false });
+}
+
+function orderTable(sales, buys) {
+  if (!sales.length && !buys.length) return el("div", { class: "c-dim", text: t("No orders set.") });
+  return el("table", { class: "ns-tab" },
+    el("tr", {}, ...["", t("good"), t("amount"), t("price"), t("value")].map(h => el("th", { text: h }))),
+    ...sales.map(r => el("tr", {}, el("td", { class: "c-green", text: t("sells") }), el("td", { text: r.name + (r.black ? " ⚠" : "") }),
+      el("td", { class: "num", text: fmt(r.stock, 0) }), el("td", { class: "num", text: CR(r.price) }), el("td", { class: "num", text: CR(r.value) }))),
+    ...buys.map(r => el("tr", {}, el("td", { class: "c-amber", text: t("buys") }), el("td", { text: r.name + (r.black ? " ⚠" : "") }),
+      el("td", { class: "num", text: fmt(r.outstanding, 0) + " / " + fmt(r.total, 0) }), el("td", { class: "num", text: CR(r.price) }),
+      el("td", { class: "num", text: CR(r.open_cr) }))));
+}
+
+function tradeMarket(M) {
+  const F = M.finances || {};
+  const rows = [line(t("Market"), svc(M.status)), orderTable(M.sales, M.purchases),
+    line(t("Cargo for sale"), fmt(M.for_sale_t, 0) + " t", el("span", { class: "c-dim", text: "  · " + t("not for sale") + " " + fmt(M.not_for_sale_t, 0) + " t" })),
+    line(t("Cargo value"), CR(F.cargo_value)),
+    line(t("Market profit (all time)"), el("span", { class: "c-green", text: CR(F.profit) }))];
+  if (M.black && (M.black.profit || M.black.for_sale || M.black.purchase_orders))
+    rows.push(line(t("Secure warehouse profit"), CR(M.black.profit)));
+  const stock = M.stock.filter(r => r.stock || r.demand);
+  if (stock.length) {
+    rows.push(el("div", { class: "ns-sub", text: t("AS VISITORS SEE IT") }));
+    rows.push(el("table", { class: "ns-tab" },
+      el("tr", {}, ...[t("good"), t("pieces"), t("demand"), t("we sell at"), t("we buy at")].map(h => el("th", { text: h }))),
+      ...stock.slice(0, 20).map(r => el("tr", {}, el("td", { text: r.name }), el("td", { class: "num", text: fmt(r.stock, 0) }),
+        el("td", { class: "num", text: fmt(r.demand, 0) }), el("td", { class: "num", text: r.buy ? CR(r.buy) : "–" }),
+        el("td", { class: "num", text: r.sell ? CR(r.sell) : "–" })))));
+  }
+  return frame(t("MARKET"), "", rows, { appear: false });
+}
+
+function tradeBar(B) {
+  const F = B.finances || {};
+  const rows = [line(t("Bar"), svc(B.status)), orderTable(B.sales, B.purchases),
+    el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Locker") }), meter(B.used, B.capacity || 1),
+      el("span", { text: fmt(B.used, 0) + " / " + fmt(B.capacity, 0) })),
+    line(t("Bar profit (all time)"), el("span", { class: F.profit ? "c-green" : "c-dim", text: CR(F.profit) }))];
+  if (B.profit_history.some(v => v)) rows.push(line(t("Profit per week"), el("span", { class: "c-dim", text: B.profit_history.map(v => CR(v)).join(" · ") })));
+  return frame(t("BAR"), t("on-foot goods"), rows, { appear: false });
+}
+
+function tradeYard(C) {
+  const S = C.shipyard, O = C.outfitting;
+  const rows = [line(t("Shipyard"), svc(S.status), el("span", { class: "c-dim", text: "  · " + t("{n} ship packs", { n: S.packs }) }))];
+  if (S.ships.length) rows.push(el("table", { class: "ns-tab" }, ...S.ships.map(r => el("tr", {}, el("td", { text: r.name }),
+    el("td", { class: "num", text: fmt(r.stock, 0) }), el("td", { class: "num", text: CR(r.price) })))));
+  else rows.push(el("div", { class: "c-dim small", text: t("No ships for sale.") }));
+  rows.push(line(t("Outfitting"), svc(O.status), el("span", { class: "c-dim", text: "  · " + t("{n} module packs", { n: O.packs }) })));
+  rows.push(line(t("In stock"), t("{u} modules of {k} kinds", { u: fmt(O.units, 0), k: O.kinds - O.bundled }), el("span", { class: "c-dim", text: "  · " + CR(O.value) })));
+  if (O.modules.length) rows.push(el("div", { class: "scroll ct-mods" }, el("table", { class: "ns-tab" },
+    el("tr", {}, ...[t("module"), t("pieces"), t("price")].map(h => el("th", { text: h }))),
+    ...O.modules.map(r => el("tr", {}, el("td", { text: r.name }), el("td", { class: "num", text: fmt(r.stock, 0) }),
+      el("td", { class: "num", text: CR(r.price) }))))));
+  if (O.bundled) rows.push(el("div", { class: "c-dim small", text: t("{n} bays come with the packs (no stock).", { n: O.bundled }) }));
+  return frame(t("SHIPYARD & OUTFITTING"), "", rows, { appear: false });
+}
+
+const ORDER_KIND = { buy: [N_("buy order"), "c-amber"], sell: [N_("sell order"), "c-green"], cancel: [N_("cancelled"), "c-dim"], other: [N_("changed"), "c-dim"] };
+function tradeHistory(H) {
+  const rows = H.length ? [el("table", { class: "ns-tab" }, ...H.slice(0, 12).map(h => el("tr", {},
+    el("td", { class: "c-dim", text: day(h.ts) }), el("td", { class: ORDER_KIND[h.kind][1], text: t(ORDER_KIND[h.kind][0]) }),
+    el("td", { text: h.name || "?" }), el("td", { class: "num", text: h.qty ? fmt(h.qty, 0) : "" }),
+    el("td", { class: "num", text: h.price ? CR(h.price) : "" }))))]
+    : [el("div", { class: "c-dim", text: t("No trade orders in your journals.") })];
+  return frame(t("ORDER HISTORY"), t("journal"), rows, { appear: false });
 }
 
 // ------------------------------------------------------------ air wing (CAG)

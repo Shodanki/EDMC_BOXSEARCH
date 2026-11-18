@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 FILE = "capi_fleetcarrier.json"
 
@@ -31,8 +31,9 @@ def _num(v: Any) -> Optional[float]:
         return None
 
 
-def load(path: Optional[str], now: Optional[float] = None) -> Optional[Dict[str, Any]]:
-    """{saved, age_s, callsign, system, fuel, hold: [...], tritium} or None."""
+def read(path: Optional[str]) -> Optional[Tuple[Optional[float], Dict[str, Any]]]:
+    """(saved, data) of the stored answer - the raw /fleetcarrier data, read
+    only - or None when the file is missing or broken."""
     if not path or not os.path.exists(path):
         return None
     try:
@@ -43,8 +44,16 @@ def load(path: Optional[str], now: Optional[float] = None) -> Optional[Dict[str,
     d = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(d, dict):
         return None
+    return _num(payload.get("saved")), d
+
+
+def load(path: Optional[str], now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """{saved, age_s, callsign, system, fuel, hold: [...], tritium} or None."""
+    got = read(path)
+    if got is None:
+        return None
+    saved, d = got
     now = time.time() if now is None else now
-    saved = _num(payload.get("saved"))
     goods: Dict[str, Dict[str, Any]] = {}
     for c in d.get("cargo") or []:
         if not isinstance(c, dict):

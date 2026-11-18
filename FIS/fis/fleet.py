@@ -39,7 +39,7 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "ShipyardSell", "ShipyardTransfer", "SellShipOnRebuy", "CarrierStats",
           "CarrierLocation", "CarrierJump", "CarrierJumpRequest", "CarrierJumpCancelled",
           "CarrierDepositFuel", "CarrierBankTransfer", "CarrierFinance", "CarrierCrewServices",
-          "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
+          "CarrierNameChange", "CarrierTradeOrder", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
           "SAAScanComplete", "SellOrganicData",
           # unsold data at risk (M4)
           "ScanOrganic", "FSSDiscoveryScan", "MultiSellExplorationData", "SellExplorationData",
