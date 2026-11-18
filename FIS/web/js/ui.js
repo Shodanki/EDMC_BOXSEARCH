@@ -137,6 +137,23 @@ export function withPopout(fr, view) {
 
 export function chip(text, cls) { return el("span", { class: "chip " + (cls || ""), text }); }
 
+// 5.0 TH: a share drawn the way the theme likes it. The standard look is the
+// plain bar; the share also sits on the element (--p and data-p, 0-100), so a
+// theme can draw segments, dots or a ring from CSS alone. The number itself is
+// always written beside it by the caller - a meter never replaces the figure.
+export function meterPct(value, max = 100) {
+  const v = Number(value), m = Number(max);
+  if (!Number.isFinite(v) || !Number.isFinite(m) || m <= 0) return 0;
+  return Math.max(0, Math.min(100, 100 * v / m));
+}
+
+export function meter(value, max = 100, cls = "") {
+  const p = meterPct(value, max), r = String(Math.round(p));
+  return el("span", { class: "lbar meter" + (cls ? " " + cls : ""), style: "--p: " + p.toFixed(1),
+    "data-p": r, role: "meter", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": r },
+  el("i", { style: "width: " + p.toFixed(1) + "%" }));
+}
+
 export function hbar(label, value, max, valText, cls = "") {
   const pct = max > 0 ? Math.max(0, Math.min(100, 100 * value / max)) : 0;
   return el("div", { class: "hbar " + cls },

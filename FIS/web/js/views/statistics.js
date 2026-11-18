@@ -9,7 +9,7 @@
 // period (the Statistics event from back then against the latest one).
 
 import { getJSON, postJSON } from "../api.js";
-import { el, frame, fmt, withPopout } from "../ui.js";
+import { el, frame, fmt, meter, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
@@ -89,14 +89,16 @@ const CARDS = [
 let root = null, data = null, busy = false;
 let days = Number(localStorage.getItem("fis.stat.days") || "30");
 // 5.0 (night 18.11.): sub-tabs instead of one long page - current state,
-// then the course over time, then rates and times; the learning status
-// keeps its own column on the right. Each pane is a list of rows, each row
+// then the course over time, then rates and times, then what the models
+// learnt (its own sub-tab since 18.11., user: more width for every pane).
+// Each pane is a list of rows, each row
 // a list of columns, each column a list of frames: fixed columns that stack
 // their frames, so a short frame no longer stretches to its tall neighbour.
 const PANES = [
   ["overview", N_("OVERVIEW"), [[["ranks", "EXPLORATION"], ["EXOBIOLOGY", "WEALTH"], ["CARRIER", "MINING", "OTHER"]]]],
   ["trends", N_("HISTORY"), [[["overTime", "surfaceMaps"], ["firstFinds"], ["perSession"]]]],
   ["rates", N_("RATES & TIMES"), [[["bioRates"]], [["timePerSystem"]]]],
+  ["learning", N_("LEARNING STATUS"), [[["learning"]]]],
 ];
 let sub = localStorage.getItem("fis.stat.sub") || "overview";
 
@@ -147,15 +149,11 @@ function render() {
     el("div", { class: "c-dim small", text: t("The game's own numbers, written at every login; the journals reach back to {d}.",
       { d: new Date(data.first_ts * 1000).toLocaleDateString() }) }),
   ], { cls: "st-head", appear: false }), "statistics");
-  // the learning status in a column of its own on the right - no scrolling down to it (11.11.)
-  const lr = learning();
-  root.append(el("div", { class: "stat-wrap" + (lr ? "" : " solo") },
-    el("div", { class: "stat-main" }, head, pane(sub)),
-    lr ? el("div", { class: "stat-side scroll" }, lr) : null));
+  root.append(el("div", { class: "stat-wrap solo" }, el("div", { class: "stat-main" }, head, pane(sub))));
 }
 
 const BUILD = { ranks: () => ranks(), overTime: () => overTime(), firstFinds: () => firstFinds(), surfaceMaps: () => surfaceMaps(),
-  bioRates: () => bioRates(), perSession: () => perSession(), timePerSystem: () => timePerSystem() };
+  bioRates: () => bioRates(), perSession: () => perSession(), timePerSystem: () => timePerSystem(), learning: () => learning() };
 for (const c of CARDS) BUILD[c[0]] = () => card(c);
 
 /** One sub-tab: its rows of columns; empty frames and columns drop out. */
@@ -242,7 +240,7 @@ function ranks() {
     return el("div", { class: "st-rank" },
       el("span", { class: "c-dim", text: t(RANK_LABEL[r.key] || r.key) }),
       el("span", { class: top ? "c-amber" : "c-cyan", text: r.name + (top ? " ★" : "") }),
-      el("span", { class: "lbar" }, el("i", { style: { width: (top ? 100 : pct || 0) + "%" } })),
+      meter(top ? 100 : pct || 0),
       el("span", { class: "num", text: top ? "" : pct === null ? "–" : pct + " %" }));
   });
   const rep = Object.entries(data.reputation || {});
@@ -295,7 +293,7 @@ function firstFinds() {
   const max = Math.max(1, ...F.map(f => f.first));
   const rows = F.map(f => el("div", { class: "st-row st-month", title: t("{f} of {n} bodies you scanned were undiscovered", { f: f.first, n: f.scanned }) },
     el("span", { class: "c-dim", text: f.month }),
-    el("span", { class: "lbar" }, el("i", { style: { width: (100 * f.first / max).toFixed(1) + "%" } })),
+    meter(f.first, max),
     el("span", { class: "num", text: fmt(f.first, 0) + " · " + fmt(f.pct, 1) + " %" })));
   rows.push(el("div", { class: "c-dim small", text: t("Your own scans (no nav beacon), each body once; only the active commander. Yours for good once sold.") }));
   return frame(t("FIRST DISCOVERIES PER MONTH"), "", rows, { cls: "st-card", appear: false });
@@ -329,7 +327,7 @@ function bioRates() {
     groups.append(box);
     for (const g of list) box.append(el("div", { class: "st-row st-month st-rate", title: t("{b} of {n} landable planets with biological signals; 95 % interval {lo}–{hi} %", { b: g.bio, n: g.n, lo: fmt(g.lo, 1), hi: fmt(g.hi, 1) }) },
       el("span", { class: "c-dim", text: g.key === "none" ? t("no atmosphere") : g.key }),
-      el("span", { class: "lbar" }, el("i", { style: { width: Math.min(100, g.pct) + "%" } })),
+      meter(g.pct),
       el("span", { class: "num", text: fmt(g.pct, 0) + " % · n " + fmt(g.n, 0) })));
   };
   const groups = el("div", { class: "st-rate-groups" });
@@ -394,7 +392,8 @@ function card([key, title, fields]) {
     const src = sec === "derived" ? data.derived || {} : (data.sections[sec] || {});
     if (src[f] === undefined) continue;
     const d = sec === "derived" ? null : ((data.delta[sec] || {})[f]);
-    rows.push(el("div", { class: "st-row" },
+    // the first figure of a card is its lead (a theme may show it large)
+    rows.push(el("div", { class: rows.length ? "st-row" : "st-row st-lead" },
       el("span", { class: "c-dim", text: t(label) }),
       el("span", { class: "num", text: value(src[f], kind) }),
       el("span", { class: "num c-green small", text: d ? (d > 0 ? "+" : "") + value(d, kind) : "" })));

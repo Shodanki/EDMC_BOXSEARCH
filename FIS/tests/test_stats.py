@@ -158,6 +158,30 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertIn('class: "c-dim small st-row st-reset"', js)
         self.assertIn(".st-learning .st-reset { display: flex;", css)
 
+    def test_themes_draw_statistics_their_own_way(self):
+        """TH1 (user 18.11.2026): each theme its own STATISTICS - console rings and
+        pills, industrial segments, station dots and prompt titles without a blinking
+        cursor, next flat with a lead figure. The standard theme stays as it was:
+        every new rule is bound to a theme other than standard."""
+        import re
+        css, js = self._read("css", "fis.css"), self._read("js", "views", "statistics.js")
+        block = css[css.index("/* 5.0 TH1: each theme's own STATISTICS"):]
+        rules = [r for r in re.findall(r"^(:root[^{]*)\{", block, re.M)]
+        self.assertTrue(rules)
+        for r in rules:
+            self.assertRegex(r, r':root\[data-theme="(console|industrial|station|next)"\] \.stat-view ')
+        self.assertNotIn('data-theme="standard"', block)
+        for theme, mark in (("console", "conic-gradient(var(--cyan) calc(var(--p, 0) * 1%)"),
+                            ("industrial", "repeating-linear-gradient(90deg, var(--amber) 0 8px"),
+                            ("station", 'content: "> "'), ("next", ".st-lead > .num:not(.small) { font: 600 26px")):
+            self.assertIn(mark, block, theme)
+        # no blinking cursor in any statistics theme (user 18.11.: it irritates)
+        self.assertNotIn("animation", block.split("@media (prefers-reduced-motion")[0])
+        self.assertNotIn('content: "_"', block)
+        # the views hand the share to the theme through meter(); the lead figure is marked
+        self.assertEqual(js.count("meter("), 3)
+        self.assertIn('rows.length ? "st-row" : "st-row st-lead"', js)
+
     def test_sub_tabs_hold_every_frame_once(self):
         """Night run 18.11.2026: STATISTICS in sub-tabs of fixed columns -
         every frame in exactly one pane, nothing dropped, labels translated."""
@@ -165,14 +189,16 @@ class StatsLayoutTest(unittest.TestCase):
         js, css, i18n = self._read("js", "views", "statistics.js"), self._read("css", "fis.css"), self._read("js", "i18n.js")
         block = js[js.index("const PANES = ["):js.index("];", js.index("const PANES = ["))]
         keys = re.findall(r'"([A-Za-z]+)"', re.sub(r'N_\("[^"]*"\)', "", block))
-        panes = ["overview", "trends", "rates"]
-        frames = [k for k in keys if k not in panes]
+        panes = ["overview", "trends", "rates", "learning"]
+        frames = list(keys)
+        for k in panes:                     # each pane id once; "learning" is a pane and its frame
+            frames.remove(k)
         cards = re.findall(r'^  \["([A-Z]+)", N_\(', js, re.M)
-        expected = ["ranks", "overTime", "firstFinds", "surfaceMaps", "bioRates", "perSession", "timePerSystem"] + cards
+        expected = ["ranks", "overTime", "firstFinds", "surfaceMaps", "bioRates", "perSession", "timePerSystem", "learning"] + cards
         self.assertEqual(sorted(frames), sorted(expected))          # each once, none missing
-        for k in expected[:7]:
+        for k in expected[:8]:
             self.assertIn(k + ": () => " + k + "()", js)
-        for label in ("OVERVIEW", "HISTORY", "RATES & TIMES", "Nothing here yet."):
+        for label in ("OVERVIEW", "HISTORY", "RATES & TIMES", "LEARNING STATUS", "Nothing here yet."):
             self.assertIn('N_("' + label + '")' if label != "Nothing here yet." else 't("' + label + '")', js)
             self.assertIn('"' + label + '": "', i18n)
         # a custom property cannot go through style.foo = ...; it is set as text
