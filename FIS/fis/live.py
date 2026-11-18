@@ -955,6 +955,7 @@ _FEED = {
     "CockpitBreached": LiveTracker._on_alert,
     "SystemsShutdown": LiveTracker._on_alert,
     "AfmuRepairs": LiveTracker._on_alert,
+    "ModuleInfo": LiveTracker._on_alert,      # R8: the module panel opened - a repair session
     "RepairAll": LiveTracker._on_repair,
     "Repair": LiveTracker._on_repair,
     "Docked": LiveTracker._on_repair,

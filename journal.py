@@ -14,6 +14,7 @@ work to worker threads.
 
 from __future__ import annotations
 
+import calendar
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -21,6 +22,7 @@ from typing import Any, Dict, List, Optional
 from . import groundmine
 from . import journalgap
 from . import journalscan
+from . import lifesupport
 from . import miningstat
 from . import overlay
 from . import shipstate
@@ -104,6 +106,7 @@ def _before_ingest(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> boo
         routewin._note_position(entry)
     _mining_event(ev, entry, state)
     _VEHICLE.feed(ev, entry)                 # 5.0 (own-3): SRV or Nomad for the left line
+    _LIFE.feed(ev, entry, _event_ts(entry))  # 5.0 (R8): life support off - Loadout, AFMU repairs
     # EDMC enriches NavRoute with the full Route array
     if ev == "NavRoute" and entry.get("Route"):
         cockpit._note_navroute(entry.get("Route"))
@@ -659,20 +662,39 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
 
 _SUIT = suittemp.SuitWatch()
 _VEHICLE = shipstate.VehicleWatch()
+_LIFE = lifesupport.LifeSupportWatch()
+
+
+def _event_ts(entry: Dict[str, Any]) -> Optional[float]:
+    """A journal event's time as Unix time, or None."""
+    try:
+        return float(calendar.timegm(time.strptime(str(entry.get("timestamp"))[:19], "%Y-%m-%dT%H:%M:%S")))
+    except (TypeError, ValueError):
+        return None
+
+
+def _life_lines(entry: Dict[str, Any], now: float) -> List[Any]:
+    """R8: the red line while life support is (probably) off; an INFO line
+    in the log at every change."""
+    verdict, changed = _LIFE.check(entry.get("Flags"), now)
+    if changed:
+        logger.info("life support | %s", "%s (%s)" % (verdict["state"], verdict["why"]) if verdict else "on")
+    return lifesupport.overlay_lines(verdict)
 
 
 def _state_overlay(entry: Dict[str, Any]) -> None:
     """The left line: out of supercruise gear, lights, hardpoints still out
     in the ship, SRV or Nomad (shipstate, setting "overlay_state"); on foot
     in heat or cold the suit's health and time left (suittemp, setting
-    "overlay_suit"). Never raises; a failure is logged once."""
+    "overlay_suit"); first of all life support off (lifesupport, R8).
+    Never raises; a failure is logged once."""
     global _STATE_FAILED
     ov = getattr(ST, "overlay", None)
     if ov is None or ("Flags" not in entry and "Flags2" not in entry):
         return
     try:
-        lines: List[Any] = []
-        if ov.enabled and cfg_bool(CFG["overlay_suit"], True):
+        lines: List[Any] = _life_lines(entry, time.time()) if ov.enabled else []
+        if not lines and ov.enabled and cfg_bool(CFG["overlay_suit"], True):
             lines = _SUIT.feed(time.time(), entry.get("Flags2"), entry.get("Health"), entry.get("Temperature"))
         if not lines and ov.enabled and cfg_bool(CFG["overlay_state"], True):
             lines = shipstate.reminder_lines(entry.get("Flags"), _VEHICLE.kind)

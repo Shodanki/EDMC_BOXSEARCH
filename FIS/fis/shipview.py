@@ -51,7 +51,7 @@ HULL_WARNING = 0.50
 
 # the panel: (key, level) in fixed order - the browser words and places them
 PANEL = [
-    ("hull_crit", "warning"), ("overheat", "warning"), ("fuel_crit", "warning"),
+    ("hull_crit", "warning"), ("life_support", "warning"), ("overheat", "warning"), ("fuel_crit", "warning"),
     ("danger", "warning"), ("interdicted", "warning"), ("canopy", "warning"),
     ("shutdown", "warning"), ("oxygen", "warning"),
     ("shields_down", "caution"), ("hull", "caution"), ("module_dmg", "caution"),
@@ -142,6 +142,7 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
 
     # ---------------------------------------------------------- panel
     panel = _ship_panel(live, st, flags, flags2, hull, alerts, rep, now)
+    _life_support(panel, flags, lo, info, alerts, now)
     master = "warning" if any(p["on"] for p in panel if p["level"] == "warning") else (
         "caution" if any(p["on"] for p in panel if p["level"] == "caution") else "normal")
     out["panel"] = panel
@@ -242,6 +243,33 @@ def _ship_report(allm: List[Dict[str, Any]], alerts: List[Dict[str, Any]], capac
     if capacity and draw > capacity:
         report.append({"level": "caution", "key": "power_over", "value": round(100 * draw / capacity)})
     return {"report": report, "damaged": damaged, "off": off, "empty": empty, "lowammo": lowammo}
+
+
+def _life_support(panel: List[Dict[str, Any]], flags: int, lo: Dict[str, Any], info: Dict[str, Any],
+                  alerts: List[Dict[str, Any]], now: float) -> None:
+    """R8: the LIFE SUPPORT lamp (with "?" while only probable) and why
+    DANGER is lit - from the plugin's lifesupport.judge, which the overlay
+    asks too. Without that plugin module the lamp stays dark."""
+    from .model import _optional
+    ls = _optional("lifesupport")
+    lo_ts = parse_ts(lo.get("timestamp"))
+    verdict = None
+    if ls is not None:
+        since = lo_ts or 0.0
+        service = [(a.get("ts"), a.get("event"), a.get("module_key")) for a in alerts
+                   if a.get("event") in ("ModuleInfo", "AfmuRepairs") and (a.get("ts") or 0) >= since]
+        try:
+            verdict = ls.judge(flags, lo, info, service, now, lo_ts, parse_ts(info.get("timestamp")))
+        except Exception:
+            verdict = None
+    for p in panel:
+        if p["key"] == "life_support":
+            p["on"] = bool(verdict)
+            if verdict:
+                p["probable"] = verdict["state"] == "probable"
+        elif p["key"] == "danger" and p["on"]:
+            p["why"] = ("life_support" if verdict else "overheat" if _bit(flags, F["overheating"])
+                        else "interdicted" if _bit(flags, F["interdicted"]) else None)
 
 
 def _ship_panel(live: Dict[str, Any], st: Dict[str, Any], flags: int, flags2: int, hull: Any,

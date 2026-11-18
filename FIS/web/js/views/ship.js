@@ -17,7 +17,7 @@ import { blinkFor, el, frame, fmt, meter, withPopout, copyText } from "../ui.js"
 import { t, N_ } from "../i18n.js";
 
 const LAMP = {
-  hull_crit: N_("HULL CRITICAL"), overheat: N_("OVERHEAT"), fuel_crit: N_("FUEL CRITICAL"),
+  hull_crit: N_("HULL CRITICAL"), life_support: N_("LIFE SUPPORT"), overheat: N_("OVERHEAT"), fuel_crit: N_("FUEL CRITICAL"),
   danger: N_("DANGER"), interdicted: N_("INTERDICTION"), canopy: N_("CANOPY BREACH"),
   shutdown: N_("SYSTEMS SHUTDOWN"), oxygen: N_("OXYGEN LOW"),
   shields_down: N_("SHIELDS DOWN"), hull: N_("HULL"), module_dmg: N_("MODULE DAMAGE"),
@@ -28,6 +28,9 @@ const LAMP = {
   scooping: N_("FUEL SCOOPING"), fsd_charging: N_("FSD CHARGING"), fsd_cooldown: N_("FSD COOLDOWN"),
   mass_locked: N_("MASS LOCK"), analysis: N_("ANALYSIS MODE"), docked: N_("DOCKED"), landed: N_("LANDED"),
 };
+// R8: why DANGER is lit, as its tooltip
+const DANGER_WHY = { life_support: N_("probably life support off"), overheat: N_("overheating"),
+  interdicted: N_("interdiction") };
 const LEVEL = { warning: N_("WARNING"), caution: N_("CAUTION"), advisory: N_("ADVISORY") };
 const GROUP = { hardpoints: N_("HARDPOINTS"), utility: N_("UTILITY"), core: N_("CORE"), optional: N_("OPTIONAL") };
 const MAT = { carbon: N_("Carbon"), vanadium: N_("Vanadium"), germanium: N_("Germanium"), arsenic: N_("Arsenic"),
@@ -39,6 +42,7 @@ const HAZ = {
   ShieldState: N_("shields down"), CockpitBreached: N_("cockpit breached"), SystemsShutdown: N_("systems shut down"),
   Died: N_("ship destroyed"), JetConeDamage: N_("jet cone damaged {m}"), JetConeBoost: N_("FSD supercharged ×{b}"),
   FighterDestroyed: N_("fighter destroyed"), SRVDestroyed: N_("SRV destroyed"),
+  LifeSupportOff: N_("life support was off (AFMU repaired it)"),
 };
 const REPORT = {
   module_damaged: N_("{w} at {v} %"), module_off: N_("{w} switched off"), ammo_empty: N_("{w}: ammunition empty"),
@@ -382,7 +386,8 @@ function annunciator() {
   const bands = ["warning", "caution", "advisory"].map(lv => el("div", { class: "ann-band " + lv },
     el("div", { class: "ab-k", text: t(LEVEL[lv]) }),
     el("div", { class: "ab-lamps" }, ...data.panel.filter(p => p.level === lv).map(p =>
-      el("div", { class: "lamp " + lv + (p.on ? " on" : ""), text: t(LAMP[p.key] || p.key), title: t(LAMP[p.key] || p.key) })))));
+      el("div", { class: "lamp " + lv + (p.on ? " on" : ""), text: t(LAMP[p.key] || p.key) + (p.probable ? "?" : ""),
+        title: t(LAMP[p.key] || p.key) + (p.why ? " – " + t(DANGER_WHY[p.why] || p.why) : "") })))));
   const id = el("div", { class: "ann-id" },
     el("div", { class: "c-cyan sh-name", text: (s.name || s.type || "?") }),
     el("div", { class: "c-dim", text: [s.type, s.ident].filter(Boolean).join(" · ") }),

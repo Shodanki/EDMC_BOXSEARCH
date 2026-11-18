@@ -23,12 +23,12 @@ from .live import parse_ts
 REPEAT_S = 90
 EVENTS = ("UnderAttack", "Interdicted", "EscapeInterdiction", "HullDamage", "HeatWarning", "HeatDamage",
           "ShieldState", "CockpitBreached", "SystemsShutdown", "Died", "JetConeDamage", "JetConeBoost",
-          "FighterDestroyed", "SRVDestroyed")
+          "FighterDestroyed", "SRVDestroyed", "AfmuRepairs")
 PLACE = ("FSDJump", "Location", "CarrierJump", "ApproachBody", "LeaveBody", "SupercruiseExit", "Touchdown")
 LEVEL = {"Died": "danger", "CockpitBreached": "danger", "HullDamage": "danger", "SystemsShutdown": "danger",
          "Interdicted": "danger", "JetConeDamage": "danger", "SRVDestroyed": "danger", "FighterDestroyed": "danger",
          "UnderAttack": "warn", "HeatDamage": "warn", "ShieldState": "warn", "HeatWarning": "warn",
-         "EscapeInterdiction": "info", "JetConeBoost": "info"}
+         "EscapeInterdiction": "info", "JetConeBoost": "info", "LifeSupportOff": "danger"}
 
 
 def _entry(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -54,6 +54,12 @@ def _entry(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         v["module"] = e.get("Module_Localised") or e.get("Module")
     elif ev == "JetConeBoost":
         v["boost"] = e.get("BoostValue")
+    elif ev == "AfmuRepairs":
+        # R8: the AFMU repairs only modules that are switched off - a repair
+        # of the life support says it was off (the game writes no event)
+        if "lifesupport" not in str(e.get("Module") or "").lower().replace("_", ""):
+            return None
+        ev = "LifeSupportOff"
     return {"kind": ev, "level": LEVEL.get(ev, "warn"), "t": parse_ts(e.get("timestamp")), "v": v, "n": 1}
 
 
