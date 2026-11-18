@@ -264,7 +264,32 @@ class App:
             parts["kepler"] = self.kepler_check()
         except Exception:
             parts["kepler"] = None
+        parts.update(self.mining_reality())
         return realitycheck.build(parts)
+
+    def mining_reality(self) -> Dict[str, Any]:
+        """R3: tonnes per rock (MP1, the plugin's RockYield) and collector
+        lifetime (ML1) against what came after - cached while the journals
+        stand still."""
+        evs = self.archive.events()
+        sig = (len(evs), evs[-1].get("timestamp") if evs else None)
+
+        def build() -> Dict[str, Any]:
+            from . import mining, realitycheck
+            from .model import _optional
+            ms = _optional("miningstat")
+            out: Dict[str, Any] = {"rocks": None, "collectors": None}
+            try:
+                if ms is not None and hasattr(ms, "RockYield"):
+                    out["rocks"] = realitycheck.rock_yield(evs, ms.RockYield)
+            except Exception:
+                out["rocks"] = None
+            try:
+                out["collectors"] = realitycheck.collectors(mining.collector_waves(evs))
+            except Exception:
+                out["collectors"] = None
+            return out
+        return self.cached("mining_reality", sig, build)
 
     def cached(self, key: str, sig: Any, build) -> Any:
         """Rebuild only when the database or the relevant live data moved."""

@@ -324,6 +324,17 @@ def collector_life(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     label}}. Only what was seen: the journal writes no expiry, so neither
     when a wave died nor how long it would have worked on is known.
     """
+    out = {}
+    for c, xs in collector_waves(events).items():
+        s = _spread(xs)
+        if s:
+            out[c] = dict(s, label=controller_label(c))
+    return out
+
+
+def collector_waves(events: List[Dict[str, Any]]) -> Dict[str, List[float]]:
+    """ML1: the seconds each collector wave was seen working, per limpet
+    controller, in the order they flew (also for the reality check)."""
     ctrl: Optional[str] = None
     marks: List[Tuple[float, Optional[str]]] = []
     for e in events:
@@ -338,12 +349,7 @@ def collector_life(events: List[Dict[str, Any]]) -> Dict[str, Any]:
         c = next((c for t, c in reversed(marks) if t <= t0), None)
         if c:
             by.setdefault(c, []).extend(_waves(run)[0])
-    out = {}
-    for c, xs in by.items():
-        s = _spread(xs)
-        if s:
-            out[c] = dict(s, label=controller_label(c))
-    return out
+    return by
 
 
 def limpet_load(cargo: int, ratio: float, reserve: float = LIMPET_RESERVE) -> Dict[str, int]:

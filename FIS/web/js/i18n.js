@@ -53,6 +53,8 @@ export function applyStatic(root = document) {
 
 const DE = /*DE*/{
   "Kepler positions": "Kepler-Positionen",
+  "Tonnes per rock (mining)": "Tonnen je Brocken (Mining)",
+  "Collector lifetime": "Sammler-Lebensdauer",
   "Fuel per jump": "Treibstoff je Sprung",
   "Time per system vs. route estimate": "Zeit je System gegen Routenschätzung",
   "Exploration value vs. sales": "Explorationswert gegen Verkäufe",

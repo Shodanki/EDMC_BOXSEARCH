@@ -58,6 +58,34 @@ class RealityTest(unittest.TestCase):
         self.assertIsNone(rows[0]["value"])
         self.assertNotIn("pending", rc.build({})[0])
 
+    def test_rock_yield_judges_each_rock_by_the_ones_before(self):
+        import sys
+        from tests.fixtures import PLUGIN_DIR
+        if PLUGIN_DIR not in sys.path:
+            sys.path.append(PLUGIN_DIR)
+        import miningstat
+
+        def rock(share, tonnes):
+            head = [{"event": "ProspectedAsteroid", "Materials": [{"Name": "Platinum", "Proportion": share}]}]
+            return head + [{"event": "MiningRefined", "Type": "$platinum_name;"}] * tonnes
+        evs = []
+        for t in (4, 5, 6, 5, 4, 5, 9):              # six rocks learn, the seventh is judged too
+            evs += rock(5.0, t)
+        evs.append({"event": "Docked"})
+        r = rc.rock_yield(evs, miningstat.RockYield)
+        self.assertEqual(r["n"], 2)                   # rocks 6 and 7: five before them each
+        self.assertEqual(r["inside_pct"], 50.0)       # 5 t inside 4-5, 9 t outside
+        self.assertIsNone(rc.rock_yield([], miningstat.RockYield))
+
+    def test_collectors_against_the_learnt_mark(self):
+        c = rc.collectors({"ctrl": [300, 310, 290, 305, 295, 300, 900]})
+        self.assertEqual((c["n"], c["within_pct"]), (2, 50.0))
+        self.assertIsNone(rc.collectors({"ctrl": [300, 310]}))
+        rows = {r["key"]: r for r in rc.build({"rocks": {"median_pct": 44.4, "inside_pct": 60.5, "n": 147},
+                                               "collectors": {"within_pct": 89.3, "n": 75}})}
+        self.assertTrue(rows["rocks"]["good"] and rows["collectors"]["good"])
+        self.assertIn("60 % in the middle half", rows["rocks"]["value"])
+
 
 class _DB:
     def __init__(self):

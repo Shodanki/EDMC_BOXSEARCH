@@ -85,6 +85,48 @@ def kepler(systems: Sequence[Any], summary_of: Callable[[Any], Optional[Dict[str
             "trusted": trusted}
 
 
+def rock_yield(events: Sequence[Dict[str, Any]], make: Callable[[], Any]) -> Optional[Dict[str, Any]]:
+    """MP1: each mined rock against what the rocks before it said
+    (miningstat.RockYield, replayed in order) - the median error of the
+    expected tonnes and the share inside the expected middle half."""
+    ry = make()
+    errs: List[float] = []
+    inside = [0]
+    close = ry._close
+
+    def judged() -> None:
+        if ry._rock is not None and ry._got:
+            main = max(ry._got, key=ry._got.get)
+            got = ry._got[main]
+            ex = ry.expect(ry._rock.get(main, 0.0))
+            if ex:
+                errs.append(100.0 * abs(ex["t"] - got) / got)
+                inside[0] += ex["lo"] <= got <= ex["hi"]
+        close()
+    ry._close = judged
+    for e in events:
+        ry.feed(e)
+    ry._close()
+    if not errs:
+        return None
+    return {"median_pct": round(_pct(errs, 0.5), 1), "inside_pct": round(100.0 * inside[0] / len(errs), 1),
+            "n": len(errs)}
+
+
+def collectors(waves: Dict[str, Sequence[float]], min_n: int = 5) -> Optional[Dict[str, Any]]:
+    """ML1: each collector wave against the 90 % mark of the waves of the
+    same controller before it - about nine in ten should stay within."""
+    n = within = 0
+    for xs in waves.values():
+        for i in range(min_n, len(xs)):
+            mark = _pct(sorted(xs[:i]), 0.9)
+            n += 1
+            within += xs[i] <= (mark or 0.0)
+    if not n:
+        return None
+    return {"within_pct": round(100.0 * within / n, 1), "n": n}
+
+
 def finds(cal: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """FX3: the mean gap between predicted and found share over the bands,
     weighted by their n."""
@@ -137,6 +179,14 @@ def build(parts: Dict[str, Any]) -> List[Dict[str, Any]]:
                      and "%.0f %% · first right %.0f %%" % (100.0 * b["recall_top3"], 100.0 * b["top1_right"]),
                      b and b.get("bodies"),
                      (b["recall_top3"] >= 0.6) if b and b.get("bodies", 0) >= 10 else None))
+    ry = parts.get("rocks")
+    rows.append(_row("rocks", "Tonnes per rock (mining)", ry and "median %.0f %% off · %.0f %% in the middle half"
+                     % (ry["median_pct"], ry["inside_pct"]), ry and ry["n"],
+                     (ry["inside_pct"] >= 35.0) if ry and ry["n"] >= 10 else None))
+    co = parts.get("collectors")
+    rows.append(_row("collectors", "Collector lifetime", co and "%.0f %% of waves within the learnt 90 %% mark"
+                     % co["within_pct"], co and co["n"],
+                     (co["within_pct"] >= 75.0) if co and co["n"] >= 10 else None))
     for row in rows:
         if not row["value"]:
             row["value"], row["good"] = None, None
