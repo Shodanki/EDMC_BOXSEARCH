@@ -33,6 +33,7 @@ from .sysroute import calibrate_from_journal, leg_distance_ls
 from .state import CFG, POSITION_EVENTS, ST, cfg_bool, logger
 from . import cockpit
 from . import cockpitinfo
+from . import eddcheck
 from . import findlog
 from . import panel
 from . import planning
@@ -242,6 +243,7 @@ def _on_arrival(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, Any]
         survey._prune_queues()
         survey._resort_queues()
         uithread._ui(survey._copy_flight)
+    eddcheck.backfill()                  # FX4: once per session, local
     if ev == "FSDJump":
         cockpit._overlay_briefing("arrival", ST.cur_system, ST.cur_id64,
                                   entry.get("StarClass") or None)
@@ -346,6 +348,7 @@ def _on_fsd_target(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, A
     nm = entry.get("Name")
     cockpit._overlay_briefing("target", nm, entry.get("SystemAddress"),
                               entry.get("StarClass"))
+    eddcheck.check_target(entry)         # FX4: EDD by id64 before the jump
     t = survey.current_probe()
     if t and nm == t.name:
         panel._set_status("confirmed: %s" % nm)

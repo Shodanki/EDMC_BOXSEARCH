@@ -206,13 +206,14 @@ def _route_check(hops: List[Tuple[str, Any, Any]]) -> None:
     (checked: EDSM)" and the same route plotted again asks nothing.
     Runs in the background.
     """
-    todo = _route_check_todo(hops)[:ROUTE_CHECK_MAX]
+    todo = _route_check_todo(hops)
     if not todo:
         return
     ttl = shells.ttl_seconds()
     known: List[Dict] = []
+    # FX4: EDD is local - every hop; only the one EDSM request keeps its cap
     rest = _route_check_edd(list(todo), ttl, known)
-    asked_edsm = _route_check_edsm(rest, ttl, known)
+    asked_edsm = _route_check_edsm(rest[:ROUTE_CHECK_MAX], ttl, known)
     if known:
         planning._store_rows(known)
     logger.info("route check | %d systems not checked before: %d known, %d asked EDSM in one "
