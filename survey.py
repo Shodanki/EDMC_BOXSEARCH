@@ -26,6 +26,7 @@ from . import groundmine
 from . import journalscan
 from . import learnreset
 from . import eddhistory
+from . import findlog
 from . import miningstat
 from .boxelplan import K_BIO, K_DSS, K_NEW, K_SCAN, Target, bundled_probe_prefix, set_origin
 from .deepspace import best_staging, staging_lines
@@ -475,6 +476,10 @@ def _start_worker() -> None:
     planning._fetch_local()
     planning._advance_horizon(allow_fetch=True)
     planning._rebuild_plan()
+    hint = findlog.height_hint(ST.center[1] if ST.center else None)
+    if hint:                                # FX4: own finds pay more off the plane
+        logger.info("sphere | %s", findlog.height_hint_text(hint))
+        panel._set_status(findlog.height_hint_text(hint))
 
 
 def _stop_survey() -> None:

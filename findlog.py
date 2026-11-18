@@ -65,3 +65,35 @@ def keep_prediction(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except Exception:
         logger.exception("find odds failed")
     return None
+
+
+HINT_RATIO = 1.5          # the other height band must pay this much better to say so
+
+
+def height_hint(y: Optional[float]) -> Optional[Dict[str, Any]]:
+    """
+    FX4: on starting a sphere near the galactic plane - do the commander's
+    own settled visits pay clearly better above or below it (|y| >=
+    findodds.HEIGHT_LY)? FX3 measurement: 3 % near the plane, 14 % above or
+    below. Only when both bands have findodds.WEIGHT visits and the other
+    band pays HINT_RATIO times as often. Returns {here, there, n_here,
+    n_there} or None. Worker thread; takes ST.lock.
+    """
+    if findodds.height_band(y) != "low" or not ST.db:
+        return None
+    with ST.lock:
+        m = findodds.model(lambda q, a: ST.db.cx.execute(q, a).fetchall())
+    lo, hi = m.cells.get(("pg", "low"), (0, 0)), m.cells.get(("pg", "high"), (0, 0))
+    if lo[1] < findodds.WEIGHT or hi[1] < findodds.WEIGHT:
+        return None
+    here, there = lo[0] / lo[1], hi[0] / hi[1]
+    if there < HINT_RATIO * max(here, 1e-9) or there <= 0:
+        return None
+    return {"here": here, "there": there, "n_here": lo[1], "n_there": hi[1]}
+
+
+def height_hint_text(h: Dict[str, Any]) -> str:
+    """The panel's status line for a height hint."""
+    return ("finds near the plane %.0f %% (%d visits), %.0f ly above/below %.0f %% (%d) - "
+            "a sphere there pays more" % (100 * h["here"], h["n_here"], findodds.HEIGHT_LY,
+                                          100 * h["there"], h["n_there"]))

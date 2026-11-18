@@ -144,5 +144,28 @@ check(sum(b["n"] for b in cal["bands"]) == 2, "both in the bands")
 check(findodds.calibration(lambda s, a: (_ for _ in ()).throw(RuntimeError("no table")))["logged"] == 0,
       "no table: an empty calibration, no error")
 
+print("FX4: the height hint on starting a sphere")
+check(findlog.height_hint(-40.0) is None, "too few visits in both bands: no hint")
+real_model = findodds.model
+fake = findodds.FindOdds()
+for i in range(60):
+    fake.add("c", "K", "", i % 4 == 0, "high")       # 25 % off the plane
+    fake.add("c", "K", "", i % 30 == 0, "low")       # 3 % near it
+findodds.model = lambda q, skip=None: fake
+h = findlog.height_hint(-78.0)
+check(h is not None and abs(h["there"] - 0.25) < 1e-9 and h["n_here"] == 60,
+      "near the plane, off-plane pays 8x: hint (%s)" % h)
+check(h is not None and "3 %" in findlog.height_hint_text(h) and "25 %" in findlog.height_hint_text(h),
+      "status line: %s" % (findlog.height_hint_text(h) if h else ""))
+check(findlog.height_hint(-150.0) is None and findlog.height_hint(None) is None,
+      "a sphere already off the plane, or no position: no hint")
+even = findodds.FindOdds()
+for i in range(60):
+    even.add("c", "K", "", i % 10 == 0, "high")
+    even.add("c", "K", "", i % 12 == 0, "low")
+findodds.model = lambda q, skip=None: even
+check(findlog.height_hint(-40.0) is None, "off-plane only a little better (10 vs 8 %): no hint")
+findodds.model = real_model
+
 print("%d failure(s)" % fails)
 sys.exit(1 if fails else 0)
