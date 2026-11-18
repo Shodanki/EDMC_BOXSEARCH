@@ -82,6 +82,8 @@ jobs:
         run: python tests/biosig.py
       - name: life support off (no event from the game - Loadout, ModulesInfo.json, AFMU repairs with DANGER)
         run: python tests/life_support.py
+      - name: reality check from the command line (every model's row over a scripted journal)
+        run: python tests/realitycheck.py
       - name: EDMC passes on no journal events (warning, missed events stored, track positions)
         run: python tests/journal_gap.py
       - name: chance of a find (FX3, kept at the first arrival, set against the scans)
