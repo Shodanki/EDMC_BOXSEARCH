@@ -825,6 +825,7 @@ const DE = /*DE*/{
   "Tritium mined: ≈ {j} carrier jumps of 500 ly": "Tritium gefördert: ≈ {j} Trägersprünge à 500 ly",
   "MINING": "MINING",
   "STATISTICS": "STATISTIK",
+  "min {v} %": "min. {v} %",
   "OVERVIEW": "ÜBERSICHT",
   "HISTORY": "VERLAUF",
   "RATES & TIMES": "QUOTEN & ZEITEN",

@@ -478,7 +478,14 @@ body.solo #views { padding-top: 30px; }   /* room for the solo control */
    taller than a screen, so they scroll inside; the module list never gets cut */
 .ship-view, .carrier-view { overflow-y: auto; overscroll-behavior: contain;
   scrollbar-color: var(--faint) transparent; scrollbar-width: thin; padding-bottom: 16px; }
-.ann { display: grid; grid-template-columns: 130px 1fr 220px; gap: 12px; align-items: stretch; }
+/* (18.11., user: like a real annunciator - one compact matrix, warnings / cautions / advisories in
+   their rows, the columns aligned across all three; no rows stretched over the width that wrap
+   into a staircase. Beside it the ship and its key readings.) */
+.ann { display: grid; grid-template-columns: 130px max-content minmax(240px, 1fr); gap: 16px; align-items: stretch; }
+.ann-side { display: flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 0; }
+.ann-read { display: grid; gap: 3px; }
+.ann-r { display: grid; grid-template-columns: 70px minmax(80px, 1fr) 96px; gap: 8px; align-items: center; font-size: 12px; }
+.ann-r .num { text-align: right; }
 .ann-master { border: 2px solid rgba(var(--green-rgb), .5); display: flex; flex-direction: column; justify-content: center;
   align-items: center; text-align: center; padding: 6px; }
 .ann-master .am-k { font-size: 11px; letter-spacing: .12em; color: var(--dim); }
@@ -490,10 +497,10 @@ body.solo #views { padding-top: 30px; }   /* room for the solo control */
 .ann-master.warning .am-v, .ann-master.warning .am-k { color: var(--warn); }
 @keyframes annblink { 50% { background: rgba(var(--red-rgb), .04); } }
 .ann-bands { display: flex; flex-direction: column; gap: 4px; }
-.ann-band { display: grid; grid-template-columns: 82px 1fr; gap: 6px; align-items: start; }
+.ann-band { display: grid; grid-template-columns: 82px max-content; gap: 6px; align-items: start; }
 .ab-k { font-size: 10px; letter-spacing: .14em; padding-top: 5px; }
 .ann-band.warning .ab-k { color: var(--warn); } .ann-band.caution .ab-k { color: var(--caut); } .ann-band.advisory .ab-k { color: var(--adv); }
-.ab-lamps { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 4px; }
+.ab-lamps { display: grid; grid-template-columns: repeat(6, 124px); gap: 4px; }
 .lamp { font-size: 10.5px; letter-spacing: .06em; text-align: center; padding: 4px 2px; border: 1px solid rgba(var(--dim-rgb), .25);
   color: rgba(var(--dim-rgb), .45); background: rgba(0,0,0,.25); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lamp.warning.on { color: var(--white); background: rgba(var(--red-rgb), .75); border-color: var(--warn); box-shadow: 0 0 10px rgba(var(--red-rgb), .5); }
@@ -1367,8 +1374,11 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 
 /* Federation bridge: keys as lavender blocks, thin round tank and hold, services as pills (on: amber) */
 :root[data-theme="bridge"] .carrier-view .ns-row { border-bottom: 0; grid-template-columns: 150px 1fr; }
-:root[data-theme="bridge"] .carrier-view .ns-k { background: var(--frame-c); color: var(--ink); text-align: right; padding: 2px 10px 0;
-  border-radius: 999px 0 0 999px; align-self: center; font-family: var(--font-display); }
+/* the keys at the rows' own size (user 18.11.: at 11 px in the narrow face CARRIER looked as if at
+   another resolution than the other pages) */
+:root[data-theme="bridge"] .carrier-view .ns-k { background: var(--frame-c); color: var(--ink); text-align: right; padding: 3px 10px 2px;
+  border-radius: 999px 0 0 999px; align-self: center; font-family: var(--font-display); font-size: 12.5px; font-weight: 600;
+  letter-spacing: .04em; line-height: 1.25; }
 :root[data-theme="bridge"] .carrier-view .ns-name { font-family: var(--font-display); text-transform: uppercase; }
 :root[data-theme="bridge"] .carrier-view .ns-sub { color: var(--amber); font-family: var(--font-display); text-align: right; }
 :root[data-theme="bridge"] .carrier-view .hold-stack { border: 0; height: 8px; border-radius: 999px; overflow: hidden; background: rgba(var(--dim-rgb), .22); }

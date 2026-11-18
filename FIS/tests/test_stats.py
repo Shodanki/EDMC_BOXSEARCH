@@ -229,6 +229,17 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertNotIn("animation", block)
         self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view, .mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view, .settings-view) .frame { padding: 5px;', css)
 
+    def test_ship_status_is_one_compact_matrix(self):
+        """User 18.11.2026: the SHIP status panel like a real annunciator - warnings, cautions and
+        advisories in one compact matrix with aligned columns (no rows stretched over the width
+        that wrap into a staircase), the ship and its key readings beside it."""
+        css, js = self._read("css", "fis.css"), self._read("js", "views", "ship.js")
+        self.assertIn(".ab-lamps { display: grid; grid-template-columns: repeat(6, 124px); gap: 4px; }", css)
+        self.assertIn(".ann-band { display: grid; grid-template-columns: 82px max-content;", css)
+        self.assertIn('el("div", { class: "ann-side" }, id, readings)', js)
+        for label in ('t("Fuel")', 't("Cargo")', 't("Modules")'):
+            self.assertIn(label, js[js.index("function annunciator"):js.index("function cutaway")])
+
     def test_ship_per_theme(self):
         """TH3 (user 18.11.2026): SHIP per theme. Hold, fuel, reservoir and the hull hand
         their share to meter(), module health carries --p; the hull meter is hidden in

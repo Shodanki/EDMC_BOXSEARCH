@@ -381,7 +381,7 @@ function annunciator() {
   const bands = ["warning", "caution", "advisory"].map(lv => el("div", { class: "ann-band " + lv },
     el("div", { class: "ab-k", text: t(LEVEL[lv]) }),
     el("div", { class: "ab-lamps" }, ...data.panel.filter(p => p.level === lv).map(p =>
-      el("div", { class: "lamp " + lv + (p.on ? " on" : ""), text: t(LAMP[p.key] || p.key) })))));
+      el("div", { class: "lamp " + lv + (p.on ? " on" : ""), text: t(LAMP[p.key] || p.key), title: t(LAMP[p.key] || p.key) })))));
   const id = el("div", { class: "ann-id" },
     el("div", { class: "c-cyan sh-name", text: (s.name || s.type || "?") }),
     el("div", { class: "c-dim", text: [s.type, s.ident].filter(Boolean).join(" · ") }),
@@ -389,8 +389,18 @@ function annunciator() {
     // TH3: the hull as a meter too - hidden in the standard look, drawn by the other themes
     meter(pct(s.hull) ?? 0, 100, "sh-hull-m " + hcls(s.hull)),
     el("div", { class: "c-dim small", text: data.live ? t("live") : t("game not running – last known state") }));
+  // beside the lamps, as on a real panel next to the annunciator: the readings that go with them
+  const L = data.logistics || {}, f = L.fuel || {}, integ = data.integrity || {};
+  const reading = (label, v, max, text, cls) => el("div", { class: "ann-r" },
+    el("span", { class: "c-dim", text: label }), meter(v || 0, max, cls), el("span", { class: "num", text }));
+  const fuelPct = f.capacity ? 100 * (f.main || 0) / f.capacity : 0;
+  const readings = el("div", { class: "ann-read" },
+    f.capacity ? reading(t("Fuel"), f.main, f.capacity, fmt(f.main, 1) + " t", fuelPct < 25 ? "warn" : "") : null,
+    L.capacity ? reading(t("Cargo"), L.used, L.capacity, fmt(L.used, 0) + " / " + fmt(L.capacity, 0) + " t", "") : null,
+    integ.min !== null && integ.min !== undefined ? reading(t("Modules"), pct(integ.min) ?? 0, 100, t("min {v} %", { v: pct(integ.min) ?? "–" }),
+      hcls(integ.min) === "ok" ? "" : "warn") : null);
   return withPopout(frame(t("STATUS"), "", el("div", { class: "ann" }, master,
-    el("div", { class: "ann-bands" }, ...bands), id), { cls: "sh-ann", appear: false }), "ship");
+    el("div", { class: "ann-bands" }, ...bands), el("div", { class: "ann-side" }, id, readings)), { cls: "sh-ann", appear: false }), "ship");
 }
 
 // ------------------------------------------------------------ cutaway
