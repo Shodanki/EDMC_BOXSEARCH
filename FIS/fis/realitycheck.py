@@ -179,6 +179,10 @@ def build(parts: Dict[str, Any]) -> List[Dict[str, Any]]:
                      and "%.0f %% · first right %.0f %%" % (100.0 * b["recall_top3"], 100.0 * b["top1_right"]),
                      b and b.get("bodies"),
                      (b["recall_top3"] >= 0.6) if b and b.get("bodies", 0) >= 10 else None))
+    sc = parts.get("scoop")
+    rows.append(_row("scoop", "Fuel scoop rate per star class", sc and "median %.0f %% off · 90 %% within %.0f %%"
+                     % (sc["median_pct"], sc["p90_pct"]), sc and sc["n"],
+                     (sc["median_pct"] <= 15.0) if sc and sc["n"] >= 10 else None))
     ry = parts.get("rocks")
     rows.append(_row("rocks", "Tonnes per rock (mining)", ry and "median %.0f %% off · %.0f %% in the middle half"
                      % (ry["median_pct"], ry["inside_pct"]), ry and ry["n"],

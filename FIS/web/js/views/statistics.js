@@ -189,6 +189,11 @@ function learning() {
   if (L.finds) rows.push(...findRows(L.finds, line, head));
   if (L.forecast) rows.push(...forecastRows(L.forecast, line, head));
   if (L.reality) rows.push(...realityRows(L.reality, head));
+  if (L.scoop && L.scoop.rates.length) {          // B-15: what your scoop got per star class
+    rows.push(head(t("Fuel scoop rate per star class (needs {n})", { n: L.scoop.min_n })));
+    for (const r of L.scoop.rates) rows.push(line(t("Class {c}", { c: r.cls }),
+      t("~{v} t/s ({lo}–{hi}) · learned from {n}", { v: fmt(r.t_s, 2), lo: fmt(r.lo, 2), hi: fmt(r.hi, 2), n: r.n }), r.thin));
+  }
   if (L.rocks.length) {
     rows.push(head(t("Prospected rocks per ring class and hotspot (needs {n})", { n: L.min_rocks })));
     for (const r of L.rocks) rows.push(line(r.cls + (r.hotspot ? " · " + r.hotspot : " · " + t("all")),
@@ -242,7 +247,8 @@ function findRows(F, line, head) {
 // V0: every learning model against your own journals - one error value each
 const REALITY = { kepler: N_("Kepler positions"), fuel: N_("Fuel per jump"), route: N_("Time per system vs. route estimate"),
   work: N_("Surface scan / bio sample"), value: N_("Exploration value vs. sales"), finds: N_("Chance of a find vs. scans"),
-  bio: N_("Bio prediction (genera in top 3)"), rocks: N_("Tonnes per rock (mining)"), collectors: N_("Collector lifetime") };
+  bio: N_("Bio prediction (genera in top 3)"), rocks: N_("Tonnes per rock (mining)"), collectors: N_("Collector lifetime"),
+  scoop: N_("Fuel scoop rate per star class") };
 
 let realityWait = null;     // R1: one reload while the Kepler check is computed in the background
 

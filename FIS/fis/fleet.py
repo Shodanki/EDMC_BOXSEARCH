@@ -61,6 +61,7 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "ShieldState", "CockpitBreached", "SystemsShutdown", "Died", "JetConeDamage", "JetConeBoost",
           "FighterDestroyed", "SRVDestroyed", "ApproachBody", "LeaveBody", "SupercruiseExit", "Touchdown",
           "AfmuRepairs",                     # R8: a repair of the life support says it was off
+          "FuelScoop", "StartJump",          # B-15: scoop rate per star class
           "Docked",
           # points of interest in SYSTEM (M10): stations, carriers, beacons
           "FSSSignalDiscovered",

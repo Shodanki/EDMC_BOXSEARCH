@@ -265,7 +265,23 @@ class App:
         except Exception:
             parts["kepler"] = None
         parts.update(self.mining_reality())
+        try:
+            parts["scoop"] = self.scoop()["reality"]
+        except Exception:
+            parts["scoop"] = None
         return realitycheck.build(parts)
+
+    def scoop(self) -> Dict[str, Any]:
+        """B-15: fuel scoop rate per star class from your journals, and its
+        reality check - cached while the journals stand still."""
+        evs = self.archive.events()
+        sig = (len(evs), evs[-1].get("timestamp") if evs else None)
+
+        def build() -> Dict[str, Any]:
+            from . import scooprate
+            smp = scooprate.samples(evs)
+            return {"rates": scooprate.rates(smp), "reality": scooprate.reality(smp), "min_n": scooprate.MIN_N}
+        return self.cached("scoop", sig, build)
 
     def mining_reality(self) -> Dict[str, Any]:
         """R3: tonnes per rock (MP1, the plugin's RockYield) and collector
@@ -1347,6 +1363,7 @@ class Handler(BaseHTTPRequestHandler):
             out["learning"]["models"]["value"] = un["exploration"].get("calibration") if un else None
             out["learning"]["finds"] = learn.find_odds(app.db)       # FX3: predicted finds vs scans
             out["learning"]["forecast"] = app.forecasts()               # B-24
+            out["learning"]["scoop"] = app.scoop()                      # B-15
             out["bio_rates"] = app.cached("bio_rates", (app.db.mtime(), app.archive.rev),    # BQ1, EA2
                                           lambda: learn.bio_rates(app.db, extra=app.archive_planets()))
             from .shipview import _bodyvalue
