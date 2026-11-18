@@ -39,14 +39,14 @@ SEGMENTS: List[Tuple[str, Tuple[str, ...], Tuple[str, ...]]] = [
     ("exploration", ("exploration", "codex"), ()),
     ("exobiology", ("exobiology",), ()),
     ("mining", ("mining",), ("limpets",)),
-    ("trade", ("trade",), ()),
+    ("trade", ("trade",), ("cogs",)),
     ("combat", ("combat",), ("ammo",)),
     ("missions", ("missions", "rescue", "community_goals"), ()),
     ("carrier", (), ("tritium",)),
 ]
 # the lines of the income statement after the revenue
 OTHER_INCOME = ("sales", "other", "from_balance")
-MATERIAL = ("fuel", "ammo", "limpets", "tritium")
+MATERIAL = ("cogs", "fuel", "ammo", "limpets", "tritium")   # GV2: cost of goods sold first
 PERSONNEL = ("crew",)
 WRITE_DOWNS = ("ship_loss",)
 KEEP = {"week": 12, "month": 12, "year": 10}

@@ -45,12 +45,12 @@ class TestLedger(unittest.TestCase):
         inc = rows(T["income_rows"])
         self.assertEqual(inc["exobiology"], 7_000_000)               # value + first-footfall bonus
         self.assertEqual(inc["exploration"], 300_000)
-        self.assertEqual(inc["trade"], 100_000)                       # the profit over the price paid
+        self.assertEqual(inc["trade"], 500_000)                       # GV2: the full sale price
         self.assertEqual(inc["mining"], 5_000_000)                    # AvgPricePaid 0: mined
         self.assertEqual(inc["community_goals"], 10_000_000)
         costs = rows(T["cost_rows"])
         costs.pop("from_balance")                                     # see the balance test
-        self.assertEqual(costs, {"fuel": 500, "repairs": 1_500, "ship_loss": 750_000})
+        self.assertEqual(costs, {"cogs": 400_000, "fuel": 500, "repairs": 1_500, "ship_loss": 750_000})
         self.assertEqual(rows(T["invest_rows"]), {"ships": 15_000_000, "modules": 1_000_000})
         self.assertEqual(T["net"], T["income"] - T["costs"])
         self.assertEqual(r["carrier"], {"deposit": 1_000_000, "withdraw": 0})   # a transfer, no gain or loss
@@ -62,7 +62,7 @@ class TestLedger(unittest.TestCase):
         by = {s["id"]: s for s in r["ships"]}
         self.assertEqual(by[1]["income"], 7_300_000)                  # bio and data sold in the explorer
         self.assertEqual(by[1]["costs"], 2_000)
-        self.assertEqual((by[2]["invest"], by[2]["costs"]), (16_000_000, 750_000))
+        self.assertEqual((by[2]["invest"], by[2]["costs"]), (16_000_000, 750_000 + 400_000))   # rebuy, the gold's cost
         self.assertTrue(by[2]["current"])
         self.assertEqual(r["cmdr"]["income"], 10_000_000 + r["rest"]["plus"])   # the CG and the balance rest
 
@@ -76,6 +76,20 @@ class TestLedger(unittest.TestCase):
         self.assertEqual(r["rest"]["gaps"], 1)
         missions = TRIP[:-2] + [ev(10, "11:25", "MissionCompleted", Reward=-(1_000_000 + booked))] + TRIP[-2:]
         self.assertEqual(ledger.build_ledger(missions, now=1e10)["rest"]["gaps"], 0)
+
+    def test_trade_gross_keeps_the_net(self):
+        """GV2: trade at its full sale with the goods' cost beside it - the
+        net, the cash flow and the balance rest stay what they were; the
+        purchase is no cost, mined goods have no cost of goods."""
+        r = ledger.build_ledger(TRIP, now=1e10)
+        T = r["totals"]
+        self.assertEqual(rows(T["income_rows"])["trade"] - rows(T["cost_rows"])["cogs"], 100_000)
+        self.assertEqual(T["net"], 7_300_000 + 100_000 + 5_000_000 + 10_000_000 - 2_000 - 750_000
+                         + r["rest"]["plus"] - r["rest"]["minus"])
+        bought = [ev(10, "08:00", "MarketBuy", Type="gold", Count=10, TotalCost=400_000)]
+        self.assertEqual(ledger.build_ledger(bought)["totals"]["costs"], 0)
+        mined = [ev(10, "08:00", "MarketSell", Type="painite", Count=5, TotalSale=1_000_000, AvgPricePaid=0)]
+        self.assertNotIn("cogs", rows(ledger.build_ledger(mined)["totals"]["cost_rows"]))
 
     def test_period(self):
         late = TRIP + [ev(20, "08:00", "RepairAll", Cost=99)]

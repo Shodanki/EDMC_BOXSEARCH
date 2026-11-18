@@ -16,10 +16,10 @@ import { balancePane, outlookPane, segmentsPane, statementPane } from "../ledger
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
 const LABEL = {
   income: { exobiology: N_("Exobiology"), exploration: N_("Exploration data"), codex: N_("Codex"),
-    mining: N_("Mining (sold)"), trade: N_("Trade (profit)"), missions: N_("Missions"),
+    mining: N_("Mining (sold)"), trade: N_("Trade (gross sales)"), missions: N_("Missions"),
     rescue: N_("Search and rescue"), community_goals: N_("Community goals"), combat: N_("Bounties and bonds"),
     sales: N_("Sales (limpets, gear)"), other: N_("Other"), from_balance: N_("From the balance (missions and more)") },
-  costs: { ship_loss: N_("Ship lost (rebuy)"), repairs: N_("Repairs"), fuel: N_("Fuel"),
+  costs: { cogs: N_("Cost of goods sold (trade)"), ship_loss: N_("Ship lost (rebuy)"), repairs: N_("Repairs"), fuel: N_("Fuel"),
     ammo: N_("Ammunition and vehicles"), limpets: N_("Limpets"), tritium: N_("Tritium"), crew: N_("Crew"), fines: N_("Fines"),
     other: N_("Other"), from_balance: N_("From the balance (not booked)") },
   invest: { ships: N_("Ships"), modules: N_("Modules"), transfers: N_("Transfers"), onfoot: N_("On-foot gear"),

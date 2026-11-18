@@ -79,6 +79,24 @@ class StatementTest(unittest.TestCase):
     def test_tritium_bought_is_material_not_goods(self):
         self.assertEqual({r["key"]: r["cr"] for r in self.led["totals"]["cost_rows"]}["tritium"], 5_000_000)
 
+    def test_trade_gross_cost_of_sales(self):
+        """GV2: trade revenue is the full sale, its goods' cost a line of its
+        own under material - the operating result is the same as with the
+        profit alone; buying goods is no cost, mined goods have none."""
+        trip = JOURNAL + [ev("2026-11-10T10:00:00Z", "MarketBuy", Type="gold", Count=10, TotalCost=400_000),
+                          ev("2026-11-10T10:30:00Z", "MarketSell", Type="gold", Count=10, TotalSale=500_000,
+                             AvgPricePaid=40_000)]
+        st = statement.statement(statement._merge(ledger.build_ledger(trip, now=NOW)["periods"]["year"], "all"))
+        L = st["lines"]
+        self.assertEqual({r["key"]: r["cr"] for r in L["revenue"]["rows"]}["trade"], 500_000)
+        self.assertEqual(L["material"]["rows"][0], {"key": "cogs", "cr": 400_000})
+        base = statement.statement(statement._merge(self.led["periods"]["year"], "all"))
+        self.assertEqual(st["result"], base["result"] + 100_000)      # exactly the profit, as before GV2
+        self.assertNotIn("cogs", [r["key"] for r in base["lines"]["material"]["rows"]])   # painite: mined
+        seg = {r["seg"]: r for r in statement.segments(statement._merge(
+            ledger.build_ledger(trip, now=NOW)["periods"]["year"], "all"), None, {})}
+        self.assertEqual((seg["trade"]["revenue"], seg["trade"]["net"]), (500_000, 100_000))
+
     def test_periods_with_carrier_upkeep(self):
         sts = statement.statements(self.led["periods"], CARRIER, 22 / 27, NOW)
         weeks = {s["label"]: s for s in sts["week"]}

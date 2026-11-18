@@ -17,9 +17,9 @@ const LINE = { revenue: N_("1. Revenue"), other_income: N_("2. Other operating i
   personnel: N_("4. Personnel expenses"), write_downs: N_("5. Write-downs and losses"), other_costs: N_("6. Other operating expenses") };
 const COST_SIDE = { material: true, personnel: true, write_downs: true, other_costs: true };
 const ROW = { exploration: N_("Exploration data"), codex: N_("Codex"), exobiology: N_("Exobiology"), mining: N_("Mining (sold)"),
-  trade: N_("Trade (profit)"), combat: N_("Bounties and bonds"), missions: N_("Missions"), rescue: N_("Search and rescue"),
+  trade: N_("Trade (gross sales)"), combat: N_("Bounties and bonds"), missions: N_("Missions"), rescue: N_("Search and rescue"),
   community_goals: N_("Community goals"), sales: N_("Sales (limpets, gear)"), other: N_("Other"),
-  from_balance: N_("From the balance (not booked)"), fuel: N_("Fuel"), ammo: N_("Ammunition and vehicles"), limpets: N_("Limpets"),
+  from_balance: N_("From the balance (not booked)"), cogs: N_("Cost of goods sold (trade)"), fuel: N_("Fuel"), ammo: N_("Ammunition and vehicles"), limpets: N_("Limpets"),
   tritium: N_("Tritium"), crew: N_("Wages of the NPC pilots"), carrier_services: N_("Carrier crew and services"),
   carrier_core: N_("Carrier core upkeep"), carrier_upkeep: N_("Carrier upkeep"), ship_loss: N_("Ships lost (rebuy)"),
   repairs: N_("Repairs"), fines: N_("Fines"), ships: N_("Ships"), modules: N_("Modules"), transfers: N_("Transfers"),

@@ -9,10 +9,11 @@ journal alone, "like in real life" (user, 17.11.).
 
 Three kinds of money, kept apart:
 - income: data sold (exobiology, exploration, codex), goods (mining sold at
-  AvgPricePaid 0, trade as its profit over the price paid), rewards;
-- running costs: repairs, fuel, ammunition and vehicles, limpets, tritium
-  bought for the carrier (GV1: its fuel, used up), a ship
-  lost (the rebuy), crew, fines;
+  AvgPricePaid 0, trade at its full sale price - GV2), rewards;
+- running costs: the cost of the goods sold in trade (GV2: AvgPricePaid x
+  Count, booked at the sale; buying them is only cash), repairs, fuel,
+  ammunition and vehicles, limpets, tritium bought for the carrier (GV1: its
+  fuel, used up), a ship lost (the rebuy), crew, fines;
 - investment: ships, modules, transfers, on-foot gear, a carrier - buying
   counts here, selling gives it back (a negative investment).
 
@@ -223,9 +224,12 @@ def _market_sell(L: _Ledger, e: Dict[str, Any], ts: Optional[float]) -> None:
         # GV1: bought tritium was booked as material - its sale is all income
         L.book(ts, INCOME, "trade", sale)
     elif paid:
-        # trade: the profit; what was paid went out with MarketBuy
+        # GV2 trade gross (cost of sales method): the full sale is revenue,
+        # what was paid for these goods their cost - booked now, at the sale;
+        # the money went out with MarketBuy, so the cash flow is the sale alone
         L.cash(paid)
-        L.book(ts, INCOME, "trade", sale - paid)
+        L.book(ts, INCOME, "trade", sale)
+        L.book(ts, COSTS, "cogs", paid)
     else:
         L.book(ts, INCOME, "mining", sale)
 
