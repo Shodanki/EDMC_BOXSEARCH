@@ -67,7 +67,7 @@ def fuel(jumps: Sequence[Tuple[float, ...]],
 def kepler(systems: Sequence[Any], summary_of: Callable[[Any], Optional[Dict[str, int]]]) -> Optional[Dict[str, Any]]:
     """The Kepler watch over every system: of the bodies checked at their
     scan, the share within KEPLER_BAR of their own orbit."""
-    checked = ok = trusted = n_sys = 0
+    checked = ok = trusted = n_sys = m_checked = m_ok = 0
     for s in systems:
         try:
             k = summary_of(s)
@@ -79,10 +79,29 @@ def kepler(systems: Sequence[Any], summary_of: Callable[[Any], Optional[Dict[str
         checked += k["checked"]
         ok += k["ok"]
         trusted += k.get("trusted", 0)
+        m_checked += k.get("moons_checked", 0)
+        m_ok += k.get("moons_ok", 0)
     if not checked:
         return None
     return {"ok_pct": round(100.0 * ok / checked, 1), "checked": checked, "systems": n_sys,
-            "trusted": trusted}
+            "trusted": trusted, "moons_checked": m_checked,
+            "moons_ok_pct": round(100.0 * m_ok / m_checked, 1) if m_checked else None}
+
+
+def double_moons(bodies: Dict[Any, Any], bar: float) -> Dict[str, int]:
+    """R6: the checked moons that orbit a barycentre of two moons around a
+    planet (parent a barycentre whose own parent is no star and no
+    barycentre) - of them, how many lie within `bar` of their orbit."""
+    n = ok = 0
+    for b in bodies.values():
+        if getattr(b, "check", None) is None or b.kind in ("Star", "BaryCentre"):
+            continue
+        p = bodies.get(b.parent_id)
+        g = bodies.get(p.parent_id) if p is not None and p.kind == "BaryCentre" else None
+        if g is not None and g.kind not in ("Star", "BaryCentre"):
+            n += 1
+            ok += b.check[0] <= bar
+    return {"moons_checked": n, "moons_ok": ok}
 
 
 def rock_yield(events: Sequence[Dict[str, Any]], make: Callable[[], Any]) -> Optional[Dict[str, Any]]:
@@ -153,6 +172,10 @@ def build(parts: Dict[str, Any]) -> List[Dict[str, Any]]:
         k = None
     rows.append(_row("kepler", "Kepler positions", k and "%.1f %% within 1 %% of the orbit · %d systems"
                      % (k["ok_pct"], k["systems"]), k and k["checked"], k and k["ok_pct"] >= 90.0))
+    dm = k if k and k.get("moons_checked") else None
+    rows.append(_row("kepler_moons", "Kepler: double moons", dm and "%.1f %% within 1 %% of the orbit"
+                     % dm["moons_ok_pct"], dm and dm["moons_checked"],
+                     (dm["moons_ok_pct"] >= 90.0) if dm and dm["moons_checked"] >= 10 else None))
     f = parts.get("fuel")
     rows.append(_row("fuel", "Fuel per jump", f and "median %.1f %% off · 90 %% within %.1f %%"
                      % (f["median_pct"], f["p90_pct"]), f and f["n"],
@@ -195,7 +218,7 @@ def build(parts: Dict[str, Any]) -> List[Dict[str, Any]]:
         if not row["value"]:
             row["value"], row["good"] = None, None
     if pending:
-        rows[0]["pending"] = True     # R1: still computing in the background
+        rows[0]["pending"] = rows[1]["pending"] = True     # R1: still computing in the background
     return rows
 
 

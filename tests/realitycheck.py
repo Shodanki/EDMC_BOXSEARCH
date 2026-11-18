@@ -61,7 +61,7 @@ def journal():
     return evs
 
 
-FIXED = {"kepler": {"ok_pct": 95.8, "checked": 2106, "systems": 202},
+FIXED = {"kepler": {"ok_pct": 95.8, "checked": 2106, "systems": 202, "moons_checked": 40, "moons_ok_pct": 92.5},
          "fuel": {"median_pct": 0.8, "p90_pct": 10.1, "n": 646},
          "route": {"ratio": 1.1, "ratio_n": 12},
          "work": {"dss_s": 224, "bio_s": 172, "dss_n": 300, "bio_n": 171},
@@ -81,13 +81,13 @@ for r in rows:
     n = " · n %d" % r["n"] if r["n"] else ""
     print("    %-*s  %-5s %s%s" % (w, r["label"], mark, r["value"] or "no data yet", n))
 keys = [r["key"] for r in rows]
-check(keys == ["kepler", "fuel", "route", "work", "value", "finds", "bio", "scoop", "rocks", "collectors"],
+check(keys == ["kepler", "kepler_moons", "fuel", "route", "work", "value", "finds", "bio", "scoop", "rocks", "collectors"],
       "every model has its row, in order: %s" % ", ".join(keys))
 check(all(set(r) >= {"key", "label", "value", "n", "good"} for r in rows), "rows keep their shape")
 by = {r["key"]: r for r in rows}
 check(parts["rocks"] and parts["rocks"]["n"] == 11, "rocks judged by the ones before: %s" % parts["rocks"])
 check(by["rocks"]["good"] is True, "steady rocks: tonnes per rock ok")
-check(all(by[k]["good"] is True for k in FIXED), "fixed figures all within their bars")
+check(all(by[k]["good"] is True for k in list(FIXED) + ["kepler_moons"]), "fixed figures all within their bars")
 check(by["collectors"]["value"] is None or by["collectors"]["good"] in (True, None),
       "collectors: judged or thin, never wrong on steady waves")
 bad = realitycheck.build(dict(FIXED, route={"ratio": 2.1, "ratio_n": 12}))

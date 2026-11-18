@@ -53,6 +53,7 @@ export function applyStatic(root = document) {
 
 const DE = /*DE*/{
   "Kepler positions": "Kepler-Positionen",
+  "Kepler: double moons": "Kepler: Doppelmonde",
   "Tonnes per rock (mining)": "Tonnen je Brocken (Mining)",
   "Collector lifetime": "Sammler-Lebensdauer",
   "Fuel scoop rate per star class": "Scoop-Rate je Sternklasse",

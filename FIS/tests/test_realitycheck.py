@@ -86,6 +86,22 @@ class RealityTest(unittest.TestCase):
         self.assertTrue(rows["rocks"]["good"] and rows["collectors"]["good"])
         self.assertIn("60 % in the middle half", rows["rocks"]["value"])
 
+    def test_double_moons(self):
+        class B:
+            def __init__(self, kind, parent, check=None):
+                self.kind, self.parent_id, self.check = kind, parent, check
+        bodies = {0: B("Star", None), 1: B("Planet", 0), 2: B("BaryCentre", 1),
+                  3: B("Planet", 2, (0.002, 0)), 4: B("Planet", 2, (0.05, 0)),     # the pair round planet 1
+                  5: B("BaryCentre", 0), 6: B("Planet", 5, (0.001, 0)),           # planets round a star pair
+                  7: B("Planet", 1, (0.001, 0))}                                  # a plain moon
+        self.assertEqual(rc.double_moons(bodies, 0.01), {"moons_checked": 2, "moons_ok": 1})
+        k = rc.kepler([1, 2], lambda s: {"checked": 10, "ok": 9, "moons_checked": 6, "moons_ok": 6 if s == 1 else 3})
+        self.assertEqual((k["moons_checked"], k["moons_ok_pct"]), (12, 75.0))
+        rows = {r["key"]: r for r in rc.build({"kepler": k})}
+        self.assertIs(rows["kepler_moons"]["good"], False)
+        self.assertEqual(rows["kepler_moons"]["n"], 12)
+        self.assertTrue(rc.build({"kepler": {"pending": True}})[1]["pending"])
+
 
 class _DB:
     def __init__(self):

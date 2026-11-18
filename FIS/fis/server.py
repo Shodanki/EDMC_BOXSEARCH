@@ -233,7 +233,9 @@ class App:
                 bodies, _by = m._system_bodies(p, self.db, rows, (srow["name"] if srow else "") or "", now)
                 if not any(b.pos for b in bodies.values()):
                     sr.resolve_positions(bodies)
-                return sr.check_summary(bodies)
+                out = sr.check_summary(bodies)
+                out.update(realitycheck.double_moons(bodies, getattr(sr, "CHECK_BAR", 0.01)))
+                return out
             return realitycheck.kepler(ids, summary)
         val = self.cached("kepler_check", sig, build)
         self._kepler_last = val
