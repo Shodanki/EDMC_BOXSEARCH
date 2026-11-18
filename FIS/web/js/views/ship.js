@@ -13,7 +13,7 @@
 // and function report) and the loadmaster's column (cargo, fuel, locker).
 
 import { getJSON, postJSON } from "../api.js";
-import { el, frame, fmt, withPopout, copyText } from "../ui.js";
+import { el, frame, fmt, meter, withPopout, copyText } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const LAMP = {
@@ -385,6 +385,8 @@ function annunciator() {
     el("div", { class: "c-cyan sh-name", text: (s.name || s.type || "?") }),
     el("div", { class: "c-dim", text: [s.type, s.ident].filter(Boolean).join(" · ") }),
     el("div", { class: "sh-hull " + hcls(s.hull), text: t("HULL") + " " + (pct(s.hull) ?? "–") + " %" }),
+    // TH3: the hull as a meter too - hidden in the standard look, drawn by the other themes
+    meter(pct(s.hull) ?? 0, 100, "sh-hull-m " + hcls(s.hull)),
     el("div", { class: "c-dim small", text: data.live ? t("live") : t("game not running – last known state") }));
   return withPopout(frame(t("STATUS"), "", el("div", { class: "ann" }, master,
     el("div", { class: "ann-bands" }, ...bands), id), { cls: "sh-ann", appear: false }), "ship");
@@ -489,7 +491,7 @@ function engineer() {
     el("div", { class: "mg-h", text: t(GROUP[g]) + " · " + list.length }),
     ...list.map(m => el("div", { class: "mrow " + hcls(m.health) + (m.on === false ? " off" : ""), title: m.slot + (m.experimental ? " · " + m.experimental : "") },
       el("span", { class: "m-n", text: m.name }),
-      el("span", { class: "m-h" }, el("i", { style: { width: (pct(m.health) ?? 0) + "%" } })),
+      el("span", { class: "m-h", style: "--p: " + (pct(m.health) ?? 0) }, el("i", { style: { width: (pct(m.health) ?? 0) + "%" } })),
       el("span", { class: "m-v", text: (pct(m.health) ?? "–") + "%" }),
       el("span", { class: "m-p", text: "P" + m.priority }),
       el("span", { class: "m-w", text: m.power ? fmt(m.power, 2) : "" }),
@@ -562,7 +564,7 @@ function hazards() {
 // ------------------------------------------------------------ logistics
 function logistics() {
   const L = data.logistics;
-  const bar = (v, max, cls) => el("span", { class: "lbar " + (cls || "") }, el("i", { style: { width: max ? Math.min(100, 100 * (v || 0) / max).toFixed(1) + "%" : "0" } }));
+  const bar = (v, max, cls) => meter(v || 0, max, cls);       // TH3: the share for the themes too
   const f = L.fuel;
   const rows = [
     el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Cargo") }), bar(L.used, L.capacity),

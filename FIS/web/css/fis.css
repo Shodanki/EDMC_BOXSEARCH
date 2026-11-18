@@ -1004,14 +1004,14 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
    rivets and stencil plates (the hardware, amber; no hazard stripes - user 18.11.) around dark inset screens with corner
    brackets (the readout, teal). Warm metal against cold screen; thin lines, small caps,
    segmented meters with an amber end cap, chevron marks. Own design, static (no blinking). */
-:root[data-theme="industrial"] .stat-view { --scr: 95, 211, 196; --scr-c: rgb(var(--scr)); }
-/* the bezel: brushed steel plate, rivets on the plate, the screen sunk in */
-:root[data-theme="industrial"] .stat-view .frame { padding: 5px; background:
+:root[data-theme="industrial"] :is(.stat-view, .ship-view) { --scr: 95, 211, 196; --scr-c: rgb(var(--scr)); }
+/* the bezel: brushed steel plate, rivets on the plate, the screen sunk in (STATISTICS and SHIP, TH3) */
+:root[data-theme="industrial"] :is(.stat-view, .ship-view) .frame { padding: 5px; background:
   radial-gradient(circle at left 4px top 50%, rgba(var(--dim-rgb), .9) 0 1.4px, transparent 2.2px),
   radial-gradient(circle at right 4px top 50%, rgba(var(--dim-rgb), .9) 0 1.4px, transparent 2.2px),
   repeating-linear-gradient(90deg, rgba(var(--white-rgb), .025) 0 1px, transparent 1px 3px),
   linear-gradient(180deg, #2a2f31, #1b1f21); background-repeat: no-repeat, no-repeat, repeat, no-repeat; }
-:root[data-theme="industrial"] body:not(.obs) .stat-view .frame > .frame-in { background:
+:root[data-theme="industrial"] body:not(.obs) :is(.stat-view, .ship-view) .frame > .frame-in { background:
   linear-gradient(var(--scr-c), var(--scr-c)) left 4px top 4px / 10px 1px,
   linear-gradient(var(--scr-c), var(--scr-c)) left 4px top 4px / 1px 10px,
   linear-gradient(var(--scr-c), var(--scr-c)) right 4px top 4px / 10px 1px,
@@ -1025,13 +1025,13 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
   background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, repeat, no-repeat;
   box-shadow: inset 0 0 0 1px rgba(var(--scr), .22), inset 0 6px 14px rgba(0, 0, 0, .55); }
 /* the title is a stencilled plate riveted above the screen, with chevrons running to its edge */
-:root[data-theme="industrial"] .stat-view .frame-title { background: linear-gradient(180deg, #33393b, #262b2d);
+:root[data-theme="industrial"] :is(.stat-view, .ship-view) .frame-title { background: linear-gradient(180deg, #33393b, #262b2d);
   margin: -2px -2px 6px; padding: 3px 10px; border-bottom: 1px solid rgba(var(--amber-rgb), .45); }
-:root[data-theme="industrial"] .stat-view .frame-title h2 { font-family: Impact, "Arial Narrow", "Segoe UI", sans-serif;
+:root[data-theme="industrial"] :is(.stat-view, .ship-view) .frame-title h2 { font-family: Impact, "Arial Narrow", "Segoe UI", sans-serif;
   font-weight: 400; letter-spacing: .24em; font-size: 15px; color: var(--amber); }
-:root[data-theme="industrial"] .stat-view .frame-title::after { content: "\203A\203A\203A"; margin-left: auto; padding-left: 10px;
+:root[data-theme="industrial"] :is(.stat-view, .ship-view) .frame-title::after { content: "\203A\203A\203A"; margin-left: auto; padding-left: 10px;
   color: rgba(var(--amber-rgb), .55); letter-spacing: -.05em; font-size: 15px; }
-:root[data-theme="industrial"] .stat-view .frame-title .tag { color: rgba(var(--scr), .8); font-size: 10px; letter-spacing: .08em; }
+:root[data-theme="industrial"] :is(.stat-view, .ship-view) .frame-title .tag { color: rgba(var(--scr), .8); font-size: 10px; letter-spacing: .08em; }
 /* sub-tabs: switch plates; the active one lit on the screen colour with a chevron */
 :root[data-theme="industrial"] .stat-view .st-tabs button { border-radius: 0; border: 1px solid rgba(var(--amber-rgb), .45);
   background: linear-gradient(180deg, #2f3537, #222729); color: var(--text); letter-spacing: .14em; font-size: 11px; }
@@ -1166,3 +1166,71 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 :root[data-theme="bridge"] .stat-view .st-learn-h { color: var(--amber); font-family: var(--font-display); letter-spacing: .1em;
   text-transform: uppercase; }
 :root[data-theme="bridge"] .stat-view .st-spark { color: var(--cyan); }
+
+/* -- TH3 (18.11.): SHIP per theme. The hull meter is new and hidden in the standard look; the
+   hold, fuel and reservoir bars and the module health carry their share (--p) for the themes. */
+.sh-hull-m { display: none; }
+/* Federation classic: rounded - hull as a ring, pill bars, lamps as capsules */
+:root[data-theme="console"] .sh-ann .sh-hull-m { display: block; width: 54px; height: 54px; border: 0; border-radius: 50%; margin: 4px 0;
+  background: conic-gradient(var(--green) calc(var(--p, 0) * 1%), rgba(var(--dim-rgb), .18) 0);
+  -webkit-mask: radial-gradient(circle, transparent 19px, #000 20px); mask: radial-gradient(circle, transparent 19px, #000 20px); }
+:root[data-theme="console"] .sh-ann .sh-hull-m.warn { background: conic-gradient(var(--caut) calc(var(--p, 0) * 1%), rgba(var(--dim-rgb), .18) 0); }
+:root[data-theme="console"] .sh-ann .sh-hull-m.bad { background: conic-gradient(var(--warn) calc(var(--p, 0) * 1%), rgba(var(--dim-rgb), .18) 0); }
+:root[data-theme="console"] .sh-ann .sh-hull-m i { display: none; }
+:root[data-theme="console"] .sh-ann .lamp { border-radius: 999px; }
+:root[data-theme="console"] .sh-ann .ann-master { border-radius: 18px; }
+:root[data-theme="console"] .sh-log .meter, :root[data-theme="console"] .sh-eng .m-h { border-radius: 999px; overflow: hidden; height: 8px; }
+:root[data-theme="console"] .sh-log .meter i, :root[data-theme="console"] .sh-eng .m-h i { border-radius: 999px; }
+
+/* Federation bridge: thin round bars, lamps as pills with a round cap, the hull a thin bar */
+:root[data-theme="bridge"] .sh-ann .sh-hull-m { display: block; width: 150px; margin: 2px 0 4px; }
+:root[data-theme="bridge"] .sh-ann .sh-hull-m.warn i { background: var(--amber); }
+:root[data-theme="bridge"] .sh-ann .sh-hull-m.bad i { background: var(--red); }
+:root[data-theme="bridge"] .sh-ann .lamp { border-radius: 999px; border: 0; background: rgba(var(--dim-rgb), .16); color: var(--dim);
+  text-align: right; padding: 4px 10px; }
+:root[data-theme="bridge"] .sh-ann .ann-master { border-radius: 22px 6px 6px 22px; border-width: 0 0 0 10px; background: rgba(var(--white-rgb), .03); }
+:root[data-theme="bridge"] .sh-ann .ab-k { font-family: var(--font-display); letter-spacing: .12em; }
+:root[data-theme="bridge"] .sh-eng .m-h { height: 5px; border-radius: 999px; background: rgba(var(--dim-rgb), .22); }
+:root[data-theme="bridge"] .sh-eng .m-h i { border-radius: 999px; background: var(--cyan); }
+:root[data-theme="bridge"] .sh-eng .mrow.warn .m-h i { background: var(--amber); }
+:root[data-theme="bridge"] .sh-eng .mrow.bad .m-h i { background: var(--red); }
+:root[data-theme="bridge"] .sh-eng .mg-h { color: var(--amber); font-family: var(--font-display); letter-spacing: .1em; text-transform: uppercase; }
+
+/* Belt industrial: segmented teal meters with an amber cap, lamps as switch plates */
+:root[data-theme="industrial"] .sh-ann .sh-hull-m { display: block; width: 160px; margin: 3px 0; }
+:root[data-theme="industrial"] .sh-log .meter, :root[data-theme="industrial"] .sh-ann .sh-hull-m {
+  height: 10px; border: 1px solid rgba(95, 211, 196, .25); background: repeating-linear-gradient(90deg, rgba(95, 211, 196, .10) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .sh-log .meter i, :root[data-theme="industrial"] .sh-ann .sh-hull-m i {
+  background: repeating-linear-gradient(90deg, rgb(95, 211, 196) 0 6px, transparent 6px 8px); box-shadow: 2px 0 0 var(--amber); }
+:root[data-theme="industrial"] .sh-log .meter.warn i, :root[data-theme="industrial"] .sh-ann .sh-hull-m.warn i {
+  background: repeating-linear-gradient(90deg, var(--amber) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .sh-ann .sh-hull-m.bad i { background: repeating-linear-gradient(90deg, var(--red) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .sh-eng .m-h { height: 8px; background: repeating-linear-gradient(90deg, rgba(95, 211, 196, .10) 0 4px, transparent 4px 6px); }
+:root[data-theme="industrial"] .sh-eng .m-h i { background: repeating-linear-gradient(90deg, rgb(95, 211, 196) 0 4px, transparent 4px 6px); }
+:root[data-theme="industrial"] .sh-eng .mrow.warn .m-h i { background: repeating-linear-gradient(90deg, var(--amber) 0 4px, transparent 4px 6px); }
+:root[data-theme="industrial"] .sh-eng .mrow.bad .m-h i { background: repeating-linear-gradient(90deg, var(--red) 0 4px, transparent 4px 6px); }
+:root[data-theme="industrial"] .sh-ann .lamp { border-radius: 0; border-width: 2px; background: linear-gradient(180deg, #2f3537, #222729);
+  font-weight: 700; letter-spacing: .1em; }
+:root[data-theme="industrial"] .sh-eng .mg-h { color: var(--amber); letter-spacing: .14em; text-transform: uppercase; }
+
+/* Station era: phosphor dot meters, glowing lamps, the hull as a dot row */
+:root[data-theme="station"] .sh-ann .sh-hull-m { display: block; width: 160px; margin: 3px 0; }
+:root[data-theme="station"] .sh-log .meter, :root[data-theme="station"] .sh-ann .sh-hull-m, :root[data-theme="station"] .sh-eng .m-h {
+  border: 0; height: 8px; background: repeating-linear-gradient(90deg, rgba(var(--cyan-rgb), .18) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] .sh-log .meter i, :root[data-theme="station"] .sh-ann .sh-hull-m i, :root[data-theme="station"] .sh-eng .m-h i {
+  background: repeating-linear-gradient(90deg, var(--green) 0 3px, transparent 3px 6px); filter: drop-shadow(0 0 3px rgba(var(--green-rgb), .8)); }
+:root[data-theme="station"] .sh-log .meter.warn i, :root[data-theme="station"] .sh-ann .sh-hull-m.warn i, :root[data-theme="station"] .sh-eng .mrow.warn .m-h i {
+  background: repeating-linear-gradient(90deg, var(--amber) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] .sh-ann .sh-hull-m.bad i, :root[data-theme="station"] .sh-eng .mrow.bad .m-h i {
+  background: repeating-linear-gradient(90deg, var(--red) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] .sh-ann .lamp.on { text-shadow: 0 0 6px currentColor; }
+:root[data-theme="station"] .sh-eng .mg-h::before { content: "> "; color: var(--dim); }
+
+/* Next: flat, the hull figure large in the accent, thin flat bars */
+:root[data-theme="next"] .sh-ann .sh-hull { font: 600 28px "Segoe UI", system-ui, sans-serif; }
+:root[data-theme="next"] .sh-ann .sh-hull-m { display: block; width: 160px; height: 4px; border: 0; background: rgba(255, 255, 255, .08); }
+:root[data-theme="next"] .sh-log .meter, :root[data-theme="next"] .sh-eng .m-h { border: 0; height: 5px; background: rgba(255, 255, 255, .07); }
+:root[data-theme="next"] .sh-ann .lamp { border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="station"] .sh-log .meter i, :root[data-theme="station"] .sh-ann .sh-hull-m i, :root[data-theme="station"] .sh-eng .m-h i { filter: none; }
+}

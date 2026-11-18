@@ -158,6 +158,21 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertIn('class: "c-dim small st-row st-reset"', js)
         self.assertIn(".st-learning .st-reset { display: flex;", css)
 
+    def test_ship_per_theme(self):
+        """TH3 (user 18.11.2026): SHIP per theme. Hold, fuel, reservoir and the hull hand
+        their share to meter(), module health carries --p; the hull meter is hidden in
+        the standard look and drawn by every other theme; Belt's bezel covers SHIP too."""
+        js, css = self._read("js", "views", "ship.js"), self._read("css", "fis.css")
+        self.assertIn('meter(pct(s.hull) ?? 0, 100, "sh-hull-m " + hcls(s.hull))', js)
+        self.assertIn("const bar = (v, max, cls) => meter(v || 0, max, cls);", js)
+        self.assertIn('class: "m-h", style: "--p: " + (pct(m.health) ?? 0)', js)
+        block = css[css.index("/* -- TH3 (18.11.): SHIP per theme."):]
+        self.assertIn(".sh-hull-m { display: none; }", block)
+        for theme in ("console", "bridge", "industrial", "station", "next"):
+            self.assertIn(':root[data-theme="%s"] .sh-ann .sh-hull-m { display: block;' % theme, block)
+        self.assertNotIn('data-theme="standard"', block)
+        self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view) .frame { padding: 5px;', css)
+
     def test_theme_lists_agree_and_bridge_is_complete(self):
         """TH2 (user 18.11.2026): the old console look stays as "Federation classic",
         "Federation bridge" is a new theme. Boot script and picker list the same
@@ -189,7 +204,7 @@ class StatsLayoutTest(unittest.TestCase):
         rules = [r for r in re.findall(r"^(:root[^{]*)\{", block, re.M)]
         self.assertTrue(rules)
         for r in rules:
-            self.assertRegex(r, r':root\[data-theme="(console|bridge|industrial|station|next)"\] (body:not\(\.obs\) )?\.stat-view ')
+            self.assertRegex(r, r':root\[data-theme="(console|bridge|industrial|station|next)"\] (body:not\(\.obs\) )?(\.stat-view |:is\(\.stat-view, \.ship-view\) )')
         self.assertNotIn('data-theme="standard"', block)
         for theme, mark in (("console", "conic-gradient(var(--cyan) calc(var(--p, 0) * 1%)"),
                             ("industrial", "repeating-linear-gradient(90deg, var(--scr-c) 0 6px"),          # TH1b: teal screen, amber cap
