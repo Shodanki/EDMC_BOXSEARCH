@@ -3,7 +3,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025-2026 Shodanki
-"""ui.meter() (5.0 TH1) under Node: the share 0-100 on the element (--p, data-p,
+"""ui.meter() (5.0 TH1) and ui.blinkFor() (user 18.11.: alarms blink only at their onset) under Node: the share 0-100 on the element (--p, data-p,
 aria) and the plain bar inside, clamped; nonsense gives 0. Skipped without Node."""
 
 import json
@@ -31,7 +31,9 @@ const cases = [[41, 100], [5, 20], [150, 100], [-3, 100], ["x", 100], [3, 0]];
 const out = cases.map(([v, m]) => { const n = ui.meter(v, m);
   return { pct: ui.meterPct(v, m), cls: n.className, style: n.attrs.style, p: n.attrs["data-p"], now: n.attrs["aria-valuenow"],
     role: n.attrs.role, bar: n.kids[0].attrs.style }; });
-console.log(JSON.stringify(out));
+const b = [ui.blinkFor("a", true, 8, 1000), ui.blinkFor("a", true, 8, 4000), ui.blinkFor("a", true, 8, 9001),
+  ui.blinkFor("a", false, 8, 9500), ui.blinkFor("a", true, 8, 20000), ui.blinkFor("b", false, 8, 1)];
+console.log(JSON.stringify({ out, b }));
 """
 
 
@@ -49,12 +51,15 @@ class MeterTest(unittest.TestCase):
                 if os.path.exists(mod):
                     os.remove(mod)
             self.assertEqual(res.returncode, 0, res.stderr)
-            out = json.loads(res.stdout)
+            got = json.loads(res.stdout)
+        out = got["out"]
         self.assertEqual([o["pct"] for o in out], [41, 25, 100, 0, 0, 0])
         first = out[0]
         self.assertEqual((first["cls"], first["style"], first["p"], first["now"], first["role"], first["bar"]),
                          ("lbar meter", "--p: 41.0", "41", "41", "meter", "width: 41.0%"))
         self.assertEqual(out[2]["bar"], "width: 100.0%")
+        # an alarm blinks from its onset for its seconds, a redraw runs on, off and on again starts anew
+        self.assertEqual(got["b"], ["animation-delay: -0ms", "animation-delay: -3000ms", "", "", "animation-delay: -0ms", ""])
 
 
 if __name__ == "__main__":

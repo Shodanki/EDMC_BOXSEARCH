@@ -6,7 +6,7 @@
 // SHBOX FIS – application shell: state, view switching, ship bar, live push.
 
 import { getJSON, subscribe } from "./api.js";
-import { fmt, el } from "./ui.js";
+import { blinkFor, fmt, el } from "./ui.js";
 import { initLang, t, N_, lang, setLang, locale, applyStatic } from "./i18n.js";
 import * as layout from "./layout.js";
 import * as fullscreen from "./fullscreen.js";
@@ -310,9 +310,12 @@ function renderCombat(c) {
   const cell = document.getElementById("sb-combat");
   if (!cell) return;
   cell.hidden = !level;
-  cell.className = "sb-cell sb-combat " + (level || "");
+  const blink = blinkFor("combat-alert", level === "alert");          // 8 s from the onset, then steady
+  cell.className = "sb-cell sb-combat " + (level || "") + (blink ? " blinking" : "");
   if (level) {
-    document.getElementById("sb-combat-v").textContent = t(COMBAT_LABEL[level] || level);
+    const v = document.getElementById("sb-combat-v");
+    v.textContent = t(COMBAT_LABEL[level] || level);
+    v.style.animationDelay = blink ? blink.split(": ")[1] : "";
     cell.title = (c.reasons || []).map(r => t(COMBAT_WHY[r] || r)).join(" · ");
   }
   if (c && c.until) {

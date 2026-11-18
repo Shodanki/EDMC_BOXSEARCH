@@ -13,7 +13,7 @@
 // and function report) and the loadmaster's column (cargo, fuel, locker).
 
 import { getJSON, postJSON } from "../api.js";
-import { el, frame, fmt, meter, withPopout, copyText } from "../ui.js";
+import { blinkFor, el, frame, fmt, meter, withPopout, copyText } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const LAMP = {
@@ -374,7 +374,8 @@ function target() {
 // ------------------------------------------------------------ annunciator
 function annunciator() {
   const s = data.ship;
-  const master = el("div", { class: "ann-master " + data.master },
+  const blink = blinkFor("ship-master", data.master === "warning");      // 8 s from the onset, then steady
+  const master = el("div", { class: "ann-master " + data.master + (blink ? " blinking" : ""), style: blink || null },
     el("div", { class: "am-k", text: data.master === "normal" ? t("ALL SYSTEMS") : t(LEVEL[data.master]) }),
     el("div", { class: "am-v", text: data.master === "normal" ? t("NORMAL") : t("CHECK") }));
   const bands = ["warning", "caution", "advisory"].map(lv => el("div", { class: "ann-band " + lv },

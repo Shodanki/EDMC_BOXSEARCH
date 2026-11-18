@@ -253,7 +253,9 @@ body.motion .frame.appear > .frame-in { animation: frame-fill var(--t-draw) ease
 .sb-combat .v { font: 600 11px var(--font-display); letter-spacing: .14em; padding: 1px 6px; border: 1px solid currentColor; }
 .sb-combat.ready .v { color: var(--amber); }
 .sb-combat.combat .v { color: var(--red); border-color: var(--red); }
-.sb-combat.alert .v { color: var(--white); background: rgba(var(--red-rgb), .75); border-color: var(--red); animation: annblink 1s steps(2) infinite; }
+.sb-combat.alert .v { color: var(--white); background: rgba(var(--red-rgb), .75); border-color: var(--red); }
+/* an alarm blinks for 8 s from its onset, then stays lit (user 18.11.; blinkFor() in ui.js) */
+.sb-combat.alert.blinking .v { animation: annblink 1s steps(2) 8; }
 body.combat-alert .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--red-rgb), .8); }
 body.combat-ready .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--amber-rgb), .6); }
 body.combat-mode .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--red-rgb), .6); }
@@ -360,9 +362,9 @@ body.combat-mode .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--red-rgb), .6);
 .br-dist .num { font-size: 22px; }
 .br-status { font: 700 18px var(--font-display); letter-spacing: .12em; color: var(--green); }
 .br-status.disc { color: var(--violet); text-shadow: 0 0 10px rgba(var(--violet-rgb), .6); }
-body.motion .br-status.disc { animation: pulse 2.4s ease-in-out infinite; }
+body.motion .br-status.disc.blinking { animation: pulse 2.4s ease-in-out 2; }
 @keyframes pulse { 50% { opacity: .55; } }
-body.motion .blink { animation: pulse 0.9s steps(2) infinite; }
+body.motion .blink { animation: pulse 0.9s steps(2) 4; }
 .navlist { list-style: none; margin: 0; padding: 0; font-size: 12px; }
 .navlist li { display: grid; grid-template-columns: 3ch 1fr 3ch 7ch auto; gap: 8px; padding: 3px 2px; align-items: center; border-bottom: 1px dotted var(--faint); }
 .navlist li.cur { color: var(--amber); background: rgba(var(--amber-rgb), .07); }
@@ -478,7 +480,8 @@ body.solo #views { padding-top: 30px; }   /* room for the solo control */
 .ann-master .am-v { font-size: 20px; letter-spacing: .1em; color: var(--green); }
 .ann-master.caution { border-color: var(--caut); background: rgba(var(--amber-rgb), .12); }
 .ann-master.caution .am-v, .ann-master.caution .am-k { color: var(--caut); }
-.ann-master.warning { border-color: var(--warn); background: rgba(var(--red-rgb), .18); animation: annblink 1s steps(2) infinite; }
+.ann-master.warning { border-color: var(--warn); background: rgba(var(--red-rgb), .18); }
+.ann-master.warning.blinking { animation: annblink 1s steps(2) 8; }
 .ann-master.warning .am-v, .ann-master.warning .am-k { color: var(--warn); }
 @keyframes annblink { 50% { background: rgba(var(--red-rgb), .04); } }
 .ann-bands { display: flex; flex-direction: column; gap: 4px; }

@@ -154,6 +154,19 @@ export function meter(value, max = 100, cls = "") {
   el("i", { style: "width: " + p.toFixed(1) + "%" }));
 }
 
+// 5.0 (user 18.11.2026): an alarm may blink, but only when it starts - it is there to
+// draw the eye to an acute problem, not to flash for as long as the problem lasts.
+// blinkFor() remembers when `key` came on and returns the style that lets a finite CSS
+// blink run on from that moment, so a redraw does not start it again; "" once it is
+// over or while the key is off (the next onset blinks anew).
+const blinkStart = new Map();
+export function blinkFor(key, on, seconds = 8, now = Date.now()) {
+  if (!on) { blinkStart.delete(key); return ""; }
+  if (!blinkStart.has(key)) blinkStart.set(key, now);
+  const gone = now - blinkStart.get(key);
+  return gone < seconds * 1000 ? "animation-delay: -" + gone + "ms" : "";
+}
+
 export function hbar(label, value, max, valText, cls = "") {
   const pct = max > 0 ? Math.max(0, Math.min(100, 100 * value / max)) : 0;
   return el("div", { class: "hbar " + cls },

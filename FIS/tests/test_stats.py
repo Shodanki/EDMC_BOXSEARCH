@@ -158,6 +158,18 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertIn('class: "c-dim small st-row st-reset"', js)
         self.assertIn(".st-learning .st-reset { display: flex;", css)
 
+    def test_nothing_blinks_for_ever(self):
+        """User 18.11.2026: blinking is fine for an alarm, but not for as long as it lasts -
+        no endless animation that blinks; alarms blink from their onset (blinkFor)."""
+        import re
+        css = self._read("css", "fis.css")
+        endless = [m.group(0) for m in re.finditer(r"animation:[^;]*infinite", css)]
+        self.assertEqual(endless, [])
+        self.assertIn(".ann-master.warning.blinking { animation: annblink 1s steps(2) 8; }", css)
+        self.assertIn(".sb-combat.alert.blinking .v { animation: annblink 1s steps(2) 8; }", css)
+        self.assertIn('blinkFor("ship-master", data.master === "warning")', self._read("js", "views", "ship.js"))
+        self.assertIn('blinkFor("combat-alert", level === "alert")', self._read("js", "app.js"))
+
     def test_ship_per_theme(self):
         """TH3 (user 18.11.2026): SHIP per theme. Hold, fuel, reservoir and the hull hand
         their share to meter(), module health carries --p; the hull meter is hidden in

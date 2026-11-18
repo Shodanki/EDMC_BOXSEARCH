@@ -5,7 +5,7 @@
 // Copyright (c) 2025-2026 Shodanki
 // BRIEFING – the next jump, Wing-Commander style.
 
-import { el, frame, fmt, chip, countUp, hbar } from "../ui.js";
+import { blinkFor, el, frame, fmt, chip, countUp, hbar } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 let root = null;
@@ -76,8 +76,11 @@ export function update(ctx, reason) {
        tg.boost ? el("span", { class: "c-violet", text: " · ⚡ " + (tg.boost === "neutron" ? t("neutron star: FSD boost ×4 in the jet cone")
          : t("white dwarf: FSD boost ×1.5 in the jet cone")) }) : null]
     : [el("span", { class: "c-dim", text: t("unknown (only at StartJump)") })];
+  // a new target never seen anywhere pulses a few times, not for as long as it is targeted
+  const discBlink = blinkFor("br-disc:" + (tg.name || ""), unknown, 5);
   const statusEl = el("div", {},
-    el("div", { class: unknown ? "br-status disc" : "br-status", text: (unknown ? "■ " : "") + t(st[0]) }),
+    el("div", { class: unknown ? "br-status disc" + (discBlink ? " blinking" : "") : "br-status", style: discBlink || null,
+      text: (unknown ? "■ " : "") + t(st[0]) }),
     el("div", { class: "c-dim", text: st[1] ? t(st[1], { s: known }) : "" }),
     b.status === "unknown" && tg.checked_by && tg.checked_by.length
       ? el("div", { class: "c-dim", text: t("checked: {s}", { s: tg.checked_by.join(", ") }) }) : null);
@@ -142,7 +145,9 @@ export function update(ctx, reason) {
     : el("span", { class: "c-amber", text: t("outside the sphere") }),
     el("span", { class: "c-dim", text: " · " + t("{d} ly from the centre (r {r})", { d: fmt(sp.from_centre_ly, 1), r: fmt(sp.radius, 0) }) })));
   if (tg.remaining_jumps) rows.push(row("ROUTE", t(tg.remaining_jumps === 1 ? "{n} jump to the target" : "{n} jumps to the target", { n: tg.remaining_jumps })));
-  if (ship.jumping) rows.push(row(t("JUMP"), el("span", { class: "c-amber blink", text: t("FSD ACTIVE") + " ⟫ " + (ship.jumping.name || "") })));
+  const jumpBlink = blinkFor("br-jump", !!ship.jumping, 4);
+  if (ship.jumping) rows.push(row(t("JUMP"), el("span", { class: "c-amber" + (jumpBlink ? " blink" : ""), style: jumpBlink || null,
+    text: t("FSD ACTIVE") + " ⟫ " + (ship.jumping.name || "") })));
 
   root.append(frame("BRIEFING", np, el("div", { class: "br-rows" }, ...rows),
     { kind: unknown ? "disc" : "hot", cls: "br-main", appear }));
