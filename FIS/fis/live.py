@@ -13,11 +13,13 @@ published to a Hub, which the HTTP server turns into Server-Sent Events.
 from __future__ import annotations
 
 import copy
+import functools
 import glob
 import json
 import math
 import os
 import queue
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -41,15 +43,31 @@ def star_pos(v: Any) -> Optional[List[float]]:
     return out
 
 
-def parse_ts(stamp: Optional[str]) -> Optional[float]:
-    """A journal timestamp as Unix time, or None."""
-    if not stamp:
-        return None
+_TS_FAST = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
+
+
+@functools.lru_cache(maxsize=1 << 17)
+def _parse_ts_str(stamp: str) -> Optional[float]:
+    # R1: the pages parse the same 40,000 journal stamps on every request -
+    # the plain shape by slicing (strptime was 7.6 us each), anything else
+    # as before; datetime() checks the ranges like strptime does
     try:
+        if _TS_FAST.match(stamp):
+            return datetime(int(stamp[0:4]), int(stamp[5:7]), int(stamp[8:10]), int(stamp[11:13]),
+                            int(stamp[14:16]), int(stamp[17:19]), tzinfo=timezone.utc).timestamp()
         return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=timezone.utc).timestamp()
     except (TypeError, ValueError):
         return None
+
+
+def parse_ts(stamp: Optional[str]) -> Optional[float]:
+    """A journal timestamp as Unix time, or None."""
+    if not stamp:
+        return None
+    if not isinstance(stamp, str):
+        return None                       # strptime refused these with TypeError
+    return _parse_ts_str(stamp)
 
 
 # ---------------------------------------------------------------------------

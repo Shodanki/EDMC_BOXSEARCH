@@ -4,9 +4,11 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025-2026 Shodanki
 """V0 reality check: each model's error value from what happened."""
+import threading
 import unittest
 
 from fis import realitycheck as rc
+from fis import server
 
 
 class Fuel:
@@ -49,6 +51,75 @@ class RealityTest(unittest.TestCase):
         self.assertIsNone(rows["finds"]["good"])                    # no data: thin, not wrong
         self.assertNotIn("work", rows)
         self.assertIn("76 %", rows["bio"]["value"])
+
+    def test_pending_row(self):
+        rows = rc.build({"kepler": {"pending": True}})
+        self.assertTrue(rows[0]["pending"])
+        self.assertIsNone(rows[0]["value"])
+        self.assertNotIn("pending", rc.build({})[0])
+
+
+class _DB:
+    def __init__(self):
+        self.n = 100
+
+    def one(self, sql, *a):
+        return {"n": self.n}
+
+
+class _Hub:
+    def __init__(self):
+        self.events = []
+
+    def publish(self, kind, data):
+        self.events.append(kind)
+
+
+class KeplerBackgroundTest(unittest.TestCase):
+    """R1: STATISTICS never waits for the Kepler check - it is computed in
+    the background and the browsers are told when it is there."""
+
+    def _app(self, compute):
+        a = server.App.__new__(server.App)
+        a.db, a.hub = _DB(), _Hub()
+        a._cache, a._cache_lock = {}, threading.Lock()
+        a._kepler_busy, a._kepler_last = False, None
+        a._kepler_compute = compute
+        return a
+
+    def test_request_does_not_wait(self):
+        gate, calls = threading.Event(), []
+
+        def compute(sig):
+            calls.append(sig)
+            gate.wait(5)
+            val = {"ok_pct": 95.0, "checked": 10, "systems": 2}
+            a._cache["kepler_check"], a._kepler_last = (sig, val), val
+            return val
+        a = self._app(compute)
+        self.assertEqual(a.kepler_check(), {"pending": True})
+        self.assertEqual(a.kepler_check(), {"pending": True})          # second request: no second thread
+        gate.set()
+        for th in threading.enumerate():
+            if th.name == "fis-kepler":
+                th.join(5)
+        self.assertEqual(calls, [4])
+        self.assertEqual(a.kepler_check()["ok_pct"], 95.0)
+        self.assertEqual(a.hub.events, ["scan"])
+        a.db.n = 125                                                     # 25 more scans: old value while recomputing
+        gate.clear()
+        self.assertEqual(a.kepler_check()["ok_pct"], 95.0)
+        gate.set()
+
+    def test_failure_does_not_loop(self):
+        def compute(sig):
+            raise RuntimeError("db gone")
+        a = self._app(compute)
+        a.kepler_check()
+        for th in threading.enumerate():
+            if th.name == "fis-kepler":
+                th.join(5)
+        self.assertIsNone(a.kepler_check())
 
 
 if __name__ == "__main__":

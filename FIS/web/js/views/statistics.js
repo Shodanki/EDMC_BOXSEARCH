@@ -244,13 +244,17 @@ const REALITY = { kepler: N_("Kepler positions"), fuel: N_("Fuel per jump"), rou
   work: N_("Surface scan / bio sample"), value: N_("Exploration value vs. sales"), finds: N_("Chance of a find vs. scans"),
   bio: N_("Bio prediction (genera in top 3)") };
 
+let realityWait = null;     // R1: one reload while the Kepler check is computed in the background
+
 function realityRows(R, head) {
   const rows = [head(t("Reality check: each model against what happened"))];
+  if (R.some((r) => r.pending) && !realityWait)
+    realityWait = setTimeout(() => { realityWait = null; if (root && root.isConnected) update(null, "data"); }, 4000);
   for (const r of R) {
-    const mark = r.good === true ? "✓" : r.good === false ? "✗" : t("thin");
+    const mark = r.pending ? "…" : r.good === true ? "✓" : r.good === false ? "✗" : t("thin");
     rows.push(el("div", { class: "st-row" + (r.value ? "" : " c-dim") },
       el("span", { text: t(REALITY[r.key] || r.label) }),
-      el("span", { class: "num", text: (r.value || t("no data yet")) + (r.n ? " · n " + fmt(r.n, 0) : "") }),
+      el("span", { class: "num", text: (r.value || t(r.pending ? "computing …" : "no data yet")) + (r.n ? " · n " + fmt(r.n, 0) : "") }),
       el("span", { class: "num small " + (r.good === true ? "c-green" : r.good === false ? "c-amber" : "c-dim"), text: mark })));
   }
   return rows;

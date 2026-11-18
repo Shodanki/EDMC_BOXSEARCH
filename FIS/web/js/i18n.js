@@ -804,6 +804,7 @@ const DE = /*DE*/{
   "GALAXY": "GALAXIE",
   "boxel": "Boxel",
   "no data yet": "noch keine Daten",
+  "computing …": "wird berechnet …",
   "FLIGHT LOG": "FLUGBUCH",
   "{n} jumps · {s} systems": "{n} Sprünge · {s} Systeme",
   "Period": "Zeitraum",

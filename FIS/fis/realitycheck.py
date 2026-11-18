@@ -106,6 +106,9 @@ def build(parts: Dict[str, Any]) -> List[Dict[str, Any]]:
     FIS translates), value text, n, and good (True / False / None = thin)."""
     rows: List[Dict[str, Any]] = []
     k = parts.get("kepler")
+    pending = bool(k and k.get("pending"))
+    if pending:
+        k = None
     rows.append(_row("kepler", "Kepler positions", k and "%.1f %% within 1 %% of the orbit · %d systems"
                      % (k["ok_pct"], k["systems"]), k and k["checked"], k and k["ok_pct"] >= 90.0))
     f = parts.get("fuel")
@@ -137,6 +140,8 @@ def build(parts: Dict[str, Any]) -> List[Dict[str, Any]]:
     for row in rows:
         if not row["value"]:
             row["value"], row["good"] = None, None
+    if pending:
+        rows[0]["pending"] = True     # R1: still computing in the background
     return rows
 
 

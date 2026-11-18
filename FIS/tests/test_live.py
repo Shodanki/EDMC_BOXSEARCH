@@ -184,6 +184,36 @@ class TestEvents(unittest.TestCase):
         self.assertEqual(hub.clients, 0)
 
 
+class TestParseTs(unittest.TestCase):
+    """R1: the fast, cached parse_ts gives exactly what strptime gave."""
+
+    @staticmethod
+    def _strptime(stamp):
+        from datetime import datetime, timezone
+        if not stamp:
+            return None
+        try:
+            return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+        except (TypeError, ValueError):
+            return None
+
+    def test_same_as_strptime(self):
+        import random
+        cases = ["2026-11-18T20:10:30Z", "2026-02-30T00:00:00Z", "2026-13-01T00:00:00Z",
+                 "2026-11-18T24:00:00Z", "2026-11-18T20:10:60Z", "2026-11-18T20:10:30",
+                 "2026-1-8T2:1:3Z", "", None, 5, "x", "2026-11-18T20:10:30.123Z",
+                 "2026-11-18T20:10:30Z\n", "９999-01-01T00:00:00Z"]
+        r = random.Random(7)
+        cases += ["%04d-%02d-%02dT%02d:%02d:%02dZ" % (r.randint(1, 9999), r.randint(0, 13), r.randint(0, 32),
+                                                     r.randint(0, 25), r.randint(0, 61), r.randint(0, 61))
+                  for _ in range(3000)]
+        for c in cases:
+            self.assertEqual(parse_ts(c), self._strptime(c), repr(c))
+
+    def test_known_value(self):
+        self.assertEqual(parse_ts("2026-11-18T20:10:30Z"), 1795032630.0)
+
+
 @unittest.skipUnless(os.path.isdir(JOURNAL), "kein Journal-Ordner")
 class TestRealJournal(unittest.TestCase):
     def test_prime_real(self):

@@ -57,6 +57,8 @@ class App:
         self.started = time.time()
         self._cache: Dict[str, Tuple[Any, Any]] = {}
         self._cache_lock = threading.Lock()
+        self._kepler_busy = False
+        self._kepler_last: Optional[Dict[str, Any]] = None
         self._stop = threading.Event()
         from .fleet import Archive
         self.archive = Archive(cfg.journal_dir)
@@ -183,11 +185,39 @@ class App:
             out["jumps"] = None
         return out
 
-    def kepler_check(self) -> Optional[Dict[str, Any]]:
+    def kepler_check(self, wait: bool = False) -> Optional[Dict[str, Any]]:
         """V0: the Kepler watch over every system with two scanned bodies or
-        more - a few seconds, so kept until 25 more bodies are scanned."""
-        from . import realitycheck
+        more - a few seconds (12 s on a full database), so kept until 25 more
+        bodies are scanned. R1: without `wait` it never computes in the
+        request - it hands back the last result (or {"pending": True}) and
+        computes in the background, then tells the browsers."""
         n = (self.db.one("SELECT COUNT(*) AS n FROM bodies WHERE scanned = 1") or {"n": 0})["n"]
+        sig = int(n) // 25
+        with self._cache_lock:
+            hit = self._cache.get("kepler_check")
+        if hit and hit[0] == sig:
+            return hit[1]
+        if wait:
+            return self._kepler_compute(sig)
+        with self._cache_lock:
+            busy, self._kepler_busy = self._kepler_busy, True
+        if not busy:
+            def run() -> None:
+                try:
+                    self._kepler_compute(sig)
+                    self.hub.publish("scan", {"source": "kepler", "ts": time.time()})
+                except Exception:
+                    with self._cache_lock:          # no retry loop until 25 more scans
+                        self._cache["kepler_check"] = (sig, None)
+                    self._kepler_last = None
+                finally:
+                    with self._cache_lock:
+                        self._kepler_busy = False
+            threading.Thread(target=run, name="fis-kepler", daemon=True).start()
+        return self._kepler_last if self._kepler_last is not None else {"pending": True}
+
+    def _kepler_compute(self, sig: int) -> Optional[Dict[str, Any]]:
+        from . import realitycheck
 
         def build() -> Optional[Dict[str, Any]]:
             m = self.model
@@ -205,7 +235,9 @@ class App:
                     sr.resolve_positions(bodies)
                 return sr.check_summary(bodies)
             return realitycheck.kepler(ids, summary)
-        return self.cached("kepler_check", int(n) // 25, build)
+        val = self.cached("kepler_check", sig, build)
+        self._kepler_last = val
+        return val
 
     def reality(self, stats_out: Dict[str, Any]) -> List[Dict[str, Any]]:
         """V0: one error value per learning model, from what the statistics
@@ -1526,6 +1558,8 @@ def main(argv: Optional[list] = None) -> int:
     app.watch_db()
     # measure route times from the journals in the background (like the plugin)
     threading.Thread(target=app.calib.run_once, name="fis-calib", daemon=True).start()
+    # R1: the Kepler reality check (seconds) ahead of the first STATISTICS visit
+    threading.Thread(target=lambda: app.kepler_check(wait=True), name="fis-kepler0", daemon=True).start()
     # ship / fleet / carrier history: one scan of all journals in the background
     threading.Thread(target=lambda: app.archive.refresh(force=True), name="fis-archive",
                      daemon=True).start()
