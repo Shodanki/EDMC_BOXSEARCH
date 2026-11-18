@@ -87,19 +87,29 @@ class RealityTest(unittest.TestCase):
         self.assertIn("60 % in the middle half", rows["rocks"]["value"])
 
     def test_double_moons(self):
+        LS = 1.0 / 299792458.0
+
         class B:
-            def __init__(self, kind, parent, check=None):
+            def __init__(self, kind, parent, check=None, sma_ls=None, arrival=None):
                 self.kind, self.parent_id, self.check = kind, parent, check
-        bodies = {0: B("Star", None), 1: B("Planet", 0), 2: B("BaryCentre", 1),
-                  3: B("Planet", 2, (0.002, 0)), 4: B("Planet", 2, (0.05, 0)),     # the pair round planet 1
-                  5: B("BaryCentre", 0), 6: B("Planet", 5, (0.001, 0)),           # planets round a star pair
-                  7: B("Planet", 1, (0.001, 0))}                                  # a plain moon
-        self.assertEqual(rc.double_moons(bodies, 0.01), {"moons_checked": 2, "moons_ok": 1})
-        k = rc.kepler([1, 2], lambda s: {"checked": 10, "ok": 9, "moons_checked": 6, "moons_ok": 6 if s == 1 else 3})
+                self.orbit = (sma_ls / LS,) if sma_ls else None
+                self.arrival_ls = arrival
+        # planet 1 at 2,000 LS is 0.002 LS off - a millionth of its orbit, its own check passes
+        bodies = {0: B("Star", None), 1: B("Planet", 0, (1e-6, 1e-6), 2000.0, 2000.0),
+                  2: B("BaryCentre", 1),
+                  3: B("Planet", 2, (0.002, 0), 0.01, 2000.0),                 # within its own 1 %
+                  4: B("Planet", 2, (0.2, 0.002 / 2000.0), 0.01, 2000.0),      # KR2: the planet's error only
+                  8: B("Planet", 2, (0.9, 0.0110 / 2000.0), 0.01, 2000.0),     # 0.009 LS beyond: really off
+                  5: B("BaryCentre", 0), 6: B("Planet", 5, (0.001, 0)),         # planets round a star pair
+                  7: B("Planet", 1, (0.001, 0))}                                # a plain moon
+        self.assertEqual(rc.double_moons(bodies, 0.01, LS), {"moons_checked": 3, "moons_ok": 2, "moons_own_ok": 1})
+        k = rc.kepler([1, 2], lambda s: {"checked": 10, "ok": 8, "moons_checked": 6, "moons_own_ok": 2,
+                                         "moons_ok": 6 if s == 1 else 3})
         self.assertEqual((k["moons_checked"], k["moons_ok_pct"]), (12, 75.0))
+        self.assertEqual(k["ok_pct"], 100.0 * (16 + 4 + 1) / 20)                # all bodies count them too
         rows = {r["key"]: r for r in rc.build({"kepler": k})}
         self.assertIs(rows["kepler_moons"]["good"], False)
-        self.assertEqual(rows["kepler_moons"]["n"], 12)
+        self.assertIn("beyond their planet's error", rows["kepler_moons"]["value"])
         self.assertTrue(rc.build({"kepler": {"pending": True}})[1]["pending"])
 
 

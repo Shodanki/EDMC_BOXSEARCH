@@ -81,6 +81,7 @@ def kepler(systems: Sequence[Any], summary_of: Callable[[Any], Optional[Dict[str
         trusted += k.get("trusted", 0)
         m_checked += k.get("moons_checked", 0)
         m_ok += k.get("moons_ok", 0)
+        ok += k.get("moons_ok", 0) - k.get("moons_own_ok", k.get("moons_ok", 0))   # KR2: beyond their planet
     if not checked:
         return None
     return {"ok_pct": round(100.0 * ok / checked, 1), "checked": checked, "systems": n_sys,
@@ -88,20 +89,37 @@ def kepler(systems: Sequence[Any], summary_of: Callable[[Any], Optional[Dict[str
             "moons_ok_pct": round(100.0 * m_ok / m_checked, 1) if m_checked else None}
 
 
-def double_moons(bodies: Dict[Any, Any], bar: float) -> Dict[str, int]:
-    """R6: the checked moons that orbit a barycentre of two moons around a
+def double_moons(bodies: Dict[Any, Any], bar: float, ls_per_metre: float = 1.0 / 299792458.0) -> Dict[str, int]:
+    """
+    R6/KR2: the checked moons that orbit a barycentre of two moons around a
     planet (parent a barycentre whose own parent is no star and no
-    barycentre) - of them, how many lie within `bar` of their orbit."""
-    n = ok = 0
+    barycentre).
+
+    KR2 (measured 18.11. on 72 of them in the plugin database and 124 in
+    the EDDiscovery archive): their orbits are tiny (0.004-0.05 LS), and the
+    error the check sees is the planet's own, carried over one to one - at
+    the planet's scale about a millionth of its orbit, but a few per cent of
+    a moon pair's. So a moon counts as right when its error beyond the
+    error its planet already has (at the planet's scan) stays within `bar`
+    of its own orbit; without a checked planet only its own error counts.
+    `moons_own_ok` keeps the plain count against the arrival distance.
+    """
+    n = ok = own = 0
     for b in bodies.values():
         if getattr(b, "check", None) is None or b.kind in ("Star", "BaryCentre"):
             continue
         p = bodies.get(b.parent_id)
         g = bodies.get(p.parent_id) if p is not None and p.kind == "BaryCentre" else None
-        if g is not None and g.kind not in ("Star", "BaryCentre"):
-            n += 1
-            ok += b.check[0] <= bar
-    return {"moons_checked": n, "moons_ok": ok}
+        if g is None or g.kind in ("Star", "BaryCentre"):
+            continue
+        n += 1
+        mine = b.check[0] <= bar
+        own += mine
+        if not mine and g.check is not None and b.orbit and b.orbit[0] and b.arrival_ls and g.arrival_ls:
+            beyond = abs(b.check[1] * b.arrival_ls - g.check[1] * g.arrival_ls)
+            mine = beyond <= bar * b.orbit[0] * ls_per_metre
+        ok += mine
+    return {"moons_checked": n, "moons_ok": ok, "moons_own_ok": own}
 
 
 def rock_yield(events: Sequence[Dict[str, Any]], make: Callable[[], Any]) -> Optional[Dict[str, Any]]:
@@ -173,7 +191,8 @@ def build(parts: Dict[str, Any]) -> List[Dict[str, Any]]:
     rows.append(_row("kepler", "Kepler positions", k and "%.1f %% within 1 %% of the orbit · %d systems"
                      % (k["ok_pct"], k["systems"]), k and k["checked"], k and k["ok_pct"] >= 90.0))
     dm = k if k and k.get("moons_checked") else None
-    rows.append(_row("kepler_moons", "Kepler: double moons", dm and "%.1f %% within 1 %% of the orbit"
+    rows.append(_row("kepler_moons", "Kepler: double moons",
+                     dm and "%.1f %% within 1 %% of the orbit beyond their planet's error"
                      % dm["moons_ok_pct"], dm and dm["moons_checked"],
                      (dm["moons_ok_pct"] >= 90.0) if dm and dm["moons_checked"] >= 10 else None))
     f = parts.get("fuel")

@@ -234,7 +234,8 @@ class App:
                 if not any(b.pos for b in bodies.values()):
                     sr.resolve_positions(bodies)
                 out = sr.check_summary(bodies)
-                out.update(realitycheck.double_moons(bodies, getattr(sr, "CHECK_BAR", 0.01)))
+                bar, ls_m = getattr(sr, "CHECK_BAR", 0.01), getattr(sr, "LS_PER_METRE", 1.0 / 299792458.0)
+                out.update(realitycheck.double_moons(bodies, bar, ls_m))
                 return out
             return realitycheck.kepler(ids, summary)
         val = self.cached("kepler_check", sig, build)
