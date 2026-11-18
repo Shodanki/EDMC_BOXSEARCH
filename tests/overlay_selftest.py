@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import plugin_pkg  # noqa: E402
 plugin_pkg.package()
-from SHBOXSEARCH.overlay import (ANCHORS, COL, CockpitOverlay, briefing_lines)  # noqa: E402
+from SHBOXSEARCH.overlay import (COL, STATE_ANCHOR, CockpitOverlay, briefing_lines)  # noqa: E402
 from SHBOXSEARCH import shipstate as ss  # noqa: E402
 from SHBOXSEARCH import suittemp as st  # noqa: E402
 
@@ -84,23 +84,34 @@ def _selftest() -> int:
     # 5.0 (own-3): gear, lights, hardpoints still out - left, out of supercruise
     ship = ss.IN_SHIP
     rl = ss.reminder_lines
-    check(rl(ship | ss.GEAR | ss.LIGHTS | ss.HARDPOINTS)[0][0] == "SHIP GEAR DOWN · HARDPOINTS OUT · LIGHTS ON",
+    check(rl(ship | ss.GEAR | ss.LIGHTS | ss.HARDPOINTS)[0][0] == "SHIP  GEAR DOWN · HARDPOINTS OUT · LIGHTS ON",
           "own-3: in orbit, all named: %r" % rl(ship | ss.GEAR | ss.LIGHTS | ss.HARDPOINTS))
     check(all(not rl(ship | ss.GEAR | x) for x in (ss.SUPERCRUISE, ss.FSD_JUMP, ss.DOCKED, ss.LANDED)),
           "own-3: nothing in supercruise, jumping, docked or landed")
     check(not rl(ship) and not rl(None) and not rl("x"), "own-3: nothing out, nothing shown")
-    check(rl(ss.IN_SRV | ss.LIGHTS)[0][0] == "SRV  LIGHTS ON"
-          and rl(ss.IN_SRV | ss.LIGHTS | ss.SRV_HIGH_BEAM)[0][0] == "SRV  HIGH BEAM" and not rl(ss.IN_SRV),
+    check(rl(ss.IN_SRV | ss.LIGHTS)[0][0] == "SRV   LIGHTS ON"
+          and rl(ss.IN_SRV | ss.LIGHTS | ss.SRV_HIGH_BEAM)[0][0] == "SRV   HIGH BEAM" and not rl(ss.IN_SRV),
           "own-3: SRV lights and high beam")
+    # own-3 round 2 (user 18.11.): the Nomad reports as InSRV with gear and
+    # hardpoints - the user's real Status.json of 19:09 UTC (Flags 203424076)
+    vw = ss.VehicleWatch()
+    vw.feed("LaunchVessel", {"VesselType": "lander01", "VesselType_Localised": "Nomad"})
+    nomad = rl(203424076, vw.kind)
+    check(nomad and nomad[0] == ("NOMAD GEAR DOWN · HARDPOINTS OUT · LIGHTS ON", ss.BLUE),
+          "own-3: the Nomad flying with gear, hardpoints and lights, in blue: %r" % nomad)
+    vw.feed("LaunchSRV", {"SRVType": "testbuggy"})
+    check(vw.kind == "SRV" and rl(ss.IN_SRV | ss.HARDPOINTS, vw.kind)[0][0] == "SRV   HARDPOINTS OUT",
+          "own-3: back in an SRV - its turret out is named too")
+    check(rl(203424076 | ss.LANDED, "NOMAD") == [], "own-3: the Nomad set down - nothing")
     sent.clear()
     ov.hidden = False
     check(ov.show_state(rl(ship | ss.GEAR)) and sent and sent[-1][0].endswith("state-0")
-          and ov._origin("state") == ANCHORS["bottom-left"], "own-3: drawn bottom left while the blocks start at the top")
+          and ov._origin("state") == STATE_ANCHOR, "own-3: drawn left middle (user 18.11.)")
     n = len(sent)
     check(ov.show_state(rl(ship | ss.GEAR)) and len(sent) == n, "own-3: unchanged - not sent again")
     check(not ov.show_state([]) and sent[-1][1] == "" and not ov._drawn.get("state"), "own-3: gear up - blanked")
     ov.position = "bottom-left"
-    check(ov._origin("state") == ANCHORS["top-left"], "own-3: blocks at the bottom - top left")
+    check(ov._origin("state") == STATE_ANCHOR, "own-3: left middle wherever the blocks are")
     ov.hidden = True
     check(not ov.show_state(rl(ship | ss.GEAR)), "own-3: not over a map screen")
     # 5.0 (own-2): on foot in heat or cold - suit health and time left

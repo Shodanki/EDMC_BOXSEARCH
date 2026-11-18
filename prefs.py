@@ -176,7 +176,7 @@ def _tab_overlay(r: _Rows) -> None:
     r.check("overlay_brief", "overlay_brief", True, "briefing on target selection and arrival")
     r.check("overlay_nav", "overlay_nav", True, "surface compass: parked SRV, open samples, known points")
     r.check("overlay_mining", "overlay_mining", True, "mining: last rock, hold, rate, session, limpets (5 lines)")
-    r.check("overlay_state", "overlay_state", True, "out of supercruise: gear, lights, hardpoints still out (left)")
+    r.check("overlay_state", "overlay_state", True, "still out: gear, lights, hardpoints - ship, SRV, Nomad (left)")
     r.check("overlay_suit", "overlay_suit", True, "on foot: too hot or cold - suit health and time left (left)")
     # 4.12: the situation column in the opposite corner (cockpitinfo)
     r.head("Situation column (the opposite corner)")

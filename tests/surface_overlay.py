@@ -189,5 +189,29 @@ nav = client.shown("nav")
 check(any(t.startswith("SHIP AWAY") for t in nav) and not any(t.startswith("SHIP (hover)") for t in nav),
       "back near the drop point: still away - recall it (%s)" % nav[1:2])
 
+print("own-3 round 2: the left line through the hooks (Nomad, ship, SRV)")
+load.journal_entry("Cmdr", False, "Test", "Test B 1",
+                   {"event": "LaunchVessel", "timestamp": "2027-01-15T10:07:00Z", "VesselType": "lander01",
+                    "VesselType_Localised": "Nomad", "ID": 49, "PlayerControlled": True}, {"FID": "F1"})
+client.sent.clear()
+clock[0] += 2
+at(203424076, 0.0, "2027-01-15T10:07:30Z", alt=25.0)          # the user's real Status.json, 18.11. 19:09 UTC
+check(client.shown("state") == ["NOMAD GEAR DOWN · HARDPOINTS OUT · LIGHTS ON"],
+      "the Nomad flying low: gear, hardpoints, lights (%s)" % client.shown("state"))
+real_status = state.ST.mine.status
+state.ST.mine.status = lambda e: 1 / 0                          # a failing step before it
+client.sent.clear()
+clock[0] += 2
+at(IN_SHIP | (1 << 2), 0.0, "2027-01-15T10:08:00Z", alt=40.0)
+check(client.shown("state") == ["SHIP  GEAR DOWN"], "a failing mining step no longer hides it (%s)"
+      % client.shown("state"))
+state.ST.mine.status = real_status
+load.journal_entry("Cmdr", False, "Test", "Test B 1",
+                   {"event": "LaunchSRV", "timestamp": "2027-01-15T10:09:00Z", "SRVType": "testbuggy",
+                    "SRVType_Localised": "SRV Scarab", "ID": 50, "PlayerControlled": True}, {"FID": "F1"})
+clock[0] += 2
+at(SRV | (1 << 8), 0.0, "2027-01-15T10:09:30Z")
+check(client.shown("state") == ["SRV   LIGHTS ON"], "the SRV with its lights on (%s)" % client.shown("state"))
+
 print("surface overlay: %s" % ("all OK" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)

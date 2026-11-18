@@ -103,6 +103,7 @@ def _before_ingest(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> boo
     if entry.get("BodyID") is not None and ev in POSITION_EVENTS:
         routewin._note_position(entry)
     _mining_event(ev, entry, state)
+    _VEHICLE.feed(ev, entry)                 # 5.0 (own-3): SRV or Nomad for the left line
     # EDMC enriches NavRoute with the full Route array
     if ev == "NavRoute" and entry.get("Route"):
         cockpit._note_navroute(entry.get("Route"))
@@ -644,9 +645,9 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
         cockpitinfo.dashboard(entry)         # 4.12: danger - unsold data at stake
         journalgap.status_tick()             # 4.12.1: EDMC quiet, the journal not?
         _mining_overlay()                    # rate and ages move on; at most every 5 s
-        _state_overlay(entry)                # 5.0 (own-3): gear, lights, hardpoints
     except Exception:
         logger.debug("mining overlay failed", exc_info=True)
+    _state_overlay(entry)                    # 5.0 (own-3): its own guard - a mining error must not hide it
     if not ST.db or not cfg_bool(CFG["harvest_destination"], True):
         return
     try:
@@ -657,21 +658,32 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
 
 
 _SUIT = suittemp.SuitWatch()
+_VEHICLE = shipstate.VehicleWatch()
 
 
 def _state_overlay(entry: Dict[str, Any]) -> None:
     """The left line: out of supercruise gear, lights, hardpoints still out
-    (shipstate, setting "overlay_state"); on foot in heat or cold the suit's
-    health and time left (suittemp, setting "overlay_suit")."""
+    in the ship, SRV or Nomad (shipstate, setting "overlay_state"); on foot
+    in heat or cold the suit's health and time left (suittemp, setting
+    "overlay_suit"). Never raises; a failure is logged once."""
+    global _STATE_FAILED
     ov = getattr(ST, "overlay", None)
     if ov is None or ("Flags" not in entry and "Flags2" not in entry):
         return
-    lines: List[Any] = []
-    if ov.enabled and cfg_bool(CFG["overlay_suit"], True):
-        lines = _SUIT.feed(time.time(), entry.get("Flags2"), entry.get("Health"), entry.get("Temperature"))
-    if not lines and ov.enabled and cfg_bool(CFG["overlay_state"], True):
-        lines = shipstate.reminder_lines(entry.get("Flags"))
-    ov.show_state(lines)
+    try:
+        lines: List[Any] = []
+        if ov.enabled and cfg_bool(CFG["overlay_suit"], True):
+            lines = _SUIT.feed(time.time(), entry.get("Flags2"), entry.get("Health"), entry.get("Temperature"))
+        if not lines and ov.enabled and cfg_bool(CFG["overlay_state"], True):
+            lines = shipstate.reminder_lines(entry.get("Flags"), _VEHICLE.kind)
+        ov.show_state(lines)
+    except Exception:
+        if not _STATE_FAILED:
+            logger.warning("overlay | still-out line failed", exc_info=True)
+        _STATE_FAILED = True
+
+
+_STATE_FAILED = False
 
 
 def _status_fuel(entry: Dict[str, Any]) -> None:

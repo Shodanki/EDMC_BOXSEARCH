@@ -55,6 +55,7 @@ ANCHORS: Dict[str, Tuple[int, int]] = {
     "bottom-right": (900, 690),
 }
 POSITIONS = tuple(ANCHORS)
+STATE_ANCHOR = (16, 440)  # 5.0 (own-3, user 18.11.): left middle, clear of every corner block
 LINE_H = {"small": 16, "normal": 20}
 BRIEFING_GAP = 8          # lines below the targets block where a briefing goes
 MAX_LINES = 8
@@ -306,10 +307,9 @@ class CockpitOverlay:
         if group == "info":
             return self._info_origin()
         if group == "state":
-            # 5.0 (own-3): always on the left, in the corner the other
-            # blocks leave free (the bottom while they start at the top)
-            corner = "bottom-left" if self.position.startswith("top") else "top-left"
-            return ANCHORS[corner]
+            # 5.0 (own-3): left middle (user 18.11.) - the bottom-left corner
+            # sat on the cockpit's own orange panels and went unseen
+            return STATE_ANCHOR
         if group in ("brief", "bio", "nav", "mine"):
             lh = LINE_H.get(self.size, 16)
             down = (self._drawn.get("targets", 0) + 1) * lh
@@ -418,6 +418,8 @@ class CockpitOverlay:
             return True
         if not self.draw("state", lines, ttl=self.STATE_TTL):
             return False
+        if lines != self._last_state:
+            self.log.info("overlay | still out: %s", lines[0][0])
         self._last_state, self._state_t = lines, now
         return True
 
