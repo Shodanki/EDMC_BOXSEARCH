@@ -158,6 +158,19 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertIn('class: "c-dim small st-row st-reset"', js)
         self.assertIn(".st-learning .st-reset { display: flex;", css)
 
+    def test_no_scanlines_over_the_flat_themes(self):
+        """User 18.11.2026: the lines over everything make Federation classic, Federation
+        bridge and Belt industrial restless, above all the lettering - those three draw no
+        scanlines and Belt's screens no line texture; standard, station and next keep them."""
+        css = self._read("css", "fis.css")
+        self.assertIn(':root[data-theme="console"] body.scanlines::after, :root[data-theme="bridge"] body.scanlines::after,\n'
+                      ':root[data-theme="industrial"] body.scanlines::after { content: none; }', css)
+        belt = css[css.index(':root[data-theme="industrial"] body:not(.obs) :is(.stat-view'):]
+        belt = belt[:belt.index("}")]
+        self.assertNotIn("repeating-linear-gradient(0deg", belt)
+        self.assertIn('body.scanlines::after {', css)                   # the switch still works elsewhere
+        self.assertIn(':root[data-theme="station"] body:not(.scanlines):not(.obs)::after', css)
+
     def test_nothing_blinks_for_ever(self):
         """User 18.11.2026: blinking is fine for an alarm, but not for as long as it lasts -
         no endless animation that blinks; alarms blink from their onset (blinkFor)."""
