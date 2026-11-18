@@ -30,6 +30,26 @@ const STATUS = {
   known: [N_("KNOWN"), N_("known in {s}")],
 };
 
+// FX5: the cell of the find odds that decided (findodds "why": root/height/kind/star/level)
+const WHY = { high: N_("off-plane"), low: N_("near plane"), named: N_("named system"), rest: N_("other star"),
+  known: N_("in a database"), checked: N_("in no database"), unchecked: N_("not checked"), inhabited: N_("inhabited") };
+export function oddsReason(o) {
+  const w = String(o.why || "prior").split("/");
+  if (w[0] === "prior") return t("no own data yet");
+  const parts = [];
+  w.slice(1).forEach((s, i) => {
+    if (s === "?") return;
+    if (i === 1 && s !== "named") parts.push(t("mass code {m}", { m: s }));
+    else if (i === 2 && !WHY[s]) parts.push(t("{s} star", { s }));
+    else parts.push(WHY[s] ? t(WHY[s]) : s);
+  });
+  return parts.join(", ") || t("all own visits");
+}
+
+export function oddsText(o) {
+  return t("~{p} % chance of an undiscovered body", { p: fmt(o.p, 0) });
+}
+
 function expectation(x) {
   if (x.key === "avg_bodies") return t("~{n} bodies (average of {k} known systems in the boxel)", { n: x.n, k: x.of });
   if (x.key === "bio_neighbours") return t("Bio: {n} of {k} visited neighbours", { n: x.n, k: x.of });
@@ -100,6 +120,12 @@ export function update(ctx, reason) {
     w: [tg.lost.scan ? t("{n} scans", { n: tg.lost.scan }) : null, tg.lost.map ? t("{n} maps", { n: tg.lost.map }) : null,
       tg.lost.bio && tg.lost.bio.length ? t("bio: {s}", { s: [...new Set(tg.lost.bio)].join(", ") }) : null].filter(Boolean).join(" · ") }) })));
   if (tg.also_by && tg.also_by.length) rows.push(row(t("ALSO"), el("span", { class: "c-dim", text: t("also explored by {n}", { n: tg.also_by.join(", ") }) })));
+  if (tg.odds) {
+    const o = tg.odds, cls = o.p >= 15 ? "c-green" : o.p >= 5 ? "" : "c-dim";
+    rows.push(row(t("FIND"), el("span", { class: cls, text: oddsText(o) }),
+      el("div", { class: "c-dim", text: t("{r} · learnt from {n} visits (range {a}–{b} %)",
+        { r: oddsReason(o), n: o.n, a: fmt(o.low, 0), b: fmt(o.high, 0) }) })));
+  }
   if (b.expectation && b.expectation.length)
     rows.push(row(t("EXPECTED"), el("div", {}, ...b.expectation.map(x => el("div", { text: expectation(x) })))));
   const f = b.fuel;

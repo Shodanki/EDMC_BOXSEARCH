@@ -342,6 +342,36 @@ def find_odds(db: Any) -> Optional[Dict[str, Any]]:
         return None
 
 
+ODDS_TTL_S = 60.0        # the counted model is reused this long (BRIEFING polls)
+_odds_cache: Dict[str, Any] = {"t": 0.0, "db": None, "m": None}
+
+
+def target_odds(db: Any, name: Optional[str], star: Optional[str], level: Optional[str],
+                y: Optional[float], now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """
+    FX5 for BRIEFING and GALAXY: the chance that a first visit to this
+    system finds an undiscovered body, from the commander's own settled
+    visits (plugin findodds, counted at most once a minute). Data, not
+    sentences: {p, low, high (percent), n, learnt, why}; the browser words
+    the reason. None when the plugin is older or nothing can be counted.
+    """
+    try:
+        import time as _time
+        from .model import plugin
+        fo = getattr(plugin(), "findodds", None)
+        if fo is None or not name:
+            return None
+        now = _time.time() if now is None else now
+        c = _odds_cache
+        if c["m"] is None or c["db"] is not db or now - c["t"] > ODDS_TTL_S:
+            c["m"], c["db"], c["t"] = fo.model(lambda q, a: db.query(q, tuple(a))), db, now
+        pr = c["m"].predict(name, star, level or "", y)
+    except Exception:
+        return None
+    return {"p": round(100 * pr["p"], 1), "low": round(100 * pr["low"], 1), "high": round(100 * pr["high"], 1),
+            "n": pr["n"], "learnt": pr["learnt"], "why": pr["why"]}
+
+
 def wilson(k: int, n: int, z: float = 1.96) -> Tuple[Optional[float], Optional[float]]:
     """The 95 % Wilson interval of k in n, in percent (None, None for n = 0)."""
     if n <= 0:

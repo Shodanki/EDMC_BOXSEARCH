@@ -225,11 +225,13 @@ def corridor(db: Database, now: float) -> Optional[Dict[str, Any]]:
     if now - float(doc.get("ts") or 0) > CORRIDOR_MAX_AGE_S:
         return None
     f = doc["from"]
+    from .learn import target_odds          # FX5: the chance of a find at the end of the corridor
     return {"from": {"x": _r(f[0]), "y": _r(f[1]), "z": _r(f[2])}, "half": doc.get("half"),
             "ts": doc.get("ts"),
             "targets": [{"name": t.get("name"), "x": _r(t.get("x")), "y": _r(t.get("y")),
                          "z": _r(t.get("z")), "ly": t.get("ly"), "jumps": t.get("jumps"),
-                         "boxels": t.get("boxels")}
+                         "boxels": t.get("boxels"),
+                         "odds": target_odds(db, t.get("name"), None, None, t.get("y"), now)}
                         for t in doc["targets"][:3] if t.get("x") is not None]}
 
 

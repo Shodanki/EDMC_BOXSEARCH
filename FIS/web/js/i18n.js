@@ -1573,5 +1573,18 @@ const DE = /*DE*/{
   "OUTLOOK": "AUSBLICK",
   "COURSE OF WEALTH": "VERLAUF DES VERMÖGENS",
   "Credit balance where the game states it (login, carrier transfers); carrier bank from its readings (CarrierStats).": "Kontostand, wo das Spiel ihn nennt (Anmeldung, Träger-Überweisungen); Träger-Bank aus ihren Ständen (CarrierStats).",
-  "BALANCE SHEET": "BILANZ"
+  "BALANCE SHEET": "BILANZ",
+  "FIND": "FUND",
+  "~{p} % chance of an undiscovered body": "~{p} % Chance auf einen unentdeckten Körper",
+  "{r} · learnt from {n} visits (range {a}–{b} %)": "{r} · gelernt aus {n} Besuchen (Spanne {a}–{b} %)",
+  "find ~{p} % ({n})": "Fund ~{p} % ({n})",
+  "no own data yet": "noch keine eigenen Daten",
+  "all own visits": "alle eigenen Besuche",
+  "mass code {m}": "Massencode {m}",
+  "{s} star": "{s}-Stern",
+  "off-plane": "abseits der Ebene",
+  "near plane": "nahe der Ebene",
+  "named system": "benanntes System",
+  "other star": "anderer Stern",
+  "in a database": "in einer Datenbank"
 }/*END*/;

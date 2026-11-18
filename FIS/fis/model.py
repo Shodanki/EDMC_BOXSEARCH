@@ -2012,6 +2012,8 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]],
     # data, not sentences: the browser words them in the display language
     out["expectation"] = exp
     out["status"] = _briefing_status(known, level, row)
+    from .learn import target_odds          # FX5: the chance of a find there
+    out["target"]["odds"] = target_odds(db, name, star, level, tpos[1] if tpos else None)
     return out
 
 

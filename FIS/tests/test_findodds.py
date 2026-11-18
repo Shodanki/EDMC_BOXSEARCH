@@ -64,6 +64,23 @@ class FindOddsTest(unittest.TestCase):
         if f is not None:
             self.assertEqual(f["logged"], 0)
 
+    def test_target_odds(self):
+        """FX5: BRIEFING and GALAXY get the chance of a find, counted once a minute."""
+        learn._odds_cache.update(t=0.0, db=None, m=None)
+        o = learn.target_odds(self.db, "Synuefe XT-Q c21-13", "K", "known", -150.0, now=1000.0)
+        self.assertIsNotNone(o)
+        self.assertEqual(o["learnt"], 1)
+        self.assertTrue(o["low"] <= o["p"] <= o["high"])
+        self.assertEqual(o["why"], "pg/high")          # the one settled visit lies off the plane
+        m = learn._odds_cache["m"]
+        learn.target_odds(self.db, "Synuefe XT-Q c21-13", "K", "known", -150.0, now=1030.0)
+        self.assertIs(learn._odds_cache["m"], m)       # within a minute: not counted again
+        learn.target_odds(self.db, "Synuefe XT-Q c21-13", "K", "known", -150.0, now=1100.0)
+        self.assertIsNot(learn._odds_cache["m"], m)
+        self.assertIsNone(learn.target_odds(self.db, None, None, None, None))
+        with mock.patch("fis.model.plugin", return_value=type("P", (), {"findodds": None})()):
+            self.assertIsNone(learn.target_odds(self.db, "Synuefe XT-Q c21-13", "K", "known", 0.0))
+
 
 if __name__ == "__main__":
     unittest.main()

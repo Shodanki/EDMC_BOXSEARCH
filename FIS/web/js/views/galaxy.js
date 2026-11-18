@@ -29,7 +29,9 @@ const FIND_NAME = { guardian: N_("Guardian site"), nonhuman: N_("non-human site"
 const BOX_NAME = { closed: N_("closed"), open: N_("open"), unchecked: N_("never checked") };
 
 function corridorText(tg) {
-  return t("plot to {n} · {b} boxels never probed · ~{j} jumps", { n: tg.name, b: tg.boxels, j: tg.jumps });
+  const s = t("plot to {n} · {b} boxels never probed · ~{j} jumps", { n: tg.name, b: tg.boxels, j: tg.jumps });
+  // FX5: the chance of a find at its end, learnt from n own visits
+  return tg.odds ? s + " · " + t("find ~{p} % ({n})", { p: Math.round(tg.odds.p), n: tg.odds.n }) : s;
 }
 
 let root = null, cv = null, g = null, side = null, data = null, hover = null;
