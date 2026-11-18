@@ -170,6 +170,17 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertIn('blinkFor("ship-master", data.master === "warning")', self._read("js", "views", "ship.js"))
         self.assertIn('blinkFor("combat-alert", level === "alert")', self._read("js", "app.js"))
 
+    def test_system_per_theme(self):
+        """TH4 (user 18.11.2026): SYSTEM per theme - flight plan, report and head on the side;
+        every rule bound to a non-standard theme, Belt's bezel on SYSTEM too."""
+        css = self._read("css", "fis.css")
+        block = css[css.index("/* -- TH4 (18.11.): SYSTEM per theme"):]
+        for theme in ("console", "bridge", "industrial", "station", "next"):
+            self.assertIn(':root[data-theme="%s"] .tac-view .leg' % theme, block)
+        self.assertNotIn('data-theme="standard"', block)
+        self.assertNotIn("animation", block)
+        self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view) .frame { padding: 5px;', css)
+
     def test_ship_per_theme(self):
         """TH3 (user 18.11.2026): SHIP per theme. Hold, fuel, reservoir and the hull hand
         their share to meter(), module health carries --p; the hull meter is hidden in
@@ -183,7 +194,7 @@ class StatsLayoutTest(unittest.TestCase):
         for theme in ("console", "bridge", "industrial", "station", "next"):
             self.assertIn(':root[data-theme="%s"] .sh-ann .sh-hull-m { display: block;' % theme, block)
         self.assertNotIn('data-theme="standard"', block)
-        self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view) .frame { padding: 5px;', css)
+        self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view) .frame { padding: 5px;', css)
 
     def test_theme_lists_agree_and_bridge_is_complete(self):
         """TH2 (user 18.11.2026): the old console look stays as "Federation classic",
@@ -216,7 +227,7 @@ class StatsLayoutTest(unittest.TestCase):
         rules = [r for r in re.findall(r"^(:root[^{]*)\{", block, re.M)]
         self.assertTrue(rules)
         for r in rules:
-            self.assertRegex(r, r':root\[data-theme="(console|bridge|industrial|station|next)"\] (body:not\(\.obs\) )?(\.stat-view |:is\(\.stat-view, \.ship-view\) )')
+            self.assertRegex(r, r':root\[data-theme="(console|bridge|industrial|station|next)"\] (body:not\(\.obs\) )?(\.stat-view |:is\(\.stat-view, \.ship-view, \.tac-view\) )')
         self.assertNotIn('data-theme="standard"', block)
         for theme, mark in (("console", "conic-gradient(var(--cyan) calc(var(--p, 0) * 1%)"),
                             ("industrial", "repeating-linear-gradient(90deg, var(--scr-c) 0 6px"),          # TH1b: teal screen, amber cap
