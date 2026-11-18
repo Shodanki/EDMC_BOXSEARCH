@@ -183,6 +183,18 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertIn('blinkFor("ship-master", data.master === "warning")', self._read("js", "views", "ship.js"))
         self.assertIn('blinkFor("combat-alert", level === "alert")', self._read("js", "app.js"))
 
+    def test_briefing_per_theme(self):
+        """TH5 (user 18.11.2026): BRIEFING per theme - target block, sphere bars (hbar now
+        hands its share to the theme as --p) and navpoints; standard unchanged, nothing animated."""
+        css, ui = self._read("css", "fis.css"), self._read("js", "ui.js")
+        self.assertIn('el("div", { class: "track", style: "--p: " + pct.toFixed(1) }', ui)
+        block = css[css.index("/* -- TH5 (18.11.): BRIEFING per theme"):]
+        for theme in ("console", "bridge", "industrial", "station", "next"):
+            self.assertIn(':root[data-theme="%s"] .briefing-view .navlist li' % theme, block)
+        self.assertNotIn('data-theme="standard"', block)
+        self.assertNotIn("animation", block)
+        self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view) .frame { padding: 5px;', css)
+
     def test_system_per_theme(self):
         """TH4 (user 18.11.2026): SYSTEM per theme - flight plan, report and head on the side;
         every rule bound to a non-standard theme, Belt's bezel on SYSTEM too."""
@@ -192,7 +204,7 @@ class StatsLayoutTest(unittest.TestCase):
             self.assertIn(':root[data-theme="%s"] .tac-view .leg' % theme, block)
         self.assertNotIn('data-theme="standard"', block)
         self.assertNotIn("animation", block)
-        self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view) .frame { padding: 5px;', css)
+        self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view) .frame { padding: 5px;', css)
 
     def test_ship_per_theme(self):
         """TH3 (user 18.11.2026): SHIP per theme. Hold, fuel, reservoir and the hull hand
@@ -207,7 +219,7 @@ class StatsLayoutTest(unittest.TestCase):
         for theme in ("console", "bridge", "industrial", "station", "next"):
             self.assertIn(':root[data-theme="%s"] .sh-ann .sh-hull-m { display: block;' % theme, block)
         self.assertNotIn('data-theme="standard"', block)
-        self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view) .frame { padding: 5px;', css)
+        self.assertIn(':root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view) .frame { padding: 5px;', css)
 
     def test_theme_lists_agree_and_bridge_is_complete(self):
         """TH2 (user 18.11.2026): the old console look stays as "Federation classic",
@@ -240,7 +252,7 @@ class StatsLayoutTest(unittest.TestCase):
         rules = [r for r in re.findall(r"^(:root[^{]*)\{", block, re.M)]
         self.assertTrue(rules)
         for r in rules:
-            self.assertRegex(r, r':root\[data-theme="(console|bridge|industrial|station|next)"\] (body:not\(\.obs\) )?(\.stat-view |:is\(\.stat-view, \.ship-view, \.tac-view\) )')
+            self.assertRegex(r, r':root\[data-theme="(console|bridge|industrial|station|next)"\] (body:not\(\.obs\) )?(\.stat-view |:is\(\.stat-view, \.ship-view, \.tac-view, \.briefing-view\) )')
         self.assertNotIn('data-theme="standard"', block)
         for theme, mark in (("console", "conic-gradient(var(--cyan) calc(var(--p, 0) * 1%)"),
                             ("industrial", "repeating-linear-gradient(90deg, var(--scr-c) 0 6px"),          # TH1b: teal screen, amber cap

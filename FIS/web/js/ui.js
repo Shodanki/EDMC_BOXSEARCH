@@ -171,7 +171,7 @@ export function hbar(label, value, max, valText, cls = "") {
   const pct = max > 0 ? Math.max(0, Math.min(100, 100 * value / max)) : 0;
   return el("div", { class: "hbar " + cls },
     el("span", { class: "c-dim", text: label }),
-    el("div", { class: "track" }, el("i", { style: { width: pct.toFixed(1) + "%" } })),
+    el("div", { class: "track", style: "--p: " + pct.toFixed(1) }, el("i", { style: { width: pct.toFixed(1) + "%" } })),
     el("span", { class: "val", text: valText ?? fmt(value, 1) }));
 }
 
