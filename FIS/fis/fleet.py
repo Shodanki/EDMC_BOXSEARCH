@@ -99,13 +99,46 @@ CARRIER_MAX_JUMP = 500.0
 CARRIER_TANK = 1000
 
 
-def tritium_for_jump(ly: float, load_t: float, tritium_t: float) -> int:
+Model = Optional[Tuple[float, float]]      # (base, div) of the formula, None = the fitted default
+LEARN_MIN = 5          # jumps of 20 ly and more before the formula is learnt
+LEARN_LAST = 50        # the newest jumps it is learnt from
+
+
+def tritium_for_jump(ly: float, load_t: float, tritium_t: float, model: Model = None) -> int:
     """Tritium in tonnes a carrier jump of ly costs with this cargo and tritium
-    load (TRITIUM_BASE / TRITIUM_DIV)."""
-    return int(round(5 + ly * (load_t + tritium_t + TRITIUM_BASE) / TRITIUM_DIV))
+    load: 5 + ly x (load + tritium + base) / div - base and div learnt from
+    your own jumps (learn_tritium), else TRITIUM_BASE / TRITIUM_DIV."""
+    b, d = model or (TRITIUM_BASE, TRITIUM_DIV)
+    return int(round(5 + ly * (load_t + tritium_t + b) / d))
 
 
-def carrier_trip(ly: float, load_t: float, tank: int) -> Dict[str, Any]:
+def learn_tritium(jumps: Iterable[Tuple[float, float, float, float]]) -> Dict[str, Any]:
+    """The formula fitted on your own jumps (ly, load, tritium before, used):
+    used - 5 = ly x (load + tritium) / div + ly x base / div, least squares
+    over the newest LEARN_LAST jumps of 20 ly and more. Below LEARN_MIN
+    jumps, or with an implausible fit, the default stays. Says how far the
+    chosen formula is off on those jumps (max_err, t)."""
+    rows = [j for j in jumps if j[0] >= 20 and j[3] > 0][-LEARN_LAST:]
+    out: Dict[str, Any] = {"n": len(rows), "learnt": False, "base": TRITIUM_BASE, "div": TRITIUM_DIV}
+    if len(rows) >= LEARN_MIN:
+        s11 = s12 = s22 = t1 = t2 = 0.0
+        for ly, load, trit, used in rows:
+            x1, x2, y = ly * (load + trit), ly, used - 5
+            s11, s12, s22, t1, t2 = s11 + x1 * x1, s12 + x1 * x2, s22 + x2 * x2, t1 + x1 * y, t2 + x2 * y
+        det = s11 * s22 - s12 * s12
+        if det > 0:
+            a = (t1 * s22 - t2 * s12) / det
+            b = (s11 * t2 - s12 * t1) / det
+            if a > 0 and 100000 <= 1 / a <= 400000 and 0 <= b / a <= 100000:
+                out.update(learnt=True, base=round(b / a, 0), div=round(1 / a, 0))
+    model = (out["base"], out["div"])
+    errs = [used - tritium_for_jump(ly, load, trit, model) for ly, load, trit, used in rows]
+    out["max_err"] = max((abs(e) for e in errs), default=None)
+    out["model"] = model
+    return out
+
+
+def carrier_trip(ly: float, load_t: float, tank: int, model: Model = None) -> Dict[str, Any]:
     """Tritium for a trip of `ly` in equal jumps of at most 500 ly. Tritium
     on board weighs too: when the tank is short, the need is worked out for
     a carrier that carries it."""
@@ -115,7 +148,7 @@ def carrier_trip(ly: float, load_t: float, tank: int) -> Dict[str, Any]:
     def cost(start: float) -> int:
         left, total = float(start), 0
         for _ in range(n):
-            need = tritium_for_jump(hop, load_t, left)
+            need = tritium_for_jump(hop, load_t, left, model)
             total += need
             left -= need
         return total
@@ -130,12 +163,12 @@ def carrier_trip(ly: float, load_t: float, tank: int) -> Dict[str, Any]:
             "short": max(0, int(need) - int(tank))}
 
 
-def carrier_range(tritium: int, load_t: float, hop_ly: float = CARRIER_MAX_JUMP
-                  ) -> Dict[str, Any]:
+def carrier_range(tritium: int, load_t: float, hop_ly: float = CARRIER_MAX_JUMP,
+                  model: Model = None) -> Dict[str, Any]:
     """Full jumps of `hop_ly` the tank allows, then what is left for a short one."""
     left, jumps, ly = int(tritium), 0, 0.0
     while True:
-        need = tritium_for_jump(hop_ly, load_t, left)
+        need = tritium_for_jump(hop_ly, load_t, left, model)
         if need > left:
             break
         left -= need
@@ -149,13 +182,13 @@ def carrier_range(tritium: int, load_t: float, hop_ly: float = CARRIER_MAX_JUMP
         lo, hi = 0.0, hop_ly
         for _ in range(30):
             mid = (lo + hi) / 2
-            if tritium_for_jump(mid, load_t, left) <= left:
+            if tritium_for_jump(mid, load_t, left, model) <= left:
                 lo = mid
             else:
                 hi = mid
         extra = lo
     return {"jumps": jumps, "ly": round(ly + extra, 0), "per_jump": tritium_for_jump(
-        hop_ly, load_t, tritium), "left_after": left}
+        hop_ly, load_t, tritium, model), "left_after": left}
 
 
 # --------------------------------------------------------------- names
@@ -620,6 +653,18 @@ def fsd_hint(fsd: Optional[Dict[str, Any]], engineers: List[Dict[str, Any]]) -> 
     return {"to": top, "blueprint": bp, "engineers": [e["engineer"] for e in can if e["max_grade"] == top]}
 
 
+def _jump_rows(jumps: Iterable[Dict[str, Any]], pos: Dict[str, Any]) -> List[Tuple[float, float, float, float]]:
+    """(ly, load, tritium before, used) of every jump with both ends and
+    the tank before and after known."""
+    rows = []
+    for j in jumps:
+        a, b = pos.get(j["from"]), pos.get(j["to"])
+        if a and b and j.get("before") is not None and j.get("after") is not None:
+            rows.append((math.dist(a, b), float(j.get("load") or 0), float(j["before"]),
+                         float(j["before"] - j["after"])))
+    return rows
+
+
 class _CarrierLog:
     """Archive.carrier's replay of the own carrier's events."""
 
@@ -1013,6 +1058,8 @@ class Archive:
         if c.stats is None:
             return None
         pos, pend, fuel, load = c.pos, c.pend, c.fuel, c.load
+        learn = learn_tritium(_jump_rows(c.jumps, pos))
+        model = learn["model"]
         hist = []
         for j in c.jumps[-12:]:
             a, b = pos.get(j["from"]), pos.get(j["to"])
@@ -1020,7 +1067,7 @@ class Archive:
             hist.append({"from": j["from"], "to": j["to"], "ly": round(ly, 1) if ly else None,
                          "used": ((j["before"] - j["after"])
                                   if j.get("before") is not None and j.get("after") is not None else None),
-                         "predicted": tritium_for_jump(ly, j["load"] or 0, j["before"] or 0) if ly else None,
+                         "predicted": tritium_for_jump(ly, j["load"] or 0, j["before"] or 0, model) if ly else None,
                          "ts": j.get("arrived") or j.get("ts")})
         pending = None
         if pend and not pend.get("arrived"):
@@ -1028,8 +1075,9 @@ class Archive:
             ly = math.dist(a, b) if a and b else None
             pending = {"to": pend["to"], "body": pend.get("body"), "departure": pend.get("departure"),
                        "ly": round(ly, 1) if ly else None,
-                       "tritium": tritium_for_jump(ly, load or 0, fuel or 0) if ly else None}
+                       "tritium": tritium_for_jump(ly, load or 0, fuel or 0, model) if ly else None}
         return {"stats": c.stats, "location": c.loc, "arrived": c.arrived_ts, "fuel": fuel, "load": load,
+                "tritium_model": learn,
                 "jumps": hist, "pending": pending, "upkeep": weekly_cost(c.balances, c.transfers),
                 "services_changed": c.services,
                 # PL2: the balance over time and your transfers, for GAIN / LOSS

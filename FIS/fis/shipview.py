@@ -414,7 +414,8 @@ def _tritium_more(archive: fl.Archive, live: Dict[str, Any], c: Dict[str, Any],
     tritium for the end of the plotted route."""
     from . import galaxy, mining
     tank, load = int(c["fuel"] or 0), c["load"] or 0
-    per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank) or 1
+    model = (c.get("tritium_model") or {}).get("model")
+    per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank, model) or 1
     out: Dict[str, Any] = {"to_full": max(0, fl.CARRIER_TANK - tank)}
     hold = hold_tritium(capi_path, now)
     if hold:
@@ -422,12 +423,12 @@ def _tritium_more(archive: fl.Archive, live: Dict[str, Any], c: Dict[str, Any],
         if hold["t"]:
             # tritium in the hold weighs already (it is cargo): as fuel it moves
             # from the load into the tank, jump by jump
-            out["with_hold"] = fl.carrier_range(tank + hold["t"], max(0, load - hold["t"]))
+            out["with_hold"] = fl.carrier_range(tank + hold["t"], max(0, load - hold["t"]), model=model)
     ship = _ship_tritium(journal_dir)
     if ship is not None:
         out["ship"] = ship
         if ship:
-            out["with_ship"] = fl.carrier_range(min(fl.CARRIER_TANK, tank + ship), load)
+            out["with_ship"] = fl.carrier_range(min(fl.CARRIER_TANK, tank + ship), load, model=model)
     s = mining.session(archive.events(), now)
     if s and s["tritium"]:
         out["mined"] = {"t": s["tritium"], "active": s["active"], "end": s["end"],
@@ -440,7 +441,7 @@ def _tritium_more(archive: fl.Archive, live: Dict[str, Any], c: Dict[str, Any],
         dest = route[-1]
         ly = sum((a - b) ** 2 for a, b in zip(dest["pos"], here)) ** 0.5
         if ly > 1:
-            out["trip"] = dict(fl.carrier_trip(ly, load, tank), to=dest.get("name"))
+            out["trip"] = dict(fl.carrier_trip(ly, load, tank, model), to=dest.get("name"))
     out["time"] = _jump_times(archive, c, out)
     return out
 
@@ -450,7 +451,7 @@ def _jump_times(archive: fl.Archive, c: Dict[str, Any], out: Dict[str, Any]) -> 
     own jumps, cooldown - for the tank's range and the route's end."""
     from . import jumpplan
     tm = jumpplan.timing(archive.own_carrier_events())
-    rng = fl.carrier_range(c["fuel"] or 0, c["load"] or 0)
+    rng = fl.carrier_range(c["fuel"] or 0, c["load"] or 0, model=(c.get("tritium_model") or {}).get("model"))
     n = rng["jumps"] + (1 if rng["ly"] > rng["jumps"] * fl.CARRIER_MAX_JUMP + 1 else 0)
     res = {"timing": tm, "range": jumpplan.trip_time(n, tm)}
     if out.get("trip"):
@@ -544,7 +545,8 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
     su = s.get("SpaceUsage") or {}
     fin = s.get("Finance") or {}
     loc = c.get("location") or {}
-    rng = fl.carrier_range(c["fuel"] or 0, c["load"] or 0)
+    learn = c.get("tritium_model") or fl.learn_tritium([])
+    rng = fl.carrier_range(c["fuel"] or 0, c["load"] or 0, model=learn["model"])
     up = c.get("upkeep") or {}
     avail = fin.get("AvailableBalance")
     # Frontier's own figure beats the estimate from the balance history
@@ -562,7 +564,8 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
                      "jumps": list(reversed(c.get("jumps") or []))},
         "tritium": {"tank": c["fuel"], "tank_max": fl.CARRIER_TANK, "load": c["load"],
                     "range": rng, "per_max_jump": rng["per_jump"],
-                    "formula": "5 + ly x (load + tritium + %d) / %d" % (fl.TRITIUM_BASE, fl.TRITIUM_DIV),
+                    "formula": "5 + ly x (load + tritium + %d) / %d" % (learn["base"], learn["div"]),
+                    "learnt": {k: learn[k] for k in ("learnt", "n", "max_err")},
                     **_tritium_more(archive, live, c, journal_dir, now, capi_path)},
         "space": {"total": su.get("TotalCapacity"), "crew": su.get("Crew"), "cargo": su.get("Cargo"),
                   "reserved": su.get("CargoSpaceReserved"), "ships": su.get("ShipPacks"),

@@ -327,12 +327,15 @@ function tritium() {
       el("span", { class: tr.trip.enough ? "c-green" : "c-amber", text: "  " + (tr.trip.enough ? t("enough") : t("{s} t short", { s: fmt(tr.trip.short, 0) })) })) : null,
     tr.hold ? line(t("In the carrier's hold"), fmt(tr.hold.t, 0) + " t",
       tr.with_hold ? el("span", { class: "c-green", text: "  → " + t("with it: {ly} ly · {n} jumps", { ly: fmt(tr.with_hold.ly, 0), n: tr.with_hold.jumps }) }) : null,
+      tr.with_hold ? el("div", { class: "c-dim small", text: t("Full 500-ly jumps; the tank takes {m} t, so move tritium from the hold about every {k} jumps.", { m: fmt(tr.tank_max, 0), k: Math.max(1, Math.floor(tr.tank_max / (tr.per_max_jump || 1))) }) }) : null,
       el("span", { class: "c-dim small", text: "  " + t("Frontier data, {a}", { a: age(tr.hold.age_s) }) }))
       : el("div", { class: "c-dim small", text: t("Tritium in the carrier's hold comes with EDMC's Frontier data (Companion API) - none yet.") }),
     tr.time && tr.time.range ? line(t("Time for the range"), el("span", { text: hm(tr.time.range) })) : null,
     tr.time && tr.time.trip ? line(t("Time to your route's end"), el("span", { text: hm(tr.time.trip) })) : null,
     tr.time ? timingNote(tr.time.timing) : null,
-    el("div", { class: "c-dim small", text: t("Formula fitted on your own jumps (±1 t): {f}", { f: tr.formula }) }),
+    el("div", { class: "c-dim small", text: tr.learnt && tr.learnt.learnt
+      ? t("Formula learnt from {n} of your jumps (±{e} t), it follows every new jump: {f}", { n: tr.learnt.n, e: fmt(tr.learnt.max_err || 0, 0), f: tr.formula })
+      : t("Default formula: {f}", { f: tr.formula }) + " · " + t("learnt from 5 jumps of 20 ly and more - {n} so far", { n: tr.learnt ? tr.learnt.n : 0 }) }),
   ], { appear: false });
 }
 

@@ -682,7 +682,6 @@ const DE = /*DE*/{
   "{n} full jumps of 500 ly": "{n} volle Sprünge à 500 ly",
   "Per 500 ly": "Pro 500 ly",
   "at {l} t load": "bei {l} t Ladung",
-  "Formula fitted on your own jumps (±1 t): {f}": "Formel an deinen eigenen Sprüngen angepasst (±1 t): {f}",
   "HOLD": "LADERAUM",
   "{n} t free": "{n} t frei",
   "free": "frei",
@@ -1728,5 +1727,9 @@ const DE = /*DE*/{
   "ship jumps": "Schiffssprünge",
   "carriers seen": "Träger gesehen",
   "plan here": "hierhin planen",
-  "permit-locked (EDDiscovery's list) - a carrier cannot go there": "Permit nötig (Liste von EDDiscovery) – ein Träger kann nicht dorthin"
+  "permit-locked (EDDiscovery's list) - a carrier cannot go there": "Permit nötig (Liste von EDDiscovery) – ein Träger kann nicht dorthin",
+  "Full 500-ly jumps; the tank takes {m} t, so move tritium from the hold about every {k} jumps.": "Volle 500-ly-Sprünge; der Tank fasst {m} t, also etwa alle {k} Sprünge Tritium aus dem Laderaum umfüllen.",
+  "Formula learnt from {n} of your jumps (±{e} t), it follows every new jump: {f}": "Formel gelernt aus {n} deiner Sprünge (±{e} t), passt sich mit jedem neuen Sprung an: {f}",
+  "learnt from 5 jumps of 20 ly and more - {n} so far": "gelernt wird ab 5 Sprüngen von mind. 20 ly – bisher {n}",
+  "Default formula: {f}": "Standardformel: {f}"
 }/*END*/;

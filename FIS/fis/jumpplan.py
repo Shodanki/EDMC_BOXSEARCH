@@ -379,7 +379,7 @@ def plan_route(start: Dict[str, Any], target: Dict[str, Any], own: OwnStars,
 
 # ------------------------------------------------------------------ tritium
 def fuel_rows(legs: Sequence[float], load: float, tank: int, hold: int,
-              tank_max: int = 1000) -> List[Dict[str, Any]]:
+              tank_max: int = 1000, model: Any = None) -> List[Dict[str, Any]]:
     """Tritium per jump with the tank going down, and when tritium must move
     from the hold into the active tank: before a jump the tank cannot pay,
     the tank is filled up from the hold (the least is named too). Tritium in
@@ -387,7 +387,7 @@ def fuel_rows(legs: Sequence[float], load: float, tank: int, hold: int,
     from .fleet import tritium_for_jump
     rows = []
     for ly in legs:
-        need = tritium_for_jump(ly, load, tank)
+        need = tritium_for_jump(ly, load, tank, model)
         row: Dict[str, Any] = {"ly": round(ly, 1), "need": need, "tank_before": tank}
         if need > tank:
             fill = min(hold, tank_max - tank)
@@ -551,7 +551,7 @@ def build(plan: Optional[Dict[str, Any]], carrier: Optional[Dict[str, Any]], car
     nxt = max(done) + 1 if done else 0
     legs = _legs(plan["start"]["pos"], hops)
     fuel = fuel_rows([lg or 0.0 for lg in legs[nxt:]], (carrier or {}).get("load") or 0,
-                     int((carrier or {}).get("fuel") or 0), hold)
+                     int((carrier or {}).get("fuel") or 0), hold, model=(carrier or {}).get("model"))
     clock = 0.0
     for i, h in enumerate(hops):
         row = {"i": i + 1, "name": h["name"], "id64": h.get("id64"), "src": h.get("src"),

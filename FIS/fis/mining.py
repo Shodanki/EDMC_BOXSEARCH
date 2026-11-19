@@ -615,16 +615,17 @@ def _tritium_carrier(trit: Dict[str, Any], car: Dict[str, Any], s: Optional[Dict
     """The carrier's tank, hold and range, and what the session mined in jumps."""
     from . import fleet as fl
     tank, load = int(car["fuel"] or 0), car["load"] or 0
-    per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank) or 1
+    model = (car.get("tritium_model") or {}).get("model")     # learnt from your jumps
+    per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank, model) or 1
     from .shipview import hold_tritium
     hold = hold_tritium(capi_path, now)
     if hold:
         trit["hold"] = hold
         if hold["t"]:
-            trit["with_hold"] = fl.carrier_range(tank + hold["t"], max(0, load - hold["t"]))
+            trit["with_hold"] = fl.carrier_range(tank + hold["t"], max(0, load - hold["t"]), model=model)
     trit.update({"tank": tank, "tank_max": fl.CARRIER_TANK, "to_full": max(0, fl.CARRIER_TANK - tank),
-                 "per_jump": per, "range": fl.carrier_range(tank, load),
-                 "with_ship": fl.carrier_range(min(fl.CARRIER_TANK, tank + trit["ship"]), load)
+                 "per_jump": per, "range": fl.carrier_range(tank, load, model=model),
+                 "with_ship": fl.carrier_range(min(fl.CARRIER_TANK, tank + trit["ship"]), load, model=model)
                  if trit["ship"] else None})
     if s and s["tritium"]:
         trit["mined"] = {"t": s["tritium"], "active": s["active"], "jumps": round(s["tritium"] / per, 1),

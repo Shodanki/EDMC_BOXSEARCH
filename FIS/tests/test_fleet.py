@@ -157,6 +157,27 @@ class FleetTest(unittest.TestCase):
         self.assertGreater(r["ly"], 4500)
         self.assertEqual(fl.carrier_range(3, 5000)["jumps"], 0)
 
+    def test_tritium_learnt_from_own_jumps(self):
+        # user 19.11.: the range follows the jumps flown. Jumps made with
+        # another formula (base 30000, div 200000) teach that formula.
+        def flown(ly, load, trit):
+            return (ly, load, trit, int(round(5 + ly * (load + trit + 30000) / 200000)))
+        legs = ((500, 4000), (480, 6000), (450, 8000), (300, 9000), (500, 9500), (250, 5000), (499, 7000))
+        jumps = [flown(ly, load, 1000) for ly, load in legs]
+        learnt = fl.learn_tritium(jumps + [(10.0, 5000.0, 900.0, 6.0)])     # a short hop is left out
+        self.assertTrue(learnt["learnt"])
+        self.assertEqual(learnt["n"], 7)
+        self.assertLessEqual(learnt["max_err"], 1)
+        self.assertLess(abs(learnt["div"] - 200000) / 200000, 0.05)
+        self.assertLess(fl.carrier_range(9869, 400, model=learnt["model"])["per_jump"],
+                        fl.carrier_range(9869, 400)["per_jump"])        # this carrier needs less
+        # too few jumps, or nonsense, keep the default
+        few = fl.learn_tritium(jumps[:4])
+        self.assertFalse(few["learnt"])
+        self.assertEqual(few["model"], (fl.TRITIUM_BASE, fl.TRITIUM_DIV))
+        self.assertFalse(fl.learn_tritium([(500.0, 5000.0, 1000.0, 400.0)] * 6)["learnt"])
+        self.assertIsNone(fl.learn_tritium([])["max_err"])
+
     def test_carrier(self):
         c = self.ar.carrier()
         self.assertEqual(c["stats"]["Callsign"], "ABC-123")

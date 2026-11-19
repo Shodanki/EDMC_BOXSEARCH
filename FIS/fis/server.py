@@ -522,7 +522,8 @@ class App:
         if su.get("TotalCapacity") and su.get("FreeSpace") is not None:
             used = su["TotalCapacity"] - su["FreeSpace"]      # what Spansh calls "used capacity"
         return {"system": name, "pos": galaxy._positions(self.archive, self.db)(name) if name else None,
-                "fuel": c.get("fuel"), "load": c.get("load"), "used": used}
+                "fuel": c.get("fuel"), "load": c.get("load"), "used": used,
+                "model": (c.get("tritium_model") or {}).get("model")}
 
     def current_id64(self) -> Optional[int]:
         """The current system: from the journal, else the last one visited."""
