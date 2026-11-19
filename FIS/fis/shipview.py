@@ -94,9 +94,10 @@ def _ammo_full(archive: fl.Archive) -> Dict[tuple, int]:
 def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str, db: Any = None,
                      now: Optional[float] = None, lost_hidden: Any = None,
                      unsold_limits: Optional[Dict[str, int]] = None,
-                     value_since: Optional[float] = None) -> Dict[str, Any]:
+                     value_since: Optional[float] = None,
+                     sold_marks: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """The SHIP view: status, modules, fuel, data at risk (with the own
-    limits), cargo, ships lost or hidden."""
+    limits and the commander's SM1 sold marks), cargo, ships lost or hidden."""
     now = time.time() if now is None else now
     st = live.get("status") or {}
     flags, flags2 = int(st.get("flags") or 0), int(st.get("flags2") or 0)
@@ -155,7 +156,7 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
     out["hazards"] = hazards.build_hazards(archive, now=now)
     out["logistics"] = _ship_logistics(live, st, lo, ship, journal_dir)
     out["target"] = build_target(live, db)
-    out["unsold"] = _unsold(archive, unsold_limits, value_since)
+    out["unsold"] = _unsold(archive, unsold_limits, value_since, sold_marks)
     if out["unsold"] is not None and db is not None and hasattr(db, "lost_summary"):
         try:
             # where data went down with the ship and is not redone yet - all
@@ -353,18 +354,23 @@ def _bodyvalue() -> Any:
 
 
 def _unsold(archive: Any, limits: Optional[Dict[str, int]] = None,
-            value_since: Optional[float] = None) -> Optional[Dict[str, Any]]:
-    """M4, worked out again only when the journals, the commander's limits
-    or the value model's reset (B6) changed (the SHIP sheet asks about once
-    a second)."""
+            value_since: Optional[float] = None,
+            sold_marks: Optional[Dict[str, float]] = None) -> Optional[Dict[str, Any]]:
+    """M4, worked out again only when the journals, the commander's limits,
+    the value model's reset (B6) or the sold marks (SM1) changed (the SHIP
+    sheet asks about once a second)."""
     from . import unsold
     try:
         archive.refresh()
-        key = (id(archive), getattr(archive, "rev", None), tuple(sorted((limits or {}).items())), value_since)
+        key = (id(archive), getattr(archive, "rev", None), tuple(sorted((limits or {}).items())), value_since,
+               tuple(sorted((sold_marks or {}).items())))
         if key[1] is not None and _UNSOLD_CACHE["key"] == key:
             return _UNSOLD_CACHE["val"]
-        val = unsold.build_unsold(archive.events(), archive.organic_values(), limits,
-                                  body_value=_bodyvalue(), value_since=value_since)
+        from .ledger import unexplained_income
+        evs, bv = archive.events(), _bodyvalue()
+        val = unsold.build_unsold(evs, archive.organic_values(), limits,
+                                  body_value=bv, value_since=value_since, sold_marks=sold_marks,
+                                  rises=unexplained_income(evs) if bv else None)    # SM1
         _UNSOLD_CACHE.update(key=key, val=val)
         return val
     except Exception:            # a broken journal line must not cost the sheet

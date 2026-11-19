@@ -50,7 +50,7 @@ const REPORT = {
   power_over: N_("power draw {v} % of the power plant"),
 };
 
-let root = null, data = null, busy = false, lostMsg = "";
+let root = null, data = null, busy = false, lostMsg = "", soldMsg = "";
 let controls = null;          // FG1: key bindings, asked when the view is shown
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
 // more lost systems than this: a summary line in UNSOLD DATA, the list in its own tab
@@ -211,7 +211,7 @@ function unsold() {
   const B = U.bio, X = U.exploration;
   // after a crash nothing is unsold any more - the lost systems still show
   if (!B.count && !X.systems) return frame(t("UNSOLD DATA"), "", [el("div", { class: "c-dim", text: t("Nothing unsold - all data is cashed in.") }),
-    lastLoss(U), ...lostRows(U)], { appear: false, kind: U.lost_systems && U.lost_systems.length ? "warn" : "" });
+    markedLine(U), lastLoss(U), ...lostRows(U)], { appear: false, kind: U.lost_systems && U.lost_systems.length ? "warn" : "" });
   const rows = [];
   if (B.count) {
     rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exobiology") + " " }),
@@ -235,9 +235,43 @@ function unsold() {
   rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; the ×5 bonus only on bodies of your first footfall; exploration data at the formula's estimate, calibrated on your own sales of at least 1 M Cr.") }));
   if (U.advice === "sell") rows.push(el("div", { class: "c-red", text: t("A lot at stake - consider selling at the next station or carrier with Vista Genomics / Universal Cartographics.") }));
   rows.push(...sellWhere(U, X));
+  rows.push(...soldRows(U));
   const head = (U.total || B.value) ? "~ " + Mcr(U.total || B.value) : "";
   return frame(t("UNSOLD DATA"), head, rows, { cls: "sh-unsold", appear: false,
     kind: U.risk === "high" ? "alert" : U.advice || U.risk === "moderate" ? "warn" : "" });
+}
+
+// SM1: the game does not always log a sale (19.11.: a carrier sale wrote no
+// MultiSellExplorationData) - the commander marks their data as sold
+function markedLine(U) {
+  const ts = Math.max(0, ...Object.values(U.marked || {}));
+  return ts ? el("div", { class: "c-dim small", text: t("Marked as sold {d} (the game logged no sale).", { d: new Date(ts * 1000).toLocaleString() }) }) : null;
+}
+
+function soldRows(U) {
+  const out = [markedLine(U)];
+  const H = U.unlogged_sale;
+  if (H) {
+    const d = new Date(H.ts * 1000).toLocaleString();
+    out.push(el("div", { class: "c-amber sh-unlogged" },
+      el("div", { text: "? " + t("Sold without a journal entry? On {d} your credits rose by {cr} more than the journal explains - about what {s} of these systems ({b} bodies) are worth{v}.",
+        { d, cr: Mcr(H.cr), s: H.systems, b: H.bodies, v: exploValue(H.value) }) }),
+      el("button", { class: "sh-sold", text: t("Yes, sold then - mark as sold"),
+        onclick: () => { if (window.confirm(t("Mark the exploration data scanned before {d} as sold? Exobiology stays as it is.", { d }))) markSold({ parts: ["explo"], ts: H.ts }); } })));
+  }
+  if (soldMsg) out.push(el("div", { class: "c-red small", text: soldMsg }));
+  out.push(el("button", { class: "sh-sold", text: t("Sold, but still listed? Mark all as sold"),
+    onclick: () => { if (window.confirm(t("Mark everything scanned and analysed up to now as sold? Use this only when you did sell it and the game logged no sale - here and in the plugin it then no longer counts as at risk."))) markSold({ parts: ["explo", "bio"] }); } }));
+  return out;
+}
+
+async function markSold(body) {
+  try {
+    await postJSON("/api/unsold/sold", body);
+    soldMsg = "";
+    data = await getJSON("/api/shipstatus");
+  } catch (e) { soldMsg = t("Could not save: {e}", { e: e.message }); }
+  render();
 }
 
 // data that went down with the ship - planned again in SYSTEM until redone

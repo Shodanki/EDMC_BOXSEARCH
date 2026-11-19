@@ -70,6 +70,7 @@ class _Ledger:
         self.balance: Optional[int] = None
         self.flow = 0                                        # booked cash since the last known balance
         self.rest = {"plus": 0, "minus": 0, "gaps": 0}
+        self.rises: List[Tuple[float, float]] = []          # SM1: (time, Cr) the balance rose unexplained
         self.carrier = {"deposit": 0, "withdraw": 0}
         # GV1: every amount also per ISO week, month and year (all time, the
         # statement picks its period), and the balances the game stated
@@ -135,6 +136,8 @@ class _Ledger:
                 if rest > 0:
                     self.book(ts, INCOME, "from_balance", rest, CMDR)
                     self._rest(ts, "plus", rest)
+                    if ts is not None:
+                        self.rises.append((ts, rest))
                 else:
                     self.book(ts, COSTS, "from_balance", -rest, CMDR)
                     self._rest(ts, "minus", -rest)
@@ -359,6 +362,18 @@ def build_ledger(events: Iterable[Dict[str, Any]], days: Optional[float] = None,
     if balance_now is not None:
         L.known_balance(now, balance_now)
     return _result(L, since, first, last)
+
+
+def unexplained_income(events: Iterable[Dict[str, Any]]) -> List[Tuple[float, float]]:
+    """SM1: (time, Cr) of every rise of the balance that no journal event
+    explains - at the balance the game stated next (LoadGame,
+    CarrierBankTransfer). A sale the game did not log shows up here."""
+    L = _Ledger(None)
+    for e in events:
+        h = HANDLERS.get(e.get("event"))
+        if h is not None:
+            h(L, e, parse_ts(e.get("timestamp")))
+    return list(L.rises)
 
 
 def _thin(pts: List[Tuple[float, int]], keep: int = 400) -> List[Tuple[float, int]]:

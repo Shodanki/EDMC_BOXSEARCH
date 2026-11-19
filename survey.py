@@ -66,6 +66,13 @@ def _measure_work(ev: str, entry: Dict[str, Any]) -> None:
         logger.exception("work measurement failed")
 
 
+def sold_marks(fid: str) -> Dict[str, float]:
+    """SM1: the commander's sold marks from the FIS (learn_reset.json, read
+    again only when it changed) - for sysdb.apply_sold_marks."""
+    path = learnreset.plugin_path(os.path.dirname(os.path.abspath(__file__)))
+    return learnreset.sold_since(learnreset.load_cached(path), fid)
+
+
 def _learn_marks() -> Dict[str, Any]:
     """SK3: when the commander reset a model in the FIS (FIS/learn_reset.json)."""
     return learnreset.load(learnreset.plugin_path(os.path.dirname(os.path.abspath(__file__))))

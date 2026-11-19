@@ -102,6 +102,7 @@ def plugin_start3(plugin_dir: str) -> str:
     routewin._MAP_W = routewin._MAP_H = routewin._MAP_SIZES.get(cfg_str(CFG["map_size"], "medium"), 480)
     try:
         ST.db = SystemDB(DB_FILE)
+        ST.db.sold_marks = survey.sold_marks          # SM1: sales marked in the FIS
         ST.planner = Planner(ST.db)
     except Exception:
         logger.exception("could not open database")

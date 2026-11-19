@@ -95,6 +95,19 @@ class App:
         lr = self.model.plugin().learnreset
         return lr.load(self.learn_reset_path) if lr is not None else {}
 
+    def _sold_marks(self) -> Dict[str, float]:
+        """SM1: the logged-in commander's sold marks ({"explo": ts, "bio": ts})."""
+        lr = self.model.plugin().learnreset
+        if lr is None or not hasattr(lr, "sold_since"):
+            return {}
+        return lr.sold_since(self._learn_marks(), self.archive.commander()[0])
+
+    def _unsold_now(self) -> Optional[Dict[str, Any]]:
+        """M4 unsold data with the commander's limits, value reset and sold marks."""
+        from . import shipview
+        return shipview._unsold(self.archive, self.cfg.unsold, self._learn_marks().get("value"),
+                                self._sold_marks())
+
     def _leg_ls(self, id64: int, a: str, b: str, at: float) -> Optional[float]:
         """Distance body a -> body b at time `at`, from the plugin's orbits."""
         try:
@@ -932,6 +945,42 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=app.calib.run_once, name="fis-calib", daemon=True).start()
         return self._json({"part": part, "since": now})
 
+    def _post_unsold_sold(self, raw: bytes) -> None:
+        """
+        SM1, POST /api/unsold/sold {"parts": ["explo", "bio"], "ts": null}:
+        the game logged no sale, so the commander marks their data as sold -
+        what was scanned before ts (default now; never in the future) counts
+        as sold, here and in the plugin. Only the FIS's learn_reset.json
+        changes. Same locks as a favourite (the FIS page only; with LAN the
+        token).
+        """
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            body = None
+        app = self.app
+        lr = app.model.plugin().learnreset
+        now = time.time()
+        parts = body.get("parts", ["explo", "bio"]) if isinstance(body, dict) else None
+        ts = body.get("ts") if isinstance(body, dict) else None
+        if (lr is None or not isinstance(parts, list) or not parts
+                or any(p not in lr.SOLD_PARTS for p in parts)
+                or (ts is not None and (not isinstance(ts, (int, float)) or isinstance(ts, bool)
+                                        or not 0 < ts <= now))):
+            return self._error(400, "bad request")
+        fid = app.archive.commander()[0]
+        if not fid:
+            return self._error(409, "no commander known yet")
+        ts = now if ts is None else float(ts)
+        try:
+            lr.mark_sold(app.learn_reset_path, fid, ts, tuple(parts))
+        except (OSError, ValueError):
+            return self._error(500, "could not write the mark")
+        return self._json({"parts": parts, "ts": ts})
+
     def _post_lost_hidden(self, raw: bytes) -> None:
         """SHIP -> LOST DATA: hide crash losses from the list, or show them
         all again. Only the FIS's own lost_hidden.json changes - the plugin
@@ -1401,7 +1450,8 @@ class Handler(BaseHTTPRequestHandler):
         out = shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
                                         lost_hidden=app.lost_hidden,
                                         unsold_limits=app.cfg.unsold,
-                                        value_since=app._learn_marks().get("value"))
+                                        value_since=app._learn_marks().get("value"),
+                                        sold_marks=app._sold_marks())
         try:
             from . import synthesis
             out["synthesis"] = synthesis.build_synthesis(app.archive, ship=True)      # V2
@@ -1472,8 +1522,7 @@ class Handler(BaseHTTPRequestHandler):
         bal = ((app.live_state() or {}).get("status") or {}).get("balance")
         out = ledger.build_ledger(evs, days, balance_now=bal)
         # B6: the open block - unsold data as UNSOLD DATA values it
-        from . import shipview
-        un = shipview._unsold(app.archive, app.cfg.unsold, app._learn_marks().get("value"))
+        un = app._unsold_now()
         out["open"] = ({"bio": un["bio"]["value"], "bio_count": un["bio"]["count"],
                         "systems": un["exploration"]["systems"], "explo": un["exploration"].get("value")}
                        if un else None)
@@ -1497,12 +1546,12 @@ class Handler(BaseHTTPRequestHandler):
         """5.0 GV1: GAIN / LOSS as an annual statement - income statement per
         week, month and year, balance sheet, segments, outlook."""
         app = self.app
-        from . import capi, carriermoney, ledger, shipview, statement
+        from . import capi, carriermoney, ledger, statement
         app.archive.refresh()
         evs = app.archive.events()
         bal = ((app.live_state() or {}).get("status") or {}).get("balance")
         led = ledger.build_ledger(evs, None, balance_now=bal)
-        un = shipview._unsold(app.archive, app.cfg.unsold, app._learn_marks().get("value"))
+        un = app._unsold_now()
         open_ = {"bio": un["bio"]["value"], "explo": un["exploration"].get("value")} if un else None
         return self._json(statement.build(led, app.archive.carrier(),
                                           carriermoney.frontier(capi.path_for(app.cfg.plugin_dir)),
@@ -1541,8 +1590,7 @@ class Handler(BaseHTTPRequestHandler):
             # SK3: the route, work and fuel models with what they rest on
             out["learning"]["models"] = learn.model_status(app.calib.info, app.live_state(),
                                                            app.calib.model)
-            from . import shipview
-            un = shipview._unsold(app.archive, app.cfg.unsold, app._learn_marks().get("value"))
+            un = app._unsold_now()
             out["learning"]["models"]["value"] = un["exploration"].get("calibration") if un else None
             out["learning"]["finds"] = learn.find_odds(app.db)       # FX3: predicted finds vs scans
             out["learning"]["forecast"] = app.forecasts()               # B-24
@@ -1703,6 +1751,7 @@ _POST_ROUTES = {
     "/api/jumpplan/full": Handler._post_jumpplan_full,
     "/api/jumpplan/online": Handler._post_jumpplan_online,
     "/api/ship/lost_hidden": Handler._post_lost_hidden,
+    "/api/unsold/sold": Handler._post_unsold_sold,
     "/api/learning/reset": Handler._post_learning_reset,
     "/api/settings": Handler._post_settings,
 }

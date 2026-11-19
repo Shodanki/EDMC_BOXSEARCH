@@ -412,6 +412,7 @@ def _unsold_worker(why: str) -> None:
     if not ST.db:
         return
     with ST.lock:
+        ST.db.apply_sold_marks()                      # SM1: a sale marked in the FIS
         rows = ST.db.unsold_rows(_fid())
     with _lock:
         sv = dict(PRICES.species)

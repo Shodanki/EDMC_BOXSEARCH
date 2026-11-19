@@ -43,6 +43,16 @@ WasDiscovered false) and species analysed on a body where you made the
 first footfall (Scan WasFootfalled false, then you disembarked there).
 Either of them makes the risk at least moderate.
 
+SM1 (5.0, user 19.11.): the game does not always log a sale - a Universal
+Cartographics sale at the own carrier wrote no MultiSellExplorationData, so
+205 sold bodies stayed "unsold". The commander can mark their data as sold
+(learnreset sold marks, per commander): exploration data or exobiology
+scanned before the mark then counts as sold, as if a sale of everything had
+been logged at that moment. The FIS asks first when it sees such a sale:
+the balance rose by more than the journal explains (ledger.
+unexplained_income) while systems were carried whose calibrated estimate
+fits the rise (CAL_FIT range around lo-hi) - it only asks, never marks.
+
 The four limits (sell advice in M Cr and systems, moderate and high risk in
 M Cr) are the user's defaults of 11.11.; since 4.11 each commander sets
 their own on the FIS settings page (fis.ini, section [fis], unsold_*).
@@ -67,29 +77,32 @@ RISK_HIGH_CR = 100_000_000       # ... from here on a real one
 STATION_MIN_LY = 20.0
 CAL_MIN_EST = 1_000_000          # B6: sales below this estimate scatter too much to calibrate
 CAL_MIN_SALES = 3                # ... and fewer such sales give no factor
+CAL_FIT = (0.8, 1.25)            # SM1: a rise of the balance this close to lo-hi may be an unlogged sale
 # the defaults of the settings page (fis.ini unsold_*), in M Cr / systems
+SOLD_PARTS = ("explo", "bio")    # SM1: the parts of a sold mark (learnreset.SOLD_PARTS)
 DEFAULT_LIMITS = {"sell_mcr": WARN_CR // 1_000_000, "sell_systems": WARN_SYSTEMS,
                   "moderate_mcr": RISK_MODERATE_CR // 1_000_000, "high_mcr": RISK_HIGH_CR // 1_000_000}
 
 
 def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[str, int]]] = None,
                  limits: Optional[Dict[str, int]] = None, body_value: Any = None,
-                 value_since: Optional[float] = None) -> Dict[str, Any]:
+                 value_since: Optional[float] = None,
+                 sold_marks: Optional[Dict[str, float]] = None,
+                 rises: Optional[List[Tuple[float, float]]] = None) -> Dict[str, Any]:
     """What is unsold and what its loss would cost. ``limits`` (M Cr and
     systems, keys as DEFAULT_LIMITS) are the commander's own; missing keys
     take the defaults. ``body_value`` is the plugin's bodyvalue module (B6;
     without it the exploration data is only counted), ``value_since`` the
-    last reset of its calibration."""
+    last reset of its calibration, ``sold_marks`` the commander's SM1 marks
+    ({"explo": ts, "bio": ts}: everything before counts as sold), ``rises``
+    the balance's unexplained rises (ledger.unexplained_income) for the
+    question whether one was an unlogged sale."""
     values = values or {}
     lim = dict(DEFAULT_LIMITS, **(limits or {}))
     warn_cr, warn_systems = lim["sell_mcr"] * 1_000_000, lim["sell_systems"]
     risk_moderate, risk_high = lim["moderate_mcr"] * 1_000_000, lim["high_mcr"] * 1_000_000
     u = _Unsold(body_value)
-    for e in events:
-        ev = e.get("event")
-        handler = _UNSOLD.get(ev)
-        if handler is not None:
-            handler(u, ev, e, parse_ts(e.get("timestamp")))
+    _replay(u, events, sold_marks, rises if body_value else None)
     bio, scanned, mapped, first_sys = u.bio, u.scanned, u.mapped, u.first_sys
     items, total, priced, unknown = _priced(bio, values)
     systems = set(scanned) | set(mapped)
@@ -117,12 +130,57 @@ def build_unsold(events: List[Dict[str, Any]], values: Optional[Dict[str, Dict[s
                             "since": u.last_sale["exploration"],
                             "value": explo, "calibration": cal},
             "total": total,
+            "marked": {p: t for p, t in (sold_marks or {}).items() if p in SOLD_PARTS},
+            "unlogged_sale": _unlogged_sale(u, cal, systems, (sold_marks or {}).get("explo")),
             "sell": _where_to_sell(u, systems),
             "lost_last": u.lost, "advice": advice,
             "warn_cr": warn_cr, "warn_systems": warn_systems,
             # what a loss would cost and what is irreplaceable
             "risk": risk, "first_systems": len(first_sys), "footfall_bio": ff_bio,
             "risk_cr": {"moderate": risk_moderate, "high": risk_high}}
+
+
+def _replay(u: "_Unsold", events: List[Dict[str, Any]], marks: Optional[Dict[str, float]],
+            rises: Optional[List[Tuple[float, float]]] = None) -> None:
+    """The journal through _Unsold; an SM1 mark takes effect at the first
+    event after it (or at the end, when it is newer than every event); at
+    each unexplained rise of the balance what was carried then is noted."""
+    todo = sorted((float(t), p) for p, t in (marks or {}).items() if p in SOLD_PARTS and t is not None)
+    up = sorted(rises or [])
+    for e in events:
+        ev = e.get("event")
+        handler = _UNSOLD.get(ev)
+        if handler is None:
+            continue
+        ts = parse_ts(e.get("timestamp"))
+        while todo and ts is not None and ts > todo[0][0]:
+            u.sold_mark(todo[0][1], todo[0][0])
+            todo.pop(0)
+        while up and ts is not None and ts >= up[0][0]:
+            u.carried_at(*up.pop(0))
+        handler(u, ev, e, ts)
+    for t, p in todo:
+        u.sold_mark(p, t)
+    for r in up:
+        u.carried_at(*r)
+
+
+def _unlogged_sale(u: "_Unsold", cal: Dict[str, Any], systems: Set[str],
+                   since: Optional[float]) -> Optional[Dict[str, Any]]:
+    """SM1: the latest unexplained rise of the balance (after the last sold
+    mark) that fits what was carried then, by the calibrated estimate, while
+    some of it is still listed as unsold - the question for the commander,
+    None without a calibration (never guessed)."""
+    if cal.get("factor") is None:
+        return None
+    for ts, cr, est, names in reversed(u.carried):
+        if since is not None and ts <= since:
+            break
+        still = names & systems
+        if still and est * cal["lo"] * CAL_FIT[0] <= cr <= est * cal["hi"] * CAL_FIT[1]:
+            return {"ts": ts, "cr": int(round(cr)), "value": _explo_value(est, cal),
+                    "systems": len(still), "bodies": sum(len(u.scanned.get(nm, ())) for nm in still)}
+    return None
 
 
 def calibration(sales: List[Tuple[Optional[float], float, float]],
@@ -242,6 +300,7 @@ class _Unsold:
         self.here: Optional[List[float]] = None       # the last known position
         self.carrier_system: Optional[str] = None     # where the own carrier stands
         self.carrier_uc = False                       # ... and whether it buys cartographic data
+        self.carried: List[Tuple[float, float, float, Set[str]]] = []   # SM1: (time, rise, estimate, systems)
 
     def arrival(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:
         """A system's name by its address, and where it lies."""
@@ -351,6 +410,27 @@ class _Unsold:
             self.sold_scan.setdefault(nm, set()).update(self.scanned.pop(nm, ()))
             self.sold_map.setdefault(nm, set()).update(self.mapped.pop(nm, ()))
             self.first_sys.discard(nm)
+        self.last_sale["exploration"] = ts
+
+    def carried_at(self, ts: float, cr: float) -> None:
+        """SM1: the balance rose by cr without an event - what was carried then."""
+        names = set(self.scanned) | set(self.mapped)
+        est = sum(self.system_est(nm)[0] for nm in names)
+        if names and est > 0:
+            self.carried.append((ts, cr, est, names))
+
+    def sold_mark(self, part: str, ts: float) -> None:
+        """SM1: the commander marked their data as sold (no sale was logged):
+        everything carried now counts as sold, as at a sale of all of it."""
+        if part == "bio":
+            self.bio = []
+            self.last_sale["bio"] = ts
+            return
+        for nm in set(self.scanned) | set(self.mapped):
+            self.rows.pop(nm, None)
+            self.sold_scan.setdefault(nm, set()).update(self.scanned.get(nm, ()))
+            self.sold_map.setdefault(nm, set()).update(self.mapped.get(nm, ()))
+        self.scanned, self.mapped, self.first_sys = {}, {}, set()
         self.last_sale["exploration"] = ts
 
     def died(self, ev: str, e: Dict[str, Any], ts: Optional[float]) -> None:

@@ -380,6 +380,13 @@ CREATE TABLE IF NOT EXISTS cmdr_bodies (
 CREATE INDEX IF NOT EXISTS ix_cmdr_bod ON cmdr_bodies(sys_id64);
 """
 
+# SM1: what a sold mark clears for one commander (open becomes sold)
+_SOLD_SQL = {
+    "explo": "UPDATE cmdr_bodies SET scan_sold=MAX(scan_sold,scan_open), map_sold=MAX(map_sold,map_open), "
+             "scan_open=0, map_open=0 WHERE fid=? AND (scan_open=1 OR map_open=1)",
+    "bio": "UPDATE cmdr_bodies SET bio_open=NULL WHERE fid=? AND bio_open IS NOT NULL",
+}
+
 # C1: the full journal replay that fills the per-commander tables; until it
 # has run, readers fall back to the shared columns (any commander).
 CMDR_READY = "upgrade_48_cmdr"
@@ -647,6 +654,9 @@ class SystemDB:
         self.fid_name: Optional[str] = None
         self.plan_fid: Optional[str] = None
         self._cmdr_written: Optional[Tuple[str, Optional[str]]] = None
+        # SM1: fid -> the commander's sold marks from the FIS ({"explo": ts,
+        # "bio": ts}), set by the plugin (survey.sold_marks); None: no marks
+        self.sold_marks: Optional[Callable[[str], Dict[str, float]]] = None
         self.prune_external_calls()
         self.prune_shells()
         self.sectors = SectorRegistry()
@@ -1564,6 +1574,7 @@ class SystemDB:
         body stays.
         """
         a, ts = entry.get("SystemAddress"), entry.get("timestamp")
+        self.apply_sold_marks(ts)                      # SM1: a sale the game did not log
         if ev == "Scan" and a and entry.get("BodyID") is not None and entry.get("ScanType") != "NavBeaconDetail":
             self._carry_scan(ev, entry, a, ts)
         elif ev == "SAAScanComplete" and a and entry.get("BodyID") is not None:
@@ -1578,6 +1589,35 @@ class SystemDB:
         elif ev == "Died":
             self._carry_died(ev, entry, a, ts)
         self.cx.commit()
+
+    def apply_sold_marks(self, ts: Any = None) -> int:
+        """
+        SM1 (5.0): the game logged no sale, so the commander marked their
+        data as sold in the FIS. Once the events (a journal timestamp) or the
+        clock (ts None) are past a mark, every open scan and map (part
+        "explo") or analysed species ("bio") of this commander counts as
+        sold. Each mark is applied once (meta sold_mark:<fid>:<part>), so a
+        later start or replay does not take newer data with it. Returns how
+        many parts were applied.
+        """
+        if not self.fid or self.sold_marks is None:
+            return 0
+        try:
+            marks = self.sold_marks(self.fid) or {}
+        except Exception:
+            logger.debug("sold marks unreadable", exc_info=True)
+            return 0
+        at = _epoch(ts) if isinstance(ts, str) else (time.time() if ts is None else float(ts))
+        n = 0
+        for part, mark in marks.items():
+            key = "sold_mark:%s:%s" % (self.fid, part)
+            done = self.get_meta(key)
+            if at is None or at <= mark or part not in _SOLD_SQL or (done and float(done) >= mark):
+                continue
+            self.cx.execute(_SOLD_SQL[part], (self.fid,))
+            self.set_meta(key, repr(float(mark)))       # commits
+            n += 1
+        return n
 
     def _carry_scan(self, ev: str, entry: dict, a: Any, ts: Any) -> None:
         """A scan is open (unsold) until the system's data is sold."""

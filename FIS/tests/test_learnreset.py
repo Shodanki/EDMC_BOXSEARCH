@@ -143,5 +143,67 @@ class TestResetEndpoint(_Base):
             self.assertIn("open", json.loads(r.read()))
 
 
+class TestSoldEndpoint(unittest.TestCase):
+    """SM1: POST /api/unsold/sold marks the logged-in commander's data as sold."""
+
+    @classmethod
+    def setUpClass(cls):
+        from tests import fixtures as fx
+        from tests.test_api import make_cfg
+        cls.tmp = tempfile.mkdtemp(prefix="fis-sold-")
+        cls.cfg = make_cfg(fx.make_db(os.path.join(cls.tmp, "db.sqlite")), cls.tmp)
+        cls.cfg.ini_path = os.path.join(cls.tmp, "fis.ini")
+        cls.cfg.lan, cls.cfg.token = False, ""
+        evs = [_e("10:00:00", "Commander", FID="F1", Name="Main"),
+               _e("10:01:00", "FSDJump", StarSystem="Sm A", SystemAddress=1, StarPos=[0, 0, 0]),
+               _e("10:02:00", "Scan", StarSystem="Sm A", SystemAddress=1, BodyID=1, ScanType="Detailed")]
+        with open(os.path.join(cls.tmp, "Journal.2026-11-17T100000.01.log"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(json.dumps(e) for e in evs) + "\n")
+        from fis.data import Database
+        lt = LiveTracker(cls.tmp)
+        for e in _ship_events():                   # the SHIP sheet needs a ship
+            lt.feed(e)
+        cls.app = App(cls.cfg, live=lt, db=Database(cls.cfg.db_path))
+        cls.srv = make_server(cls.app, host="127.0.0.1", port=0)
+        cls.base = "http://127.0.0.1:%d" % cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def _post(self, body, headers=None):
+        req = urllib.request.Request(self.base + "/api/unsold/sold", data=json.dumps(body).encode(),
+                                     headers=dict({"Content-Type": "application/json"}, **(headers or {})),
+                                     method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            e.close()
+            return e.code, None
+
+    def _unsold(self):
+        with urllib.request.urlopen(self.base + "/api/shipstatus", timeout=10) as r:
+            return json.loads(r.read())["unsold"]
+
+    def test_mark_sold(self):
+        path = os.path.join(self.tmp, "learn_reset.json")
+        ok = {"X-FIS-Settings": "1"}
+        self.assertEqual(self._unsold()["exploration"]["systems"], 1)
+        self.assertEqual(self._post({})[0], 403)                                # not from the FIS page
+        for bad in ({"parts": ["fuel"]}, {"parts": []}, {"ts": time.time() + 3600}, {"ts": True}, {"ts": "x"}):
+            self.assertEqual(self._post(bad, ok)[0], 400, bad)
+        self.assertFalse(os.path.exists(path))
+        code, out = self._post({"parts": ["explo"]}, ok)
+        self.assertEqual((code, out["parts"]), (200, ["explo"]))
+        from fis import model
+        lr = model.plugin().learnreset
+        self.assertEqual(lr.sold_since(lr.load(path), "F1"), {"explo": out["ts"]})
+        u = self._unsold()
+        self.assertEqual((u["exploration"]["systems"], u["marked"]), (0, {"explo": out["ts"]}))
+
+
 if __name__ == "__main__":
     unittest.main()

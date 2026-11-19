@@ -25,7 +25,50 @@ VALUES = {"Bacterium Aurasus": {"value": 1000000, "bonus": 4000000},
           "Stratum Tectonicas": {"value": 19010800, "bonus": 0}}
 
 
+def carrier_sale_unlogged():
+    """SM1, the user's evening of 19.11.2026 in small: two systems scanned and
+    mapped, a species analysed; docked at the own carrier the species sale is
+    logged, the Universal Cartographics sale is not (the credits rose by it)."""
+    def scan(t, sysname, addr, body):
+        return ev(t, "Scan", StarSystem=sysname, SystemAddress=addr, BodyID=body, ScanType="Detailed",
+                  BodyName="%s %d" % (sysname, body), PlanetClass="Icy body", MassEM=0.1,
+                  DistanceFromArrivalLS=100.0 * body)
+    return [ev("08:00", "FSDJump", StarSystem="Synuefe A", SystemAddress=1, StarPos=[0, 0, 0]),
+            scan("08:01", "Synuefe A", 1, 1), scan("08:02", "Synuefe A", 1, 2),
+            ev("08:03", "SAAScanComplete", SystemAddress=1, BodyID=2, ProbesUsed=3, EfficiencyTarget=5),
+            analyse("08:10", "Bacterium Aurasus"),
+            ev("09:00", "FSDJump", StarSystem="Synuefe B", SystemAddress=2, StarPos=[0, 0, 30]),
+            scan("09:01", "Synuefe B", 2, 1),
+            ev("10:12", "Docked", StationType="FleetCarrier", StarSystem="Synuefe B", MarketID=7),
+            ev("10:15", "SellOrganicData", MarketID=7, BioData=[{"Species_Localised": "Bacterium Aurasus",
+                                                                 "Value": 1000000, "Bonus": 0}]),
+            ev("10:17", "CarrierBankTransfer", Deposit=5000000, PlayerBalance=100000000)]
+
+
 class TestUnsold(unittest.TestCase):
+    def test_unlogged_carrier_sale_marked_as_sold(self):
+        """SM1: without the mark both systems stay unsold; with it (at the
+        moment the commander says) they are sold, later scans stay open."""
+        import calendar
+        evs = carrier_sale_unlogged()
+        u = unsold.build_unsold(evs, VALUES)
+        self.assertEqual((u["bio"]["count"], u["exploration"]["systems"], u["exploration"]["bodies"]), (0, 2, 3))
+        at = float(calendar.timegm((2026, 11, 10, 10, 17, 0)))
+        later = evs + [ev("11:00", "FSDJump", StarSystem="Col C", SystemAddress=3, StarPos=[0, 0, 60]),
+                       ev("11:01", "Scan", StarSystem="Col C", SystemAddress=3, BodyID=4, ScanType="Detailed"),
+                       analyse("11:05", "Stratum Tectonicas", addr=3)]
+        u = unsold.build_unsold(later, VALUES, sold_marks={"explo": at, "bio": at})
+        x = u["exploration"]
+        self.assertEqual((x["systems"], x["bodies"], x["mapped"]), (1, 1, 0))
+        self.assertEqual((x["since"], u["bio"]["count"], u["marked"]), (at, 1, {"explo": at, "bio": at}))
+        # the same bodies scanned again later are no new data
+        again = later + [ev("12:00", "FSDJump", StarSystem="Synuefe A", SystemAddress=1, StarPos=[0, 0, 0]),
+                         ev("12:01", "Scan", StarSystem="Synuefe A", SystemAddress=1, BodyID=1, ScanType="Detailed")]
+        self.assertEqual(unsold.build_unsold(again, VALUES, sold_marks={"explo": at})["exploration"]["systems"], 1)
+        # a mark newer than every event: all of it; only "explo" keeps the species
+        u = unsold.build_unsold(later, VALUES, sold_marks={"explo": at + 86400})
+        self.assertEqual((u["exploration"]["systems"], u["bio"]["count"]), (0, 1))
+
     def test_bio_pending_value_and_partial_sale(self):
         evs = [ev("08:00", "FSDJump", StarSystem="Alpha", SystemAddress=1),
                # first footfall on body 2: nobody had walked there, then you did
@@ -251,6 +294,39 @@ class TestExplorationValue(unittest.TestCase):
         u2 = unsold.build_unsold(evs, {}, body_value=self.bv, value_since=10 ** 10)
         self.assertFalse(u2["exploration"]["value"]["calibrated"])
         self.assertEqual(u2["total"], 0)                         # not calibrated: not counted in the risk
+
+    def test_unlogged_sale_is_asked_about(self):
+        """SM1 (19.11.2026): the balance rose by about what the carried data
+        is worth, no sale was logged - the FIS asks; a mark at that moment
+        answers it. A rise that does not fit is no question."""
+        import calendar
+        from fis import ledger
+        evs = []
+        for i, f in enumerate((0.8, 0.9, 1.2)):
+            nm = "Sold%d" % i
+            evs += self._system("08:0%d" % i, nm, 10 + i, 80)
+            evs.append(_sale("08:3%d" % i, [nm], int(80 * self.one * f)))
+        evs += self._system("09:00", "Pending", 20, 80)
+        evs.append(ev("09:30", "LoadGame", Credits=1_000_000))
+        evs.append(ev("09:40", "SellOrganicData", BioData=[{"Species_Localised": "Bacterium Aurasus",
+                                                            "Value": 1_000_000, "Bonus": 0}]))
+        sold = int(80 * self.one * 0.9)                    # what Universal Cartographics paid, unlogged
+        bank = [ev("10:17", "CarrierBankTransfer", Deposit=0, PlayerBalance=2_000_000 + sold)]
+        u = unsold.build_unsold(evs + bank, {}, body_value=self.bv,
+                                rises=ledger.unexplained_income(evs + bank))
+        at = float(calendar.timegm((2026, 11, 10, 10, 17, 0)))
+        h = u["unlogged_sale"]
+        self.assertEqual((h["ts"], h["cr"], h["systems"], h["bodies"]), (at, sold, 1, 80))
+        self.assertTrue(h["value"]["calibrated"])
+        # answered with a mark at that moment: nothing unsold, no question
+        u = unsold.build_unsold(evs + bank, {}, body_value=self.bv, sold_marks={"explo": at},
+                                rises=ledger.unexplained_income(evs + bank))
+        self.assertEqual((u["exploration"]["systems"], u["unlogged_sale"]), (0, None))
+        # ten times the value is something else (and the bio sale was logged)
+        far = [ev("10:17", "CarrierBankTransfer", Deposit=0, PlayerBalance=2_000_000 + 10 * sold)]
+        u = unsold.build_unsold(evs + far, {}, body_value=self.bv, rises=ledger.unexplained_income(evs + far))
+        self.assertIsNone(u["unlogged_sale"])
+        self.assertEqual(ledger.unexplained_income(evs), [])
 
     def test_loss_in_a_crash_has_a_value(self):
         evs = self._system("08:00", "Gone", 30, 3) + [analyse("08:10", "Bacterium Aurasus"), ev("08:20", "Died")]
