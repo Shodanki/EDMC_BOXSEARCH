@@ -97,12 +97,21 @@ def _selftest() -> int:
     vw = ss.VehicleWatch()
     vw.feed("LaunchVessel", {"VesselType": "lander01", "VesselType_Localised": "Nomad"})
     nomad = rl(203424076, vw.kind)
-    check(nomad and nomad[0] == ("NOMAD GEAR DOWN · HARDPOINTS OUT · LIGHTS ON", ss.BLUE),
-          "own-3: the Nomad flying with gear, hardpoints and lights, in blue: %r" % nomad)
-    vw.feed("LaunchSRV", {"SRVType": "testbuggy"})
-    check(vw.kind == "SRV" and rl(ss.IN_SRV | ss.HARDPOINTS, vw.kind)[0][0] == "SRV   HARDPOINTS OUT",
+    # round 3 (user 19.11.): the Nomad cannot retract its hardpoints - not named
+    check(nomad and nomad[0] == ("NOMAD GEAR DOWN · LIGHTS ON", ss.BLUE),
+          "own-3: the Nomad flying with gear and lights, in blue: %r" % nomad)
+    vw.feed("LaunchSRV", {"SRVType": "testbuggy", "SRVType_Localised": "SRV Scarab"})
+    check(vw.kind == "SCARAB" and rl(ss.IN_SRV | ss.HARDPOINTS, vw.kind)[0][0] == "SCARAB HARDPOINTS OUT",
           "own-3: back in an SRV - its turret out is named too")
     check(rl(203424076 | ss.LANDED, "NOMAD") == [], "own-3: the Nomad set down - nothing")
+    # round 3: an SRV on the ground (Landed) still shows; Scarab and Rhino with the cargo scoop
+    srv = rl(ss.IN_SRV | ss.LANDED | ss.LIGHTS | ss.SCOOP, vw.kind)
+    check(srv and srv[0][0] == "SCARAB CARGO SCOOP OPEN · LIGHTS ON", "r2-own3: Scarab on the ground: %r" % srv)
+    vw.feed("LaunchSRV", {"SRVType": "mev_rhino", "SRVType_Localised": "SRV Rhino"})
+    rh = rl(ss.IN_SRV | ss.LANDED | ss.SCOOP | ss.LIGHTS | ss.SRV_HIGH_BEAM, vw.kind)
+    check(vw.kind == "RHINO" and rh and rh[0][0] == "RHINO CARGO SCOOP OPEN · HIGH BEAM",
+          "r2-own3: Rhino with scoop and high beam: %r" % rh)
+    check(rl(ss.IN_SRV | ss.LANDED | ss.DOCKED | ss.LIGHTS, "RHINO") == [], "r2-own3: SRV in its bay - nothing")
     sent.clear()
     ov.hidden = False
     check(ov.show_state(rl(ship | ss.GEAR)) and sent and sent[-1][0].endswith("state-0")
