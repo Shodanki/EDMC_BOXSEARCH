@@ -72,6 +72,10 @@ class App:
         from .vehicletanks import VehicleTankStore
         # V1b: tank size per vehicle type, learnt after a refuel synthesis (FIS-owned file)
         self.vehicle_tanks = VehicleTankStore(os.path.join(os.path.dirname(cfg.ini_path), "vehicle_tanks.json"))
+        # 5.0 JUMP PLAN: the carrier's plan and "target full" reports (FIS-owned file)
+        from .jumpplan import PlanStore
+        self.jumpplans = PlanStore(os.path.join(os.path.dirname(cfg.ini_path), "jump_plan.json"))
+        self._edd_stars: Any = None
         # K5: the one online lookup of the FIS (on a click, through the plugin's gateway)
         from .online import CarrierLookup
         self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
@@ -496,6 +500,30 @@ class App:
                                        "body_id": j.get("body_id"), "from": cn.get("system")}
         return out
 
+    def edd_stars(self) -> Any:
+        """JUMP PLAN: EDDiscovery's star database through the plugin's reader
+        (read only), once calibrated; False when there is none."""
+        if self._edd_stars is None:
+            from . import jumpplan
+            from .config import PLUGIN_PREFIX
+            path = (self.cfg._plugin_settings() or {}).get(PLUGIN_PREFIX + "edd_path") or None
+            self._edd_stars = jumpplan.edd_stars(path) or False
+        return self._edd_stars or None
+
+    def carrier_now(self) -> Optional[Dict[str, Any]]:
+        """JUMP PLAN: the own carrier's system, position, tank and load."""
+        c = self.archive.carrier()
+        if not c:
+            return None
+        from . import galaxy
+        name = (c.get("location") or {}).get("StarSystem")
+        su = (c.get("stats") or {}).get("SpaceUsage") or {}
+        used = None
+        if su.get("TotalCapacity") and su.get("FreeSpace") is not None:
+            used = su["TotalCapacity"] - su["FreeSpace"]      # what Spansh calls "used capacity"
+        return {"system": name, "pos": galaxy._positions(self.archive, self.db)(name) if name else None,
+                "fuel": c.get("fuel"), "load": c.get("load"), "used": used}
+
     def current_id64(self) -> Optional[int]:
         """The current system: from the journal, else the last one visited."""
         cur = self.live_state().get("system") or {}
@@ -727,23 +755,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """The few writing calls (carrier favourites and lookups, lost and
-        hidden ships, settings): a body of at most 4 KiB, under the request
-        brake; each call checks who may write."""
+        hidden ships, settings, the jump plan): a body of at most 4 KiB (a
+        Spansh route to import: 256 KiB), under the request brake; each call
+        checks who may write."""
         wait = self._braked()
         if wait is not None:
             self.close_connection = True
             return self._too_many(wait)
         url = urlparse(self.path)
+        limit = _POST_LIMITS.get(url.path, 4096)
         # read the (small) body first: answering before it was read makes
         # Windows reset the connection instead of delivering the answer
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             n = -1
-        raw = self.rfile.read(n) if 0 < n <= 4096 else b""
-        if n > 4096 or n < 0:
+        raw = self.rfile.read(n) if 0 < n <= limit else b""
+        if n > limit or n < 0:
             self.close_connection = True
-            if 4096 < n <= 65536:
+            if limit < n <= 65536:
                 # a too large body is still read (and dropped) up to 64 KiB, or
                 # Windows resets the connection before the 400 arrives
                 # (test_losthidden.test_locks failed about once in three runs)
@@ -752,19 +782,10 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             return self._error(400, "bad request")
-        if url.path == "/api/carriers/favourite":
-            return self._post_favourite(raw)
-        if url.path == "/api/carriers/lookup":
-            return self._post_lookup(raw)
-        if url.path == "/api/carriers/nearby":
-            return self._post_nearby()
-        if url.path == "/api/ship/lost_hidden":
-            return self._post_lost_hidden(raw)
-        if url.path == "/api/learning/reset":
-            return self._post_learning_reset(raw)
-        if url.path != "/api/settings":
+        fn = _POST_ROUTES.get(url.path)
+        if fn is None:
             return self._error(404, "not found")
-        return self._post_settings(raw)
+        return fn(self, raw)
 
     def _post_settings(self, raw: bytes) -> None:
         """POST /api/settings: only from the game PC, only from the FIS page.
@@ -1006,7 +1027,53 @@ class Handler(BaseHTTPRequestHandler):
         app.favourites.set_online(fid, cs, res)
         return self._json(dict(res, callsign=cs, cached=False))
 
-    def _post_nearby(self) -> None:
+    def _body(self, raw: bytes) -> Optional[Dict[str, Any]]:
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return None
+        return body if isinstance(body, dict) else None
+
+    def _post_jumpplan(self, raw: bytes) -> None:
+        """JUMP PLAN: plan the carrier's jumps to a target (name or id64,
+        optionally a body) - from your own data, checked and extended with
+        EDDiscovery's star database. Nothing goes online."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "plans only from the FIS page")
+        body = self._body(raw)
+        if body is None:
+            return self._error(400, "bad request")
+        from . import jumpplan
+        app = self.app
+        car = app.carrier_now()
+        if not car or not car.get("pos"):
+            return self._error(409, "carrier position unknown")
+        edd = app.edd_stars()
+        own = jumpplan.own_stars(app.db, app.archive.events())
+        try:
+            id64 = int(body["id64"]) if body.get("id64") else None
+        except (TypeError, ValueError):
+            return self._error(400, "bad id64")
+        target = jumpplan.resolve(own, edd, name=str(body.get("name") or "")[:80] or None, id64=id64)
+        if target is None:
+            return self._json({"error": "target unknown", "spansh": True}, 404)
+        bid = body.get("body_id")
+        plan = jumpplan.make_plan({"name": car["system"], "pos": car["pos"]}, target, own, edd, time.time(),
+                                  body=str(body.get("body") or "")[:80] or None,
+                                  body_id=bid if isinstance(bid, int) else None)
+        if plan["hops"]:
+            app.jumpplans.set_plan(app.archive.commander()[0], plan)
+        return self._json({"ok": bool(plan["hops"]), "plan": plan, "spansh": not plan["hops"]})
+
+    def _post_jumpplan_clear(self, raw: bytes = b"") -> None:
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "plans only from the FIS page")
+        self.app.jumpplans.set_plan(self.app.archive.commander()[0], None)
+        return self._json({"ok": True})
+
+    def _post_nearby(self, raw: bytes = b"") -> None:
         """H2: carriers near the commander at Spansh - on a click only, one
         request per region and day (online.CarrierLookup.nearby)."""
         if not self._page_write_ok():
@@ -1258,6 +1325,18 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(shipview.build_carrier(app.archive, app.live_state(),
                                                  journal_dir=app.cfg.journal_dir,
                                                  capi_path=capi.path_for(app.cfg.plugin_dir)))
+
+    def _get_jumpplan(self, qs: Dict[str, Any]) -> None:
+        """CARRIER > JUMP PLAN: the plan with tritium, time and what is done."""
+        app = self.app
+        from . import jumpplan, shipview, capi
+        car = app.carrier_now()
+        hold = shipview.hold_tritium(capi.path_for(app.cfg.plugin_dir), time.time())
+        saved = app.jumpplans.get(app.archive.commander()[0])
+        out = jumpplan.build(saved["plan"], car, app.archive.own_carrier_events(),
+                             int((hold or {}).get("t") or 0), time.time())
+        out.update(carrier=car, hold_info=hold, edd=app.edd_stars() is not None)
+        return self._json(out)
 
     def _get_carriers_known(self, qs: Dict[str, Any]) -> None:
         """KNOWN CARRIERS: favourites and carriers seen."""
@@ -1512,6 +1591,20 @@ class _Server(ThreadingHTTPServer):
     allow_reuse_address = False
 
 
+# POST path -> its Handler method (5.0 JUMP PLAN: was a chain in do_POST)
+_POST_ROUTES = {
+    "/api/carriers/favourite": Handler._post_favourite,
+    "/api/carriers/lookup": Handler._post_lookup,
+    "/api/carriers/nearby": Handler._post_nearby,
+    "/api/jumpplan/plan": Handler._post_jumpplan,
+    "/api/jumpplan/clear": Handler._post_jumpplan_clear,
+    "/api/ship/lost_hidden": Handler._post_lost_hidden,
+    "/api/learning/reset": Handler._post_learning_reset,
+    "/api/settings": Handler._post_settings,
+}
+# bodies larger than 4 KiB: only a Spansh route to import
+_POST_LIMITS = {"/api/jumpplan/import": 256 * 1024}
+
 # GET path -> its Handler method (4.12: was one chain of 48)
 _GET_ROUTES = {
     "/api/health": Handler._get_health,
@@ -1531,6 +1624,7 @@ _GET_ROUTES = {
     "/api/shipstatus": Handler._get_shipstatus,
     "/api/carrier": Handler._get_carrier,
     "/api/carriers/known": Handler._get_carriers_known,
+    "/api/jumpplan": Handler._get_jumpplan,
     "/api/mining/live": Handler._get_mining_live,
     "/api/mining": Handler._get_mining,
     "/api/statistics": Handler._get_statistics,

@@ -3,11 +3,21 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025-2026 Shodanki
-"""5.0 CARRIER > JUMP PLAN: jump times learnt from your own jumps."""
+"""5.0 CARRIER > JUMP PLAN: jump times learnt from your own jumps, the
+route over your own systems and EDDiscovery's, tritium per jump, the plan
+file and ticking off by the carrier's position."""
 
+import json
+import os
+import tempfile
+import threading
 import unittest
+import urllib.error
+import urllib.request
 
 from fis import jumpplan
+from fis.server import App, make_server
+from tests.test_api import _Base, fed_tracker
 
 
 def _req(ts, dep, to):
@@ -55,6 +65,208 @@ class TimingTest(unittest.TestCase):
         self.assertEqual(tt["hi"], round(3 * 23.2 + 10))
         self.assertEqual(tt["n"], 3)
         self.assertIsNone(jumpplan.trip_time(0, tm))
+
+
+def _line(n, step, prefix="Own"):
+    """n systems along the x axis, `step` ly apart (all invented)."""
+    return [{"name": "%s %d" % (prefix, i), "id64": 1000 + i, "pos": (i * step, 0.0, 0.0)} for i in range(1, n + 1)]
+
+
+START = {"name": "Start", "pos": (0.0, 0.0, 0.0)}
+TARGET = {"name": "Target", "id64": 9, "pos": (1400.0, 0.0, 0.0)}
+
+
+class FakeEdd:
+    """Stands in for EDDiscovery's star database: a dense row of stars."""
+    src = "edd"
+
+    def __init__(self, stars):
+        self.stars = jumpplan.OwnStars(stars)
+        for s in self.stars.by_name.values():
+            s["src"] = "edd"
+
+    def near(self, center, radius):
+        return self.stars.near(center, radius)
+
+
+class RouteTest(unittest.TestCase):
+    def test_own_systems_fewest_jumps(self):
+        own = jumpplan.OwnStars(_line(14, 100.0))        # 100 ly apart up to 1400
+        hops = jumpplan.route_own(START, TARGET, own)
+        self.assertEqual(len(hops), 3)                   # 500, 1000, target
+        self.assertEqual(hops[-1]["name"], "Target")
+        legs = jumpplan._legs(START["pos"], hops)
+        self.assertTrue(all(lg <= 500.0 for lg in legs))
+
+    def test_gap_in_own_data_needs_edd(self):
+        own = jumpplan.OwnStars(_line(3, 100.0))         # nothing beyond 300 ly
+        r = jumpplan.plan_route(START, TARGET, own)
+        self.assertIsNone(r["hops"])
+        self.assertIsNone(r["source"])
+        edd = FakeEdd(_line(30, 50.0, "Edd"))
+        r = jumpplan.plan_route(START, TARGET, own, edd)
+        self.assertEqual(r["source"], "own+edd")
+        self.assertTrue(r["checked_edd"])
+        self.assertEqual(len(r["hops"]), 3)
+        self.assertEqual(r["ideal"], 3)
+
+    def test_edd_only_checks_when_own_is_as_good(self):
+        own = jumpplan.OwnStars(_line(14, 100.0))
+        edd = FakeEdd(_line(30, 50.0, "Edd"))
+        r = jumpplan.plan_route(START, TARGET, own, edd)
+        self.assertEqual(r["source"], "own")             # same jumps: your own data wins
+        self.assertTrue(r["checked_edd"])
+
+    def test_target_within_one_jump(self):
+        near = {"name": "Near", "pos": (300.0, 0.0, 0.0)}
+        self.assertEqual(jumpplan.route_own(START, near, jumpplan.OwnStars([])), [near])
+
+    def test_resolve_by_name_and_id64(self):
+        own = jumpplan.OwnStars(_line(3, 100.0))
+        self.assertEqual(jumpplan.resolve(own, None, name="own 2")["id64"], 1002)
+        self.assertEqual(jumpplan.resolve(own, None, id64=1003)["name"], "Own 3")
+        self.assertIsNone(jumpplan.resolve(own, None, name="Nowhere"))
+
+    def test_edd_name_keys_invert_the_plugins_decoding(self):
+        import sources      # the plugin's reader (tests put the plugin folder on sys.path)
+        dec = sources.EDDiscoverySource.decode_nameid
+        for sector, rest in (("Col 285 Sector", "XY-Z c6-5"), ("Prua Phoe", "AB-C d1-23"), ("Eol Prou", "QR-S b4-10")):
+            self.assertEqual(dec(jumpplan._std_nameid(rest), sector), sector + " " + rest)
+        for sector, rest in (("HIP", "31330"), ("EXO", "1846-031")):
+            self.assertEqual(dec(jumpplan._num_nameid(rest), sector), sector + " " + rest)
+        self.assertIsNone(jumpplan._std_nameid("Colonia"))
+        self.assertIsNone(jumpplan._num_nameid("12-34-5"))
+
+
+class FuelTest(unittest.TestCase):
+    def test_refuel_from_the_hold_before_the_jump_that_needs_it(self):
+        rows = jumpplan.fuel_rows([500.0] * 3, load=8000.0, tank=150, hold=600)
+        self.assertEqual(rows[0]["need"], 104)           # 5 + 500 * (8000 + 150 + 26500) / 175000
+        self.assertNotIn("refuel", rows[0])
+        self.assertIn("refuel", rows[1])                 # 46 t left, 104 needed
+        self.assertEqual(rows[1]["refuel"]["min"], rows[1]["need"] - 46)
+        self.assertEqual(rows[1]["refuel"]["fill"], 600)   # all of the hold fits the tank
+        self.assertFalse(any(r["short"] for r in rows))
+
+    def test_short_without_tritium(self):
+        rows = jumpplan.fuel_rows([500.0, 500.0], load=8000.0, tank=120, hold=0)
+        self.assertFalse(rows[0]["short"])
+        self.assertTrue(rows[1]["short"])
+        self.assertEqual(rows[1]["refuel"]["short"], rows[1]["need"] - rows[0]["tank_after"])
+
+
+class StoreAndTickTest(unittest.TestCase):
+    def test_plan_file_per_commander_and_broken_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "jump_plan.json")
+            st = jumpplan.PlanStore(path)
+            self.assertIsNone(st.get("F1")["plan"])
+            st.set_plan("F1", {"hops": [1]})
+            st.report_full("F1", {"system": "Target", "ts": 1.0})
+            self.assertEqual(jumpplan.PlanStore(path).get("F1")["plan"], {"hops": [1]})
+            self.assertEqual(len(st.get("F1")["full"]), 1)
+            self.assertIsNone(st.get("F2")["plan"])
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("{broken")
+            self.assertIsNone(st.get("F1")["plan"])
+            self.assertTrue(os.path.exists(path + ".bad"))
+            st.set_plan("F1", None)
+            with open(path, encoding="utf-8") as fh:
+                self.assertIn("cmdrs", json.load(fh))
+
+    def test_tick_off_in_order_after_the_plan(self):
+        hops = [{"name": "A"}, {"name": "B"}, {"name": "C"}]
+        created = jumpplan.parse_ts("2026-05-01T10:00:00Z")
+        evs = [_loc("2026-05-01T09:00:00Z", "B"),        # before the plan: not counted
+               _loc("2026-05-01T10:20:00Z", "A"),
+               _loc("2026-05-01T11:00:00Z", "A"),        # a login again
+               _loc("2026-05-01T12:00:00Z", "C")]        # B skipped: C still counts
+        self.assertEqual(jumpplan.progress(hops, evs, created),
+                         {0: "2026-05-01T10:20:00Z", 2: "2026-05-01T12:00:00Z"})
+
+    def test_build_rows(self):
+        plan = jumpplan.make_plan(START, TARGET, jumpplan.OwnStars(_line(14, 100.0)), None,
+                                  jumpplan.parse_ts("2026-05-01T09:00:00Z"))
+        evs = JUMPS + [_loc("2026-05-01T12:00:00Z", plan["hops"][0]["name"])]
+        out = jumpplan.build(plan, {"fuel": 1000, "load": 8000}, evs, 0, 0.0)
+        rows = out["rows"]
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(rows[0]["done"])
+        self.assertTrue(rows[1]["next"])
+        self.assertEqual(out["left"], 2)
+        self.assertEqual(rows[1]["minutes"], 21.0)       # countdown 16 + cooldown 5
+        self.assertEqual(rows[2]["minutes"], 16.0)       # the last: no cooldown
+        self.assertEqual(rows[2]["at"], 37)
+        self.assertEqual(out["total"]["mid"], 37)
+        self.assertFalse(out["arrived"])
+
+
+def _fsd(ts, name, pos):
+    return {"timestamp": ts, "event": "FSDJump", "StarSystem": name, "StarPos": list(pos)}
+
+
+class ApiTest(_Base):
+    """GET /api/jumpplan and POST plan/clear against a scripted journal."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.jd = tempfile.mkdtemp()
+        lines = [{"timestamp": "2026-11-01T09:00:00Z", "event": "Commander", "FID": "F7", "Name": "Tester"}]
+        lines += [_fsd("2026-11-01T09:%02d:00Z" % i, "Demo %d" % i, (i * 100.0, 0, 0)) for i in range(1, 15)]
+        lines += [_fsd("2026-11-01T09:30:00Z", "Demo Home", (0, 0, 0)),
+                  {"timestamp": "2026-11-01T09:31:00Z", "event": "CarrierStats", "CarrierID": 77, "Callsign": "Q2W-3ER",
+                   "FuelLevel": 900, "SpaceUsage": {"TotalCapacity": 25000, "Crew": 6000, "Cargo": 8000,
+                                                    "CargoSpaceReserved": 0, "ShipPacks": 0, "ModulePacks": 0,
+                                                    "FreeSpace": 11000}},
+                  {"timestamp": "2026-11-01T09:32:00Z", "event": "CarrierLocation", "CarrierID": 77,
+                   "StarSystem": "Demo Home", "BodyID": 0}]
+        with open(os.path.join(cls.jd, "Journal.2026-11-01T090000.01.log"), "w", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(x) + "\n" for x in lines))
+        cls.cfg.journal_dir = cls.jd
+        cls.app = App(cls.cfg, live=fed_tracker(cls.tmp), db=cls.db)
+        cls.app.jumpplans = jumpplan.PlanStore(os.path.join(cls.jd, "jump_plan.json"))
+        cls.app._edd_stars = False          # never the real EDDiscovery file in a test
+        cls.srv = make_server(cls.app, host="127.0.0.1", port=0)
+        cls.base = "http://127.0.0.1:%d" % cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def _post(self, path, body, headers=None):
+        req = urllib.request.Request(self.base + path, data=json.dumps(body).encode(), method="POST",
+                                     headers=dict({"Content-Type": "application/json"}, **(headers or {})))
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            out = (e.code, json.loads(e.read() or b"{}"))
+            e.close()
+            return out
+
+    def _get(self):
+        with urllib.request.urlopen(self.base + "/api/jumpplan", timeout=10) as r:
+            return json.loads(r.read())
+
+    def test_plan_tick_and_clear(self):
+        w = {"X-FIS-Settings": "1"}
+        self.assertEqual(self._post("/api/jumpplan/plan", {"name": "Demo 14"})[0], 403)     # no header
+        code, res = self._post("/api/jumpplan/plan", {"name": "Nowhere"}, w)
+        self.assertEqual((code, res["spansh"]), (404, True))
+        code, res = self._post("/api/jumpplan/plan", {"name": "Demo 14", "body": "Demo 14 A 1"}, w)
+        self.assertEqual(code, 200)
+        self.assertEqual([h["name"] for h in res["plan"]["hops"]], ["Demo 5", "Demo 10", "Demo 14"])
+        g = self._get()
+        self.assertEqual(g["carrier"]["used"], 14000)       # Spansh's "used capacity"
+        self.assertFalse(g["edd"])
+        self.assertEqual([r["name"] for r in g["rows"]], ["Demo 5", "Demo 10", "Demo 14"])
+        self.assertTrue(g["rows"][0]["next"])
+        self.assertEqual(g["plan"]["target"]["body"], "Demo 14 A 1")
+        self.assertEqual(self._post("/api/jumpplan/clear", {}, w)[0], 200)
+        self.assertIsNone(self._get()["plan"])
 
 
 if __name__ == "__main__":
