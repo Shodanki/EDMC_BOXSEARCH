@@ -1629,5 +1629,15 @@ const DE = /*DE*/{
   "near plane": "nahe der Ebene",
   "named system": "benanntes System",
   "other star": "anderer Stern",
-  "in a database": "in einer Datenbank"
+  "in a database": "in einer Datenbank",
+  "Time for the range": "Zeit für die Reichweite",
+  "Time to your route's end": "Zeit bis zum Routenende",
+  "{m} min": "{m} min",
+  "{h} h {m} min": "{h} h {m} min",
+  "{n} jumps": "{n} Sprünge",
+  "Countdown ~{m} min ({a}–{b}), learnt from {n} of your jumps": "Countdown ~{m} min ({a}–{b}), gelernt aus {n} deiner Sprünge",
+  "Countdown ~{m} min (no own jump yet)": "Countdown ~{m} min (noch kein eigener Sprung)",
+  "cooldown {m} min after each jump (public value)": "Cooldown {m} min nach jedem Sprung (öffentlicher Wert)",
+  "your fastest next jump order: {m} min after arrival": "dein schnellster nächster Sprungbefehl: {m} min nach Ankunft",
+  "1 jump": "1 Sprung"
 }/*END*/;

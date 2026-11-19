@@ -441,7 +441,21 @@ def _tritium_more(archive: fl.Archive, live: Dict[str, Any], c: Dict[str, Any],
         ly = sum((a - b) ** 2 for a, b in zip(dest["pos"], here)) ** 0.5
         if ly > 1:
             out["trip"] = dict(fl.carrier_trip(ly, load, tank), to=dest.get("name"))
+    out["time"] = _jump_times(archive, c, out)
     return out
+
+
+def _jump_times(archive: fl.Archive, c: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any]:
+    """5.0 JUMP PLAN: how long the jumps take - countdown learnt from your
+    own jumps, cooldown - for the tank's range and the route's end."""
+    from . import jumpplan
+    tm = jumpplan.timing(archive.own_carrier_events())
+    rng = fl.carrier_range(c["fuel"] or 0, c["load"] or 0)
+    n = rng["jumps"] + (1 if rng["ly"] > rng["jumps"] * fl.CARRIER_MAX_JUMP + 1 else 0)
+    res = {"timing": tm, "range": jumpplan.trip_time(n, tm)}
+    if out.get("trip"):
+        res["trip"] = jumpplan.trip_time(out["trip"]["jumps"], tm)
+    return res
 
 
 def _capi_hold(capi_path: Optional[str], now: float) -> Optional[Dict[str, Any]]:

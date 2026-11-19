@@ -324,8 +324,29 @@ function tritium() {
       tr.with_hold ? el("span", { class: "c-green", text: "  → " + t("with it: {ly} ly · {n} jumps", { ly: fmt(tr.with_hold.ly, 0), n: tr.with_hold.jumps }) }) : null,
       el("span", { class: "c-dim small", text: "  " + t("Frontier data, {a}", { a: age(tr.hold.age_s) }) }))
       : el("div", { class: "c-dim small", text: t("Tritium in the carrier's hold comes with EDMC's Frontier data (Companion API) - none yet.") }),
+    tr.time && tr.time.range ? line(t("Time for the range"), el("span", { text: hm(tr.time.range) })) : null,
+    tr.time && tr.time.trip ? line(t("Time to your route's end"), el("span", { text: hm(tr.time.trip) })) : null,
+    tr.time ? timingNote(tr.time.timing) : null,
     el("div", { class: "c-dim small", text: t("Formula fitted on your own jumps (±1 t): {f}", { f: tr.formula }) }),
   ], { appear: false });
+}
+
+// 5.0 JUMP PLAN: "~3 h 35 min (3 h 20 – 4 h 30)" from minutes
+export function dur(m) {
+  m = Math.round(m || 0);
+  return m < 60 ? t("{m} min", { m }) : t("{h} h {m} min", { h: Math.floor(m / 60), m: m % 60 });
+}
+export function hm(tt) {
+  return "~" + dur(tt.mid) + (tt.hi > tt.lo ? " (" + dur(tt.lo) + " – " + dur(tt.hi) + ")" : "")
+    + " · " + (tt.jumps === 1 ? t("1 jump") : t("{n} jumps", { n: tt.jumps }));
+}
+export function timingNote(tm) {
+  const c = tm.countdown;
+  return el("div", { class: "c-dim small", text: (c.learnt
+    ? t("Countdown ~{m} min ({a}–{b}), learnt from {n} of your jumps", { m: fmt(c.mid, 1), a: fmt(c.lo, 1), b: fmt(c.hi, 1), n: c.n })
+    : t("Countdown ~{m} min (no own jump yet)", { m: fmt(c.mid, 0) }))
+    + " · " + t("cooldown {m} min after each jump (public value)", { m: fmt(tm.cooldown, 0) })
+    + (tm.fastest_next ? " · " + t("your fastest next jump order: {m} min after arrival", { m: fmt(tm.fastest_next, 1) }) : "") });
 }
 
 function hold() {
