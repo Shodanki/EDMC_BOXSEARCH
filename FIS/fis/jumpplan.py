@@ -533,7 +533,8 @@ def build(plan: Optional[Dict[str, Any]], carrier: Optional[Dict[str, Any]], car
     clock = 0.0
     for i, h in enumerate(hops):
         row = {"i": i + 1, "name": h["name"], "id64": h.get("id64"), "src": h.get("src"),
-               "ly": round(legs[i], 1) if legs[i] is not None else None, "done": done.get(i), "next": i == nxt}
+               "ly": round(legs[i], 1) if legs[i] is not None else None, "done": done.get(i), "next": i == nxt,
+               "spansh_fuel": h.get("spansh_fuel"), "icy_ring": h.get("icy_ring")}
         if i >= nxt:
             f = fuel[i - nxt]
             last = i == len(hops) - 1
@@ -546,3 +547,98 @@ def build(plan: Optional[Dict[str, Any]], carrier: Optional[Dict[str, Any]], car
     out.update(left=left, total=trip_time(left, tm), need=sum(r.get("need") or 0 for r in out["rows"]),
                arrived=nxt >= len(hops))
     return out
+
+
+# ------------------------------------------------------------------ Spansh
+SPANSH_ROUTER = "https://spansh.co.uk/fleet-carrier"
+
+
+def _spansh_json(d: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    """Jumps of Spansh's fleet carrier JSON export (result.jumps)."""
+    res = d.get("result") if isinstance(d.get("result"), dict) else d
+    jumps = res.get("jumps") if isinstance(res, dict) else None
+    if not isinstance(jumps, list):
+        return None
+    out = []
+    for j in jumps:
+        if not isinstance(j, dict) or not j.get("name"):
+            return None
+        pos = [j.get("x"), j.get("y"), j.get("z")]
+        out.append({"name": str(j["name"])[:80], "id64": _int(j.get("id64")),
+                    "pos": pos if all(isinstance(v, (int, float)) for v in pos) else None,
+                    "ly": _num(j.get("distance")), "spansh_fuel": _int(j.get("fuel_used")),
+                    "restock": bool(j.get("must_restock")), "icy_ring": bool(j.get("has_icy_ring")),
+                    "pristine": bool(j.get("is_system_pristine"))})
+    return out
+
+
+def _spansh_csv(text: str) -> Optional[List[Dict[str, Any]]]:
+    """Jumps of Spansh's fleet carrier CSV export (names and distances)."""
+    import csv
+    import io
+    rows = list(csv.DictReader(io.StringIO(text)))
+    if not rows or "System Name" not in rows[0]:
+        return None
+    yes = ("yes", "true", "1")
+    return [{"name": r["System Name"][:80], "id64": None, "pos": None, "ly": _num(r.get("Distance")),
+             "spansh_fuel": _int(r.get("Fuel Used")), "restock": (r.get("Restock Tritium") or "").lower() in yes,
+             "icy_ring": (r.get("Icy Ring") or "").lower() in yes, "pristine": (r.get("Pristine") or "").lower() in yes}
+            for r in rows if r.get("System Name")]
+
+
+def _int(v: Any) -> Optional[int]:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def _num(v: Any) -> Optional[float]:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def parse_spansh(text: str) -> Optional[List[Dict[str, Any]]]:
+    """Spansh's fleet carrier route, JSON or CSV, as a list of jumps with
+    the start first - or None when it is neither."""
+    text = (text or "").lstrip("\ufeff").strip()
+    if text.startswith("{"):
+        try:
+            d = json.loads(text)
+        except ValueError:
+            return None
+        return _spansh_json(d) if isinstance(d, dict) else None
+    return _spansh_csv(text)
+
+
+def spansh_plan(jumps: List[Dict[str, Any]], own: OwnStars, edd: Optional[Any], now: float
+                ) -> Optional[Dict[str, Any]]:
+    """A plan from an imported Spansh route: the first row is the start;
+    positions missing in a CSV come from your data or EDDiscovery's."""
+    if len(jumps) < 2:
+        return None
+    for j in jumps:
+        if j["pos"] is None:
+            hit = resolve(own, edd, name=j["name"], id64=j.get("id64"))
+            j["pos"] = list(hit["pos"]) if hit else None
+            j["id64"] = j.get("id64") or (hit or {}).get("id64")
+    start, hops = jumps[0], jumps[1:]
+    tgt = hops[-1]
+    return {"created": now, "start": {"name": start["name"], "pos": start["pos"]},
+            "target": {"name": tgt["name"], "id64": tgt.get("id64"), "pos": tgt["pos"], "body": None, "body_id": None},
+            "hops": [dict(h, src="spansh") for h in hops], "source": "spansh", "checked_edd": False,
+            "own_jumps": None, "ideal": None, "own_systems": len(own),
+            "spansh_need": sum(h.get("spansh_fuel") or 0 for h in hops)}
+
+
+def spansh_help(carrier: Optional[Dict[str, Any]], plan: Optional[Dict[str, Any]], hold: int) -> Dict[str, Any]:
+    """What Spansh's fleet carrier router asks for, ready to copy: source,
+    destination, used capacity (TotalCapacity - FreeSpace of CarrierStats),
+    tritium in the tank and in the hold. Spansh opens in your own browser."""
+    c = carrier or {}
+    dest = ((plan or {}).get("target") or {}).get("name")
+    return {"url": SPANSH_ROUTER, "source": c.get("system"), "destination": dest,
+            "used": c.get("used"), "tank": c.get("fuel"), "hold": hold}

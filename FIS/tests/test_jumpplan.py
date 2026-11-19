@@ -207,6 +207,53 @@ class StoreAndTickTest(unittest.TestCase):
         self.assertFalse(out["arrived"])
 
 
+# Spansh's fleet carrier export, its layout with invented systems and values
+SPANSH_JSON = {"created_at": "2026-11-19T08:00:00", "job": "DEMO-JOB", "parameters": {"capacity_used": 14000},
+               "result": {"jumps": [
+                   {"name": "Demo Home", "id64": "11", "x": 0, "y": 0, "z": 0, "distance": 0, "fuel_used": 0,
+                    "must_restock": 1, "has_icy_ring": False, "is_system_pristine": False},
+                   {"name": "Demo 5", "id64": "15", "x": 500, "y": 0, "z": 0, "distance": 500.0, "fuel_used": 113,
+                    "must_restock": 0, "has_icy_ring": True, "is_system_pristine": True},
+                   {"name": "Demo 9", "id64": "19", "x": 900, "y": 0, "z": 0, "distance": 400.0, "fuel_used": 90,
+                    "must_restock": 0, "has_icy_ring": False, "is_system_pristine": False}]}}
+SPANSH_CSV = ('"System Name","Distance","Distance Remaining","Tritium in tank","Tritium in market","Fuel Used",'
+              '"Icy Ring","Pristine","Restock Tritium"\n'
+              '"Demo Home","0","900","","0","0","No","No","Yes"\n'
+              '"Demo 5","500","400","","0","113","Yes","Yes","No"\n'
+              '"Demo 9","400","0","","0","90","No","No","No"\n')
+
+
+class SpanshTest(unittest.TestCase):
+    def test_json_and_csv(self):
+        j = jumpplan.parse_spansh(json.dumps(SPANSH_JSON))
+        c = jumpplan.parse_spansh("\ufeff" + SPANSH_CSV)
+        self.assertEqual([x["name"] for x in j], ["Demo Home", "Demo 5", "Demo 9"])
+        self.assertEqual([x["name"] for x in c], [x["name"] for x in j])
+        self.assertEqual((j[1]["pos"], j[1]["id64"], j[1]["spansh_fuel"], j[1]["icy_ring"]), ([500, 0, 0], 15, 113, True))
+        self.assertEqual((c[1]["pos"], c[1]["spansh_fuel"], c[1]["icy_ring"], c[0]["restock"]), (None, 113, True, True))
+        for bad in ("", "{}", "{broken", "a,b\n1,2", json.dumps({"result": {"jumps": [{"x": 1}]}})):
+            self.assertIsNone(jumpplan.parse_spansh(bad), bad)
+
+    def test_plan_from_csv_takes_positions_from_your_data(self):
+        own = jumpplan.OwnStars([{"name": "Demo 5", "id64": 15, "pos": (500.0, 0, 0)}])
+        p = jumpplan.spansh_plan(jumpplan.parse_spansh(SPANSH_CSV), own, None, 0.0)
+        self.assertEqual(p["source"], "spansh")
+        self.assertEqual(p["start"]["name"], "Demo Home")
+        self.assertEqual([h["name"] for h in p["hops"]], ["Demo 5", "Demo 9"])
+        self.assertEqual(p["hops"][0]["pos"], [500.0, 0, 0])
+        self.assertIsNone(p["hops"][1]["pos"])          # unknown here: its distance from Spansh is used
+        self.assertEqual(p["spansh_need"], 203)
+        self.assertEqual(jumpplan._legs(None, p["hops"]), [500.0, 400.0])   # Spansh's distances
+        self.assertIsNone(jumpplan.spansh_plan(jumpplan.parse_spansh(SPANSH_CSV)[:1], own, None, 0.0))
+
+    def test_help_fields(self):
+        h = jumpplan.spansh_help({"system": "Demo Home", "used": 14000, "fuel": 900},
+                                 {"target": {"name": "Demo 9"}}, 250)
+        self.assertEqual((h["source"], h["destination"], h["used"], h["tank"], h["hold"]),
+                         ("Demo Home", "Demo 9", 14000, 900, 250))
+        self.assertTrue(h["url"].startswith("https://spansh.co.uk/"))
+
+
 def _fsd(ts, name, pos):
     return {"timestamp": ts, "event": "FSDJump", "StarSystem": name, "StarPos": list(pos)}
 
@@ -272,6 +319,14 @@ class ApiTest(_Base):
         self.assertEqual([r["name"] for r in g["rows"]], ["Demo 5", "Demo 10", "Demo 14"])
         self.assertTrue(g["rows"][0]["next"])
         self.assertEqual(g["plan"]["target"]["body"], "Demo 14 A 1")
+        code, res = self._post("/api/jumpplan/import", {"text": json.dumps(SPANSH_JSON)}, w)
+        self.assertEqual((code, res["plan"]["source"], res["other_start"]), (200, "spansh", False))
+        g = self._get()
+        self.assertEqual([r["spansh_fuel"] for r in g["rows"]], [113, 90])
+        self.assertEqual(g["spansh"]["destination"], "Demo 9")
+        self.assertEqual(self._post("/api/jumpplan/import", {"text": "nonsense"}, w)[0], 400)
+        big = {"text": json.dumps(SPANSH_JSON) + " " * 20000}       # larger than 4 KiB: allowed here
+        self.assertEqual(self._post("/api/jumpplan/import", big, w)[0], 200)
         self.assertEqual(self._post("/api/jumpplan/clear", {}, w)[0], 200)
         self.assertIsNone(self._get()["plan"])
 

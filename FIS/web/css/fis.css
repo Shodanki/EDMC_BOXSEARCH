@@ -1492,3 +1492,5 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 .jp-tab tr.jp-done td { color: var(--dim); }
 .jp-tab tr.jp-next td { background: rgba(var(--dim-rgb), .14); }
 .jp-tab .jp-copy { padding: 0 6px; margin-left: 4px; }
+.jp-spansh summary { cursor: pointer; }
+.jp-paste { width: 100%; box-sizing: border-box; font: 12px var(--font-mono); }

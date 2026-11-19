@@ -1068,6 +1068,28 @@ class Handler(BaseHTTPRequestHandler):
             app.jumpplans.set_plan(app.archive.commander()[0], plan)
         return self._json({"ok": bool(plan["hops"]), "plan": plan, "spansh": not plan["hops"]})
 
+    def _post_jumpplan_import(self, raw: bytes) -> None:
+        """JUMP PLAN: a route the commander computed at Spansh (its JSON or
+        CSV export, chosen or pasted in the page) becomes the plan. The FIS
+        reads no file itself and asks nothing online."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "plans only from the FIS page")
+        body = self._body(raw)
+        from . import jumpplan
+        jumps = jumpplan.parse_spansh(str((body or {}).get("text") or ""))
+        if not jumps:
+            return self._error(400, "not a Spansh fleet carrier route (JSON or CSV)")
+        app = self.app
+        own = jumpplan.own_stars(app.db, app.archive.events())
+        plan = jumpplan.spansh_plan(jumps, own, app.edd_stars(), time.time())
+        if plan is None:
+            return self._error(400, "the route has no jump")
+        app.jumpplans.set_plan(app.archive.commander()[0], plan)
+        car = app.carrier_now() or {}
+        return self._json({"ok": True, "plan": plan,
+                           "other_start": (car.get("system") or "").lower() != plan["start"]["name"].lower()})
+
     def _post_jumpplan_clear(self, raw: bytes = b"") -> None:
         if not self._page_write_ok():
             self._note_fail()
@@ -1337,7 +1359,8 @@ class Handler(BaseHTTPRequestHandler):
         saved = app.jumpplans.get(app.archive.commander()[0])
         out = jumpplan.build(saved["plan"], car, app.archive.own_carrier_events(),
                              int((hold or {}).get("t") or 0), time.time())
-        out.update(carrier=car, hold_info=hold, edd=app.edd_stars() is not None)
+        out.update(carrier=car, hold_info=hold, edd=app.edd_stars() is not None,
+                   spansh=jumpplan.spansh_help(car, saved["plan"], int((hold or {}).get("t") or 0)))
         return self._json(out)
 
     def _get_carriers_known(self, qs: Dict[str, Any]) -> None:
@@ -1600,6 +1623,7 @@ _POST_ROUTES = {
     "/api/carriers/nearby": Handler._post_nearby,
     "/api/jumpplan/plan": Handler._post_jumpplan,
     "/api/jumpplan/clear": Handler._post_jumpplan_clear,
+    "/api/jumpplan/import": Handler._post_jumpplan_import,
     "/api/ship/lost_hidden": Handler._post_lost_hidden,
     "/api/learning/reset": Handler._post_learning_reset,
     "/api/settings": Handler._post_settings,

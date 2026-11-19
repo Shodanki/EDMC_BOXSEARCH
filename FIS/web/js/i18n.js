@@ -1681,5 +1681,19 @@ const DE = /*DE*/{
   "plan your carrier's jumps to this body - CARRIER > JUMP PLAN": "die Sprünge deines Trägers zu diesem Körper planen – TRÄGER › SPRUNGPLAN",
   "carrier target": "Carrier-Ziel",
   "arrival": "Ankunft",
-  "Your carrier is already in {n}.": "Dein Träger ist schon in {n}."
+  "Your carrier is already in {n}.": "Dein Träger ist schon in {n}.",
+  "Spansh: {n} t": "Spansh: {n} t",
+  "Could not read the route: {e}": "Route nicht lesbar: {e}",
+  "Imported - note: the route starts at {s}, not where your carrier is.": "Eingelesen – Achtung: Die Route beginnt in {s}, nicht beim Standort deines Trägers.",
+  "or paste the exported JSON / CSV here": "oder das exportierte JSON / CSV hier einfügen",
+  "Plan at Spansh instead (online, in your browser)": "Stattdessen bei Spansh planen (online, in deinem Browser)",
+  "Open Spansh's fleet carrier router, enter these values, compute the route and export it (JSON preferred, CSV works). Then choose the file here.": "Öffne Spanshs Fleet-Carrier-Router, trage diese Werte ein, berechne die Route und exportiere sie (am besten JSON, CSV geht auch). Dann wähle die Datei hier aus.",
+  "Source system": "Startsystem",
+  "Used capacity": "Belegter Platz (used capacity)",
+  "total capacity minus free space of your carrier (CarrierStats)": "Gesamtkapazität minus freier Platz deines Trägers (CarrierStats)",
+  "Tritium in the tank": "Tritium im Tank",
+  "Tritium in the hold": "Tritium im Laderaum",
+  "open Spansh": "Spansh öffnen",
+  "read pasted route": "eingefügte Route lesen",
+  "optional": "optional"
 }/*END*/;

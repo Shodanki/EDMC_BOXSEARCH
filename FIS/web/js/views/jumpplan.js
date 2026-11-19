@@ -19,7 +19,7 @@ const SOURCE = { own: N_("your own data"), "own+edd": N_("your own data + EDDisc
   spansh: N_("Spansh (imported)") };
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
 
-let box = null, data = null, msg = "", busy = false, query = "";
+let box = null, data = null, msg = "", busy = false, query = "", needSpansh = false, lastTarget = "", paste = "";
 
 /** SYSTEM hands a target over: kept until the plan tab picks it up. */
 export function handOver(target) { store(PENDING, JSON.stringify(target)); }
@@ -39,7 +39,7 @@ async function load() {
 }
 
 async function plan(target) {
-  busy = true; msg = ""; draw();
+  busy = true; msg = ""; needSpansh = false; lastTarget = target.name || ""; draw();
   try {
     const r = await post("/api/jumpplan/plan", target);
     if (r.status === 404) msg = t("{n} is not in your data nor in EDDiscovery's star database - plan it at Spansh below.", { n: target.name || target.id64 });
@@ -47,6 +47,7 @@ async function plan(target) {
     else if (r.status !== 200) msg = t("Could not plan: {e}", { e: r.data.error || r.status });
     else if (r.data.here) msg = t("Your carrier is already in {n}.", { n: target.name || "" });
     else if (!r.data.ok) msg = t("No route from known systems: a gap of more than 500 ly. Plan it at Spansh below.");
+    needSpansh = r.status === 404 || (r.status === 200 && !r.data.ok && !r.data.here);
   } catch (e) { msg = t("Could not plan: {e}", { e: e.message }); }
   busy = false;
   await load();
@@ -68,7 +69,8 @@ export function planView() {
 
 function draw() {
   if (!box) return;
-  box.replaceChildren(head(), ...(data && data.plan && data.plan.hops && data.plan.hops.length ? [summary(), table()] : []));
+  const has = data && data.plan && data.plan.hops && data.plan.hops.length;
+  box.replaceChildren(head(), ...(has ? [summary(), table()] : []), spansh());
 }
 
 function head() {
@@ -136,14 +138,56 @@ function table() {
     el("td", { class: "c-dim", text: String(r.i) }),
     el("td", {}, el("span", { text: r.name }), r.src === "edd" ? el("span", { class: "c-dim small", title: t("from EDDiscovery's star database"), text: " ·E" }) : null),
     el("td", { class: "num", text: r.ly !== null && r.ly !== undefined ? fmt(r.ly, 1) : "–" }),
-    el("td", { class: "num", text: r.need !== undefined ? "~" + fmt(r.need, 0) + " t" : "" }),
+    el("td", { class: "num", text: r.need !== undefined ? "~" + fmt(r.need, 0) + " t" : "",
+      title: r.spansh_fuel ? t("Spansh: {n} t", { n: r.spansh_fuel }) : "" },
+      r.spansh_fuel && r.need !== undefined ? el("div", { class: "c-dim small", text: "Spansh " + r.spansh_fuel + " t" }) : null),
     el("td", { class: "num" + (r.short ? " c-red" : ""), text: r.tank_after !== undefined ? fmt(r.tank_after, 0) + " t" : "" }),
     el("td", { class: "num", text: r.minutes ? "~" + dur(r.minutes) : "" }),
     el("td", { class: "num c-dim", text: r.at ? clock(r.at) : "" }),
     el("td", {}, note(r), r.done ? null : el("button", { class: "jp-copy", text: "⧉", title: t("copy the system name - paste it in the carrier's galaxy map"),
       onclick: (e) => copyText(r.name, e.currentTarget) }))));
-  return frame(t("JUMPS"), t("{n} jumps", { n: rows.length }), [
+  return frame(t("JUMPS"), rows.length === 1 ? t("1 jump") : t("{n} jumps", { n: rows.length }), [
     el("div", { class: "scroll" }, el("table", { class: "ns-tab jp-tab" }, head, ...body)),
     el("div", { class: "c-dim small", text: t("Tritium from the formula fitted on your own jumps, with the tank going down; tritium moved from the hold weighs the same. Ticked off when your carrier arrives (journal). You enter every jump in the game - the FIS sends nothing.") }),
   ], { appear: false });
+}
+
+// Spansh: the commander plans there in their own browser; the FIS hands over
+// what the router asks for and reads the exported route back (no request
+// from the FIS, no file read by it)
+async function importRoute(text) {
+  busy = true; msg = ""; draw();
+  try {
+    const r = await post("/api/jumpplan/import", { text });
+    if (r.status !== 200) msg = t("Could not read the route: {e}", { e: r.data.error || r.status });
+    else { needSpansh = false; paste = "";
+      if (r.data.other_start) msg = t("Imported - note: the route starts at {s}, not where your carrier is.", { s: r.data.plan.start.name }); }
+  } catch (e) { msg = t("Could not read the route: {e}", { e: e.message }); }
+  busy = false;
+  await load();
+  draw();
+}
+
+function spansh() {
+  const h = (data && data.spansh) || {};
+  const dest = h.destination || lastTarget || query;
+  const copyRow = (k, v, tip) => el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: k }),
+    el("span", { class: "c-cyan", text: v === null || v === undefined || v === "" ? "–" : String(v) }),
+    v === null || v === undefined || v === "" ? null : el("button", { class: "jp-copy", text: "⧉", title: tip || t("copy"),
+      onclick: (e) => copyText(String(v), e.currentTarget) }));
+  const file = el("input", { type: "file", accept: ".json,.csv,application/json,text/csv",
+    onchange: async (e) => { const f = e.target.files && e.target.files[0]; if (f) importRoute(await f.text()); } });
+  const area = el("textarea", { class: "jp-paste", rows: 3, placeholder: t("or paste the exported JSON / CSV here"), value: paste,
+    oninput: (e) => { paste = e.target.value; } });
+  const det = el("details", { class: "jp-spansh" }, el("summary", { text: t("Plan at Spansh instead (online, in your browser)") }),
+    el("div", { class: "c-dim small", text: t("Open Spansh's fleet carrier router, enter these values, compute the route and export it (JSON preferred, CSV works). Then choose the file here.") }),
+    copyRow(t("Source system"), h.source), copyRow(t("Destination"), dest),
+    copyRow(t("Used capacity"), h.used, t("total capacity minus free space of your carrier (CarrierStats)")),
+    copyRow(t("Tritium in the tank"), h.tank), copyRow(t("Tritium in the hold"), h.hold),
+    el("div", { class: "cag-tools" },
+      el("button", { text: t("open Spansh") + " ↗", onclick: () => window.open(h.url || "https://spansh.co.uk/fleet-carrier", "_blank", "noopener") }),
+      file),
+    area, el("button", { text: t("read pasted route"), disabled: busy || null, onclick: () => { if (paste.trim()) importRoute(paste); } }));
+  if (needSpansh) det.open = true;
+  return frame("SPANSH", t("optional"), [det], { appear: false });
 }
