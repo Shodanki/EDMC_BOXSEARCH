@@ -153,11 +153,24 @@ function nearbyRow(c) {
 function nearbyRows() {
   const rows = [el("div", { class: "sr-h", text: t("NEAR YOU - ONLINE") }),
     el("div", { class: "kc-act" }, el("button", { text: t("find carriers near me"),
-      title: t("ask Spansh once for the carriers within 100 ly of you - at most once a day per region"),
+      title: t("ask Spansh once for the carriers within 100 ly of you - outside the bubble up to 5000 ly, as a rescue anchor - at most once a day per region"),
       onclick: (e) => findNearby(e.currentTarget) }))];
   if (nearbyMsg) rows.push(el("div", { class: "c-red small", text: nearbyMsg }));
   if (nearby && nearby.carriers) {
-    if (!nearby.carriers.length) rows.push(el("div", { class: "c-dim small", text: t("Spansh knows no carrier within 100 ly.") }));
+    const rescue = nearby.rescue || [];
+    if (!nearby.carriers.length && !rescue.length) {
+      rows.push(el("div", { class: "c-dim small", text: nearby.deep
+        ? t("Spansh knows no carrier within 100 ly, and none within 5000 ly where anyone may dock and repair.")
+        : t("Spansh knows no carrier within 100 ly.") }));
+      rows.push(el("div", { class: "small" }, t("Look for one yourself:") + " ",
+        el("a", { href: "https://spansh.co.uk/", target: "_blank", rel: "noopener", text: "Spansh" }), " · ",
+        el("a", { href: "https://inara.cz/elite/", target: "_blank", rel: "noopener", text: "Inara" })));
+    }
+    if (rescue.length) {
+      rows.push(el("div", { class: "sr-h c-amber", text: t("NOTHING WITHIN 100 LY - NEAREST TO DOCK AND REPAIR") }));
+      rows.push(el("div", { class: "c-dim small", text: t("Up to 5000 ly: carriers anyone may dock at that repair; Vista Genomics and Universal Cartographics first, then the nearer.") }));
+      rows.push(...rescue.map(nearbyRow));
+    }
     rows.push(...nearby.carriers.map(nearbyRow));
     rows.push(el("div", { class: "c-dim small", text: t("Spansh, asked {d}: where someone last reported each carrier - it may have jumped since.", { d: since(nearby.checked) }) }));
   }

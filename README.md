@@ -715,7 +715,9 @@ The plugin notices a locked file and reads it again later.
 *FIS.* The flight information system asks Spansh only on your click in
 CARRIER - *online* at a favourite carrier (where it was last reported, at
 most once per carrier every six hours), *find carriers near me* (the
-carriers within 100 ly, at most once a day per region) and, in JUMP PLAN for
+carriers within 100 ly - outside the bubble one request up to 5000 ly, as a
+rescue list of the nearest you may dock at that repair - at most once a day
+per region) and, in JUMP PLAN for
 a target in the bubble, *known carriers in the target* (the same request
 and cache) - through the same gateway and daily cap. The jump plan itself
 is planned on your PC (your systems, then EDDiscovery's file); Spansh's

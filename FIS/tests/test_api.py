@@ -649,11 +649,12 @@ class TestSettings(_Base):
     def test_carriers_nearby_endpoint(self):
         """H2: only from the FIS page, only with a position, offline says so."""
         from unittest import mock
-        asked = []
+        asked, deeps = [], []
 
         class FakeLookup:
-            def nearby(self, pos):
+            def nearby(self, pos, deep=False):
                 asked.append(pos)
+                deeps.append(deep)
                 return {"checked": "2026-11-13T21:00:00Z", "ref": pos, "cached": False,
                         "carriers": [{"callsign": "JFM-21Z", "distance": 5.0}]}
         hdr = {"X-FIS-Settings": "1", "Origin": self.base}
@@ -672,12 +673,16 @@ class TestSettings(_Base):
                 with post(hdr) as r:
                     d = json.loads(r.read())
             self.assertEqual((d["carriers"][0]["callsign"], asked), ("JFM-21Z", [[1.0, 2.0, 3.0]]))
+            with mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": [9000.0, 0.0, 9000.0]}}):
+                with post(hdr) as r:
+                    r.read()
+            self.assertEqual(deeps, [False, True])          # the bubble asks 100 ly, deep space 5000 ly
             with mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": "garbage"}}):
                 with self.assertRaises(urllib.error.HTTPError) as e:
                     post(hdr)
                 self.assertEqual(e.exception.code, 409)
                 e.exception.close()
-        with mock.patch.object(self.app.lookup, "nearby", lambda pos: {"error": "offline"}), \
+        with mock.patch.object(self.app.lookup, "nearby", lambda pos, deep=False: {"error": "offline"}), \
                 mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": [1, 2, 3]}}):
             with self.assertRaises(urllib.error.HTTPError) as e:
                 post(hdr)

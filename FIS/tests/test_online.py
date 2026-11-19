@@ -185,5 +185,46 @@ class TestNearby(unittest.TestCase):
         self.assertIn("500", lk.nearby([0.0, 0.0, 0.0])["error"])
 
 
+def _far(cs, x, access="All", services=("Repair",)):
+    """An invented carrier on the x axis, as Spansh lists it."""
+    return {"name": cs, "type": "Drake-Class Carrier", "system_name": "Demo %s" % cs, "system_id64": 1,
+            "system_x": float(x), "system_y": 0.0, "system_z": 0.0, "updated_at": "2026-11-18T10:00:00Z",
+            "carrier_docking_access": access, "services": [{"name": s} for s in services]}
+
+
+class TestDeepSpace(TestNearby):
+    """User 19.11.: outside the bubble a rescue anchor up to 5000 ly."""
+
+    def test_deep_asks_5000_and_rescues_where_you_can_dock_and_repair(self):
+        FakeSession.answer = (200, {"results": [
+            _far("AAA-001", 300, access="Squadron Friends", services=("Repair", "Vista Genomics")),   # no docking for you
+            _far("AAA-002", 350, services=("Refuel",)),                                               # no repair
+            _far("AAA-003", 400),                                                                     # repair only
+            _far("AAA-004", 900, services=("Repair", "Universal Cartographics")),
+            _far("AAA-005", 1200, services=("Repair", "Vista Genomics", "Universal Cartographics")),
+            _far("AAA-006", 1500, access=None, services=("Repair",)),                                 # access unknown
+            _far("AAA-007", 2000)]})
+        r = self.lk.nearby([0.0, 0.0, 0.0], deep=True)
+        body = FakeSession.sent[0][2]
+        self.assertEqual(body["filters"]["distance"], {"min": "0", "max": "5000"})
+        self.assertEqual(body["size"], 50)
+        self.assertEqual((r["carriers"], r["radius"], r["deep"]), ([], 5000, True))
+        # Vista + UC first, then UC, then repair only; nearer first among equals; at most 3
+        self.assertEqual([c["callsign"] for c in r["rescue"]], ["AAA-005", "AAA-004", "AAA-003"])
+
+    def test_deep_with_carriers_within_100_ly_shows_them_as_in_the_bubble(self):
+        FakeSession.answer = (200, {"results": NEAR + [_far("AAA-009", 800)]})
+        r = self.lk.nearby([0.0, 0.0, 0.0], deep=True)
+        self.assertEqual([c["callsign"] for c in r["carriers"]], ["G6M-8QZ", "JFM-21Z"])   # beyond 100 ly left out
+        self.assertNotIn("rescue", r)
+
+    def test_bubble_and_deep_are_cached_apart(self):
+        self.lk.nearby([0.0, 0.0, 0.0])
+        self.lk.nearby([0.0, 0.0, 0.0], deep=True)
+        self.assertEqual(len(FakeSession.sent), 2)
+        self.assertTrue(self.lk.nearby([5.0, 0.0, 0.0], deep=True)["cached"])
+        self.assertEqual(len(FakeSession.sent), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

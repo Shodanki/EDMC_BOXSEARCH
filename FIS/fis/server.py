@@ -1167,7 +1167,8 @@ class Handler(BaseHTTPRequestHandler):
         pos = star_pos(((self.app.live_state() or {}).get("system") or {}).get("pos"))
         if pos is None:
             return self._error(409, "position unknown - jump once or open the galaxy map")
-        res = self.app.lookup.nearby(pos)
+        from .jumpplan import in_bubble
+        res = self.app.lookup.nearby(pos, deep=not in_bubble(pos))   # deep space: up to 5000 ly
         if res.get("error"):
             return self._json(res, 503 if res["error"] != "offline" else 409)
         return self._json(res)
