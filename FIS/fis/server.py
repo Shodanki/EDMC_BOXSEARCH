@@ -1564,7 +1564,8 @@ class Handler(BaseHTTPRequestHandler):
         from . import trade
         app.archive.refresh()
         return self._json(trade.build_trade(app.archive, app.live_state(), app.cfg.journal_dir,
-                                            os.path.join(os.path.dirname(app.cfg.ini_path), "market_means.json")))
+                                            os.path.join(os.path.dirname(app.cfg.ini_path), "market_means.json"),
+                                            edd_path=app.archive.edd_source()))
 
     def _get_statistics(self, qs: Dict[str, Any]) -> None:
         """STATISTICS, with what the FIS has learnt so far."""

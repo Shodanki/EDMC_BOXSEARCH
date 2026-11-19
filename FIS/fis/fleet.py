@@ -778,6 +778,10 @@ class Archive:
         self._scanned = 0.0
         self._kick_edd()
 
+    def edd_source(self) -> Optional[str]:
+        """The EDDiscovery archive read from now on, None while it is off."""
+        return self._edd_path
+
     def _kick_edd(self) -> None:
         """Start the background read of the archive when one is due."""
         with self._lock:

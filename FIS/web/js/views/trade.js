@@ -45,7 +45,8 @@ function cells(r) {
     el("td", { class: "num", text: s ? fmt(s.t, 0) + " t" : "–" }),
     el("td", { class: "num", text: s ? cr(s.cr) : "–" }),
     el("td", { class: "num c-dim", text: r.mean ? cr(r.mean) : "–",
-      title: mf ? t("from {s}, {d}", { s: mf.station || "?", d: day(mf.ts) }) : t("open a station's commodity market once") }),
+      title: mf ? t(mf.edd ? "from {s}, {d} (EDDiscovery archive)" : "from {s}, {d}", { s: mf.station || "?", d: day(mf.ts) })
+        : t("open a station's commodity market once (or switch on the EDDiscovery archive in the settings)") }),
     el("td", { class: "num " + (vs === null || vs === undefined ? "c-dim" : vs >= 0 ? "c-green" : vs < -10 ? "c-amber" : ""),
       text: vs === null || vs === undefined ? "–" : (vs > 0 ? "+" : "") + vs + " %" }),
     el("td", { class: "num" + (r.here && r.here.demand ? " c-green" : " c-dim"), text: r.here

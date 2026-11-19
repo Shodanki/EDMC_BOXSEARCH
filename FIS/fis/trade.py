@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 from .live import parse_ts
@@ -66,6 +67,37 @@ def _read_json(path: str) -> Dict[str, Any]:
 
 
 _MEANS_LOCK = threading.Lock()
+_EDD_MEANS: Dict[str, Any] = {"path": None, "t": 0.0, "means": {}}
+EDD_MEANS_S = 6 * 3600           # h-tab: EDD's markets read again at most this often
+
+
+def edd_means(path: Optional[str]) -> Dict[str, Dict[str, Any]]:
+    """h-tab: the galactic means from EDDiscovery's archive (eddarchive.
+    market_means) by commodity key, read once and then at most every
+    EDD_MEANS_S; empty when the archive is off or unreadable."""
+    if not path:
+        return {}
+    with _MEANS_LOCK:
+        c = _EDD_MEANS
+        if c["path"] != path or time.time() - c["t"] > EDD_MEANS_S:
+            from . import eddarchive
+            try:
+                raw = eddarchive.market_means(path)
+            except Exception:
+                raw = {}
+            c.update(path=path, t=time.time(),
+                     means={key_of(k): {"mean": v["mean"], "station": v["station"], "ts": parse_ts(v["iso"]) or 0}
+                            for k, v in raw.items() if key_of(k)})
+        return dict(c["means"])
+
+
+def with_edd(known: Dict[str, Dict[str, Any]], edd: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """The kept means, a commodity missing there (or older) from EDD's archive."""
+    out = dict(known)
+    for k, v in edd.items():
+        if (out.get(k) or {}).get("ts", 0) < v.get("ts", 0):
+            out[k] = dict(v, edd=True)
+    return out
 
 
 def _load_means(path: Optional[str]) -> Dict[str, Dict[str, Any]]:
@@ -115,9 +147,10 @@ def _docked_here(archive: Any, live: Dict[str, Any], market: Dict[str, Any]) -> 
 
 
 def build_trade(archive: Any, live: Optional[Dict[str, Any]], journal_dir: Optional[str],
-                means_path: Optional[str] = None) -> Dict[str, Any]:
+                means_path: Optional[str] = None, edd_path: Optional[str] = None) -> Dict[str, Any]:
     """The TRADE view: one row per commodity you carry, mined or sold, with
-    the galactic means kept in `means_path`."""
+    the galactic means kept in `means_path` and, h-tab, from EDDiscovery's
+    archive at `edd_path` (when the commander switched it on)."""
     live = live or {}
     evs = archive.events()
     sold = _sales(evs)
@@ -129,7 +162,7 @@ def build_trade(archive: Any, live: Optional[Dict[str, Any]], journal_dir: Optio
     market = _read_json(os.path.join(journal_dir, "Market.json")) if journal_dir else {}
     here = _docked_here(archive, live, market)
     items = {key_of(i.get("Name")): i for i in market.get("Items") or []}
-    means = remember_means(means_path, market)
+    means = with_edd(remember_means(means_path, market), edd_means(edd_path))
     rows = []
     for k in set(sold) | set(mined) | set(hold):
         it = items.get(k) or {}
@@ -139,7 +172,8 @@ def build_trade(archive: Any, live: Optional[Dict[str, Any]], journal_dir: Optio
         mean = means.get(k) or {}
         rows.append({"key": k, "name": name, "hold": (hold.get(k) or (0, None))[0], "mined": k in mined,
                      "sold": s or None, "mean": mean.get("mean"),
-                     "mean_from": {"station": mean.get("station"), "ts": mean.get("ts")} if mean else None,
+                     "mean_from": ({"station": mean.get("station"), "ts": mean.get("ts"), "edd": bool(mean.get("edd"))}
+                                   if mean else None),
                      "vs_mean": (round(100.0 * s["avg"] / mean["mean"] - 100) if s.get("avg") and mean.get("mean")
                                  else None),
                      "here": ({"price": int(it.get("SellPrice") or 0), "demand": int(it.get("Demand") or 0)}

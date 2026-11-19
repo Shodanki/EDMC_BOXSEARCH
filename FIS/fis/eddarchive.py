@@ -24,6 +24,12 @@ privilege:
     EDDiscovery never saw log in is left out (statistics count only the
     active commander, so nothing may be counted for everyone).
 
+h-tab (user 19.11.2026): the galactic mean of a commodity (MeanPrice) is
+only in a station's market - a fleet carrier's has 0. EDDiscovery stores
+each Market event with the market's items, so market_means() takes the
+newest mean per commodity from there (the same switch; only the event
+Market, only Name and MeanPrice of its items are kept).
+
 EDDiscovery is Apache-2.0 software; no part of it is used here, only its
 file is read. Nothing is sent anywhere.
 """
@@ -120,6 +126,31 @@ def read(path: str, events: Iterable[str],
         con.close()
     return {"events": out, "rows": rows,
             "commanders": {cmdrs[c]: f for c, f in fid_of.items() if c in cmdrs}}
+
+
+def market_means(path: str) -> Dict[str, Dict[str, Any]]:
+    """h-tab: the newest galactic mean per commodity (raw Name, lower case)
+    from the Market events EDDiscovery kept: {name: {"mean", "station", "ts"}}."""
+    out: Dict[str, Dict[str, Any]] = {}
+    con = _connect(path)
+    try:
+        for (data,) in con.execute("SELECT EventData FROM JournalEntries WHERE EventType='Market' ORDER BY Id"):
+            try:
+                e = json.loads(data)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(e, dict):
+                continue
+            ts = e.get("timestamp") or ""
+            for it in e.get("Items") or []:
+                mean = it.get("MeanPrice") if isinstance(it, dict) else None
+                if isinstance(mean, (int, float)) and mean > 0 and it.get("Name"):
+                    k = str(it["Name"]).lower()
+                    if ts >= (out.get(k) or {}).get("iso", ""):
+                        out[k] = {"mean": int(mean), "station": e.get("StationName"), "iso": ts}
+    finally:
+        con.close()
+    return out
 
 
 def _first_fids(con: sqlite3.Connection, cmdrs: Dict[int, str]) -> Dict[int, str]:

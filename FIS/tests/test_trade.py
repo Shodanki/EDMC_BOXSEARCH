@@ -91,6 +91,37 @@ class TradeTest(unittest.TestCase):
         self.assertEqual(trade.remember_means(path, newer)["tritium"]["mean"], 51000)
         self.assertEqual(trade.remember_means(path, older)["tritium"]["station"], "New Port")
 
+    def test_means_from_the_edd_archive(self):
+        """h-tab (user 19.11.): only carrier markets lately - no mean; the
+        station markets EDDiscovery kept fill the column, a kept newer mean
+        from an own station market still wins."""
+        import sqlite3
+        db = os.path.join(self.jd, "EDDUser.sqlite")
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE JournalEntries (Id INTEGER PRIMARY KEY AUTOINCREMENT, CommanderId INTEGER, "
+                    "EventType TEXT, EventData TEXT)")
+        may = [{"Name": "$Gold_Name;", "MeanPrice": 9500}, {"Name": "$tritium_name;", "MeanPrice": 9},
+               {"Name": "$bromellite_name;", "MeanPrice": 0}]
+        for ts, st, items in (("2026-05-01T10:00:00Z", "Old Hub", [{"Name": "$gold_name;", "MeanPrice": 9000}]),
+                              ("2026-05-21T20:29:27Z", "May Hub", may)):
+            con.execute("INSERT INTO JournalEntries (CommanderId, EventType, EventData) VALUES (1, 'Market', ?)",
+                        (json.dumps({"timestamp": ts, "event": "Market", "StationName": st, "Items": items}),))
+        con.execute("INSERT INTO JournalEntries (CommanderId, EventType, EventData) VALUES (1, 'Docked', '{}')")
+        con.commit()
+        con.close()
+        trade._EDD_MEANS.update(path=None, t=0.0, means={})
+        path = os.path.join(self.jd, "market_means.json")
+        out = trade.build_trade(_Archive(self.evs), {"status": {"flags": 0}}, self.jd, path, edd_path=db)
+        rows = {r["key"]: r for r in out["rows"]}
+        g = rows["gold"]
+        self.assertEqual((g["mean"], g["mean_from"]["station"], g["mean_from"]["edd"], g["vs_mean"]),
+                         (9500, "May Hub", True, -5))
+        # the station market of November (Market.json) is newer than EDD's May
+        self.assertEqual((rows["tritium"]["mean"], rows["tritium"]["mean_from"]["edd"]), (50000, False))
+        self.assertEqual(rows["bromellite"]["mean"], 40000)
+        self.assertEqual(trade.edd_means(None), {})
+        trade._EDD_MEANS.update(path=None, t=0.0, means={})
+
     def test_key(self):
         self.assertEqual(trade.key_of("$lowtemperaturediamond_name;"), "lowtemperaturediamond")
         self.assertEqual(trade.key_of("Tritium"), "tritium")
