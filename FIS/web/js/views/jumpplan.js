@@ -20,6 +20,7 @@ const SOURCE = { own: N_("your own data"), "own+edd": N_("your own data + EDDisc
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
 
 let box = null, data = null, msg = "", busy = false, query = "", needSpansh = false, lastTarget = "", paste = "";
+let seen = "", spanshOpen = false;     // what was drawn last; the SPANSH box stays as you left it
 
 /** SYSTEM hands a target over: kept until the plan tab picks it up. */
 export function handOver(target) { store(PENDING, JSON.stringify(target)); }
@@ -34,8 +35,16 @@ async function post(path, body) {
   return { status: r.status, data: d || {} };
 }
 
+// true when the answer differs from the one drawn (the age of Frontier's
+// data changes with every call and does not count)
 async function load() {
-  try { data = await getJSON("/api/jumpplan"); } catch (e) { msg = t("Could not load the plan: {e}", { e: e.message }); }
+  let d;
+  try { d = await getJSON("/api/jumpplan"); } catch (e) { msg = t("Could not load the plan: {e}", { e: e.message }); return true; }
+  const key = JSON.stringify(Object.assign({}, d, { hold_info: d && d.hold_info ? Object.assign({}, d.hold_info, { age_s: 0 }) : null }));
+  data = d;
+  if (key === seen) return false;
+  seen = key;
+  return true;
 }
 
 async function plan(target) {
@@ -54,14 +63,17 @@ async function plan(target) {
   draw();
 }
 
-/** The JUMP PLAN tab: a box that fills itself. */
+/** The JUMP PLAN tab: a box that fills itself. CARRIER rebuilds its page
+ * every minute: the same box comes back and is only redrawn when the plan
+ * changed (a jump ticked off, a new plan) - no reload you can see. */
 export function planView() {
-  box = el("div", { class: "jp" });
+  const fresh = !box;
+  if (fresh) box = el("div", { class: "jp" });
   const pend = store(PENDING);
   store(PENDING, null);
   (async () => {
-    await load();
-    draw();
+    if (busy) return;
+    if (await load() || fresh) draw();
     if (pend) { try { await plan(JSON.parse(pend)); } catch (e) { /* a broken hand-over */ } }
   })();
   return box;
@@ -189,7 +201,9 @@ function spansh() {
       el("button", { text: t("open Spansh") + " ↗", onclick: () => window.open(h.url || "https://spansh.co.uk/fleet-carrier", "_blank", "noopener") }),
       file),
     area, el("button", { text: t("read pasted route"), disabled: busy || null, onclick: () => { if (paste.trim()) importRoute(paste); } }));
-  if (needSpansh) det.open = true;
+  if (needSpansh) spanshOpen = true;
+  det.open = spanshOpen;
+  det.addEventListener("toggle", () => { spanshOpen = det.open; });
   return frame("SPANSH", t("optional"), [det], { appear: false });
 }
 

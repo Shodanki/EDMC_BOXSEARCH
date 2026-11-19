@@ -350,6 +350,25 @@ class AlternativesTest(unittest.TestCase):
         self.assertEqual(jumpplan.carriers_in(res, {"name": "target"})["callsigns"], ["A"])
 
 
+class PageTest(unittest.TestCase):
+    """The page side, read as text (no browser in CI; checked in the browser pane)."""
+    WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+
+    def _read(self, *parts):
+        with open(os.path.join(self.WEB, *parts), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_table_centred_headers_over_numbers(self):
+        css = self._read("css", "fis.css")
+        self.assertIn(".ns-tab.jp-tab th, .ns-tab.jp-tab td, .ns-tab.jp-tab td.num { text-align: center; }", css)
+
+    def test_minute_refresh_keeps_the_view(self):
+        js = self._read("js", "views", "jumpplan.js")
+        self.assertIn("const fresh = !box;", js)                 # the same box comes back
+        self.assertIn("if (await load() || fresh) draw();", js)  # redrawn only when the plan changed
+        self.assertIn("age_s: 0", js)                            # the data's age is no change
+
+
 def _fsd(ts, name, pos):
     return {"timestamp": ts, "event": "FSDJump", "StarSystem": name, "StarPos": list(pos)}
 
