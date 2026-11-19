@@ -143,10 +143,11 @@ check and are never touched by it.
 SHBOX FIS keeps running when EDMC is closed: after an update close its
 window (or end `python -m fis`) so it starts with the new files. Keep
 `FIS/fis.ini`, `FIS/favourites.json`, `FIS/lost_hidden.json`,
-`FIS/vehicle_tanks.json`, `FIS/learn_reset.json` and `FIS/market_means.json` -
-your settings, favourites, hidden losses, the tank sizes the FIS learnt,
-when you reset a learnt model (STATISTICS > LEARNING STATUS) and the
-galactic mean prices of the markets you opened (TRADE).
+`FIS/vehicle_tanks.json`, `FIS/learn_reset.json`, `FIS/market_means.json` and
+`FIS/jump_plan.json` - your settings, favourites, hidden losses, the tank
+sizes the FIS learnt, when you reset a learnt model (STATISTICS > LEARNING
+STATUS), the galactic mean prices of the markets you opened (TRADE) and your
+carrier's jump plan with your "target full" reports (CARRIER > JUMP PLAN).
 
 ## Files
 
@@ -713,9 +714,13 @@ The plugin notices a locked file and reads it again later.
 
 *FIS.* The flight information system asks Spansh only on your click in
 CARRIER - *online* at a favourite carrier (where it was last reported, at
-most once per carrier every six hours) and *find carriers near me* (the
-carriers within 100 ly, at most once a day per region) - through the same
-gateway and daily cap.
+most once per carrier every six hours), *find carriers near me* (the
+carriers within 100 ly, at most once a day per region) and, in JUMP PLAN for
+a target in the bubble, *known carriers in the target* (the same request
+and cache) - through the same gateway and daily cap. The jump plan itself
+is planned on your PC (your systems, then EDDiscovery's file); Spansh's
+fleet carrier router is only opened in your own browser, and the route you
+export there is read back from the page - the FIS sends it nothing.
 
 *Route check.* When you plot a route of two jumps or more through space no
 source was asked about (outside the fetched shells), its systems are checked
