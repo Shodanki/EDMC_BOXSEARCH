@@ -211,6 +211,10 @@ class StatementTest(unittest.TestCase):
         self.assertFalse(re.search(r"#[0-9a-fA-F]{3,6}\b", gv))        # theme colours only
         for pane in ("statementPane", "balancePane", "segmentsPane", "outlookPane"):
             self.assertIn("export function " + pane, js)
+        # own-6 (user 19.11.): the five GuV tabs stood 76-137 px out of the
+        # narrow overview frame in every theme - the tab bar must wrap
+        rule = re.search(r"^\.kc-tabs \{([^}]*)\}", css, re.M)
+        self.assertTrue(rule and "flex-wrap: wrap" in rule.group(1))
 
 
 if __name__ == "__main__":

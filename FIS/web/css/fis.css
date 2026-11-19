@@ -701,7 +701,7 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .kc-row.fav { background: rgba(var(--amber-rgb), .04); }
 .kc-main { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .kc-act { display: flex; gap: 4px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
-.kc-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.kc-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; max-width: 100%; }   /* own-6: wraps in a narrow frame (GuV overview) */
 .kc-tabs button.on { color: var(--amber); border-color: var(--amber); }
 .ct-mods { max-height: 260px; }   /* CT1: outfitting stock scrolls inside its frame */
 /* SHIP -> LOST DATA */
