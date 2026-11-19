@@ -518,7 +518,7 @@ const DE = /*DE*/{
   "{v} PARKED": "{v} GEPARKT",
   "SHIP LANDED": "SCHIFF GELANDET",
   "SHIP HOVERING": "SCHIFF SCHWEBT",
-  "leaves at 2.3 km": "fliegt bei 2,3 km ab",
+  "leaves at 2.1 km": "fliegt bei 2,1 km ab",
   "SHIP AWAY": "SCHIFF WEG",
   "sent away": "weggeschickt",
   "flew off": "abgeflogen",

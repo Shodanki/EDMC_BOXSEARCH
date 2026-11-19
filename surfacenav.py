@@ -319,7 +319,10 @@ def head_line(label: str, done: int, open_n: int = 0, lost_n: int = 0,
     return base
 
 
-SHIP_LEAVE_M = 2300.0     # a hovering ship flies off when the SRV is this far (seen: 2.3-2.5 km)
+# a hovering ship flies off when the SRV is this far: measured 2.1 km in the Rhino (19.11.2026;
+# 2.3-2.5 km seen on 15.11. were the fixes after it had gone). Reported from 2.01 km (user),
+# for both SRVs and the Rhino alike
+SHIP_LEAVE_M = 2010.0
 SHIP_WARN_M = 1800.0      # from here the ship's line turns red: it is about to leave
 
 

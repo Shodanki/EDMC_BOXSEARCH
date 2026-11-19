@@ -165,7 +165,7 @@ The map of the body you are on follows you while you drive or walk
 marker moves across it; dragging the map switches it off too. **Me**,
 **Ship** and **SRV** centre on you, the landed ship and the parked SRV -
 the last two appear only when their position is known. A ship that dropped
-the Rhino in a hover waits there (*SHIP HOVERING 1240 m · leaves at 2.3 km*); once
+the Rhino in a hover waits there (*SHIP HOVERING 1240 m · leaves at 2.1 km*); once
 it has flown off (the SRV went too far, or the ship was sent away) it shows
 as *SHIP AWAY · 12 min ago · flew off - recall it* until you are aboard again.
 Double-click resets the view.

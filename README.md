@@ -1968,11 +1968,11 @@ Gypseeum Brain Tree         903 m  < 13
   The Nomad gives no such point: the ship flies along at some 2-3 km.
 * **the hovering ship** (4.12) - an SRV dropped from a hovering ship (no
   touchdown before) leaves the ship waiting at the drop point, `SHIP (hover)`.
-  It flies off once the SRV is some 2.3-2.5 km away; the line turns red from
-  1.8 km, so you see it coming.
+  It flies off once the SRV is 2.1 km away (measured in the Rhino); the line
+  turns red from 1.8 km, so you see it coming.
 * **the ship flown off** (4.12) - `SHIP AWAY 12 min    flew off - recall it`.
   The journal writes nothing when a hovering ship leaves, so the plugin
-  marks the moment you pass 2.3 km itself. A landed ship sent away (or
+  marks the moment you pass 2.01 km itself. A landed ship sent away (or
   leaving on its own) says `dismissed`. The line goes when you dock the SRV
   in the recalled ship, board it, or it lands again; flying the ship
   yourself it never shows.
@@ -2639,9 +2639,9 @@ replay. Close the FIS window once so it starts with the new files.
   just as important - what the ship can still take once the Rhino's load
   is aboard, and which of the two is the limit.
 * **The hovering ship, and when it has flown off.** A ship that dropped
-  the Rhino in a hover waits there until the SRV is some 2.3 km away, then
+  the Rhino in a hover waits there until the SRV is 2.1 km away, then
   leaves - the journal writes nothing for either. The compass shows
-  *SHIP (hover)* with the distance, red from 1.8 km, and from 2.3 km
+  *SHIP (hover)* with the distance, red from 1.8 km, and from 2.01 km
   *SHIP AWAY 12 min - flew off, recall it* (and *dismissed* for a landed
   ship sent away) until you are aboard again; FIS PLANET the same.
 * **A finished system can get no route.** Windows: with "show the full tour
