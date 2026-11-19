@@ -1058,6 +1058,8 @@ class Handler(BaseHTTPRequestHandler):
         target = jumpplan.resolve(own, edd, name=str(body.get("name") or "")[:80] or None, id64=id64)
         if target is None:
             return self._json({"error": "target unknown", "spansh": True}, 404)
+        if target["name"].lower() == (car["system"] or "").lower():
+            return self._json({"ok": False, "here": True, "spansh": False})
         bid = body.get("body_id")
         plan = jumpplan.make_plan({"name": car["system"], "pos": car["pos"]}, target, own, edd, time.time(),
                                   body=str(body.get("body") or "")[:80] or None,

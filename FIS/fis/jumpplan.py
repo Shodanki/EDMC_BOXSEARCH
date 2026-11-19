@@ -498,6 +498,8 @@ def make_plan(start: Dict[str, Any], target: Dict[str, Any], own: OwnStars, edd:
     r = plan_route(start, target, own, edd)
     hops = [{"name": h["name"], "id64": h.get("id64"), "pos": list(h["pos"]), "src": h.get("src", "own")}
             for h in (r["hops"] or [])]
+    if r["source"] == "own" and any(h["src"] == "edd" for h in hops):
+        r["source"] = "own+edd"          # the target itself came from EDDiscovery
     return {"created": now, "start": {"name": start["name"], "pos": list(start["pos"])},
             "target": {"name": target["name"], "id64": target.get("id64"), "pos": list(target["pos"]),
                        "body": body, "body_id": body_id},

@@ -117,6 +117,12 @@ class RouteTest(unittest.TestCase):
         self.assertEqual(r["source"], "own")             # same jumps: your own data wins
         self.assertTrue(r["checked_edd"])
 
+    def test_target_from_edd_names_the_source(self):
+        own = jumpplan.OwnStars(_line(14, 100.0))
+        target = dict(TARGET, src="edd")
+        plan = jumpplan.make_plan(START, target, own, None, 0.0)
+        self.assertEqual(plan["source"], "own+edd")
+
     def test_target_within_one_jump(self):
         near = {"name": "Near", "pos": (300.0, 0.0, 0.0)}
         self.assertEqual(jumpplan.route_own(START, near, jumpplan.OwnStars([])), [near])
@@ -256,6 +262,7 @@ class ApiTest(_Base):
         self.assertEqual(self._post("/api/jumpplan/plan", {"name": "Demo 14"})[0], 403)     # no header
         code, res = self._post("/api/jumpplan/plan", {"name": "Nowhere"}, w)
         self.assertEqual((code, res["spansh"]), (404, True))
+        self.assertTrue(self._post("/api/jumpplan/plan", {"name": "Demo Home"}, w)[1]["here"])
         code, res = self._post("/api/jumpplan/plan", {"name": "Demo 14", "body": "Demo 14 A 1"}, w)
         self.assertEqual(code, 200)
         self.assertEqual([h["name"] for h in res["plan"]["hops"]], ["Demo 5", "Demo 10", "Demo 14"])

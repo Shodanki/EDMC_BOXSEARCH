@@ -14,6 +14,7 @@
 import { getJSON, postJSON } from "../api.js";
 import { copyText, el, fmt, frame, meter, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
+import { planView } from "./jumpplan.js";
 
 const ROLES = [["combat", N_("Combat")], ["mining", N_("Mining")], ["transport", N_("Transport")],
   ["exploration", N_("Exploration")], ["passengers", N_("Passengers")], ["sar", N_("SAR")]];
@@ -37,7 +38,8 @@ let sortKey = store("fis.cag.sort") || "", sortDir = store("fis.cag.dir") === "a
 let shipQuery = "", onBoardOnly = store("fis.cag.here") === "1";
 // with a carrier of your own, the known carriers get a tab of their own (11.11.)
 // CT1 (18.11.): the own carrier's trade gets a tab of its own, before the known carriers
-let tab = ["known", "trade"].includes(store("fis.carrier.tab")) ? store("fis.carrier.tab") : "own";
+// 5.0 JUMP PLAN: the carrier's jumps to a target, a tab of its own
+let tab = ["known", "trade", "plan"].includes(store("fis.carrier.tab")) ? store("fis.carrier.tab") : "own";
 // what a visited carrier offered when you docked (StationServices, lower case)
 const KC_SERVICE = { refuel: N_("Refuel"), repair: N_("Repair"), rearm: N_("Rearm"), commodities: N_("Commodities"),
   shipyard: N_("Shipyard"), outfitting: N_("Outfitting"), blackmarket: N_("Secure warehouse"),
@@ -48,6 +50,7 @@ export function mount(r) { root = r; root.classList.add("carrier-view"); }
 
 export async function update(ctx, reason) {
   if (!root) return;
+  if (reason === "show" && store("fis.jumpplan.target")) tab = "plan";
   if (reason !== "show" && reason !== "data" && data) return;
   const [d, k] = await Promise.all([getJSON("/api/carrier").catch(() => null),
     getJSON("/api/carriers/known").catch(() => null)]);
@@ -256,13 +259,15 @@ function render() {
     if (data && data.fleet && data.fleet.length) root.append(airWing());
     return;
   }
-  if (known || data.trade) {
+  {
     const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
       onclick: () => { tab = k; store("fis.carrier.tab", k); render(); } });
     root.append(el("div", { class: "kc-tabs" }, tb("own", t("MY CARRIER")),
+      tb("plan", t("JUMP PLAN")),
       data.trade ? tb("trade", t("CARRIER TRADE")) : null,
       known ? tb("known", t("KNOWN CARRIERS") + " · " + known.counts.known) : null));
   }
+  if (tab === "plan") { root.append(planView()); return; }
   if (known && tab === "known") { root.append(knownCarriers()); return; }
   if (data.trade && tab === "trade") { root.append(trade()); return; }
   root.append(el("div", { class: "ns-grid" },

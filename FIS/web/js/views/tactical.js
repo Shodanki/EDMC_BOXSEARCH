@@ -42,6 +42,7 @@ const SYS_REPORT = {
 const SYS_LEVEL = { good: "c-green", warn: "c-amber", danger: "c-red", info: "" };
 import { buildScene, drawOverlay, groupBounds, pick } from "./scene.js";
 import { create2D } from "./render2d.js";
+import { handOver } from "./jumpplan.js";
 
 let root, stage, overlay, side, ctxRef;
 let renderer = null;
@@ -418,6 +419,10 @@ function renderSide() {
         el("span", { class: "c-dim", text: " · " + ringClass(r.cls) + (r.inner_km && r.outer_km ? " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" : "") }),
         r.hotspots && r.hotspots.length ? el("span", { class: "c-amber", text: " · ◎ " + r.hotspots.map((h) => h.material + (h.count > 1 ? " ×" + h.count : "")).join(", ") }) : null)),
       el("button", { onclick: () => ctxRef.show("planet"), text: t("Datasheet") + " ⟶" }),
+      // 5.0 JUMP PLAN: this body (or its ring) as the carrier's target - planned in CARRIER
+      sys.id64 || sys.name ? el("button", { title: t("plan your carrier's jumps to this body - CARRIER > JUMP PLAN"),
+        onclick: () => { handOver({ id64: sys.id64 || null, name: sys.name || null, body: b.name || b.short, body_id: b.body_id });
+          ctxRef.show("carrier"); }, text: t("carrier target") + " ⟶" }) : null,
     ], { kind: "hot", appear: false }));
   }
 
