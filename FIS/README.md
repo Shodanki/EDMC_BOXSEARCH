@@ -249,32 +249,64 @@ names too (`/#system`, `/#planetinfo`, `/#stats`).
 
 Demo data: a copy of a real plugin database with the commander's current
 area, carrier, earnings and surface tracks removed; commander and ship are
-called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English.
+called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English, theme
+standard. Every page, in the order of the tabs.
 
-**SYSTEM** - the system in 3D with Kepler orbits, flight plan legs, bio and
-first-footfall marks, and a rule-based system report.
+**BRIEFING** - the next target and the sphere ahead: what is left, the chance of a find, the time and value still to come.
+
+![BRIEFING view](docs/screenshots/demo_briefing.png)
+
+**PLANET** - the surface around you: bio finds, samples and their spacing.
+
+![PLANET view](docs/screenshots/demo_planet.png)
+
+**SYSTEM** - the system in 3D with Kepler orbits, flight plan legs, bio and first-footfall marks, and a rule-based system report.
 
 ![SYSTEM view](docs/screenshots/demo_system.png)
 
-**GALAXY** - the survey sphere and its boxels in 3D, flight path, known
-systems; the focus panel and flight log on the right.
+**GALAXY** - the survey sphere and its boxels in 3D, flight path, known systems, the next hop; the focus panel and flight log on the right.
 
-![GALAXY view in 3D](docs/screenshots/demo_galaxy.png)
+![GALAXY view](docs/screenshots/demo_galaxy.png)
 
-**PLANET INFO** - datasheet, science report, atmosphere and surface, biology
-of the selected body.
+**PLANET INFO** - datasheet, science report, atmosphere and surface, biology of the selected body.
 
 ![PLANET INFO view](docs/screenshots/demo_planetinfo.png)
 
-**SHIP** - status lamps from `Status.json`, schematic cutaway, damage and
-function report, engineer view of power and module health.
+**ATLAS** - signals, rings, materials and finds of every known body, nearest first, with a top view around you.
+
+![ATLAS view](docs/screenshots/demo_atlas.png)
+
+**SHIP** - the annunciator from `Status.json`, schematic cutaway, damage and function report, engineer view of power and module health.
 
 ![SHIP view](docs/screenshots/demo_ship.png)
 
-**ATLAS** - signals, rings, materials and finds of every known body, nearest
-first, with a top view around you.
+**VEHICLE** - SRV, Nomad and Scarab: tanks, cargo, synthesis.
 
-![ATLAS view](docs/screenshots/demo_atlas.png)
+![VEHICLE view](docs/screenshots/demo_vehicle.png)
+
+**CARRIER** - your fleet carrier: position, tritium and range with the time per jump, jump plan, carrier trade, known carriers.
+
+![CARRIER view](docs/screenshots/demo_carrier.png)
+
+**MINING** - rocks, tonnes and limpets, learnt from your own runs.
+
+![MINING view](docs/screenshots/demo_mining.png)
+
+**STATISTICS** - overview, history, rates and times, and the learning status with the reality check of every model.
+
+![STATISTICS view](docs/screenshots/demo_statistics.png)
+
+**LEDGER** - gain and loss like a business statement: segments, balance, outlook.
+
+![LEDGER view](docs/screenshots/demo_ledger.png)
+
+**TRADE** - commodity trades against the galactic mean.
+
+![TRADE view](docs/screenshots/demo_trade.png)
+
+**SETTINGS** - language, display links, unsold-data limits, the app.
+
+![SETTINGS view](docs/screenshots/demo_settings.png)
 
 ## Third-party parts
 
