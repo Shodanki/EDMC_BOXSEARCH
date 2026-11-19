@@ -57,6 +57,21 @@ class TestStore(unittest.TestCase):
         self.assertEqual(st.get("F1")["favourites"], {})
         self.assertTrue(os.path.exists(self.path + ".bad"))
 
+    def test_online_positions_newest_and_not_older_than_90_days(self):
+        st = FavouriteStore(self.path)
+        now = 1793577600.0
+        row = {"callsign": "Q2W-3ER", "system": "A", "id64": 1, "pos": [1, 2, 3], "updated": "2026-11-01T10:00:00+00:00",
+               "access": "All", "services": ["repair"]}
+        self.assertEqual(st.note_online("F1", [row, dict(row, callsign="bad"),
+                                               dict(row, callsign="OLD-111", updated="2026-05-01T00:00:00Z")], now=now), 1)
+        on = FavouriteStore(self.path).get("F1")["online"]
+        self.assertEqual(list(on), ["Q2W-3ER"])
+        self.assertEqual((on["Q2W-3ER"]["ts"], on["Q2W-3ER"]["services"]), ("2026-11-01T10:00:00Z", ["repair"]))
+        self.assertEqual(st.note_online("F1", [dict(row, system="Older", updated="2026-10-01T00:00:00Z")], now=now), 0)
+        self.assertEqual(st.get("F1")["online"]["Q2W-3ER"]["system"], "A")
+        st.note_online("F1", [], now=now + 100 * 86400)                     # 100 days on: it ages out
+        self.assertEqual(st.get("F1")["online"], {})
+
     def test_position_only_moves_forward(self):
         st = FavouriteStore(self.path)
         st.set_favourite("F1", "Q2W-3ER", True, info={"system": "A", "ts": "2026-11-02T00:00:00Z"})
@@ -80,6 +95,8 @@ class TestApi(_Base):
         cls.app.favourites = FavouriteStore(os.path.join(cls.jd, "favourites.json"))
         cls.srv = make_server(cls.app, host="127.0.0.1", port=0)
         cls.port = cls.srv.server_address[1]
+        from fis import carriers
+        cls._clock, carriers._clock = carriers._clock, lambda: 1793577600.0     # the fixtures' journal is fresh
         cls.base = "http://127.0.0.1:%d" % cls.port
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
 
@@ -88,6 +105,8 @@ class TestApi(_Base):
         cls.srv.shutdown()
         cls.srv.server_close()
         cls.cfg.lan = False
+        from fis import carriers
+        carriers._clock = cls._clock
 
     def _post(self, body, headers):
         req = urllib.request.Request(self.base + "/api/carriers/favourite", data=json.dumps(body).encode(),

@@ -93,7 +93,8 @@ function visiting() {
 
 // K4: other carriers you know - favourites first (★), then the ones you
 // docked at or started something from, then the newest FSS sightings
-const HOW = { docked: N_("docked"), sighted: N_("seen in the FSS"), jump: N_("jumped with you aboard") };
+const HOW = { docked: N_("docked"), sighted: N_("seen in the FSS"), jump: N_("jumped with you aboard"),
+  online: N_("reported at Spansh") };
 
 function since(ts) { const ms = Date.parse(ts || ""); return isNaN(ms) ? "?" : age((Date.now() - ms) / 1000); }
 
@@ -123,7 +124,8 @@ async function lookup(c, btn) {
 // H2: the carriers Spansh knows near you - one request on a click, kept a day per region
 async function findNearby(btn) {
   btn.disabled = true; btn.textContent = "…";
-  try { nearby = await postJSON("/api/carriers/nearby", {}); nearbyMsg = ""; }
+  try { nearby = await postJSON("/api/carriers/nearby", {}); nearbyMsg = "";
+    known = await getJSON("/api/carriers/known").catch(() => known); }        // what was shown is known now
   catch (e) { nearbyMsg = t("Online lookup failed: {e}", { e: e.message || e }); }
   render();
 }
@@ -223,6 +225,7 @@ function carrierRow(c) {
         accessEl ? " " : null, accessEl,
         c.note ? el("span", { class: "c-amber small", text: "  " + c.note }) : null),
       el("div", { class: "small" }, el("span", { text: c.system || t("position unknown") }),
+        c.stale ? el("span", { class: "c-amber", text: "  " + t("position outdated (over 90 days)") }) : null,
         el("span", { class: "c-dim", text: "  " + t(HOW[c.how] || "seen in the FSS") + " " + since(c.ts)
           + (c.dist_ly !== null && c.dist_ly !== undefined ? " · " + fmt(c.dist_ly, 1) + " ly" : "")
           + (c.from_store ? " · " + t("stored") : "") })),
@@ -256,7 +259,7 @@ function knownCarriers() {
     if (seen.length > 8) rows.push(el("button", { text: showAllSeen ? t("fewer") : t("show {n} more", { n: seen.length - 8 }),
       onclick: () => { showAllSeen = !showAllSeen; render(); } }));
   }
-  rows.push(el("div", { class: "c-dim small", text: t("Last known positions from your own journals; the market is the one you last opened there. Online only when you click it for a favourite (Spansh, the place someone last reported).") }));
+  rows.push(el("div", { class: "c-dim small", text: t("Last known positions from your own journals and from \"find carriers near me\" (Spansh); the market is the one you last opened there. Carriers not seen for 90 days leave the list - favourites stay.") }));
   rows.push(...nearbyRows());
   return frame(t("KNOWN CARRIERS"), t("{f} favourites · {n} known", { f: k.counts.favourites, n: k.counts.known }), rows, { cls: "ns-known", appear: false });
 }

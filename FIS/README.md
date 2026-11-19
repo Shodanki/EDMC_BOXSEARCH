@@ -327,8 +327,11 @@ third-party parts of the project, and Frontier's data:
   Inara. Favourites,
   notes and the last market of each visited carrier are kept per commander
   in `favourites.json` next to `fis.ini` (personal - keep it out of anything
-  you share). Starring works from the tablet too (with the home-network
-  token); the settings stay on the game PC.
+  you share), and with them where Spansh placed the carriers *find carriers
+  near me* showed - KNOWN CARRIERS lists those too. A position not seen for
+  90 days is stale: such a carrier leaves the list; a favourite stays, its
+  position marked outdated. Starring works from the tablet too (with the
+  home-network token); the settings stay on the game PC.
 * Entries you hide from the list of data lost with the ship are kept per
   commander in `lost_hidden.json` next to `fis.ini` - like `favourites.json`
   keep it when you update.

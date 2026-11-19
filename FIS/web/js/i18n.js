@@ -1358,7 +1358,6 @@ const DE = /*DE*/{
   "Copy the plugin folder from the release ZIP again - your database and settings are separate files and stay.": "Den Plugin-Ordner noch einmal aus dem Release-ZIP kopieren – Datenbank und Einstellungen sind eigene Dateien und bleiben.",
   "Spansh knows no carrier within 100 ly.": "Spansh kennt keinen Träger im Umkreis von 100 ly.",
   "Spansh, asked {d}: where someone last reported each carrier - it may have jumped since.": "Spansh, gefragt {d}: wo jemand den Träger zuletzt gemeldet hat – er kann inzwischen gesprungen sein.",
-  "Last known positions from your own journals; the market is the one you last opened there. Online only when you click it for a favourite (Spansh, the place someone last reported).": "Letzte bekannte Positionen aus deinen eigenen Journalen; der Markt ist der, den du dort zuletzt geöffnet hast. Online nur, wenn du es für einen Favoriten anklickst (Spansh, der Ort, den zuletzt jemand gemeldet hat).",
   "Theme: standard": "Theme: Standard",
   "Theme: Federation classic": "Theme: Föderation klassisch",
   "Theme: Federation bridge": "Theme: Föderation Brücke",
@@ -1735,5 +1734,8 @@ const DE = /*DE*/{
   "Look for one yourself:": "Selbst suchen:",
   "NOTHING WITHIN 100 LY - NEAREST TO DOCK AND REPAIR": "NICHTS IM UMKREIS VON 100 LY – NÄCHSTE ZUM ANDOCKEN UND REPARIEREN",
   "Up to 5000 ly: carriers anyone may dock at that repair; Vista Genomics and Universal Cartographics first, then the nearer.": "Bis 5000 ly: Träger, an denen jeder andocken kann und die reparieren; Vista Genomics und Universal Cartographics zuerst, dann die näheren.",
-  "ask Spansh once for the carriers within 100 ly of you - with none that close, up to 5000 ly as a rescue anchor - at most once a day per region": "einmal bei Spansh nach Trägern im Umkreis von 100 ly fragen – ist keiner so nah, bis 5000 ly als Rettungsanker – höchstens einmal am Tag je Region"
+  "ask Spansh once for the carriers within 100 ly of you - with none that close, up to 5000 ly as a rescue anchor - at most once a day per region": "einmal bei Spansh nach Trägern im Umkreis von 100 ly fragen – ist keiner so nah, bis 5000 ly als Rettungsanker – höchstens einmal am Tag je Region",
+  "Last known positions from your own journals and from \"find carriers near me\" (Spansh); the market is the one you last opened there. Carriers not seen for 90 days leave the list - favourites stay.": "Letzte bekannte Positionen aus deinen eigenen Journalen und aus „Träger in meiner Nähe“ (Spansh); der Markt ist der, den du dort zuletzt geöffnet hast. Träger, die 90 Tage nicht gesehen wurden, fallen aus der Liste – Favoriten bleiben.",
+  "reported at Spansh": "bei Spansh gemeldet",
+  "position outdated (over 90 days)": "Position veraltet (über 90 Tage)"
 }/*END*/;

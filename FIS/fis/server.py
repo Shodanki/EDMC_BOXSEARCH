@@ -1173,6 +1173,11 @@ class Handler(BaseHTTPRequestHandler):
         res = self.app.lookup.nearby(pos, deep=True)
         if res.get("error"):
             return self._json(res, 503 if res["error"] != "offline" else 409)
+        try:            # what was shown joins KNOWN CARRIERS (user 19.11.)
+            self.app.favourites.note_online(self.app.archive.commander()[0],
+                                            (res.get("carriers") or []) + (res.get("rescue") or []))
+        except OSError:
+            pass
         return self._json(res)
 
     def _json(self, obj: Any, code: int = 200) -> None:
