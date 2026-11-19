@@ -591,7 +591,17 @@ def _note_position(entry: Dict[str, Any]) -> None:
     uithread._ui(_route_window_refresh)
 
 
-def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
+def _is_stop_body(stop: Any, body: Any) -> bool:
+    """The stop's body, named (ApproachBody, Touchdown, SAAScanComplete) or
+    as its BodyID: ScanOrganic writes "Body" as a number."""
+    if isinstance(body, bool):
+        return False
+    if isinstance(body, int):
+        return stop.body.body_id == body
+    return stop.body.name == body
+
+
+def _route_auto_tick(body_name: Optional[Any], reason: str) -> None:
     """
     Tick a stop off automatically when the journal says you were there.
 
@@ -599,11 +609,14 @@ def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
     directly, so there is no need to tick anything by hand while flying. The
     manual checkbox stays for the cases the journal cannot see - a body you
     looked at and decided to skip.
+
+    ScanOrganic gives the body as its BodyID, not its name (19.11.: B 2 was
+    analysed at 18:37 but only ticked off at the next ApproachBody, 18:43).
     """
-    if not (body_name and ST.route):
+    if body_name is None or body_name == "" or not ST.route:
         return
     for st in ST.route.stops:
-        if st.body.name == body_name and st.body.body_id not in ST.route_done:
+        if _is_stop_body(st, body_name) and st.body.body_id not in ST.route_done:
             if _bio_open(st.body.body_id):
                 # 5.0 (k-brain): bio still to sample - the stop stays on the
                 # list, amber in NEXT TARGETS, until the last species is done

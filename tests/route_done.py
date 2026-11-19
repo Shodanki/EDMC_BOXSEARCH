@@ -113,8 +113,12 @@ ST.db.ingest_journal_event({"event": "ScanOrganic", "timestamp": T % 30, "ScanTy
                             "SystemAddress": 78, "Body": 11, "Genus": "$Codex_Ent_Brancae_Name;",
                             "Genus_Localised": "Brain Trees", "Species": "$Codex_Ent_Brancae_04_Name;",
                             "Species_Localised": "Ostrinum Brain Tree"})
-routewin._route_auto_tick(B, "sampled")
-check(11 in ST.route_done, "the species analysed: now it is ticked off")
+# the game's form: ScanOrganic gives "Body" as the BodyID, a number (19.11.: B 2 in
+# Synuefe AZ-K b27-1 was analysed at 18:37 and only ticked off at the next ApproachBody)
+routewin._route_auto_tick(99, "sampled")
+check(11 not in ST.route_done, "another body's id ticks nothing")
+routewin._route_auto_tick(11, "sampled")
+check(11 in ST.route_done, "the species analysed: ticked off right away, by its BodyID")
 
 print("the first estimate after the FSS is kept (own-4)")
 est = ST.db.cx.execute("SELECT * FROM route_estimates").fetchall()
