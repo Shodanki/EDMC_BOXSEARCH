@@ -1459,6 +1459,11 @@ class Handler(BaseHTTPRequestHandler):
             out["synthesis"] = None
         return self._json(out)
 
+    def _get_nexthop(self, qs: Dict[str, Any]) -> None:
+        """NH1: the systems within one jump, best chance of a find first."""
+        from . import nexthop
+        return self._json(nexthop.build_nexthop(self.app.db, self.app.live_state()))
+
     def _get_carrier(self, qs: Dict[str, Any]) -> None:
         """CARRIER: the own carrier, its jumps and hold."""
         app = self.app
@@ -1786,6 +1791,7 @@ _GET_ROUTES = {
     "/api/ledger/statement": Handler._get_statement,
     "/api/trade": Handler._get_trade,
     "/api/galaxy": Handler._get_galaxy,
+    "/api/nexthop": Handler._get_nexthop,
     "/api/survey/export": Handler._get_survey_export,
     "/api/survey": Handler._get_survey,
 }

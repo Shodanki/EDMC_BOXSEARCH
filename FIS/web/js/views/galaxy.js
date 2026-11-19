@@ -223,6 +223,7 @@ export async function update(ctx, reason) {
   if (mc !== "") qs.set("mc", mc);
   const before = data && data.you ? data.you.id : null;
   try { data = await getJSON("/api/galaxy?" + qs.toString()); } catch (e) { data = null; }
+  try { hop = await getJSON("/api/nexthop"); } catch (e) { hop = null; }      // NH1: from the new position
   if (data && g3) g3.setData(data, on);
   // start on the focus (you, or the last system of the log); while it is
   // you, it follows your jumps
@@ -474,11 +475,42 @@ function label(p) {
 }
 
 // ------------------------------------------------------------ side panel
+// NH1 (user 19.11.): where the galaxy map plots no route (systems wrongly
+// shown as permit-locked) - the systems within one jump, best chance of a
+// find first; the name copied for the map's search (nothing goes to the game)
+let hop = null;
+const HOP_LEVEL = { unchecked: N_("not checked"), checked: N_("in no database"), known: N_("in a database"), inhabited: N_("inhabited") };
+
+function hopFrame() {
+  const rows = (hop.rows || []).map((h) => {
+    const btn = el("button", { class: "hop-copy", text: "⧉", title: t("copy the name for the galaxy map's search"),
+      onclick: () => copyText(h.name, btn) });
+    return el("div", { class: "hop-row" }, btn, el("span", { class: h.level === "known" ? "" : "c-green", text: " " + h.name }),
+      el("span", { class: "c-dim", text: " · " + (h.approx ? "~" : "") + fmt(h.ly, 1) + " ly · " + t(HOP_LEVEL[h.level] || h.level)
+        + (h.odds ? " · " + t("find ~{p} % ({n})", { p: Math.round(h.odds.p), n: h.odds.n }) : "") }));
+  });
+  const box = (hop.boxels || []).map((b) => {
+    const btn = el("button", { class: "hop-copy", text: "⧉", title: t("copy the search prefix - the map lists every system of this boxel"),
+      onclick: () => copyText(b.prefix, btn) });
+    return el("div", { class: "hop-row" }, btn, el("span", { class: b.known ? "" : "c-green", text: " " + b.prefix + "…" }),
+      el("span", { class: "c-dim", text: " · " + t("centre ~{d} ly (±{h})", { d: fmt(b.ly, 0), h: fmt(b.half, 0) })
+        + " · " + (b.known ? t("{n} known", { n: b.known }) : t("none known")) }));
+  });
+  const why = { "no position": N_("no position yet"), "no range": N_("jump range not known yet (Loadout)") }[hop.why];
+  const tag = hop.range_ly ? t("within {r} ly", { r: fmt(hop.range_ly, 1) }) : "";
+  return frame(t("NEXT HOP"), tag, [
+    ...(rows.length ? rows : [el("div", { class: "empty", text: why ? t(why) : t("no unvisited system known within one jump") })]),
+    ...(box.length ? [el("div", { class: "c-dim small", text: t("Boxels within reach, survey not complete - search prefix:") }), ...box] : []),
+    el("div", { class: "c-dim small", text: t("Unvisited systems within your jump range, best chance of a find first. ⧉ copies the name - paste it into the galaxy map's search, select, jump. Worked out again after every jump; ~ = position estimated from the name.") }),
+  ]);
+}
+
 function renderSide() {
   side.replaceChildren();
   if (!data) { side.append(frame(t("GALAXY"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
   const st = data.stats;
   if (focus) side.append(focusFrame());
+  if (hop) side.append(hopFrame());
   const period = st.first ? new Date(st.first * 1000).toLocaleDateString() + " – " + new Date(st.last * 1000).toLocaleDateString() : "";
   const daySel = el("select", { class: "lay-pick", onchange: (e) => { days = Number(e.target.value); localStorage.setItem("fis.gal.days", String(days)); view.scale = null; update(null, "data"); } },
     ...SPANS.map(([v, l]) => el("option", { value: String(v), text: t(l) })));

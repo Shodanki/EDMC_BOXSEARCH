@@ -712,6 +712,8 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .sh-copy:hover { color: var(--cyan); border-color: var(--cyan); }
 .sh-unhide { margin-top: 4px; color: var(--cyan); }
 .sh-sold { margin-top: 4px; color: var(--cyan); }
+.hop-row { padding: 2px 0; overflow-wrap: anywhere; }
+.hop-copy { padding: 0 6px; margin-right: 2px; }
 .sh-unlogged { margin-top: 6px; padding: 4px 6px; border-left: 2px solid var(--amber); }
 .sh-caps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
 .sh-lost-row { display: grid; grid-template-columns: 30px minmax(0, 1.4fr) 80px 90px minmax(0, 2fr); gap: 8px;
