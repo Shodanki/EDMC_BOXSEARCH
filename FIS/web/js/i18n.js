@@ -448,6 +448,7 @@ const DE = /*DE*/{
   "landable": "landbar",
   "terraformable": "terraformbar",
   "Star": "Stern",
+  "Brown dwarf": "Brauner Zwerg",
   "Gravity": "Schwerkraft",
   "Temperature": "Temperatur",
   "Pressure": "Druck",

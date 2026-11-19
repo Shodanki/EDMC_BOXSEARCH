@@ -411,7 +411,7 @@ function renderSide() {
     if (b.flags.valuable) chips.push(chip(t("valuable"), "val"));
     side.append(frame(t("SELECTION"), b.kind === "Star" ? t("Star") : (b.moon ? t("Moon") : t("Planet")), [
       el("div", { class: "tac-sys" }, b.short),
-      el("div", { class: "c-dim", text: (b.kind === "Star" ? t("Star") + " " + b.cls : classDe(b.cls)) + " · " + fmt(b.arrival_ls, 0) + " LS" + (b.landable ? " · " + t("landable") : "") }),
+      el("div", { class: "c-dim", text: (b.kind === "Star" ? (/^[LTY]$/.test(b.cls) ? t("Brown dwarf") : t("Star")) + " " + b.cls : classDe(b.cls)) + " · " + fmt(b.arrival_ls, 0) + " LS" + (b.landable ? " · " + t("landable") : "") }),
       el("div", {}, ...chips),
       b.bio_hint ? el("div", { class: "c-amber", text: b.bio_hint }) : null,
       ...(b.rings || []).filter((r) => !r.belt).map((r) => el("div", { class: "small" },

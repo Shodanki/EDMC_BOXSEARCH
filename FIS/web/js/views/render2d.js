@@ -81,7 +81,7 @@ export function create2D(container) {
       }
       g.lineWidth = 1;
       g.fillStyle = b.colour;
-      if (b.kind === "Star") { g.shadowColor = b.colour; g.shadowBlur = 12; }
+      if (b.kind === "Star") { g.shadowColor = b.colour; g.shadowBlur = 12 * (b.glow ?? 1); }
       g.beginPath(); g.arc(s.x, s.y, r, 0, Math.PI * 2); g.fill();
       g.shadowBlur = 0;
     }

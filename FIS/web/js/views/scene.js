@@ -14,13 +14,17 @@ import { fixLabel, C, alpha } from "../ui.js";
 
 export const COLOURS = {
   "star-o": "#9BB0FF", "star-b": "#AABFFF", "star-a": "#CAD7FF", "star-f": "#F8F7FF",
-  "star-g": "#FFF4E8", "star-k": "#FFD2A1", "star-m": "#FFB27A", "star-l": "#FF8A5C",
-  "star-t": "#D8665A", "star-y": "#A8524E", "star-x": "#FFFFFF", "star-remnant": "#E6F0FF",
+  "star-g": "#FFF4E8", "star-k": "#FFD2A1", "star-m": "#FFB27A",
+  // brown dwarfs (SB2, 19.11.): deep red to magenta, darker than any M star
+  "star-l": "#C4482E", "star-t": "#A3406E", "star-y": "#74405E",
+  "star-x": "#FFFFFF", "star-remnant": "#E6F0FF",
   elw: "#4FA3FF", water: "#3E7BFF", ammonia: "#C9B25A", gas: "#D9A46A", icy: "#BFE3F2",
   metal: "#C9C3B5", rocky: "#A88C74", rockyice: "#9FB3B8", other: "#8FA3A0",
 };
 // the interface colours come from the theme tokens (ui.js C); the table above is physics
 export const UI = C;
+// SB2: how strongly a star glows (1 = full); brown dwarfs barely shine
+const GLOW = { "star-l": 0.35, "star-t": 0.18, "star-y": 0.1 };
 
 const len = (v) => Math.hypot(v[0], v[1], v[2]);
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -71,6 +75,37 @@ function warp(vec, f) {
   return mul(vec, f(r) / r);
 }
 
+// SB1 (19.11.): a far companion star with bodies of its own is pushed out
+// until its drawn group clears everything nearer to the arrival star. On the
+// log scale alone B of Synuefe AZ-K b27-1 (163 000 LS) sat at 62.6 units, its
+// planets up to 37 units around it - B 5 was drawn beside A 8 (2 510 LS).
+// Returns body_id -> factor on the star's log position (only factors > 1).
+// clear space between the groups: a quarter of their reach (the oblique view
+// shortens the gap), at least 3 units
+const farGap = (r) => Math.max(3, 0.25 * r);
+function farPush(bodies, byId, topLevel) {
+  const under = (x, b) => {                          // is x a descendant of b?
+    for (let p = byId.get(x.parent_id), n = 0; p && n < 32; p = byId.get(p.parent_id), n++) {
+      if (p.body_id === b.body_id) return true;
+    }
+    return false;
+  };
+  const drawn = bodies.filter((x) => x.kind === "Star" || x.kind === "Planet");
+  const push = new Map();
+  for (const b of drawn) {
+    const d = len(b.pos);
+    if (b.kind !== "Star" || d < 1 || !topLevel(b)) continue;
+    const own = drawn.filter((x) => under(x, b));
+    if (!own.length) continue;
+    const reach = Math.max(...own.map((x) => FSTAR(len(sub(x.pos, b.pos))) + sizeOf(x)));
+    const near = drawn.filter((x) => x !== b && !own.includes(x) && len(x.pos) < d);
+    const r0 = Math.max(0, ...near.map((x) => F0(len(x.pos)) + sizeOf(x)));
+    const k = (r0 + reach + farGap(r0 + reach)) / F0(d);
+    if (k > 1) push.set(b.body_id, k);
+  }
+  return push;
+}
+
 /**
  * Build the scene model from /api/system/... JSON.
  * mode: "log" | "lin". Returns { bodies, byId, route, rings, extent, fix }.
@@ -93,7 +128,9 @@ export function buildScene(sys, mode = "log") {
   function levelFn(b, anchorLen, relLen) {
     const parent = byId.get(b.parent_id);
     if (parent && parent.kind === "Planet") return moonFn(b, parent);
-    if (anchorLen < 1e-3 || relLen > anchorLen) return F0;
+    // SB1: equal lengths = the arrival star around an unscanned barycentre;
+    // anchor + FSTAR drew it 4.5 units beside its own planets' centre
+    if (anchorLen < 1e-3 || relLen > anchorLen * 0.999) return F0;
     if (relLen < 50) return moonFn(b, parent);
     return FSTAR;
   }
@@ -115,7 +152,7 @@ export function buildScene(sys, mode = "log") {
       const f = levelFn(b, len(pp), len(rel));
       // top level: warp the absolute position (log is not additive, so
       // anchor + warp(rel) would shift a binary's arrival star off the origin)
-      p = f === F0 ? warp(b.pos, F0) : add(anchorOf(b), warp(rel, f));
+      p = f === F0 ? mul(warp(b.pos, F0), push.get(b.body_id) || 1) : add(anchorOf(b), warp(rel, f));
     }
     memo.set(b.body_id, p);
     return p;
@@ -126,10 +163,16 @@ export function buildScene(sys, mode = "log") {
     if (mode === "lin") return b.orbit.map((q) => toScene(mul(q, LIN)));
     const pp = b.ppos || [0, 0, 0];
     const f = levelFn(b, len(pp), len(sub(b.pos, pp)));
-    if (f === F0) return b.orbit.map((q) => toScene(warp(q, F0)));
+    if (f === F0) return b.orbit.map((q) => toScene(mul(warp(q, F0), push.get(b.body_id) || 1)));
     const a = anchorOf(b);
     return b.orbit.map((q) => toScene(add(a, warp(sub(q, pp), f))));
   }
+
+  const isTop = (b) => {
+    const pp = b.ppos || [0, 0, 0];
+    return levelFn(b, len(pp), len(sub(b.pos, pp))) === F0;
+  };
+  const push = mode === "lin" ? new Map() : farPush(sys.bodies, byId, isTop);
 
   const bodies = [];
   for (const b of sys.bodies) {
@@ -142,6 +185,9 @@ export function buildScene(sys, mode = "log") {
     bodies.push({
       id: b.body_id, src: b, kind: b.kind, short: b.short, group: b.group, moon: b.moon,
       p: toScene(S(b)), size, colour: COLOURS[b.colour] || COLOURS.other,
+      glow: b.kind === "Star" ? (GLOW[b.colour] || 1) : 0,
+      // SB1: pushed out - the label says how far it really is
+      far: push.has(b.body_id) ? len(b.pos) : 0,
       orbit: orbitPts(b),
       // the equator's pole in scene space: rings lie in that plane, like the moons (5.0, K2)
       pole: b.pole ? toScene(b.pole) : null,
@@ -285,6 +331,7 @@ export function drawOverlay(ctx2d, w, h, scene, project, state) {
     if (b.flags.footfall) tags.push(["FF", UI.violet]);
     if (b.flags.settlement) tags.push(["⌂" + (b.flags.settlement > 1 ? b.flags.settlement : ""), UI.text]);
     let text = b.short || "?";
+    if (b.far) text += "  ≈" + (b.far >= 1000 ? Math.round(b.far / 1000) + "k" : Math.round(b.far)) + " LS";
     if (col && col.head === b.id && b.id !== state.selected) text += "  +" + col.n;
     items.push({ s, text, tags, pri, b, colour: b.id === state.selected ? UI.amber : (pri >= 90 ? UI.cyan : UI.text) });
   }

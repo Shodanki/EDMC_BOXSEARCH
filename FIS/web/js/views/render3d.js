@@ -112,7 +112,7 @@ export function create3D(container) {
         rim.position.copy(m.position); rim.scale.setScalar(b.size * 1.08);
         root.add(rim);
       } else {
-        const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: colour, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
+        const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: colour, transparent: true, opacity: 0.55 * (b.glow ?? 1), depthWrite: false, blending: THREE.AdditiveBlending }));
         s.position.copy(m.position); s.scale.setScalar(b.size * 7);
         root.add(s);
       }
