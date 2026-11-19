@@ -57,9 +57,12 @@ class App:
         self.started = time.time()
         self._cache: Dict[str, Tuple[Any, Any]] = {}
         self._cache_lock = threading.Lock()
+        self._kepler_busy = False
+        self._kepler_last: Optional[Dict[str, Any]] = None
         self._stop = threading.Event()
         from .fleet import Archive
         self.archive = Archive(cfg.journal_dir)
+        self.archive.use_edd(cfg.edd_user_db())     # 5.0: EDDiscovery's archive, when on
         from .favourites import FavouriteStore
         # personal (K2): next to fis.ini, never in the repository
         self.favourites = FavouriteStore(os.path.join(os.path.dirname(cfg.ini_path), "favourites.json"))
@@ -69,12 +72,41 @@ class App:
         from .vehicletanks import VehicleTankStore
         # V1b: tank size per vehicle type, learnt after a refuel synthesis (FIS-owned file)
         self.vehicle_tanks = VehicleTankStore(os.path.join(os.path.dirname(cfg.ini_path), "vehicle_tanks.json"))
+        # 5.0 JUMP PLAN: the carrier's plan and "target full" reports (FIS-owned file)
+        from .jumpplan import PlanStore
+        self.jumpplans = PlanStore(os.path.join(os.path.dirname(cfg.ini_path), "jump_plan.json"))
+        self._edd_stars: Any = None
         # K5: the one online lookup of the FIS (on a click, through the plugin's gateway)
         from .online import CarrierLookup
         self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
                                     offline=self._plugin_offline)
+        # SK3: when a learnt model was reset (FIS-owned file next to fis.ini,
+        # read by the plugin at start-up too)
+        self.learn_reset_path = os.path.join(os.path.dirname(cfg.ini_path), "learn_reset.json")
+        lr = model.plugin().learnreset
+        if lr is not None:
+            self.live.fuel_since = lr.fuel_since(lr.load(self.learn_reset_path))
         from .calib import Calibrator
-        self.calib = Calibrator(cfg.journal_dir, model.plugin().sysroute, self._leg_ls)
+        self.calib = Calibrator(cfg.journal_dir, model.plugin().sysroute, self._leg_ls,
+                                marks=self._learn_marks)
+
+    def _learn_marks(self) -> Dict[str, Any]:
+        """The model resets (plugin learnreset), empty with an older plugin."""
+        lr = self.model.plugin().learnreset
+        return lr.load(self.learn_reset_path) if lr is not None else {}
+
+    def _sold_marks(self) -> Dict[str, float]:
+        """SM1: the logged-in commander's sold marks ({"explo": ts, "bio": ts})."""
+        lr = self.model.plugin().learnreset
+        if lr is None or not hasattr(lr, "sold_since"):
+            return {}
+        return lr.sold_since(self._learn_marks(), self.archive.commander()[0])
+
+    def _unsold_now(self) -> Optional[Dict[str, Any]]:
+        """M4 unsold data with the commander's limits, value reset and sold marks."""
+        from . import shipview
+        return shipview._unsold(self.archive, self.cfg.unsold, self._learn_marks().get("value"),
+                                self._sold_marks())
 
     def _leg_ls(self, id64: int, a: str, b: str, at: float) -> Optional[float]:
         """Distance body a -> body b at time `at`, from the plugin's orbits."""
@@ -119,6 +151,181 @@ class App:
     def live_state(self) -> Dict[str, Any]:
         """A copy of the live state."""
         return self.live.snapshot()
+
+    def forecast_inputs(self) -> Dict[str, Any]:
+        """B-24: your minutes per worked system (own-4) and value per hour of
+        your sessions of at least 30 min (RT1/FX0), cached while the
+        journals and the database stand still."""
+        evs = self.archive.events()
+        sig = (len(evs), evs[-1].get("timestamp") if evs else None, self.db.mtime())
+
+        def build() -> Dict[str, Any]:
+            from . import stats, systime
+            from .shipview import _bodyvalue
+            st = systime.build(evs, self.db, self.archive.commander()[0], keep=1 << 30)
+            ses = stats.play_sessions(evs, _bodyvalue(), self.archive.organic_values(), keep=1 << 30)
+            long_ = [r for r in ses["sessions"] if r["minutes"] * 60 >= stats.SESSION_MIN_S]
+            return {"minutes": {r["id64"]: r["minutes"] for r in st["systems"]},
+                    "value_h": [r["value_h"] for r in long_ if r["value_h"] is not None]}
+        return self.cached("forecast_inputs", sig, build)
+
+    def sphere_forecast(self, survey: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """B-24: hours, value and finds still ahead in the active sphere -
+        minutes from the sphere's own worked systems once there are three,
+        else from all of yours."""
+        if not survey or not survey.get("center") or not survey.get("systems"):
+            return None
+        from . import forecast, learn
+        inp = self.forecast_inputs()
+        c = survey["center"]
+        ids = {int(r["id64"]) for r in self.db.systems_in_sphere(c[0], c[1], c[2], survey.get("radius") or 0.0)
+               if r["visited"] and r["id64"] is not None}
+        own = [v for k, v in inp["minutes"].items() if k in ids]
+        mins = own if len(own) >= forecast.MIN_N else list(inp["minutes"].values())
+        out = forecast.sphere(survey["systems"], mins, inp["value_h"], learn.find_odds(self.db))
+        if out:
+            out["minutes_from"] = "sphere" if mins is own else "all"
+        return out
+
+    def forecasts(self) -> Dict[str, Any]:
+        """B-24 for STATISTICS > LEARNING STATUS: the sphere's rest and the
+        tank in jumps."""
+        out: Dict[str, Any] = {"sphere": None, "jumps": None}
+        try:
+            out["sphere"] = self.sphere_forecast(self.model.build_survey(self.db))
+        except Exception:
+            out["sphere"] = None
+        try:
+            from . import forecast
+            out["jumps"] = forecast.jumps(self.model._fuel_state(self.live_state()))
+        except Exception:
+            out["jumps"] = None
+        return out
+
+    def kepler_check(self, wait: bool = False) -> Optional[Dict[str, Any]]:
+        """V0: the Kepler watch over every system with two scanned bodies or
+        more - a few seconds (12 s on a full database), so kept until 25 more
+        bodies are scanned. R1: without `wait` it never computes in the
+        request - it hands back the last result (or {"pending": True}) and
+        computes in the background, then tells the browsers."""
+        n = (self.db.one("SELECT COUNT(*) AS n FROM bodies WHERE scanned = 1") or {"n": 0})["n"]
+        sig = int(n) // 25
+        with self._cache_lock:
+            hit = self._cache.get("kepler_check")
+        if hit and hit[0] == sig:
+            return hit[1]
+        if wait:
+            return self._kepler_compute(sig)
+        with self._cache_lock:
+            busy, self._kepler_busy = self._kepler_busy, True
+        if not busy:
+            def run() -> None:
+                try:
+                    self._kepler_compute(sig)
+                    self.hub.publish("scan", {"source": "kepler", "ts": time.time()})
+                except Exception:
+                    with self._cache_lock:          # no retry loop until 25 more scans
+                        self._cache["kepler_check"] = (sig, None)
+                    self._kepler_last = None
+                finally:
+                    with self._cache_lock:
+                        self._kepler_busy = False
+            threading.Thread(target=run, name="fis-kepler", daemon=True).start()
+        return self._kepler_last if self._kepler_last is not None else {"pending": True}
+
+    def _kepler_compute(self, sig: int) -> Optional[Dict[str, Any]]:
+        from . import realitycheck
+
+        def build() -> Optional[Dict[str, Any]]:
+            m = self.model
+            p = m.plugin()
+            sr = p.sysroute
+            ids = [r["sys_id64"] for r in self.db.query(
+                "SELECT sys_id64 FROM bodies WHERE scanned = 1 GROUP BY sys_id64 HAVING COUNT(*) >= 2")]
+            now = time.time()
+
+            def summary(id64: int) -> Optional[Dict[str, int]]:
+                rows = self.db.bodies_for(id64, None)
+                srow = self.db.system_by_id64(id64)
+                bodies, _by = m._system_bodies(p, self.db, rows, (srow["name"] if srow else "") or "", now)
+                if not any(b.pos for b in bodies.values()):
+                    sr.resolve_positions(bodies)
+                out = sr.check_summary(bodies)
+                bar, ls_m = getattr(sr, "CHECK_BAR", 0.01), getattr(sr, "LS_PER_METRE", 1.0 / 299792458.0)
+                out.update(realitycheck.double_moons(bodies, bar, ls_m))
+                return out
+            return realitycheck.kepler(ids, summary)
+        val = self.cached("kepler_check", sig, build)
+        self._kepler_last = val
+        return val
+
+    def reality(self, stats_out: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """V0: one error value per learning model, from what the statistics
+        payload already holds plus the fuel and Kepler checks."""
+        from . import realitycheck
+        L = stats_out.get("learning") or {}
+        models = L.get("models") or {}
+        parts: Dict[str, Any] = {"route": stats_out.get("systime"), "work": models.get("work"),
+                                 "value": models.get("value"),
+                                 "finds": realitycheck.finds(L.get("finds")),
+                                 "bio": (stats_out.get("bio_rates") or {}).get("v0")}
+        try:
+            live = self.live_state()
+            base = self.model._fuel_state(live)
+
+            def make(js: List[Any]) -> Any:
+                fs = self.model._fuel_state(dict(live, jumps=js))
+                fs.unladen, fs.cargo, fs.fsd = getattr(base, "unladen", 0.0), getattr(base, "cargo", 0.0), base.fsd
+                return fs
+            parts["fuel"] = realitycheck.fuel(live.get("jumps") or [], make)
+        except Exception:
+            parts["fuel"] = None
+        try:
+            parts["kepler"] = self.kepler_check()
+        except Exception:
+            parts["kepler"] = None
+        parts.update(self.mining_reality())
+        try:
+            parts["scoop"] = self.scoop()["reality"]
+        except Exception:
+            parts["scoop"] = None
+        return realitycheck.build(parts)
+
+    def scoop(self) -> Dict[str, Any]:
+        """B-15: fuel scoop rate per star class from your journals, and its
+        reality check - cached while the journals stand still."""
+        evs = self.archive.events()
+        sig = (len(evs), evs[-1].get("timestamp") if evs else None)
+
+        def build() -> Dict[str, Any]:
+            from . import scooprate
+            smp = scooprate.samples(evs)
+            return {"rates": scooprate.rates(smp), "reality": scooprate.reality(smp), "min_n": scooprate.MIN_N}
+        return self.cached("scoop", sig, build)
+
+    def mining_reality(self) -> Dict[str, Any]:
+        """R3: tonnes per rock (MP1, the plugin's RockYield) and collector
+        lifetime (ML1) against what came after - cached while the journals
+        stand still."""
+        evs = self.archive.events()
+        sig = (len(evs), evs[-1].get("timestamp") if evs else None)
+
+        def build() -> Dict[str, Any]:
+            from . import mining, realitycheck
+            from .model import _optional
+            ms = _optional("miningstat")
+            out: Dict[str, Any] = {"rocks": None, "collectors": None}
+            try:
+                if ms is not None and hasattr(ms, "RockYield"):
+                    out["rocks"] = realitycheck.rock_yield(evs, ms.RockYield)
+            except Exception:
+                out["rocks"] = None
+            try:
+                out["collectors"] = realitycheck.collectors(mining.collector_waves(evs))
+            except Exception:
+                out["collectors"] = None
+            return out
+        return self.cached("mining_reality", sig, build)
 
     def cached(self, key: str, sig: Any, build) -> Any:
         """Rebuild only when the database or the relevant live data moved."""
@@ -177,7 +384,28 @@ class App:
         out = self.cached("sys:%d" % id64, sig, lambda: self.model.build_system(
             self.db, id64, live, self.cfg.filters, cost_model=cm, order_model=om,
             skip_arrival=self.cfg.skip_arrival, archive=self.archive, fid=self.fid()))
-        return self._with_places(self._with_favourites(self._with_carrier(out, id64)), id64)
+        out = self._with_places(self._with_favourites(self._with_carrier(out, id64)), id64)
+        try:
+            out = dict(out, time_here=self._time_here(id64))
+        except Exception:
+            pass
+        return out
+
+    def _time_here(self, id64: int) -> Optional[Dict[str, Any]]:
+        """own-4: the time spent in this system so far and the route's kept
+        estimate (systime)."""
+        from . import systime
+        evs = self.archive.events()
+        v = self.cached("systime:visits", (len(evs), evs[-1].get("timestamp") if evs else None),
+                        lambda: systime.visits(evs))
+        return systime.here(v.get(id64), systime.estimates(self.db, self.fid()).get(id64))
+
+    def archive_planets(self) -> List[Dict[str, Any]]:
+        """EA2: landable planets the archive knows and the plugin database
+        does not (learn.archive_planets) - with the EDDiscovery archive on."""
+        from . import fleet, learn
+        known = {(r["sys_id64"], r["body_id"]) for r in self.db.query("SELECT sys_id64, body_id FROM bodies")}
+        return learn.archive_planets(self.archive.events(fleet.ALL_COMMANDERS), known)
 
     def _with_places(self, out: Dict[str, Any], id64: int) -> Dict[str, Any]:
         """S2b: what the SYSTEM map draws - your favourite carriers as long as
@@ -284,6 +512,31 @@ class App:
                                        "departure": j.get("departure"), "body": j.get("body"),
                                        "body_id": j.get("body_id"), "from": cn.get("system")}
         return out
+
+    def edd_stars(self) -> Any:
+        """JUMP PLAN: EDDiscovery's star database through the plugin's reader
+        (read only), once calibrated; False when there is none."""
+        if self._edd_stars is None:
+            from . import jumpplan
+            from .config import PLUGIN_PREFIX
+            path = (self.cfg._plugin_settings() or {}).get(PLUGIN_PREFIX + "edd_path") or None
+            self._edd_stars = jumpplan.edd_stars(path) or False
+        return self._edd_stars or None
+
+    def carrier_now(self) -> Optional[Dict[str, Any]]:
+        """JUMP PLAN: the own carrier's system, position, tank and load."""
+        c = self.archive.carrier()
+        if not c:
+            return None
+        from . import galaxy
+        name = (c.get("location") or {}).get("StarSystem")
+        su = (c.get("stats") or {}).get("SpaceUsage") or {}
+        used = None
+        if su.get("TotalCapacity") and su.get("FreeSpace") is not None:
+            used = su["TotalCapacity"] - su["FreeSpace"]      # what Spansh calls "used capacity"
+        return {"system": name, "pos": galaxy._positions(self.archive, self.db)(name) if name else None,
+                "fuel": c.get("fuel"), "load": c.get("load"), "used": used,
+                "model": (c.get("tritium_model") or {}).get("model")}
 
     def current_id64(self) -> Optional[int]:
         """The current system: from the journal, else the last one visited."""
@@ -510,27 +763,31 @@ class Handler(BaseHTTPRequestHandler):
                 "unsold": dict(cfg.unsold),
                 "unsold_defaults": {k: v[0] for k, v in config_mod.UNSOLD_LIMITS.items()},
                 # FG1: the key bindings in SHIP (reads the game's Bindings folder)
-                "show_controls": cfg.show_controls}
+                "show_controls": cfg.show_controls,
+                # 5.0: the EDDiscovery archive - switch, file, what it added
+                "edd_archive": cfg.edd_archive, "edd": self.app.archive.edd_state}
 
     def do_POST(self) -> None:
         """The few writing calls (carrier favourites and lookups, lost and
-        hidden ships, settings): a body of at most 4 KiB, under the request
-        brake; each call checks who may write."""
+        hidden ships, settings, the jump plan): a body of at most 4 KiB (a
+        Spansh route to import: 256 KiB), under the request brake; each call
+        checks who may write."""
         wait = self._braked()
         if wait is not None:
             self.close_connection = True
             return self._too_many(wait)
         url = urlparse(self.path)
+        limit = _POST_LIMITS.get(url.path, 4096)
         # read the (small) body first: answering before it was read makes
         # Windows reset the connection instead of delivering the answer
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             n = -1
-        raw = self.rfile.read(n) if 0 < n <= 4096 else b""
-        if n > 4096 or n < 0:
+        raw = self.rfile.read(n) if 0 < n <= limit else b""
+        if n > limit or n < 0:
             self.close_connection = True
-            if 4096 < n <= 65536:
+            if limit < n <= 65536:
                 # a too large body is still read (and dropped) up to 64 KiB, or
                 # Windows resets the connection before the 400 arrives
                 # (test_losthidden.test_locks failed about once in three runs)
@@ -539,17 +796,10 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             return self._error(400, "bad request")
-        if url.path == "/api/carriers/favourite":
-            return self._post_favourite(raw)
-        if url.path == "/api/carriers/lookup":
-            return self._post_lookup(raw)
-        if url.path == "/api/carriers/nearby":
-            return self._post_nearby()
-        if url.path == "/api/ship/lost_hidden":
-            return self._post_lost_hidden(raw)
-        if url.path != "/api/settings":
+        fn = _POST_ROUTES.get(url.path)
+        if fn is None:
             return self._error(404, "not found")
-        return self._post_settings(raw)
+        return fn(self, raw)
 
     def _post_settings(self, raw: bytes) -> None:
         """POST /api/settings: only from the game PC, only from the FIS page.
@@ -576,6 +826,8 @@ class Handler(BaseHTTPRequestHandler):
         cfg.language = lang if lang in config_mod.LANGUAGES else cfg.language
         cfg.open_browser = bool(body.get("open_browser", cfg.open_browser))
         cfg.show_controls = bool(body.get("show_controls", cfg.show_controls))
+        cfg.edd_archive = bool(body.get("edd_archive", cfg.edd_archive))
+        self.app.archive.use_edd(cfg.edd_user_db())
         cfg.lan = bool(body.get("lan", cfg.lan))
         if "main_cmdr" in body:
             mc = str(body.get("main_cmdr") or "")
@@ -661,6 +913,73 @@ class Handler(BaseHTTPRequestHandler):
         if seen:
             app.favourites.set_online(fid, cs, seen)     # H2: starred from the nearby list
         return self._json({"callsign": cs, "favourite": fav is not None, "note": (fav or {}).get("note", "")})
+
+    def _post_learning_reset(self, raw: bytes) -> None:
+        """
+        SK3, POST /api/learning/reset {"part": "route" | "work" | "fuel" | "value"}:
+        forget what a model learnt - measurements before now are left out
+        from then on, here and in the plugin at its next start. Same locks
+        as a favourite (the FIS page only; with LAN the token).
+        """
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "resets only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            part = str(body.get("part") or "") if isinstance(body, dict) else ""
+        except (ValueError, UnicodeDecodeError):
+            part = ""
+        app = self.app
+        lr = app.model.plugin().learnreset
+        if lr is None or part not in lr.PARTS:
+            return self._error(400, "bad request")
+        now = time.time()
+        ship = app.live.reset_fuel(now) if part == "fuel" else None
+        if part == "fuel" and ship is None:
+            return self._error(409, "no ship known yet")
+        try:
+            lr.mark(app.learn_reset_path, part, now, ship=ship)
+        except (OSError, ValueError):
+            return self._error(500, "could not write the reset")
+        if part != "fuel":
+            threading.Thread(target=app.calib.run_once, name="fis-calib", daemon=True).start()
+        return self._json({"part": part, "since": now})
+
+    def _post_unsold_sold(self, raw: bytes) -> None:
+        """
+        SM1, POST /api/unsold/sold {"parts": ["explo", "bio"], "ts": null}:
+        the game logged no sale, so the commander marks their data as sold -
+        what was scanned before ts (default now; never in the future) counts
+        as sold, here and in the plugin. Only the FIS's learn_reset.json
+        changes. Same locks as a favourite (the FIS page only; with LAN the
+        token).
+        """
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "only from the FIS page")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            body = None
+        app = self.app
+        lr = app.model.plugin().learnreset
+        now = time.time()
+        parts = body.get("parts", ["explo", "bio"]) if isinstance(body, dict) else None
+        ts = body.get("ts") if isinstance(body, dict) else None
+        if (lr is None or not isinstance(parts, list) or not parts
+                or any(p not in lr.SOLD_PARTS for p in parts)
+                or (ts is not None and (not isinstance(ts, (int, float)) or isinstance(ts, bool)
+                                        or not 0 < ts <= now))):
+            return self._error(400, "bad request")
+        fid = app.archive.commander()[0]
+        if not fid:
+            return self._error(409, "no commander known yet")
+        ts = now if ts is None else float(ts)
+        try:
+            lr.mark_sold(app.learn_reset_path, fid, ts, tuple(parts))
+        except (OSError, ValueError):
+            return self._error(500, "could not write the mark")
+        return self._json({"parts": parts, "ts": ts})
 
     def _post_lost_hidden(self, raw: bytes) -> None:
         """SHIP -> LOST DATA: hide crash losses from the list, or show them
@@ -758,7 +1077,136 @@ class Handler(BaseHTTPRequestHandler):
         app.favourites.set_online(fid, cs, res)
         return self._json(dict(res, callsign=cs, cached=False))
 
-    def _post_nearby(self) -> None:
+    def _body(self, raw: bytes) -> Optional[Dict[str, Any]]:
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return None
+        return body if isinstance(body, dict) else None
+
+    def _post_jumpplan(self, raw: bytes) -> None:
+        """JUMP PLAN: plan the carrier's jumps to a target (name or id64,
+        optionally a body) - from your own data, checked and extended with
+        EDDiscovery's star database. Nothing goes online."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "plans only from the FIS page")
+        body = self._body(raw)
+        if body is None:
+            return self._error(400, "bad request")
+        from . import jumpplan
+        app = self.app
+        car = app.carrier_now()
+        if not car or not car.get("pos"):
+            return self._error(409, "carrier position unknown")
+        edd = app.edd_stars()
+        own = jumpplan.own_stars(app.db, app.archive.events())
+        permits = edd.permits() if edd else set()
+        own.drop(permits)                    # a carrier cannot go to a permit-locked system
+        try:
+            id64 = int(body["id64"]) if body.get("id64") else None
+        except (TypeError, ValueError):
+            return self._error(400, "bad id64")
+        target = jumpplan.resolve(own, edd, name=str(body.get("name") or "")[:80] or None, id64=id64)
+        if target is None:
+            return self._json({"error": "target unknown", "spansh": True}, 404)
+        if target["name"].lower() == (car["system"] or "").lower():
+            return self._json({"ok": False, "here": True, "spansh": False})
+        bid = body.get("body_id")
+        plan = jumpplan.make_plan({"name": car["system"], "pos": car["pos"]}, target, own, edd, time.time(),
+                                  body=str(body.get("body") or "")[:80] or None,
+                                  body_id=bid if isinstance(bid, int) else None)
+        plan["target"]["permit"] = bool(target.get("id64") and int(target["id64"]) in permits)
+        if plan["hops"]:
+            app.jumpplans.set_plan(app.archive.commander()[0], plan)
+        return self._json({"ok": bool(plan["hops"]), "plan": plan, "spansh": not plan["hops"]})
+
+    def _post_jumpplan_import(self, raw: bytes) -> None:
+        """JUMP PLAN: a route the commander computed at Spansh (its JSON or
+        CSV export, chosen or pasted in the page) becomes the plan. The FIS
+        reads no file itself and asks nothing online."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "plans only from the FIS page")
+        body = self._body(raw)
+        from . import jumpplan
+        jumps = jumpplan.parse_spansh(str((body or {}).get("text") or ""))
+        if not jumps:
+            return self._error(400, "not a Spansh fleet carrier route (JSON or CSV)")
+        app = self.app
+        own = jumpplan.own_stars(app.db, app.archive.events())
+        plan = jumpplan.spansh_plan(jumps, own, app.edd_stars(), time.time())
+        if plan is None:
+            return self._error(400, "the route has no jump")
+        app.jumpplans.set_plan(app.archive.commander()[0], plan)
+        car = app.carrier_now() or {}
+        return self._json({"ok": True, "plan": plan,
+                           "other_start": (car.get("system") or "").lower() != plan["start"]["name"].lower()})
+
+    def _post_jumpplan_full(self, raw: bytes) -> None:
+        """JUMP PLAN: the target is full - with "report" the commander's
+        report is kept for learning (a system fills and empties within
+        minutes: a hint, never a rule); always the alternatives: other bodies
+        of the system, then systems near it within a laden jump of a
+        transporter on board, reachable from the jump before the target."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "plans only from the FIS page")
+        body = self._body(raw) or {}
+        from . import jumpplan
+        app = self.app
+        fid = app.archive.commander()[0]
+        saved = app.jumpplans.get(fid)
+        plan = saved["plan"]
+        if not plan or not plan.get("hops") or not plan["target"].get("pos"):
+            return self._error(409, "no plan with a target position")
+        tgt, now, evs = plan["target"], time.time(), app.archive.events()
+        sight = jumpplan.sightings(evs)
+        if body.get("report"):
+            app.jumpplans.report_full(fid, {"system": tgt["name"], "id64": tgt.get("id64"), "body": tgt.get("body"),
+                                            "ts": now, "seen": jumpplan.seen_at(sight, tgt.get("id64"), now)})
+        ships = jumpplan.transporters(app.archive.fleet()["ships"], jumpplan.laden_seen(evs))
+        pick = next((x for x in ships if x["id"] == body.get("ship")), ships[0] if ships else None)
+        laden = pick["laden"] if pick else jumpplan.DEFAULT_LADEN
+        hops = plan["hops"]
+        before = hops[-2]["pos"] if len(hops) > 1 and hops[-2].get("pos") else plan["start"]["pos"]
+        own = jumpplan.own_stars(app.db, evs)
+        if app.edd_stars():
+            own.drop(app.edd_stars().permits())
+        finders = [own] + ([app.edd_stars()] if app.edd_stars() else [])
+        avoid = [r["system"] for r in app.jumpplans.get(fid)["full"] if now - (r.get("ts") or 0) <= jumpplan.FULL_FRESH]
+        alts = jumpplan.alternatives(tgt, before, finders, laden, bool(body.get("fewest", True)), avoid, sight, now)
+        bodies = []
+        if tgt.get("id64") and app.db.exists:
+            bodies = [b["name"] for b in app.db.bodies_of(int(tgt["id64"])) if b["name"] != tgt.get("body")][:8]
+        return self._json({"alternatives": alts, "bodies": bodies, "ship": pick, "laden": laden,
+                           "fewest": bool(body.get("fewest", True)), "reported": bool(body.get("report"))})
+
+    def _post_jumpplan_online(self, raw: bytes = b"") -> None:
+        """JUMP PLAN: the carriers Spansh knows in the target - only in the
+        bubble, only on a click, through the same gateway, cache and daily
+        cap as "carriers near me" (online.CarrierLookup.nearby)."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "lookups only from the FIS page")
+        from . import jumpplan
+        plan = self.app.jumpplans.get(self.app.archive.commander()[0])["plan"]
+        tgt = (plan or {}).get("target") or {}
+        if not tgt.get("pos") or not jumpplan.in_bubble(tgt["pos"]):
+            return self._error(409, "only for targets in the bubble")
+        res = self.app.lookup.nearby(tgt["pos"])
+        if res.get("error"):
+            return self._json(res, 503 if res["error"] != "offline" else 409)
+        return self._json(jumpplan.carriers_in(res, tgt))
+
+    def _post_jumpplan_clear(self, raw: bytes = b"") -> None:
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "plans only from the FIS page")
+        self.app.jumpplans.set_plan(self.app.archive.commander()[0], None)
+        return self._json({"ok": True})
+
+    def _post_nearby(self, raw: bytes = b"") -> None:
         """H2: carriers near the commander at Spansh - on a click only, one
         request per region and day (online.CarrierLookup.nearby)."""
         if not self._page_write_ok():
@@ -768,9 +1216,17 @@ class Handler(BaseHTTPRequestHandler):
         pos = star_pos(((self.app.live_state() or {}).get("system") or {}).get("pos"))
         if pos is None:
             return self._error(409, "position unknown - jump once or open the galaxy map")
-        res = self.app.lookup.nearby(pos)
+        # one request up to 5000 ly everywhere: within 100 ly as ever, and the
+        # rescue list when nothing is that close (a border "1000 ly from Sol"
+        # took empty space 670 ly out for the bubble - user 19.11.)
+        res = self.app.lookup.nearby(pos, deep=True)
         if res.get("error"):
             return self._json(res, 503 if res["error"] != "offline" else 409)
+        try:            # what was shown joins KNOWN CARRIERS (user 19.11.)
+            self.app.favourites.note_online(self.app.archive.commander()[0],
+                                            (res.get("carriers") or []) + (res.get("rescue") or []))
+        except OSError:
+            pass
         return self._json(res)
 
     def _json(self, obj: Any, code: int = 200) -> None:
@@ -991,9 +1447,22 @@ class Handler(BaseHTTPRequestHandler):
             live = dict(live, fuel_warning=m._fuel_state(live).warning() if live.get("ship") else None)
         except Exception:
             pass
-        return self._json(shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
-                                                    lost_hidden=app.lost_hidden,
-                                                    unsold_limits=app.cfg.unsold))
+        out = shipview.build_shipstatus(live, app.archive, app.cfg.journal_dir, app.db,
+                                        lost_hidden=app.lost_hidden,
+                                        unsold_limits=app.cfg.unsold,
+                                        value_since=app._learn_marks().get("value"),
+                                        sold_marks=app._sold_marks())
+        try:
+            from . import synthesis
+            out["synthesis"] = synthesis.build_synthesis(app.archive, ship=True)      # V2
+        except Exception:
+            out["synthesis"] = None
+        return self._json(out)
+
+    def _get_nexthop(self, qs: Dict[str, Any]) -> None:
+        """NH1: the systems within one jump, best chance of a find first."""
+        from . import nexthop
+        return self._json(nexthop.build_nexthop(self.app.db, self.app.live_state()))
 
     def _get_carrier(self, qs: Dict[str, Any]) -> None:
         """CARRIER: the own carrier, its jumps and hold."""
@@ -1003,6 +1472,27 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(shipview.build_carrier(app.archive, app.live_state(),
                                                  journal_dir=app.cfg.journal_dir,
                                                  capi_path=capi.path_for(app.cfg.plugin_dir)))
+
+    def _get_jumpplan(self, qs: Dict[str, Any]) -> None:
+        """CARRIER > JUMP PLAN: the plan with tritium, time and what is done."""
+        app = self.app
+        from . import jumpplan, shipview, capi
+        car = app.carrier_now()
+        hold = shipview.hold_tritium(capi.path_for(app.cfg.plugin_dir), time.time())
+        saved = app.jumpplans.get(app.archive.commander()[0])
+        out = jumpplan.build(saved["plan"], car, app.archive.own_carrier_events(),
+                             int((hold or {}).get("t") or 0), time.time())
+        out.update(carrier=car, hold_info=hold, edd=app.edd_stars() is not None,
+                   spansh=jumpplan.spansh_help(car, saved["plan"], int((hold or {}).get("t") or 0)))
+        plan = saved["plan"]
+        if plan and plan.get("hops") and not out.get("arrived"):
+            evs = app.archive.events()
+            out["full"] = jumpplan.full_estimate(plan["target"], saved["full"],
+                                                 jumpplan.arrivals(app.archive.own_carrier_events()),
+                                                 jumpplan.sightings(evs), time.time())
+            out["transporters"] = jumpplan.transporters(app.archive.fleet()["ships"], jumpplan.laden_seen(evs))
+            out["bubble"] = bool(plan["target"].get("pos")) and jumpplan.in_bubble(plan["target"]["pos"])
+        return self._json(out)
 
     def _get_carriers_known(self, qs: Dict[str, Any]) -> None:
         """KNOWN CARRIERS: favourites and carriers seen."""
@@ -1024,6 +1514,64 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(mining.build_mining(app.archive, app.db, app.live_state(), app.cfg.journal_dir,
                                               capi_path=capi.path_for(app.cfg.plugin_dir)))
 
+    def _get_ledger(self, qs: Dict[str, Any]) -> None:
+        """5.0 GAIN / LOSS of the active commander, per ship, over ?days= (0: all)."""
+        app = self.app
+        from . import ledger
+        try:
+            days = float((qs.get("days") or ["0"])[0]) or None
+        except ValueError:
+            days = None
+        app.archive.refresh()
+        evs = app.archive.events()
+        bal = ((app.live_state() or {}).get("status") or {}).get("balance")
+        out = ledger.build_ledger(evs, days, balance_now=bal)
+        # B6: the open block - unsold data as UNSOLD DATA values it
+        un = app._unsold_now()
+        out["open"] = ({"bio": un["bio"]["value"], "bio_count": un["bio"]["count"],
+                        "systems": un["exploration"]["systems"], "explo": un["exploration"].get("value")}
+                       if un else None)
+        names = app.archive.ship_names(evs)
+        from .fleet import type_label, upkeep_between
+        for s in out["ships"]:
+            s["type_name"] = type_label(names, s.get("type"))      # PL2: readable without a localised name
+        for d in out["deaths"]:
+            d["type_name"] = type_label(names, d.get("type"))
+        # PL2: the carrier's upkeep over the period - an estimate from its balance
+        car = app.archive.carrier()
+        if car:
+            out["carrier"]["upkeep"] = upkeep_between(car.get("balances") or [], car.get("transfers") or [],
+                                                      out.get("since"))
+        # CT2: the carrier's money - Frontier's figures and the journal's
+        from . import capi, carriermoney
+        out["carrier"]["money"] = carriermoney.build(capi.path_for(app.cfg.plugin_dir), car, evs, out.get("since"))
+        return self._json(out)
+
+    def _get_statement(self, qs: Dict[str, Any]) -> None:
+        """5.0 GV1: GAIN / LOSS as an annual statement - income statement per
+        week, month and year, balance sheet, segments, outlook."""
+        app = self.app
+        from . import capi, carriermoney, ledger, statement
+        app.archive.refresh()
+        evs = app.archive.events()
+        bal = ((app.live_state() or {}).get("status") or {}).get("balance")
+        led = ledger.build_ledger(evs, None, balance_now=bal)
+        un = app._unsold_now()
+        open_ = {"bio": un["bio"]["value"], "explo": un["exploration"].get("value")} if un else None
+        return self._json(statement.build(led, app.archive.carrier(),
+                                          carriermoney.frontier(capi.path_for(app.cfg.plugin_dir)),
+                                          app.archive.fleet()["ships"], evs, bal, open_))
+
+    def _get_trade(self, qs: Dict[str, Any]) -> None:
+        """TRADE (HD1): your sale prices per commodity, the galactic mean and
+        - docked - what this market pays."""
+        app = self.app
+        from . import trade
+        app.archive.refresh()
+        return self._json(trade.build_trade(app.archive, app.live_state(), app.cfg.journal_dir,
+                                            os.path.join(os.path.dirname(app.cfg.ini_path), "market_means.json"),
+                                            edd_path=app.archive.edd_source()))
+
     def _get_statistics(self, qs: Dict[str, Any]) -> None:
         """STATISTICS, with what the FIS has learnt so far."""
         app = self.app
@@ -1034,9 +1582,35 @@ class Handler(BaseHTTPRequestHandler):
             days = None
         out = stats.build_statistics(app.archive, days)
         try:
+            # CT2: the carrier's money over the period
+            from . import capi, carriermoney
+            out["carrier_money"] = carriermoney.build(capi.path_for(app.cfg.plugin_dir), app.archive.carrier(),
+                                                      app.archive.events(),
+                                                      time.time() - days * 86400 if days else None)
+        except Exception:
+            out["carrier_money"] = None
+        try:
             from . import learn
             # L4: what the FIS has learnt from your own data so far
             out["learning"] = learn.learning_status(app.archive, app.db)
+            # SK3: the route, work and fuel models with what they rest on
+            out["learning"]["models"] = learn.model_status(app.calib.info, app.live_state(),
+                                                           app.calib.model)
+            un = app._unsold_now()
+            out["learning"]["models"]["value"] = un["exploration"].get("calibration") if un else None
+            out["learning"]["finds"] = learn.find_odds(app.db)       # FX3: predicted finds vs scans
+            out["learning"]["forecast"] = app.forecasts()               # B-24
+            out["learning"]["scoop"] = app.scoop()                      # B-15
+            out["bio_rates"] = app.cached("bio_rates", (app.db.mtime(), app.archive.rev),    # BQ1, EA2
+                                          lambda: learn.bio_rates(app.db, extra=app.archive_planets()))
+            from .shipview import _bodyvalue
+            out["sessions"] = stats.play_sessions(app.archive.events(), _bodyvalue(), app.archive.organic_values())
+            from . import systime        # own-4: time per system against the route's estimate
+            evs = app.archive.events()
+            out["systime"] = app.cached("systime", (len(evs), evs[-1].get("timestamp") if evs else None,
+                                                    app.db.mtime()),
+                                        lambda: systime.build(evs, app.db, app.archive.commander()[0]))
+            out["learning"]["reality"] = app.reality(out)                # V0: every model against reality
         except Exception:
             out["learning"] = None
         return self._json(out)
@@ -1080,11 +1654,16 @@ class Handler(BaseHTTPRequestHandler):
             "Content-Disposition": 'attachment; filename="shbox-survey-%s.%s"' % (day, fmt)})
 
     def _get_survey(self, qs: Dict[str, Any]) -> None:
-        """The survey state (cached while the database does not change)."""
+        """The survey state (cached while the database does not change),
+        with B-24's forecast of the sphere's rest."""
         app = self.app
         m = app.model
-        return self._json(app.cached("survey", app.db.mtime(),
-                                     lambda: m.build_survey(app.db)))
+        out = dict(app.cached("survey", app.db.mtime(), lambda: m.build_survey(app.db)))
+        try:
+            out["forecast"] = self.app.sphere_forecast(out)
+        except Exception:
+            out["forecast"] = None
+        return self._json(out)
 
     PING_S = 15.0                            # quiet game: a ping at least this often
 
@@ -1167,6 +1746,24 @@ class _Server(ThreadingHTTPServer):
     allow_reuse_address = False
 
 
+# POST path -> its Handler method (5.0 JUMP PLAN: was a chain in do_POST)
+_POST_ROUTES = {
+    "/api/carriers/favourite": Handler._post_favourite,
+    "/api/carriers/lookup": Handler._post_lookup,
+    "/api/carriers/nearby": Handler._post_nearby,
+    "/api/jumpplan/plan": Handler._post_jumpplan,
+    "/api/jumpplan/clear": Handler._post_jumpplan_clear,
+    "/api/jumpplan/import": Handler._post_jumpplan_import,
+    "/api/jumpplan/full": Handler._post_jumpplan_full,
+    "/api/jumpplan/online": Handler._post_jumpplan_online,
+    "/api/ship/lost_hidden": Handler._post_lost_hidden,
+    "/api/unsold/sold": Handler._post_unsold_sold,
+    "/api/learning/reset": Handler._post_learning_reset,
+    "/api/settings": Handler._post_settings,
+}
+# bodies larger than 4 KiB: only a Spansh route to import
+_POST_LIMITS = {"/api/jumpplan/import": 256 * 1024}
+
 # GET path -> its Handler method (4.12: was one chain of 48)
 _GET_ROUTES = {
     "/api/health": Handler._get_health,
@@ -1186,10 +1783,15 @@ _GET_ROUTES = {
     "/api/shipstatus": Handler._get_shipstatus,
     "/api/carrier": Handler._get_carrier,
     "/api/carriers/known": Handler._get_carriers_known,
+    "/api/jumpplan": Handler._get_jumpplan,
     "/api/mining/live": Handler._get_mining_live,
     "/api/mining": Handler._get_mining,
     "/api/statistics": Handler._get_statistics,
+    "/api/ledger": Handler._get_ledger,
+    "/api/ledger/statement": Handler._get_statement,
+    "/api/trade": Handler._get_trade,
     "/api/galaxy": Handler._get_galaxy,
+    "/api/nexthop": Handler._get_nexthop,
     "/api/survey/export": Handler._get_survey_export,
     "/api/survey": Handler._get_survey,
 }
@@ -1255,6 +1857,8 @@ def main(argv: Optional[list] = None) -> int:
     app.watch_db()
     # measure route times from the journals in the background (like the plugin)
     threading.Thread(target=app.calib.run_once, name="fis-calib", daemon=True).start()
+    # R1: the Kepler reality check (seconds) ahead of the first STATISTICS visit
+    threading.Thread(target=lambda: app.kepler_check(wait=True), name="fis-kepler0", daemon=True).start()
     # ship / fleet / carrier history: one scan of all journals in the background
     threading.Thread(target=lambda: app.archive.refresh(force=True), name="fis-archive",
                      daemon=True).start()

@@ -182,14 +182,28 @@ def fit_like_plugin(sysroute: Any, m: Measurements) -> Any:
     return sysroute.calibrate_work_from_journal(m.dss, m.bio, [], sysroute.DEFAULT_MODEL)
 
 
+def _from(events: Iterable[Dict[str, Any]], since: Optional[float]) -> Iterable[Dict[str, Any]]:
+    """The events from unix time `since` on (all when None)."""
+    if since is None:
+        yield from events
+        return
+    for e in events:
+        ts = parse_ts(e.get("timestamp"))
+        if ts is not None and ts >= since:
+            yield e
+
+
 class Calibrator:
     """Holds the current model; re-measures when the journals changed,
     at most every `min_interval` seconds, on a background thread."""
 
     def __init__(self, journal_dir: str, sysroute: Any,
                  leg: Optional[LegLookup] = None,
-                 files: int = 30, min_interval: float = 600.0) -> None:
+                 files: int = 30, min_interval: float = 600.0,
+                 marks: Optional[Callable[[], Dict[str, Any]]] = None) -> None:
         self.journal_dir = journal_dir
+        # SK3: when the route and the work model were reset (learnreset marks)
+        self.marks = marks or (lambda: {})
         self.sysroute = sysroute
         self.leg = leg
         self.files = files
@@ -213,14 +227,20 @@ class Calibrator:
         body order model from them; returns the model."""
         paths = journal_files(self.journal_dir, self.files)
         sig = self._signature(paths)
+        marks = self.marks() or {}
+        work_since, route_since = marks.get("work"), marks.get("route")
         m = Measurements()
         m.files = len(paths)
-        measure(read_events(paths), self.leg, m)
+        measure(_from(read_events(paths), work_since), self.leg, m)
+        if route_since != work_since:
+            # the legs from the route model's own reset on
+            m.sc = measure(_from(read_events(paths), route_since), self.leg).sc
         model = fit(self.sysroute, m)
         order = fit_like_plugin(self.sysroute, m)
         info = {"calibrated": model is not self.sysroute.DEFAULT_MODEL,
                 "measured": m.as_dict(), "model": model.as_dict(),
-                "order_model": order.as_dict(), "ts": time.time()}
+                "order_model": order.as_dict(), "ts": time.time(),
+                "since": {"route": route_since, "work": work_since}}
         with self._lock:
             self.model, self.order_model = model, order
             self.info, self._sig, self._last = info, sig, time.time()

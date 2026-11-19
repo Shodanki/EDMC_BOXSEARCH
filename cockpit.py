@@ -19,11 +19,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import shells
 from .biopredict import BioModel
+from .boxelplan import CLIENT_SOURCES
 from .deepspace import is_scoopable, scoop_line, scoop_plan
 from .overlay import POSITIONS as OVERLAY_POSITIONS
 from .procgen import parse_name, star_pos
 from .sysdb import CURRENT, Q_ESTIMATE
 from .state import CFG, ST, cfg_bool, cfg_str, logger
+from . import findlog
 from . import overlaywin
 from . import panel
 from . import planning
@@ -109,6 +111,9 @@ def _briefing_info(kind: str, name: Optional[str], id64: Optional[int],
     except Exception:
         regions = {}
     info["level"], info["checked_by"] = shells.info_level(srcs, pos, regions)
+    # FX5: the chance of a find there, from the own settled visits
+    info["odds"] = findlog.odds_for(name, star_class or (row["star_class"] if row is not None else None),
+                                    info["level"], row["y"] if row is not None else None)
     _briefing_region(info, row, id64)
     if row is not None and kind == "target":
         _briefing_visits(info, row)
@@ -206,15 +211,19 @@ def _route_check(hops: List[Tuple[str, Any, Any]]) -> None:
     (checked: EDSM)" and the same route plotted again asks nothing.
     Runs in the background.
     """
-    todo = _route_check_todo(hops)[:ROUTE_CHECK_MAX]
+    todo = _route_check_todo(hops)
     if not todo:
         return
     ttl = shells.ttl_seconds()
     known: List[Dict] = []
+    # FX4: EDD is local - every hop; only the one EDSM request keeps its cap
     rest = _route_check_edd(list(todo), ttl, known)
-    asked_edsm = _route_check_edsm(rest, ttl, known)
+    asked_edsm = _route_check_edsm(rest[:ROUTE_CHECK_MAX], ttl, known)
     if known:
         planning._store_rows(known)
+    if len(known) < len(todo):            # FX4: in no database - kept for good
+        with ST.lock:
+            ST.db.proofs_from_checks(CLIENT_SOURCES, ROUTE_CHECK_R)
     logger.info("route check | %d systems not checked before: %d known, %d asked EDSM in one "
                 "request, %d in no database", len(todo), len(known), asked_edsm,
                 len(todo) - len(known) if asked_edsm or len(rest) == 0 else 0)

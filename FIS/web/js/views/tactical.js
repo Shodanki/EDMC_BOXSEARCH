@@ -42,6 +42,7 @@ const SYS_REPORT = {
 const SYS_LEVEL = { good: "c-green", warn: "c-amber", danger: "c-red", info: "" };
 import { buildScene, drawOverlay, groupBounds, pick } from "./scene.js";
 import { create2D } from "./render2d.js";
+import { handOver } from "./jumpplan.js";
 
 let root, stage, overlay, side, ctxRef;
 let renderer = null;
@@ -279,6 +280,21 @@ function renderSide() {
       t("{n} bodies", { n: sys.body_count ? sys.bodies.length + "/" + sys.body_count : sys.bodies.length }) +
       (sys.fss_complete ? " · " + t("FSS complete") : "")),
   ];
+  // SK1: the Kepler watch - positions the game's own arrival distances confirm
+  const kw = sys.kepler;
+  if (kw && kw.checked) head.push(el("div", { class: kw.trusted ? "c-amber" : "c-dim",
+    title: t("Each scan says how far the body is from the arrival star. Within 1 % of its own orbit counts as confirmed; more than 5 % off, the body is placed at the game's distance."),
+    text: t("positions checked {n}/{m}", { n: kw.ok, m: kw.checked })
+      + (kw.trusted ? " · " + t("{k} placed by the game's distance", { k: kw.trusted }) : "") }));
+  // own-4: the time spent here so far against the route's first estimate after the FSS
+  const th = sys.time_here;
+  if (th && (th.minutes || th.estimate)) {
+    const hm = (m) => Math.floor(m / 60) + ":" + String(Math.round(m % 60)).padStart(2, "0");
+    head.push(el("div", { class: th.ratio > 1.5 ? "c-amber" : "c-dim",
+      title: t("From your journals: arrival to the next jump, pauses of 30 min left out. The estimate is the route's first one after your FSS (STATISTICS > TIME PER SYSTEM)."),
+      text: t("here {h} h", { h: hm(th.minutes) }) + (th.estimate ? " · " + t("estimate ~{e} h", { e: hm(th.estimate) }) : "")
+        + (th.ratio ? " · ×" + fmt(th.ratio, 1) : "") }));
+  }
   if (sys.carrier) {
     const c = sys.carrier, at = c.body_id !== null && c.body_id !== undefined && sys.bodies.find((b) => b.body_id === c.body_id);
     head.push(el("div", { class: "c-amber", text: (c.expected ? t("Your carrier {n} should be here", { n: c.name || "" })
@@ -361,7 +377,14 @@ function renderSide() {
       }
       for (const g of b.missing) { nOpen++; rows.push(el("div", { class: "bio-sp c-violet", text: "? " + t("{g} – not found yet", { g }) })); }
       // 4.11.1: Brain Trees report one signal, but a body can carry several species
-      for (const g of b.multi || []) rows.push(el("div", { class: "bio-sp c-dim small", text: "ⓘ " + t("{g}: one signal, can be several species - scan the trees nearby", { g }) }));
+      for (const g of b.multi || []) {
+        rows.push(el("div", { class: "bio-sp c-dim small", text: "ⓘ " + t("{g}: one signal, can be several species - scan the trees nearby", { g }) }));
+        // BT2: how many it was on the bodies found so far - a lower bound
+        const ms = (sys.bio_multi || {})[g];
+        if (ms && ms.n) rows.push(el("div", { class: "bio-sp c-dim small",
+          title: t("Species per signal on the bodies found so far (codex and samples) - trees out of sight are missing, so it is a lower bound."),
+          text: "  " + t("so far ~{m} species per signal ({lo}–{hi}, {n} bodies)", { m: fmt(ms.mean, 1), lo: ms.lo, hi: ms.hi, n: ms.n }) }));
+      }
       if (done.length) rows.push(el("div", { class: "bio-sp c-green" + (rows.length ? " small" : ""), title: done.map(s => s.species).join(", "),
         text: "✔ " + (done.length === 1 ? done[0].species : t("{n} analysed", { n: done.length })) }));
       if (!b.species.length && !b.missing.length)
@@ -388,7 +411,7 @@ function renderSide() {
     if (b.flags.valuable) chips.push(chip(t("valuable"), "val"));
     side.append(frame(t("SELECTION"), b.kind === "Star" ? t("Star") : (b.moon ? t("Moon") : t("Planet")), [
       el("div", { class: "tac-sys" }, b.short),
-      el("div", { class: "c-dim", text: (b.kind === "Star" ? t("Star") + " " + b.cls : classDe(b.cls)) + " · " + fmt(b.arrival_ls, 0) + " LS" + (b.landable ? " · " + t("landable") : "") }),
+      el("div", { class: "c-dim", text: (b.kind === "Star" ? (/^[LTY]$/.test(b.cls) ? t("Brown dwarf") : t("Star")) + " " + b.cls : classDe(b.cls)) + " · " + fmt(b.arrival_ls, 0) + " LS" + (b.landable ? " · " + t("landable") : "") }),
       el("div", {}, ...chips),
       b.bio_hint ? el("div", { class: "c-amber", text: b.bio_hint }) : null,
       ...(b.rings || []).filter((r) => !r.belt).map((r) => el("div", { class: "small" },
@@ -396,6 +419,10 @@ function renderSide() {
         el("span", { class: "c-dim", text: " · " + ringClass(r.cls) + (r.inner_km && r.outer_km ? " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" : "") }),
         r.hotspots && r.hotspots.length ? el("span", { class: "c-amber", text: " · ◎ " + r.hotspots.map((h) => h.material + (h.count > 1 ? " ×" + h.count : "")).join(", ") }) : null)),
       el("button", { onclick: () => ctxRef.show("planet"), text: t("Datasheet") + " ⟶" }),
+      // 5.0 JUMP PLAN: this body (or its ring) as the carrier's target - planned in CARRIER
+      sys.id64 || sys.name ? el("button", { title: t("plan your carrier's jumps to this body - CARRIER > JUMP PLAN"),
+        onclick: () => { handOver({ id64: sys.id64 || null, name: sys.name || null, body: b.name || b.short, body_id: b.body_id });
+          ctxRef.show("carrier"); }, text: t("carrier target") + " ⟶" }) : null,
     ], { kind: "hot", appear: false }));
   }
 

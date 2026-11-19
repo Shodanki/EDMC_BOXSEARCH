@@ -46,6 +46,14 @@ CARRIER_TYPES = ["Drake-Class Carrier"]
 NEARBY_LY = 100           # H2: how far to look
 NEARBY_SIZE = 15          # how many carriers, nearest first
 NEARBY_CACHE_S = 24 * 3600.0
+# a rescue anchor (user 19.11.): one request reaches DEEP_LY; what lies
+# within NEARBY_LY is shown as ever (in the bubble that is all of it), and
+# only when nothing does, a rescue list - the nearest carriers anyone may dock at that repair, those
+# with Vista Genomics and Universal Cartographics first
+DEEP_LY = 5000
+DEEP_SIZE = 50            # carriers of that answer, nearest first
+RESCUE_POOL = 10          # the nearest that qualify ...
+RESCUE_MAX = 3            # ... of which these are shown
 CELL_LY = 50.0            # one answer per cell of space and day
 # Spansh service names -> the FIS's keys (what an explorer far out needs)
 NEARBY_SERVICES = {"Refuel": "refuel", "Repair": "repair", "Restock": "rearm",
@@ -174,20 +182,23 @@ class CarrierLookup:
     def _cell(pos: Sequence[float]) -> Tuple[int, int, int]:
         return tuple(int(math.floor(float(c) / CELL_LY)) for c in pos)   # type: ignore[return-value]
 
-    def nearby(self, pos: Sequence[float]) -> Dict[str, Any]:
+    def nearby(self, pos: Sequence[float], deep: bool = False) -> Dict[str, Any]:
         """H2: the Drake-Class Carriers Spansh knows near ``pos`` -
-        {'checked', 'ref', 'cached', 'carriers': [...]} nearest first, or
-        {'error': ...}. One request per CELL_LY cell and NEARBY_CACHE_S."""
-        cell = self._cell(pos)
+        {'checked', 'ref', 'cached', 'deep', 'carriers': [...]} within
+        NEARBY_LY, nearest first, or {'error': ...}. One request per CELL_LY
+        cell and NEARBY_CACHE_S. ``deep`` (outside the bubble) asks up to
+        DEEP_LY; with nothing within NEARBY_LY the answer has a 'rescue' list
+        (see rescue())."""
+        cell = self._cell(pos) + (bool(deep),)
         hit = self._nearby.get(cell)
         if hit and self._clock() - hit[0] < NEARBY_CACHE_S:
-            return dict(hit[1], cached=True, carriers=_with_distance(hit[1]["carriers"], pos))
+            return dict(_shaped(hit[1], pos), cached=True)
         if self._offline():
             return {"error": "offline"}
         gw = self._gateway()
         body = {"filters": {"type": {"value": CARRIER_TYPES},
-                            "distance": {"min": "0", "max": str(NEARBY_LY)}},
-                "sort": [{"distance": {"direction": "asc"}}], "size": NEARBY_SIZE, "page": 0,
+                            "distance": {"min": "0", "max": str(DEEP_LY if deep else NEARBY_LY)}},
+                "sort": [{"distance": {"direction": "asc"}}], "size": DEEP_SIZE if deep else NEARBY_SIZE, "page": 0,
                 "reference_coords": {"x": float(pos[0]), "y": float(pos[1]), "z": float(pos[2])}}
         resp = gw.request("spansh", "POST", SPANSH_STATIONS, "stations/search", json=body,
                           timeout=20)
@@ -200,10 +211,10 @@ class CarrierLookup:
             rows = resp.json().get("results") or []
         except ValueError:
             return {"error": "Spansh answer unreadable"}
-        out = {"checked": _now_iso(), "ref": [float(c) for c in pos],
+        out = {"checked": _now_iso(), "ref": [float(c) for c in pos], "deep": bool(deep),
                "carriers": [c for c in (_nearby_row(r) for r in rows) if c]}
         self._nearby[cell] = (self._clock(), out)
-        return dict(out, cached=False, carriers=_with_distance(out["carriers"], pos))
+        return dict(_shaped(out, pos), cached=False)
 
     def from_nearby(self, callsign: str) -> Optional[Dict[str, Any]]:
         """A carrier of a fresh nearby answer, shaped like lookup()'s answer -
@@ -231,6 +242,37 @@ def _nearby_row(r: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "pos": [float(v) for v in p], "updated": r.get("updated_at"),
             "access": r.get("carrier_docking_access") or None,
             "services": sorted({k for n, k in NEARBY_SERVICES.items() if n in names})}
+
+
+def _shaped(out: Dict[str, Any], pos: Sequence[float]) -> Dict[str, Any]:
+    """A stored answer seen from ``pos``: the carriers within NEARBY_LY;
+    outside the bubble with none there, the rescue list."""
+    every = _with_distance(out["carriers"], pos)
+    near = [c for c in every if c["distance"] <= NEARBY_LY][:NEARBY_SIZE]
+    res = dict(out, carriers=near, radius=DEEP_LY if out.get("deep") else NEARBY_LY)
+    if out.get("deep") and not near:
+        res["rescue"] = rescue(every)
+    return res
+
+
+def dockable(c: Dict[str, Any]) -> bool:
+    """Anyone may dock (the carrier's access is "all"); friends or squadron
+    only, none, or unknown do not count - the FIS cannot tell who you are
+    to them."""
+    return str(c.get("access") or "").replace(" ", "").lower() == "all"
+
+
+def rescue(carriers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Rescue anchor (user 19.11.): of the nearest RESCUE_POOL carriers you
+    may dock at that repair, the RESCUE_MAX best - Vista Genomics and
+    Universal Cartographics first (repair, sell the bio data, then the
+    cartography), nearer first among equals."""
+    ok = [c for c in carriers if dockable(c) and "repair" in (c.get("services") or [])][:RESCUE_POOL]
+
+    def score(c: Dict[str, Any]) -> int:
+        s = c.get("services") or []
+        return ("vistagenomics" in s) + ("exploration" in s)
+    return sorted(ok, key=lambda c: (-score(c), c["distance"]))[:RESCUE_MAX]
 
 
 def _with_distance(carriers: List[Dict[str, Any]], pos: Sequence[float]) -> List[Dict[str, Any]]:

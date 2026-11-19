@@ -6,7 +6,7 @@
 // SHBOX FIS – application shell: state, view switching, ship bar, live push.
 
 import { getJSON, subscribe } from "./api.js";
-import { fmt, el } from "./ui.js";
+import { blinkFor, fmt, el } from "./ui.js";
 import { initLang, t, N_, lang, setLang, locale, applyStatic } from "./i18n.js";
 import * as layout from "./layout.js";
 import * as fullscreen from "./fullscreen.js";
@@ -20,10 +20,12 @@ import * as vehicle from "./views/vehicle.js";
 import * as carrier from "./views/carrier.js";
 import * as galaxy from "./views/galaxy.js";
 import * as statistics from "./views/statistics.js";
+import * as ledger from "./views/ledger.js";
+import * as trade from "./views/trade.js";
 import * as mining from "./views/mining.js";
 import * as settings from "./views/settings.js";
 
-const VIEWS = { briefing, tactical, planet, surface, atlas, ship, vehicle, carrier, galaxy, statistics, mining, settings };
+const VIEWS = { briefing, tactical, planet, surface, atlas, ship, vehicle, carrier, galaxy, statistics, ledger, trade, mining, settings };
 // ?solo=ship: one view alone in its own window (second screen, tablet)
 // ?system=<id64> pins another system (detail window from GALAXY, review)
 const PINNED = (/^\d+$/.exec(new URLSearchParams(location.search).get("system") || "") || [null])[0];
@@ -60,7 +62,8 @@ applyStatic();
 // H1: theme per browser - theme-boot.js applied it before the views loaded,
 // so a change reloads the page (canvas colours are read on load)
 {
-  const THEMES = [["standard", N_("Theme: standard")], ["console", N_("Theme: Federation console")],
+  const THEMES = [["standard", N_("Theme: standard")], ["console", N_("Theme: Federation classic")],
+    ["bridge", N_("Theme: Federation bridge")],
     ["industrial", N_("Theme: Belt industrial")], ["station", N_("Theme: Station era")],
     ["next", N_("Theme: Next (own accent)")]];
   const sel = document.getElementById("opt-theme"), acc = document.getElementById("opt-accent");
@@ -188,7 +191,7 @@ function show(name) {
 for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => show(b.dataset.view));
 // hand-edited URL hash / bookmarks (#briefing, #tactical, #planet)
 // the names on the tabs work as addresses too (#system, #planetinfo)
-const ALIAS = { system: "tactical", planetinfo: "planet", stats: "statistics", srv: "vehicle", nomad: "vehicle" };
+const ALIAS = { system: "tactical", planetinfo: "planet", stats: "statistics", pnl: "ledger", guv: "ledger", handel: "trade", srv: "vehicle", nomad: "vehicle" };
 window.addEventListener("hashchange", () => {
   const name = ALIAS[location.hash.slice(1)] || location.hash.slice(1);
   if (!SOLO && VIEWS[name] && name !== store.view) show(name);
@@ -252,6 +255,15 @@ const FOCUS = { "NONE": N_("COCKPIT"), "GALAXY MAP": N_("GALAXY MAP"), "SYSTEM M
   "INTERNAL": N_("INTERNAL"), "EXTERNAL": N_("EXTERNAL"), "COMMS": N_("COMMS"), "ROLE": N_("ROLE"),
   "STATION": "STATION", "ORRERY": "ORRERY", "FSS": "FSS", "SAA": "DSS", "CODEX": N_("CODEX") };
 
+// SK2: what the fuel forecast stands on - the ship's own fit with its
+// scatter and the jumps it learnt from, or the FSD's power as a prior
+function fuelModelText(m) {
+  if (!m || m.source === "none") return "";
+  if (m.source === "fit") return t("fuel model: ~{x}^{b}, ±{s} % · learned from {n} jumps",
+    { x: m.mass ? t("(distance × mass)") : t("distance"), b: fmt(m.power, 2), s: fmt(m.spread_pct, 1), n: m.n });
+  return t("fuel model: ~distance^{b} from the FSD · {n} of 4 jumps to learn", { b: fmt(m.power, 2), n: m.n });
+}
+
 function renderShipBar() {
   const s = store.ship || {};
   const sys = s.system || {};
@@ -265,7 +277,7 @@ function renderShipBar() {
   if (f.jumps_left !== null && f.jumps_left !== undefined) txt += " · " + t("{n} jmp", { n: f.jumps_left });
   const fv = document.getElementById("sb-fuel");
   fv.textContent = txt;
-  fv.title = f.summary || "";
+  fv.title = fuelModelText(f.model) || f.summary || "";
   fv.className = "v " + (f.warning ? (f.jumps_left <= 2 ? "c-red" : "c-amber") : "c-green");
   const tgt = s.target;
   const tEl = document.getElementById("sb-target");
@@ -298,9 +310,12 @@ function renderCombat(c) {
   const cell = document.getElementById("sb-combat");
   if (!cell) return;
   cell.hidden = !level;
-  cell.className = "sb-cell sb-combat " + (level || "");
+  const blink = blinkFor("combat-alert", level === "alert");          // 8 s from the onset, then steady
+  cell.className = "sb-cell sb-combat " + (level || "") + (blink ? " blinking" : "");
   if (level) {
-    document.getElementById("sb-combat-v").textContent = t(COMBAT_LABEL[level] || level);
+    const v = document.getElementById("sb-combat-v");
+    v.textContent = t(COMBAT_LABEL[level] || level);
+    v.style.animationDelay = blink ? blink.split(": ")[1] : "";
     cell.title = (c.reasons || []).map(r => t(COMBAT_WHY[r] || r)).join(" · ");
   }
   if (c && c.until) {

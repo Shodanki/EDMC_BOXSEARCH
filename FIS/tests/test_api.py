@@ -92,6 +92,13 @@ class TestModel(_Base):
         self.assertAlmostEqual(dm, 1.0, delta=0.05)
         self.assertTrue(moon["moon"])
         self.assertEqual(len(by[1]["orbit"]), 73)
+        # the equator the rings are drawn in (K2): a unit vector; none for the main star
+        self.assertAlmostEqual(sum(v * v for v in by[1]["pole"]), 1.0, delta=1e-3)
+        self.assertIsNone(by[0]["pole"])
+        # SK1: the Kepler watch is in the record (fixture rows carry no scan
+        # time, so nothing is checkable and nothing is moved)
+        self.assertEqual(s["kepler"]["checked"], sum(1 for b in s["bodies"] if b["kepler"]))
+        self.assertEqual(s["kepler"]["trusted"], 0)
         self.assertTrue(by[1]["flags"]["first"])
         self.assertEqual(by[1]["flags"]["bio"], 2)
         self.assertEqual(by[3]["rings"][0]["cls"], "Icy")
@@ -393,6 +400,9 @@ class TestServer(_Base):
         self.assertIn("kinds", js["synthesis"])
         st, js = self.getj("/api/system/current")
         self.assertEqual(js["id64"], fx.SYS_ID)
+        self.assertIn("time_here", js)                          # own-4 (None without visits or estimate)
+        st, js = self.getj("/api/statistics")
+        self.assertIn("systime", js)                            # own-4
         st, js = self.getj("/api/health")
         self.assertFalse(js["ai_at_runtime"])
 
@@ -639,11 +649,12 @@ class TestSettings(_Base):
     def test_carriers_nearby_endpoint(self):
         """H2: only from the FIS page, only with a position, offline says so."""
         from unittest import mock
-        asked = []
+        asked, deeps = [], []
 
         class FakeLookup:
-            def nearby(self, pos):
+            def nearby(self, pos, deep=False):
                 asked.append(pos)
+                deeps.append(deep)
                 return {"checked": "2026-11-13T21:00:00Z", "ref": pos, "cached": False,
                         "carriers": [{"callsign": "JFM-21Z", "distance": 5.0}]}
         hdr = {"X-FIS-Settings": "1", "Origin": self.base}
@@ -662,12 +673,16 @@ class TestSettings(_Base):
                 with post(hdr) as r:
                     d = json.loads(r.read())
             self.assertEqual((d["carriers"][0]["callsign"], asked), ("JFM-21Z", [[1.0, 2.0, 3.0]]))
+            with mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": [9000.0, 0.0, 9000.0]}}):
+                with post(hdr) as r:
+                    r.read()
+            self.assertEqual(deeps, [True, True])           # always up to 5000 ly: the rescue list needs no border
             with mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": "garbage"}}):
                 with self.assertRaises(urllib.error.HTTPError) as e:
                     post(hdr)
                 self.assertEqual(e.exception.code, 409)
                 e.exception.close()
-        with mock.patch.object(self.app.lookup, "nearby", lambda pos: {"error": "offline"}), \
+        with mock.patch.object(self.app.lookup, "nearby", lambda pos, deep=False: {"error": "offline"}), \
                 mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": [1, 2, 3]}}):
             with self.assertRaises(urllib.error.HTTPError) as e:
                 post(hdr)

@@ -109,7 +109,7 @@ def _selftest() -> None:
                   "detail": "Brain Trees", "lat": 0.01, "lon": 0.0})
     assert body_state(marks)["species"][0]["samples"] == 1
     # the Rhino dropped from a hovering ship (no Touchdown): the ship waits
-    # at the drop point until the SRV is some 2.3-2.5 km away (15.11.2026)
+    # at the drop point until the SRV is 2.1 km away (measured 19.11.2026), reported from 2.01 km
     from SHBOXSEARCH.surfacenav import SHIP_LEAVE_M, SHIP_WARN_M, hover_gone
     R = 492617.0
     rh = [{"ts": "2026-11-14T15:12:08Z", "kind": "srv_out", "label": "SRV Rhino", "detail": None,
@@ -126,6 +126,8 @@ def _selftest() -> None:
     ship = [(ln, c) for ln, c in compass_lines(late, rh, R) if ln.startswith("SHIP")]
     assert ship and ship[0][0].startswith("SHIP (hover)") and ship[0][1] == "#FF4D4D" \
         and SHIP_WARN_M < 2000 < SHIP_LEAVE_M, ship
+    assert not hover_gone(rh, dict(near, lat=-26.05 - 2000 * deg, lon=143.60), R), "2.0 km: still waiting"
+    assert hover_gone(rh, dict(near, lat=-26.05 - 2020 * deg, lon=143.60), R), "2.02 km: reported gone"
     far = dict(near, lat=-26.05 - 2400 * deg, lon=143.60)
     assert hover_gone(rh, far, R), "2.4 km away: the hovering ship has left"
     lines = compass_lines(far, rh, R)

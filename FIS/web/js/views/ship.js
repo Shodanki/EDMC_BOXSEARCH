@@ -13,11 +13,11 @@
 // and function report) and the loadmaster's column (cargo, fuel, locker).
 
 import { getJSON, postJSON } from "../api.js";
-import { el, frame, fmt, withPopout, copyText } from "../ui.js";
+import { blinkFor, el, frame, fmt, meter, withPopout, copyText } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const LAMP = {
-  hull_crit: N_("HULL CRITICAL"), overheat: N_("OVERHEAT"), fuel_crit: N_("FUEL CRITICAL"),
+  hull_crit: N_("HULL CRITICAL"), life_support: N_("LIFE SUPPORT"), overheat: N_("OVERHEAT"), fuel_crit: N_("FUEL CRITICAL"),
   danger: N_("DANGER"), interdicted: N_("INTERDICTION"), canopy: N_("CANOPY BREACH"),
   shutdown: N_("SYSTEMS SHUTDOWN"), oxygen: N_("OXYGEN LOW"),
   shields_down: N_("SHIELDS DOWN"), hull: N_("HULL"), module_dmg: N_("MODULE DAMAGE"),
@@ -28,6 +28,9 @@ const LAMP = {
   scooping: N_("FUEL SCOOPING"), fsd_charging: N_("FSD CHARGING"), fsd_cooldown: N_("FSD COOLDOWN"),
   mass_locked: N_("MASS LOCK"), analysis: N_("ANALYSIS MODE"), docked: N_("DOCKED"), landed: N_("LANDED"),
 };
+// R8: why DANGER is lit, as its tooltip
+const DANGER_WHY = { life_support: N_("probably life support off"), overheat: N_("overheating"),
+  interdicted: N_("interdiction") };
 const LEVEL = { warning: N_("WARNING"), caution: N_("CAUTION"), advisory: N_("ADVISORY") };
 const GROUP = { hardpoints: N_("HARDPOINTS"), utility: N_("UTILITY"), core: N_("CORE"), optional: N_("OPTIONAL") };
 const MAT = { carbon: N_("Carbon"), vanadium: N_("Vanadium"), germanium: N_("Germanium"), arsenic: N_("Arsenic"),
@@ -39,6 +42,7 @@ const HAZ = {
   ShieldState: N_("shields down"), CockpitBreached: N_("cockpit breached"), SystemsShutdown: N_("systems shut down"),
   Died: N_("ship destroyed"), JetConeDamage: N_("jet cone damaged {m}"), JetConeBoost: N_("FSD supercharged ×{b}"),
   FighterDestroyed: N_("fighter destroyed"), SRVDestroyed: N_("SRV destroyed"),
+  LifeSupportOff: N_("life support was off (AFMU repaired it)"),
 };
 const REPORT = {
   module_damaged: N_("{w} at {v} %"), module_off: N_("{w} switched off"), ammo_empty: N_("{w}: ammunition empty"),
@@ -46,12 +50,12 @@ const REPORT = {
   power_over: N_("power draw {v} % of the power plant"),
 };
 
-let root = null, data = null, busy = false, lostMsg = "";
+let root = null, data = null, busy = false, lostMsg = "", soldMsg = "";
 let controls = null;          // FG1: key bindings, asked when the view is shown
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
 // more lost systems than this: a summary line in UNSOLD DATA, the list in its own tab
 const LOST_INLINE = 10;
-let tab = store("fis.ship.tab") === "lost" ? "lost" : "ship";
+let tab = ["lost", "synth"].includes(store("fis.ship.tab")) ? store("fis.ship.tab") : "ship";
 const lostMany = () => !!(data && data.unsold && (data.unsold.lost_systems || []).length > LOST_INLINE);
 
 export function mount(r) {
@@ -114,6 +118,30 @@ function stamp(ts) {
   return new Date(ts * 1000).toLocaleString(undefined, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+// V2: what you synthesised in the ship (limpets, heat sinks, FSD injections ...)
+// and how often the materials on board make it again - learnt, not looked up
+function shipSynthesis() {
+  const S = data.synthesis;
+  const rows = [];
+  for (const r of (S && S.recipes) || []) {
+    const byKey = Object.fromEntries(r.materials.map((m) => [m.key, m]));
+    const note = r.missing.length ? t("missing: {m}", { m: r.missing.map((k) => byKey[k].name).join(", ") })
+      : r.limit ? t("limited by {m} ({n})", { m: byKey[r.limit].name, n: byKey[r.limit].have }) : "";
+    rows.push(el("div", { class: "vh-syn sh-syn" },
+      el("span", { class: "c-dim", text: r.name }),
+      el("span", { class: "vh-syn-n " + (r.can ? "c-green" : "c-amber"), text: r.can === null ? "–" : fmt(r.can, 0) }),
+      el("span", { class: "small" },
+        el("span", { text: r.materials.map((m) => m.name + " " + m.need + "/" + m.have).join(" · ") }),
+        note ? el("span", { class: "c-dim", text: " · " + note }) : null,
+        el("span", { class: "c-dim", text: " · " + t("made {n}× · last {d}", { n: r.made, d: r.last ? new Date(r.last).toLocaleDateString() : "?" }) }))));
+  }
+  rows.push(el("div", { class: "c-dim small", text: rows.length
+    ? t("Learnt from your own synthesis in the ship - a recipe appears once you have made it. Per row: material need/on board. Stock as of {d}.",
+      { d: S && S.base_ts ? new Date(S.base_ts).toLocaleString() : "–" })
+    : t("No synthesis in the ship yet - make limpets, a heat sink or an FSD injection once; its recipe and how often you can make it again follow here.") }));
+  return el("div", { class: "sh-grid" }, frame(t("SYNTHESIS"), t("your own recipes"), rows, { appear: false, cls: "vh-synth" }));
+}
+
 function render() {
   if (!root) return;
   root.replaceChildren();
@@ -123,32 +151,67 @@ function render() {
     return;
   }
   root.append(annunciator());
-  // many crash losses: SHIP | LOST DATA, the same sub-tabs as CARRIER
-  if (lostMany()) {
-    const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
-      onclick: () => { tab = k; store("fis.ship.tab", k); render(); } });
-    root.append(el("div", { class: "kc-tabs" }, tb("ship", t("SHIP")),
-      tb("lost", t("LOST DATA") + " · " + data.unsold.lost_systems.length)));
-    if (tab === "lost") { root.append(lostData()); return; }
-  }
-  // left: the picture and the hold; right (the wide side): report and the
-  // engineer's module list, which needs the room (user, 05.11.2026)
+  // sub-tabs as in CARRIER: SHIP | SYNTHESIS (V2) | LOST DATA (many crash losses)
+  const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
+    onclick: () => { tab = k; store("fis.ship.tab", k); render(); } });
+  if (tab === "lost" && !lostMany()) tab = "ship";
+  root.append(el("div", { class: "kc-tabs" }, tb("ship", t("SHIP")), tb("synth", t("SYNTHESIS")),
+    lostMany() ? tb("lost", t("LOST DATA") + " · " + data.unsold.lost_systems.length) : null));
+  if (tab === "lost") { root.append(lostData()); return; }
+  if (tab === "synth") { root.append(shipSynthesis()); return; }
+  // left: the picture, the hold and - when switched on - the key bindings (there is room
+  // under the hold, user 18.11.); right (the wide side): report and the engineer's module
+  // list, which needs the room (user, 05.11.2026)
   root.append(el("div", { class: "sh-grid" },
-    el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), jumponium()),
-    el("div", { class: "sh-col sh-right" }, target(), unsold(), report(), hazards(), engineer(), controlsFrame())));
+    el("div", { class: "sh-col sh-left" }, cutaway(), logistics(), jumponium(), controlsFrame()),
+    el("div", { class: "sh-col sh-right" }, target(), unsold(), report(), hazards(), engineer())));
+}
+
+// 5.0: where the exploration data can be sold - a station only takes systems
+// at least 20 ly away, a carrier with Universal Cartographics takes it all
+function sellWhere(U, X) {
+  const S = U.sell;
+  if (!S || !X.systems || !(S.too_near || U.advice === "sell")) return [];
+  const out = [];
+  if (S.too_near) out.push(el("div", { class: "c-amber small", text: t("A station here buys {a} of {s} systems - {n} lie within {ly} ly, a station takes data only from {ly} ly away.", { a: S.station_now, s: X.systems, n: S.too_near, ly: fmt(S.min_ly, 0) }) }));
+  const C = S.carrier;
+  let line = t("A carrier with Universal Cartographics buys all of it, at any distance.");
+  if (C && C.uc) line += " " + t("Your carrier: {sys}", { sys: C.system }) + (C.ly != null ? " · " + fmt(C.ly, 0) + " ly" : "");
+  else if (C) line += " " + t("Your carrier ({sys}) has Universal Cartographics switched off.", { sys: C.system });
+  out.push(el("div", { class: "c-dim small", text: line }));
+  if (S.no_position) out.push(el("div", { class: "c-dim small", text: t("{n} systems without a known position - not counted.", { n: S.no_position }) }));
+  return out;
 }
 
 // ------------------------------------------------------------ unsold data (M4)
 // What a destroyed ship would cost in data: exobiology since it was sold
-// (valued from your own sales), exploration data only counted.
+// (valued from your own sales), exploration data at the formula's estimate
+// calibrated on your own sales (B6: ~value, range, number of sales).
+const Mcr = (v) => fmt(v / 1e6, 1) + " M Cr";
+
+function exploValue(V) {
+  if (!V || !V.est) return "";
+  if (!V.calibrated) return " · ~" + Mcr(V.mid) + " " + t("(formula, not calibrated yet)");
+  return " · ~" + Mcr(V.mid) + " (" + fmt(V.lo / 1e6, 1) + "–" + fmt(V.hi / 1e6, 1) + ", " + t("from {n} sales", { n: V.n }) + ")";
+}
+
+// B6: the last loss in a crash, with what it was worth
+function lastLoss(U) {
+  const L = U.lost_last;
+  if (!L || (!L.bio && !L.systems)) return null;
+  const bits = [];
+  if (L.bio) bits.push(t("{n} species", { n: L.bio }) + (L.bio_value ? " ≈ " + Mcr(L.bio_value) : ""));
+  if (L.systems) bits.push(t("{n} systems", { n: L.systems }) + exploValue(L.explo));
+  return el("div", { class: "c-red small", text: "✖ " + t("Last loss {d}: {w}", { d: L.ts ? new Date(L.ts * 1000).toLocaleDateString() : "?", w: bits.join(" · ") }) });
+}
+
 function unsold() {
   const U = data.unsold;
   if (!U) return null;
   const B = U.bio, X = U.exploration;
   // after a crash nothing is unsold any more - the lost systems still show
   if (!B.count && !X.systems) return frame(t("UNSOLD DATA"), "", [el("div", { class: "c-dim", text: t("Nothing unsold - all data is cashed in.") }),
-    ...lostRows(U)], { appear: false, kind: U.lost_systems && U.lost_systems.length ? "warn" : "" });
-  const Mcr = (v) => fmt(v / 1e6, 1) + " M Cr";
+    markedLine(U), lastLoss(U), ...lostRows(U)], { appear: false, kind: U.lost_systems && U.lost_systems.length ? "warn" : "" });
   const rows = [];
   if (B.count) {
     rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exobiology") + " " }),
@@ -159,20 +222,56 @@ function unsold() {
       el("span", { class: "c-dim", text: (x.system ? " · " + x.system : "") + (x.value ? " · " + Mcr(x.value) : "") })));
   }
   if (X.systems) rows.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Exploration") + " " }),
-    el("span", { text: t("{s} systems · {b} bodies · {m} mapped", { s: X.systems, b: X.bodies, m: X.mapped }) })));
+    el("span", { text: t("{s} systems · {b} bodies · {m} mapped", { s: X.systems, b: X.bodies, m: X.mapped }) + exploValue(X.value) })));
   // risk: low, moderate, high by the limits on the settings page (4.11; default 50 / 100 M);
   // first discoveries and first-footfall biology are what cannot be had again
   const RISK = { low: [N_("RISK LOW"), "c-green"], moderate: [N_("RISK MODERATE"), "c-amber"], high: [N_("RISK HIGH"), "c-red"] };
   if (U.risk && RISK[U.risk]) rows.unshift(el("div", { class: "pl-line" }, el("span", { class: RISK[U.risk][1], text: t(RISK[U.risk][0]) }),
     el("span", { class: "c-dim", text: " · " + t("moderate from {m} M, high from {h} M Cr", { m: fmt(U.risk_cr.moderate / 1e6, 0), h: fmt(U.risk_cr.high / 1e6, 0) }) })));
-  rows.push(...lostRows(U));
+  rows.push(lastLoss(U), ...lostRows(U));
   if (U.first_systems || U.footfall_bio) rows.push(el("div", { class: "c-violet" }, "★ " + [
-    U.first_systems ? t("{n} systems discovered first by you", { n: U.first_systems }) : null,
+    U.first_systems ? t("{n} systems you may be first to discover - yours only once sold", { n: U.first_systems }) : null,
     U.footfall_bio ? t("{n} species on bodies of your first footfall", { n: U.footfall_bio }) : null].filter(Boolean).join(" · ")));
-  rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; the ×5 bonus only on bodies of your first footfall; exploration data only counted.") }));
+  rows.push(el("div", { class: "c-dim small", text: t("Lost if the ship is destroyed. Values from your own sales; the ×5 bonus only on bodies of your first footfall; exploration data at the formula's estimate, calibrated on your own sales of at least 1 M Cr.") }));
   if (U.advice === "sell") rows.push(el("div", { class: "c-red", text: t("A lot at stake - consider selling at the next station or carrier with Vista Genomics / Universal Cartographics.") }));
-  return frame(t("UNSOLD DATA"), B.value ? "≈ " + Mcr(B.value) : "", rows, { cls: "sh-unsold", appear: false,
+  rows.push(...sellWhere(U, X));
+  rows.push(...soldRows(U));
+  const head = (U.total || B.value) ? "~ " + Mcr(U.total || B.value) : "";
+  return frame(t("UNSOLD DATA"), head, rows, { cls: "sh-unsold", appear: false,
     kind: U.risk === "high" ? "alert" : U.advice || U.risk === "moderate" ? "warn" : "" });
+}
+
+// SM1: the game does not always log a sale (19.11.: a carrier sale wrote no
+// MultiSellExplorationData) - the commander marks their data as sold
+function markedLine(U) {
+  const ts = Math.max(0, ...Object.values(U.marked || {}));
+  return ts ? el("div", { class: "c-dim small", text: t("Marked as sold {d} (the game logged no sale).", { d: new Date(ts * 1000).toLocaleString() }) }) : null;
+}
+
+function soldRows(U) {
+  const out = [markedLine(U)];
+  const H = U.unlogged_sale;
+  if (H) {
+    const d = new Date(H.ts * 1000).toLocaleString();
+    out.push(el("div", { class: "c-amber sh-unlogged" },
+      el("div", { text: "? " + t("Sold without a journal entry? On {d} your credits rose by {cr} more than the journal explains - about what {s} of these systems ({b} bodies) are worth{v}.",
+        { d, cr: Mcr(H.cr), s: H.systems, b: H.bodies, v: exploValue(H.value) }) }),
+      el("button", { class: "sh-sold", text: t("Yes, sold then - mark as sold"),
+        onclick: () => { if (window.confirm(t("Mark the exploration data scanned before {d} as sold? Exobiology stays as it is.", { d }))) markSold({ parts: ["explo"], ts: H.ts }); } })));
+  }
+  if (soldMsg) out.push(el("div", { class: "c-red small", text: soldMsg }));
+  out.push(el("button", { class: "sh-sold", text: t("Sold, but still listed? Mark all as sold"),
+    onclick: () => { if (window.confirm(t("Mark everything scanned and analysed up to now as sold? Use this only when you did sell it and the game logged no sale - here and in the plugin it then no longer counts as at risk."))) markSold({ parts: ["explo", "bio"] }); } }));
+  return out;
+}
+
+async function markSold(body) {
+  try {
+    await postJSON("/api/unsold/sold", body);
+    soldMsg = "";
+    data = await getJSON("/api/shipstatus");
+  } catch (e) { soldMsg = t("Could not save: {e}", { e: e.message }); }
+  render();
 }
 
 // data that went down with the ship - planned again in SYSTEM until redone
@@ -314,20 +413,34 @@ function target() {
 // ------------------------------------------------------------ annunciator
 function annunciator() {
   const s = data.ship;
-  const master = el("div", { class: "ann-master " + data.master },
+  const blink = blinkFor("ship-master", data.master === "warning");      // 8 s from the onset, then steady
+  const master = el("div", { class: "ann-master " + data.master + (blink ? " blinking" : ""), style: blink || null },
     el("div", { class: "am-k", text: data.master === "normal" ? t("ALL SYSTEMS") : t(LEVEL[data.master]) }),
     el("div", { class: "am-v", text: data.master === "normal" ? t("NORMAL") : t("CHECK") }));
   const bands = ["warning", "caution", "advisory"].map(lv => el("div", { class: "ann-band " + lv },
     el("div", { class: "ab-k", text: t(LEVEL[lv]) }),
     el("div", { class: "ab-lamps" }, ...data.panel.filter(p => p.level === lv).map(p =>
-      el("div", { class: "lamp " + lv + (p.on ? " on" : ""), text: t(LAMP[p.key] || p.key) })))));
+      el("div", { class: "lamp " + lv + (p.on ? " on" : ""), text: t(LAMP[p.key] || p.key) + (p.probable ? "?" : ""),
+        title: t(LAMP[p.key] || p.key) + (p.why ? " – " + t(DANGER_WHY[p.why] || p.why) : "") })))));
   const id = el("div", { class: "ann-id" },
     el("div", { class: "c-cyan sh-name", text: (s.name || s.type || "?") }),
     el("div", { class: "c-dim", text: [s.type, s.ident].filter(Boolean).join(" · ") }),
     el("div", { class: "sh-hull " + hcls(s.hull), text: t("HULL") + " " + (pct(s.hull) ?? "–") + " %" }),
+    // TH3: the hull as a meter too - hidden in the standard look, drawn by the other themes
+    meter(pct(s.hull) ?? 0, 100, "sh-hull-m " + hcls(s.hull)),
     el("div", { class: "c-dim small", text: data.live ? t("live") : t("game not running – last known state") }));
+  // beside the lamps, as on a real panel next to the annunciator: the readings that go with them
+  const L = data.logistics || {}, f = L.fuel || {}, integ = data.integrity || {};
+  const reading = (label, v, max, text, cls) => el("div", { class: "ann-r" },
+    el("span", { class: "c-dim", text: label }), meter(v || 0, max, cls), el("span", { class: "num", text }));
+  const fuelPct = f.capacity ? 100 * (f.main || 0) / f.capacity : 0;
+  const readings = el("div", { class: "ann-read" },
+    f.capacity ? reading(t("Fuel"), f.main, f.capacity, fmt(f.main, 1) + " t", fuelPct < 25 ? "warn" : "") : null,
+    L.capacity ? reading(t("Cargo"), L.used, L.capacity, fmt(L.used, 0) + " / " + fmt(L.capacity, 0) + " t", "") : null,
+    integ.min !== null && integ.min !== undefined ? reading(t("Modules"), pct(integ.min) ?? 0, 100, t("min {v} %", { v: pct(integ.min) ?? "–" }),
+      hcls(integ.min) === "ok" ? "" : "warn") : null);
   return withPopout(frame(t("STATUS"), "", el("div", { class: "ann" }, master,
-    el("div", { class: "ann-bands" }, ...bands), id), { cls: "sh-ann", appear: false }), "ship");
+    el("div", { class: "ann-bands" }, ...bands), el("div", { class: "ann-side" }, id, readings)), { cls: "sh-ann", appear: false }), "ship");
 }
 
 // ------------------------------------------------------------ cutaway
@@ -429,7 +542,7 @@ function engineer() {
     el("div", { class: "mg-h", text: t(GROUP[g]) + " · " + list.length }),
     ...list.map(m => el("div", { class: "mrow " + hcls(m.health) + (m.on === false ? " off" : ""), title: m.slot + (m.experimental ? " · " + m.experimental : "") },
       el("span", { class: "m-n", text: m.name }),
-      el("span", { class: "m-h" }, el("i", { style: { width: (pct(m.health) ?? 0) + "%" } })),
+      el("span", { class: "m-h", style: "--p: " + (pct(m.health) ?? 0) }, el("i", { style: { width: (pct(m.health) ?? 0) + "%" } })),
       el("span", { class: "m-v", text: (pct(m.health) ?? "–") + "%" }),
       el("span", { class: "m-p", text: "P" + m.priority }),
       el("span", { class: "m-w", text: m.power ? fmt(m.power, 2) : "" }),
@@ -502,13 +615,16 @@ function hazards() {
 // ------------------------------------------------------------ logistics
 function logistics() {
   const L = data.logistics;
-  const bar = (v, max, cls) => el("span", { class: "lbar " + (cls || "") }, el("i", { style: { width: max ? Math.min(100, 100 * (v || 0) / max).toFixed(1) + "%" : "0" } }));
+  const bar = (v, max, cls) => meter(v || 0, max, cls);       // TH3: the share for the themes too
   const f = L.fuel;
   const rows = [
     el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Cargo") }), bar(L.used, L.capacity),
       el("span", { text: fmt(L.used, 0) + " / " + fmt(L.capacity, 0) + " t" })),
     el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Fuel") }), bar(f.main, f.capacity, (f.main / (f.capacity || 1)) < 0.25 ? "warn" : ""),
       el("span", { text: fmt(f.main, 1) + " / " + fmt(f.capacity, 0) + " t" })),
+    f.jumps ? el("div", { class: "lg-row", title: t("At the {d} ly you jump lately; the range is the fuel model's scatter.", { d: fmt(f.jumps.ly, 1) }) },
+      el("span", { class: "c-dim", text: t("Jumps") }), el("span", { class: "c-dim small", text: t("learned from {n}", { n: f.jumps.n }) }),
+      el("span", { class: f.jumps.thin ? "c-amber" : "", text: "~" + f.jumps.mid + " (" + f.jumps.lo + "–" + f.jumps.hi + ")" })) : null,
     el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Reservoir") }), bar(f.reservoir, f.reserve_cap),
       el("span", { text: fmt(f.reservoir, 2) + " / " + fmt(f.reserve_cap, 2) + " t" })),
     el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Limpets") }), el("span"), el("span", { text: fmt(L.limpets, 0) })),
@@ -520,5 +636,5 @@ function logistics() {
   const locker = el("div", { class: "c-dim small", text: t("Ship locker: {i} items · {c} components · {u} consumables · {d} data",
     { i: lk.Items, c: lk.Components, u: lk.Consumables, d: lk.Data }) });
   const bal = L.balance !== null && L.balance !== undefined ? el("div", { class: "small", text: t("Credits") + ": " + fmt(L.balance, 0) + " Cr" }) : null;
-  return frame(t("LOGISTICS"), L.free !== null ? t("{n} t free", { n: fmt(L.free, 0) }) : "", [...rows, inv, locker, bal], { cls: "sh-log", appear: false });
+  return frame(t("LOGISTICS"), L.free !== null ? t("{n} t free", { n: fmt(L.free, 0) }) : "", [...rows.filter(Boolean), inv, locker, bal], { cls: "sh-log", appear: false });
 }

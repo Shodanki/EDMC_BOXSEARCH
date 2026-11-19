@@ -15,7 +15,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import plugin_pkg  # noqa: E402
 plugin_pkg.package()
-from SHBOXSEARCH.overlay import (COL, CockpitOverlay, briefing_lines)  # noqa: E402
+from SHBOXSEARCH.overlay import (COL, STATE_ANCHOR, CockpitOverlay, briefing_lines)  # noqa: E402
+from SHBOXSEARCH import shipstate as ss  # noqa: E402
+from SHBOXSEARCH import suittemp as st  # noqa: E402
 
 
 def _selftest() -> int:
@@ -71,6 +73,74 @@ def _selftest() -> int:
     check("REGION  Inner Orion Spur" in texts(region="Inner Orion Spur")
           and not any(t.startswith("REGION") for t in texts()),
           "4.10: the codex region when known, nothing otherwise")
+    od = briefing_lines(dict(name="X", kind="target", known_sources=["EDSM"], level="known",
+                             odds={"p": 0.137, "n": 131, "reason": "off-plane, mc b"}))
+    check(("FIND ~14 % (131)  off-plane, mc b", COL["data"]) in od, "FX5: the chance of a find and why")
+    hi = briefing_lines(dict(name="X", odds={"p": 0.2, "n": 40, "reason": "off-plane"}))
+    check(("FIND ~20 % (40)  off-plane", COL["new"]) in hi, "FX5: from 15 % (findodds band) it stands out")
+    check(not any(t.startswith("FIND") for t in texts()), "FX5: no odds, no line")
+    lo = briefing_lines(dict(name="X", odds={"p": 0.02, "n": 0, "reason": "no own data yet"}))
+    check(("FIND ~2 % (0)  no own data yet", COL["dim"]) in lo, "FX5: a low chance is dim")
+    # 5.0 (own-3): gear, lights, hardpoints still out - left, out of supercruise
+    ship = ss.IN_SHIP
+    rl = ss.reminder_lines
+    check(rl(ship | ss.GEAR | ss.LIGHTS | ss.HARDPOINTS)[0][0] == "SHIP  GEAR DOWN · HARDPOINTS OUT · LIGHTS ON",
+          "own-3: in orbit, all named: %r" % rl(ship | ss.GEAR | ss.LIGHTS | ss.HARDPOINTS))
+    check(all(not rl(ship | ss.GEAR | x) for x in (ss.SUPERCRUISE, ss.FSD_JUMP, ss.DOCKED, ss.LANDED)),
+          "own-3: nothing in supercruise, jumping, docked or landed")
+    check(not rl(ship) and not rl(None) and not rl("x"), "own-3: nothing out, nothing shown")
+    check(rl(ss.IN_SRV | ss.LIGHTS)[0][0] == "SRV   LIGHTS ON"
+          and rl(ss.IN_SRV | ss.LIGHTS | ss.SRV_HIGH_BEAM)[0][0] == "SRV   HIGH BEAM" and not rl(ss.IN_SRV),
+          "own-3: SRV lights and high beam")
+    # own-3 round 2 (user 18.11.): the Nomad reports as InSRV with gear and
+    # hardpoints - the user's real Status.json of 19:09 UTC (Flags 203424076)
+    vw = ss.VehicleWatch()
+    vw.feed("LaunchVessel", {"VesselType": "lander01", "VesselType_Localised": "Nomad"})
+    nomad = rl(203424076, vw.kind)
+    # round 3 (user 19.11.): the Nomad cannot retract its hardpoints - not named
+    check(nomad and nomad[0] == ("NOMAD GEAR DOWN · LIGHTS ON", ss.BLUE),
+          "own-3: the Nomad flying with gear and lights, in blue: %r" % nomad)
+    vw.feed("LaunchSRV", {"SRVType": "testbuggy", "SRVType_Localised": "SRV Scarab"})
+    check(vw.kind == "SCARAB" and rl(ss.IN_SRV | ss.HARDPOINTS, vw.kind)[0][0] == "SCARAB HARDPOINTS OUT",
+          "own-3: back in an SRV - its turret out is named too")
+    check(rl(203424076 | ss.LANDED, "NOMAD") == [], "own-3: the Nomad set down - nothing")
+    # round 3: an SRV on the ground (Landed) still shows; Scarab and Rhino with the cargo scoop
+    srv = rl(ss.IN_SRV | ss.LANDED | ss.LIGHTS | ss.SCOOP, vw.kind)
+    check(srv and srv[0][0] == "SCARAB CARGO SCOOP OPEN · LIGHTS ON", "r2-own3: Scarab on the ground: %r" % srv)
+    vw.feed("LaunchSRV", {"SRVType": "mev_rhino", "SRVType_Localised": "SRV Rhino"})
+    rh = rl(ss.IN_SRV | ss.LANDED | ss.SCOOP | ss.LIGHTS | ss.SRV_HIGH_BEAM, vw.kind)
+    check(vw.kind == "RHINO" and rh and rh[0][0] == "RHINO CARGO SCOOP OPEN · HIGH BEAM",
+          "r2-own3: Rhino with scoop and high beam: %r" % rh)
+    check(rl(ss.IN_SRV | ss.LANDED | ss.DOCKED | ss.LIGHTS, "RHINO") == [], "r2-own3: SRV in its bay - nothing")
+    sent.clear()
+    ov.hidden = False
+    check(ov.show_state(rl(ship | ss.GEAR)) and sent and sent[-1][0].endswith("state-0")
+          and ov._origin("state") == STATE_ANCHOR, "own-3: drawn left middle (user 18.11.)")
+    n = len(sent)
+    check(ov.show_state(rl(ship | ss.GEAR)) and len(sent) == n, "own-3: unchanged - not sent again")
+    check(not ov.show_state([]) and sent[-1][1] == "" and not ov._drawn.get("state"), "own-3: gear up - blanked")
+    ov.position = "bottom-left"
+    check(ov._origin("state") == STATE_ANCHOR, "own-3: left middle wherever the blocks are")
+    ov.hidden = True
+    check(not ov.show_state(rl(ship | ss.GEAR)), "own-3: not over a map screen")
+    # 5.0 (own-2): on foot in heat or cold - suit health and time left
+    w = st.SuitWatch()
+    foot = st.ON_FOOT
+    check(w.feed(0, foot, 1.0, 290) == [] and w.feed(0, st.VERY_HOT, 1.0, 900) == [],
+          "own-2: bearable, or hot but not on foot: nothing")
+    first = w.feed(100.0, foot | st.VERY_HOT, 1.0, 812.4)
+    check(first[0] == ("SUIT VERY HOT 812 K - suit takes damage", st.RED) and "no damage measured yet" in first[1][0],
+          "own-2: very hot, no rate yet: %r" % first)
+    w.feed(105.0, foot | st.VERY_HOT, 0.9, 812)
+    lines = w.feed(110.0, foot | st.VERY_HOT, 0.8, 812)      # 2 % per second
+    check(lines[1][0] == "     health 80 % · ~0:40 left (from 10 s)", "own-2: time left at the rate now: %r" % lines)
+    w.feed(140.0, foot | st.VERY_HOT, 0.8, 812)
+    check(w.rate() == (None, 0.0) or w.rate()[0] is None, "own-2: older ticks than 20 s drop out of the rate")
+    check(w.feed(141.0, foot | st.COLD, 0.8, 150)[0] == ("SUIT COLD 150 K - near the limit", st.AMBER),
+          "own-2: cold is amber, near the limit")
+    check(w.feed(142.0, foot, 0.8, 250) == [] and w.samples == [], "own-2: bearable again - gone, rate forgotten")
+    check(w.feed(143.0, foot | st.HOT, None, 400) == [] and w.feed(144.0, "x", 1, 1) == [],
+          "own-2: without health or with junk: nothing")
     print("failures: %d" % fails)
     return fails
 

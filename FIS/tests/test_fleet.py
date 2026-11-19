@@ -157,6 +157,27 @@ class FleetTest(unittest.TestCase):
         self.assertGreater(r["ly"], 4500)
         self.assertEqual(fl.carrier_range(3, 5000)["jumps"], 0)
 
+    def test_tritium_learnt_from_own_jumps(self):
+        # user 19.11.: the range follows the jumps flown. Jumps made with
+        # another formula (base 30000, div 200000) teach that formula.
+        def flown(ly, load, trit):
+            return (ly, load, trit, int(round(5 + ly * (load + trit + 30000) / 200000)))
+        legs = ((500, 4000), (480, 6000), (450, 8000), (300, 9000), (500, 9500), (250, 5000), (499, 7000))
+        jumps = [flown(ly, load, 1000) for ly, load in legs]
+        learnt = fl.learn_tritium(jumps + [(10.0, 5000.0, 900.0, 6.0)])     # a short hop is left out
+        self.assertTrue(learnt["learnt"])
+        self.assertEqual(learnt["n"], 7)
+        self.assertLessEqual(learnt["max_err"], 1)
+        self.assertLess(abs(learnt["div"] - 200000) / 200000, 0.05)
+        self.assertLess(fl.carrier_range(9869, 400, model=learnt["model"])["per_jump"],
+                        fl.carrier_range(9869, 400)["per_jump"])        # this carrier needs less
+        # too few jumps, or nonsense, keep the default
+        few = fl.learn_tritium(jumps[:4])
+        self.assertFalse(few["learnt"])
+        self.assertEqual(few["model"], (fl.TRITIUM_BASE, fl.TRITIUM_DIV))
+        self.assertFalse(fl.learn_tritium([(500.0, 5000.0, 1000.0, 400.0)] * 6)["learnt"])
+        self.assertIsNone(fl.learn_tritium([])["max_err"])
+
     def test_carrier(self):
         c = self.ar.carrier()
         self.assertEqual(c["stats"]["Callsign"], "ABC-123")
@@ -238,11 +259,75 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(hs["ammo_pct"], 100)
         self.assertNotIn("cosmetic", s["modules"])
 
+    def test_thrusters_on_after_liftoff(self):
+        # own-1: the Loadout after DockSRV on the ground has the thrusters
+        # off and no new one follows Liftoff - flying, they count as on
+        lo = {"Modules": [{"Slot": "MainEngines", "Item": "int_engine_size7_class5", "On": False},
+                          {"Slot": "Slot02_Size5", "Item": "int_shieldgenerator_size5_class2", "On": False}]}
+        ship = 1 << 24
+        for flags, want in ((ship, True), (ship | 1 << 1, False), (ship | 1 << 0, False), (1 << 26, False)):
+            st = {"ts": time.time(), "flags": flags}
+            g, _ = shipview._ship_modules(lo, {}, self.ar, flying=shipview._flying(st, flags))
+            self.assertIs(g["core"][0]["on"], want, flags)
+            self.assertIs(g["optional"][0]["on"], False)
+        self.assertFalse(shipview._flying({}, ship))
+
     def test_overheat_is_warning(self):
         live = {"status": {"ts": time.time(), "flags": (1 << 24) | (1 << 20) | (1 << 3), "flags2": 0},
                 "ship": {"hull": 1.0}, "alerts": []}
         s = shipview.build_shipstatus(live, self.ar, self.tmp.name)
         self.assertEqual(s["master"], "warning")
+
+
+class FsdHintTest(unittest.TestCase):
+    """EN1: FSD grade per ship against the engineers that worked on your drive."""
+
+    def _lo(self, ts, sid, level=None, eng=None):
+        fsd = {"Slot": "FrameShiftDrive", "Item": "int_hyperdrive_size5_class5"}
+        if level:
+            fsd["Engineering"] = {"Engineer": eng, "BlueprintName": "FSD_LongRange", "Level": level}
+        return {"timestamp": ts, "event": "Loadout", "Ship": "asp", "ShipID": sid, "Modules": [fsd]}
+
+    def test_engineers_and_hint(self):
+        from fis.fleet import fsd_engineers, fsd_hint, fsd_of
+        evs = [{"timestamp": "2026-01-01T10:00:00Z", "event": "EngineerProgress", "Engineers": [
+                   {"Engineer": "Felicity Farseer", "Progress": "Unlocked", "Rank": 5},
+                   {"Engineer": "Elvira Martuuk", "Progress": "Known"}]},
+               self._lo("2026-01-01T11:00:00Z", 1, 5, "Felicity Farseer"),
+               {"timestamp": "2026-01-02T10:00:00Z", "event": "EngineerCraft", "Engineer": "Elvira Martuuk",
+                "Slot": "FrameShiftDrive", "BlueprintName": "FSD_LongRange", "Level": 3},
+               self._lo("2026-01-03T10:00:00Z", 2, 2, "Felicity Farseer"),
+               self._lo("2026-01-03T11:00:00Z", 3)]
+        eng = fsd_engineers(evs)
+        self.assertEqual([(e["engineer"], e["max_grade"], e["unlocked"]) for e in eng],
+                         [("Felicity Farseer", 5, True), ("Elvira Martuuk", 3, False)])
+        self.assertEqual(fsd_hint(fsd_of(evs[3]), eng), {"to": 5, "blueprint": "FSD_LongRange",
+                                                        "engineers": ["Felicity Farseer"]})
+        self.assertEqual(fsd_hint(fsd_of(evs[4]), eng)["to"], 5)          # not engineered: Increased Range
+        self.assertIsNone(fsd_hint(fsd_of(evs[1]), eng))                 # already G5
+        self.assertIsNone(fsd_of({"Modules": []}))
+
+
+class LedgerCarrierTest(unittest.TestCase):
+    """PL2: the carrier's upkeep over a period, readable ship types."""
+
+    def test_upkeep_between(self):
+        from fis.fleet import upkeep_between
+        day = 86400.0
+        bal = [(0.0, 100_000_000), (4 * day, 90_000_000), (8 * day, 95_000_000)]
+        tr = [{"ts": 6 * day, "deposit": 10_000_000, "withdraw": 0}]       # you paid in 10 M
+        u = upkeep_between(bal, tr, None)
+        self.assertEqual((u["cost"], u["days"], u["readings"]), (15_000_000, 8.0, 3))
+        self.assertEqual(upkeep_between(bal, tr, 4 * day)["cost"], 5_000_000)
+        self.assertIsNone(upkeep_between(bal, tr, 7 * day))                   # one reading left
+        up = upkeep_between([(0.0, 1), (5 * day, 50)], [], None)
+        self.assertEqual((up["cost"], up["drift"]), (None, 49))                # rose: no cost made up
+
+    def test_type_label(self):
+        from fis.fleet import type_label
+        self.assertEqual(type_label({"krait_light": "Krait Phantom"}, "Krait_Light"), "Krait Phantom")
+        self.assertEqual(type_label({}, "type9_military"), "Type9 Military")
+        self.assertEqual(type_label({}, None), "?")
 
 
 if __name__ == "__main__":

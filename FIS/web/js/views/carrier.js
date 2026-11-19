@@ -12,8 +12,9 @@
 // from the balance over time and says so.
 
 import { getJSON, postJSON } from "../api.js";
-import { el, frame, fmt, withPopout, copyText } from "../ui.js";
+import { copyText, el, fmt, frame, meter, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
+import { planView } from "./jumpplan.js";
 
 const ROLES = [["combat", N_("Combat")], ["mining", N_("Mining")], ["transport", N_("Transport")],
   ["exploration", N_("Exploration")], ["passengers", N_("Passengers")], ["sar", N_("SAR")]];
@@ -36,7 +37,9 @@ let root = null, data = null, known = null, knownQuery = "", knownMsg = "", show
 let sortKey = store("fis.cag.sort") || "", sortDir = store("fis.cag.dir") === "asc" ? 1 : -1;
 let shipQuery = "", onBoardOnly = store("fis.cag.here") === "1";
 // with a carrier of your own, the known carriers get a tab of their own (11.11.)
-let tab = store("fis.carrier.tab") === "known" ? "known" : "own";
+// CT1 (18.11.): the own carrier's trade gets a tab of its own, before the known carriers
+// 5.0 JUMP PLAN: the carrier's jumps to a target, a tab of its own
+let tab = ["known", "trade", "plan"].includes(store("fis.carrier.tab")) ? store("fis.carrier.tab") : "own";
 // what a visited carrier offered when you docked (StationServices, lower case)
 const KC_SERVICE = { refuel: N_("Refuel"), repair: N_("Repair"), rearm: N_("Rearm"), commodities: N_("Commodities"),
   shipyard: N_("Shipyard"), outfitting: N_("Outfitting"), blackmarket: N_("Secure warehouse"),
@@ -47,6 +50,7 @@ export function mount(r) { root = r; root.classList.add("carrier-view"); }
 
 export async function update(ctx, reason) {
   if (!root) return;
+  if (reason === "show" && store("fis.jumpplan.target")) tab = "plan";
   if (reason !== "show" && reason !== "data" && data) return;
   const [d, k] = await Promise.all([getJSON("/api/carrier").catch(() => null),
     getJSON("/api/carriers/known").catch(() => null)]);
@@ -89,7 +93,8 @@ function visiting() {
 
 // K4: other carriers you know - favourites first (★), then the ones you
 // docked at or started something from, then the newest FSS sightings
-const HOW = { docked: N_("docked"), sighted: N_("seen in the FSS"), jump: N_("jumped with you aboard") };
+const HOW = { docked: N_("docked"), sighted: N_("seen in the FSS"), jump: N_("jumped with you aboard"),
+  online: N_("reported at Spansh") };
 
 function since(ts) { const ms = Date.parse(ts || ""); return isNaN(ms) ? "?" : age((Date.now() - ms) / 1000); }
 
@@ -119,7 +124,8 @@ async function lookup(c, btn) {
 // H2: the carriers Spansh knows near you - one request on a click, kept a day per region
 async function findNearby(btn) {
   btn.disabled = true; btn.textContent = "…";
-  try { nearby = await postJSON("/api/carriers/nearby", {}); nearbyMsg = ""; }
+  try { nearby = await postJSON("/api/carriers/nearby", {}); nearbyMsg = "";
+    known = await getJSON("/api/carriers/known").catch(() => known); }        // what was shown is known now
   catch (e) { nearbyMsg = t("Online lookup failed: {e}", { e: e.message || e }); }
   render();
 }
@@ -149,11 +155,24 @@ function nearbyRow(c) {
 function nearbyRows() {
   const rows = [el("div", { class: "sr-h", text: t("NEAR YOU - ONLINE") }),
     el("div", { class: "kc-act" }, el("button", { text: t("find carriers near me"),
-      title: t("ask Spansh once for the carriers within 100 ly of you - at most once a day per region"),
+      title: t("ask Spansh once for the carriers within 100 ly of you - with none that close, up to 5000 ly as a rescue anchor - at most once a day per region"),
       onclick: (e) => findNearby(e.currentTarget) }))];
   if (nearbyMsg) rows.push(el("div", { class: "c-red small", text: nearbyMsg }));
   if (nearby && nearby.carriers) {
-    if (!nearby.carriers.length) rows.push(el("div", { class: "c-dim small", text: t("Spansh knows no carrier within 100 ly.") }));
+    const rescue = nearby.rescue || [];
+    if (!nearby.carriers.length && !rescue.length) {
+      rows.push(el("div", { class: "c-dim small", text: nearby.deep
+        ? t("Spansh knows no carrier within 100 ly, and none within 5000 ly where anyone may dock and repair.")
+        : t("Spansh knows no carrier within 100 ly.") }));
+      rows.push(el("div", { class: "small" }, t("Look for one yourself:") + " ",
+        el("a", { href: "https://spansh.co.uk/", target: "_blank", rel: "noopener", text: "Spansh" }), " · ",
+        el("a", { href: "https://inara.cz/elite/", target: "_blank", rel: "noopener", text: "Inara" })));
+    }
+    if (rescue.length) {
+      rows.push(el("div", { class: "sr-h c-amber", text: t("NOTHING WITHIN 100 LY - NEAREST TO DOCK AND REPAIR") }));
+      rows.push(el("div", { class: "c-dim small", text: t("Up to 5000 ly: carriers anyone may dock at that repair; Vista Genomics and Universal Cartographics first, then the nearer.") }));
+      rows.push(...rescue.map(nearbyRow));
+    }
     rows.push(...nearby.carriers.map(nearbyRow));
     rows.push(el("div", { class: "c-dim small", text: t("Spansh, asked {d}: where someone last reported each carrier - it may have jumped since.", { d: since(nearby.checked) }) }));
   }
@@ -206,6 +225,7 @@ function carrierRow(c) {
         accessEl ? " " : null, accessEl,
         c.note ? el("span", { class: "c-amber small", text: "  " + c.note }) : null),
       el("div", { class: "small" }, el("span", { text: c.system || t("position unknown") }),
+        c.stale ? el("span", { class: "c-amber", text: "  " + t("position outdated (over 90 days)") }) : null,
         el("span", { class: "c-dim", text: "  " + t(HOW[c.how] || "seen in the FSS") + " " + since(c.ts)
           + (c.dist_ly !== null && c.dist_ly !== undefined ? " · " + fmt(c.dist_ly, 1) + " ly" : "")
           + (c.from_store ? " · " + t("stored") : "") })),
@@ -239,7 +259,7 @@ function knownCarriers() {
     if (seen.length > 8) rows.push(el("button", { text: showAllSeen ? t("fewer") : t("show {n} more", { n: seen.length - 8 }),
       onclick: () => { showAllSeen = !showAllSeen; render(); } }));
   }
-  rows.push(el("div", { class: "c-dim small", text: t("Last known positions from your own journals; the market is the one you last opened there. Online only when you click it for a favourite (Spansh, the place someone last reported).") }));
+  rows.push(el("div", { class: "c-dim small", text: t("Last known positions from your own journals and from \"find carriers near me\" (Spansh); the market is the one you last opened there. Carriers not seen for 90 days leave the list - favourites stay.") }));
   rows.push(...nearbyRows());
   return frame(t("KNOWN CARRIERS"), t("{f} favourites · {n} known", { f: k.counts.favourites, n: k.counts.known }), rows, { cls: "ns-known", appear: false });
 }
@@ -255,13 +275,17 @@ function render() {
     if (data && data.fleet && data.fleet.length) root.append(airWing());
     return;
   }
-  if (known) {
+  {
     const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
       onclick: () => { tab = k; store("fis.carrier.tab", k); render(); } });
     root.append(el("div", { class: "kc-tabs" }, tb("own", t("MY CARRIER")),
-      tb("known", t("KNOWN CARRIERS") + " · " + known.counts.known)));
+      tb("plan", t("JUMP PLAN")),
+      data.trade ? tb("trade", t("CARRIER TRADE")) : null,
+      known ? tb("known", t("KNOWN CARRIERS") + " · " + known.counts.known) : null));
   }
+  if (tab === "plan") { root.append(planView()); return; }
   if (known && tab === "known") { root.append(knownCarriers()); return; }
+  if (data.trade && tab === "trade") { root.append(trade()); return; }
   root.append(el("div", { class: "ns-grid" },
     el("div", { class: "ns-col" }, ident(), position(), tritium()),
     el("div", { class: "ns-col" }, hold(), finance(), services())));
@@ -303,7 +327,7 @@ function tritium() {
   const pctTank = Math.round(100 * (tr.tank || 0) / tr.tank_max);
   return frame(t("TRITIUM & RANGE"), pctTank + " %", [
     el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Tank") }),
-      el("span", { class: "lbar " + (pctTank < 25 ? "warn" : "") }, el("i", { style: { width: pctTank + "%" } })),
+      meter(pctTank, 100, pctTank < 25 ? "warn" : ""),          // TH6: the tank's share for the themes
       el("span", { text: fmt(tr.tank, 0) + " / " + fmt(tr.tank_max, 0) + " t" })),
     line(t("Range"), el("span", { class: "big c-green", text: fmt(r.ly, 0) + " ly" }),
       el("span", { class: "c-dim", text: "  " + t("{n} full jumps of 500 ly", { n: r.jumps }) })),
@@ -319,10 +343,34 @@ function tritium() {
       el("span", { class: tr.trip.enough ? "c-green" : "c-amber", text: "  " + (tr.trip.enough ? t("enough") : t("{s} t short", { s: fmt(tr.trip.short, 0) })) })) : null,
     tr.hold ? line(t("In the carrier's hold"), fmt(tr.hold.t, 0) + " t",
       tr.with_hold ? el("span", { class: "c-green", text: "  → " + t("with it: {ly} ly · {n} jumps", { ly: fmt(tr.with_hold.ly, 0), n: tr.with_hold.jumps }) }) : null,
+      tr.with_hold ? el("div", { class: "c-dim small", text: t("Full 500-ly jumps; the tank takes {m} t, so move tritium from the hold about every {k} jumps.", { m: fmt(tr.tank_max, 0), k: Math.max(1, Math.floor(tr.tank_max / (tr.per_max_jump || 1))) }) }) : null,
       el("span", { class: "c-dim small", text: "  " + t("Frontier data, {a}", { a: age(tr.hold.age_s) }) }))
       : el("div", { class: "c-dim small", text: t("Tritium in the carrier's hold comes with EDMC's Frontier data (Companion API) - none yet.") }),
-    el("div", { class: "c-dim small", text: t("Formula fitted on your own jumps (±1 t): {f}", { f: tr.formula }) }),
+    tr.time && tr.time.range ? line(t("Time for the range"), el("span", { text: hm(tr.time.range) })) : null,
+    tr.time && tr.time.trip ? line(t("Time to your route's end"), el("span", { text: hm(tr.time.trip) })) : null,
+    tr.time ? timingNote(tr.time.timing) : null,
+    el("div", { class: "c-dim small", text: tr.learnt && tr.learnt.learnt
+      ? t("Formula learnt from {n} of your jumps (±{e} t), it follows every new jump: {f}", { n: tr.learnt.n, e: fmt(tr.learnt.max_err || 0, 0), f: tr.formula })
+      : t("Default formula: {f}", { f: tr.formula }) + " · " + t("learnt from 5 jumps of 20 ly and more - {n} so far", { n: tr.learnt ? tr.learnt.n : 0 }) }),
   ], { appear: false });
+}
+
+// 5.0 JUMP PLAN: "~3 h 35 min (3 h 20 – 4 h 30)" from minutes
+export function dur(m) {
+  m = Math.round(m || 0);
+  return m < 60 ? t("{m} min", { m }) : t("{h} h {m} min", { h: Math.floor(m / 60), m: m % 60 });
+}
+export function hm(tt) {
+  return "~" + dur(tt.mid) + (tt.hi > tt.lo ? " (" + dur(tt.lo) + " – " + dur(tt.hi) + ")" : "")
+    + " · " + (tt.jumps === 1 ? t("1 jump") : t("{n} jumps", { n: tt.jumps }));
+}
+export function timingNote(tm) {
+  const c = tm.countdown;
+  return el("div", { class: "c-dim small", text: (c.learnt
+    ? t("Countdown ~{m} min ({a}–{b}), learnt from {n} of your jumps", { m: fmt(c.mid, 1), a: fmt(c.lo, 1), b: fmt(c.hi, 1), n: c.n })
+    : t("Countdown ~{m} min (no own jump yet)", { m: fmt(c.mid, 0) }))
+    + " · " + t("cooldown {m} min after each jump (public value)", { m: fmt(tm.cooldown, 0) })
+    + (tm.fastest_next ? " · " + t("your fastest next jump order: {m} min after arrival", { m: fmt(tm.fastest_next, 1) }) : "") });
 }
 
 function hold() {
@@ -374,6 +422,98 @@ function services() {
   return frame(t("SERVICES"), "", el("div", { class: "svc" }, ...data.services.map(s => el("span", {
     class: "chip " + (s.active ? (s.enabled === false ? "warn" : "mapped") : "off"),
     title: s.crew || "", text: SERVICE[s.role] ? t(SERVICE[s.role]) : s.role }))), { appear: false });
+}
+
+// ------------------------------------------------------------ CT1: carrier trade
+const CR = (v) => v === null || v === undefined ? "–" : v >= 1e6 ? fmt(v / 1e6, 1) + " M Cr" : fmt(v, 0) + " Cr";
+const SVC = { ok: N_("open"), unmanned: N_("not manned"), unavailable: N_("not installed"), closed: N_("closed") };
+function svc(st) { return st ? el("span", { class: st === "ok" ? "c-green" : "c-dim", text: SVC[st] ? t(SVC[st]) : st }) : null; }
+
+function trade() {
+  const T = data.trade, C = T.capi;
+  const left = [demand(T), C ? tradeMarket(C.market) : null];
+  const right = [C ? tradeBar(C.bar) : null, C ? tradeYard(C) : null, tradeHistory(T.history)];
+  if (!C) left.push(frame(t("MARKET"), "", el("div", { class: "c-dim", text: t("Orders, stock, the bar, shipyard and outfitting come with EDMC's Frontier data (Companion API) - none yet. Below: the orders from your journal.") }), { appear: false }));
+  return el("div", { class: "ns-grid ct-grid" }, el("div", { class: "ns-col" }, ...left), el("div", { class: "ns-col" }, ...right));
+}
+
+// what is still wanted: open purchase orders, market and bar
+function demand(T) {
+  const D = T.demand, C = T.capi;
+  if (!C) return null;
+  const rows = [line(t("Still wanted"), el("span", { class: D.units ? "c-amber" : "c-dim", text: D.units ? fmt(D.units, 0) + " " + t("units") : t("nothing") }),
+    D.cr ? el("span", { class: "c-dim", text: "  · " + CR(D.cr) }) : null)];
+  for (const r of D.rows) rows.push(el("div", { class: "lg-row" }, el("span", { text: r.name + (r.where === "bar" ? " · " + t("bar") : "") }),
+    meter(r.delivered, r.total || 1), el("span", { class: "num", text: fmt(r.delivered, 0) + " / " + fmt(r.total, 0) + " · " + CR(r.price) })));
+  rows.push(el("div", { class: "c-dim small", text: t("Frontier data, {a}. Purchase orders with what is delivered so far; the rest is reserved from the carrier's balance.", { a: age(C.age_s) }) }));
+  return frame(t("OPEN DEMAND"), D.cr ? CR(D.cr) : "", rows, { appear: false });
+}
+
+function orderTable(sales, buys) {
+  if (!sales.length && !buys.length) return el("div", { class: "c-dim", text: t("No orders set.") });
+  return el("table", { class: "ns-tab" },
+    el("tr", {}, ...["", t("good"), t("amount"), t("price"), t("value")].map(h => el("th", { text: h }))),
+    ...sales.map(r => el("tr", {}, el("td", { class: "c-green", text: t("sells") }), el("td", { text: r.name + (r.black ? " ⚠" : "") }),
+      el("td", { class: "num", text: fmt(r.stock, 0) }), el("td", { class: "num", text: CR(r.price) }), el("td", { class: "num", text: CR(r.value) }))),
+    ...buys.map(r => el("tr", {}, el("td", { class: "c-amber", text: t("buys") }), el("td", { text: r.name + (r.black ? " ⚠" : "") }),
+      el("td", { class: "num", text: fmt(r.outstanding, 0) + " / " + fmt(r.total, 0) }), el("td", { class: "num", text: CR(r.price) }),
+      el("td", { class: "num", text: CR(r.open_cr) }))));
+}
+
+function tradeMarket(M) {
+  const F = M.finances || {};
+  const rows = [line(t("Market"), svc(M.status)), orderTable(M.sales, M.purchases),
+    line(t("Cargo for sale"), fmt(M.for_sale_t, 0) + " t", el("span", { class: "c-dim", text: "  · " + t("not for sale") + " " + fmt(M.not_for_sale_t, 0) + " t" })),
+    line(t("Cargo value"), CR(F.cargo_value)),
+    line(t("Market profit (all time)"), el("span", { class: "c-green", text: CR(F.profit) }))];
+  if (M.black && (M.black.profit || M.black.for_sale || M.black.purchase_orders))
+    rows.push(line(t("Secure warehouse profit"), CR(M.black.profit)));
+  const stock = M.stock.filter(r => r.stock || r.demand);
+  if (stock.length) {
+    rows.push(el("div", { class: "ns-sub", text: t("AS VISITORS SEE IT") }));
+    rows.push(el("table", { class: "ns-tab" },
+      el("tr", {}, ...[t("good"), t("pieces"), t("demand"), t("we sell at"), t("we buy at")].map(h => el("th", { text: h }))),
+      ...stock.slice(0, 20).map(r => el("tr", {}, el("td", { text: r.name }), el("td", { class: "num", text: fmt(r.stock, 0) }),
+        el("td", { class: "num", text: fmt(r.demand, 0) }), el("td", { class: "num", text: r.buy ? CR(r.buy) : "–" }),
+        el("td", { class: "num", text: r.sell ? CR(r.sell) : "–" })))));
+  }
+  return frame(t("MARKET"), "", rows, { appear: false });
+}
+
+function tradeBar(B) {
+  const F = B.finances || {};
+  const rows = [line(t("Bar"), svc(B.status)), orderTable(B.sales, B.purchases),
+    el("div", { class: "lg-row" }, el("span", { class: "c-dim", text: t("Locker") }), meter(B.used, B.capacity || 1),
+      el("span", { text: fmt(B.used, 0) + " / " + fmt(B.capacity, 0) })),
+    line(t("Bar profit (all time)"), el("span", { class: F.profit ? "c-green" : "c-dim", text: CR(F.profit) }))];
+  if (B.profit_history.some(v => v)) rows.push(line(t("Profit per week"), el("span", { class: "c-dim", text: B.profit_history.map(v => CR(v)).join(" · ") })));
+  return frame(t("BAR"), t("on-foot goods"), rows, { appear: false });
+}
+
+function tradeYard(C) {
+  const S = C.shipyard, O = C.outfitting;
+  const rows = [line(t("Shipyard"), svc(S.status), el("span", { class: "c-dim", text: "  · " + t("{n} ship packs", { n: S.packs }) }))];
+  if (S.ships.length) rows.push(el("table", { class: "ns-tab" }, ...S.ships.map(r => el("tr", {}, el("td", { text: r.name }),
+    el("td", { class: "num", text: fmt(r.stock, 0) }), el("td", { class: "num", text: CR(r.price) })))));
+  else rows.push(el("div", { class: "c-dim small", text: t("No ships for sale.") }));
+  rows.push(line(t("Outfitting"), svc(O.status), el("span", { class: "c-dim", text: "  · " + t("{n} module packs", { n: O.packs }) })));
+  rows.push(line(t("In stock"), t("{u} modules of {k} kinds", { u: fmt(O.units, 0), k: O.kinds - O.bundled }), el("span", { class: "c-dim", text: "  · " + CR(O.value) })));
+  if (O.modules.length) rows.push(el("div", { class: "scroll ct-mods" }, el("table", { class: "ns-tab" },
+    el("tr", {}, ...[t("module"), t("pieces"), t("price")].map(h => el("th", { text: h }))),
+    ...O.modules.map(r => el("tr", {}, el("td", { text: r.name }), el("td", { class: "num", text: fmt(r.stock, 0) }),
+      el("td", { class: "num", text: CR(r.price) }))))));
+  if (O.bundled) rows.push(el("div", { class: "c-dim small", text: t("{n} bays come with the packs (no stock).", { n: O.bundled }) }));
+  return frame(t("SHIPYARD & OUTFITTING"), "", rows, { appear: false });
+}
+
+const ORDER_KIND = { buy: [N_("buy order"), "c-amber"], sell: [N_("sell order"), "c-green"], cancel: [N_("cancelled"), "c-dim"], other: [N_("changed"), "c-dim"] };
+function tradeHistory(H) {
+  const rows = H.length ? [el("table", { class: "ns-tab" }, ...H.slice(0, 12).map(h => el("tr", {},
+    el("td", { class: "c-dim", text: day(h.ts) }), el("td", { class: ORDER_KIND[h.kind][1], text: t(ORDER_KIND[h.kind][0]) }),
+    el("td", { text: h.name || "?" }), el("td", { class: "num", text: h.qty ? fmt(h.qty, 0) : "" }),
+    el("td", { class: "num", text: h.price ? CR(h.price) : "" }))))]
+    : [el("div", { class: "c-dim", text: t("No trade orders in your journals.") })];
+  return frame(t("ORDER HISTORY"), t("journal"), rows, { appear: false });
 }
 
 // ------------------------------------------------------------ air wing (CAG)
@@ -443,12 +583,24 @@ function airWing() {
       ...ROLES.map(([k]) => el("td", { class: "rd" + (r && r.primary === k ? " prim" : ""), title: r ? r.why[k] : "",
         text: r ? dots(r.roles[k]) : "" })),
       el("td", { class: "num", text: s.hull !== undefined && s.hull !== null ? Math.round(s.hull * 100) + "%" : "–" }),
-      el("td", { class: "num", text: s.jump ? fmt(s.jump, 1) : "–" }),
+      el("td", { class: "num", text: s.jump ? fmt(s.jump, 1) : "–" }, fsdBadge(s.fsd)),
       el("td", { class: "num", text: s.cargo !== undefined && s.cargo !== null ? fmt(s.cargo, 0) : "–" }),
       el("td", { class: "c-dim small", text: s.loadout_ts ? day(s.loadout_ts) : t("unknown") }));
   });
+  const fsdNote = el("div", { class: "c-dim small", text: t("FSD: the grade of the drive's engineering; ↑ an unlocked engineer already took your drive higher (hover). Only a hint from your own engineering.") });
   const note = el("div", { class: "c-dim small", text: t("Ratings 0–5 from the last known fitting (hover for the reasons). Ships without a fitting were not flown since your journals begin – fly or outfit them once.") });
   const hang = data.hangar;
   return frame(t("AIR WING"), hang ? t("{n} ships · hangar list of {d}", { n: ships.length, d: day(hang.ts) }) : String(ships.length),
-    [board, tools, el("div", { class: "scroll cag-list" }, el("table", { class: "ns-tab cag" }, head, ...rows)), note], { cls: "ns-cag", appear: false });
+    [board, tools, el("div", { class: "scroll cag-list" }, el("table", { class: "ns-tab cag" }, head, ...rows)), note, fsdNote], { cls: "ns-cag", appear: false });
+}
+
+// EN1: the FSD's grade under the jump range, with an arrow when an unlocked
+// engineer already engineered your drive higher - a hint, never advice
+function fsdBadge(f) {
+  if (!f) return null;
+  const g = f.grade ? "G" + f.grade : t("stock");
+  const h = f.hint;
+  const tip = (f.grade ? t("FSD {g} by {e}", { g, e: f.engineer || "?" }) + (f.experimental ? " · " + f.experimental : "") : t("FSD not engineered"))
+    + (h ? "\n" + t("{n} gave your drive G{to} before - unlocked", { n: h.engineers.join(", "), to: h.to }) : "");
+  return el("div", { class: "small " + (h ? "c-amber" : "c-dim"), title: tip, text: g + (h ? " ↑" : "") });
 }

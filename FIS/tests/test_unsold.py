@@ -3,11 +3,13 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025-2026 Shodanki
-"""M4: unsold data at risk - exobiology valued from own sales, exploration counted."""
+"""M4: unsold data at risk - exobiology valued from own sales, exploration
+at the bodyvalue estimate calibrated on own sales (B6)."""
 
 import unittest
 
 from fis import unsold
+from tests import fixtures as fx
 
 
 def ev(ts, name, **kw):
@@ -23,7 +25,50 @@ VALUES = {"Bacterium Aurasus": {"value": 1000000, "bonus": 4000000},
           "Stratum Tectonicas": {"value": 19010800, "bonus": 0}}
 
 
+def carrier_sale_unlogged():
+    """SM1, the user's evening of 19.11.2026 in small: two systems scanned and
+    mapped, a species analysed; docked at the own carrier the species sale is
+    logged, the Universal Cartographics sale is not (the credits rose by it)."""
+    def scan(t, sysname, addr, body):
+        return ev(t, "Scan", StarSystem=sysname, SystemAddress=addr, BodyID=body, ScanType="Detailed",
+                  BodyName="%s %d" % (sysname, body), PlanetClass="Icy body", MassEM=0.1,
+                  DistanceFromArrivalLS=100.0 * body)
+    return [ev("08:00", "FSDJump", StarSystem="Synuefe A", SystemAddress=1, StarPos=[0, 0, 0]),
+            scan("08:01", "Synuefe A", 1, 1), scan("08:02", "Synuefe A", 1, 2),
+            ev("08:03", "SAAScanComplete", SystemAddress=1, BodyID=2, ProbesUsed=3, EfficiencyTarget=5),
+            analyse("08:10", "Bacterium Aurasus"),
+            ev("09:00", "FSDJump", StarSystem="Synuefe B", SystemAddress=2, StarPos=[0, 0, 30]),
+            scan("09:01", "Synuefe B", 2, 1),
+            ev("10:12", "Docked", StationType="FleetCarrier", StarSystem="Synuefe B", MarketID=7),
+            ev("10:15", "SellOrganicData", MarketID=7, BioData=[{"Species_Localised": "Bacterium Aurasus",
+                                                                 "Value": 1000000, "Bonus": 0}]),
+            ev("10:17", "CarrierBankTransfer", Deposit=5000000, PlayerBalance=100000000)]
+
+
 class TestUnsold(unittest.TestCase):
+    def test_unlogged_carrier_sale_marked_as_sold(self):
+        """SM1: without the mark both systems stay unsold; with it (at the
+        moment the commander says) they are sold, later scans stay open."""
+        import calendar
+        evs = carrier_sale_unlogged()
+        u = unsold.build_unsold(evs, VALUES)
+        self.assertEqual((u["bio"]["count"], u["exploration"]["systems"], u["exploration"]["bodies"]), (0, 2, 3))
+        at = float(calendar.timegm((2026, 11, 10, 10, 17, 0)))
+        later = evs + [ev("11:00", "FSDJump", StarSystem="Col C", SystemAddress=3, StarPos=[0, 0, 60]),
+                       ev("11:01", "Scan", StarSystem="Col C", SystemAddress=3, BodyID=4, ScanType="Detailed"),
+                       analyse("11:05", "Stratum Tectonicas", addr=3)]
+        u = unsold.build_unsold(later, VALUES, sold_marks={"explo": at, "bio": at})
+        x = u["exploration"]
+        self.assertEqual((x["systems"], x["bodies"], x["mapped"]), (1, 1, 0))
+        self.assertEqual((x["since"], u["bio"]["count"], u["marked"]), (at, 1, {"explo": at, "bio": at}))
+        # the same bodies scanned again later are no new data
+        again = later + [ev("12:00", "FSDJump", StarSystem="Synuefe A", SystemAddress=1, StarPos=[0, 0, 0]),
+                         ev("12:01", "Scan", StarSystem="Synuefe A", SystemAddress=1, BodyID=1, ScanType="Detailed")]
+        self.assertEqual(unsold.build_unsold(again, VALUES, sold_marks={"explo": at})["exploration"]["systems"], 1)
+        # a mark newer than every event: all of it; only "explo" keeps the species
+        u = unsold.build_unsold(later, VALUES, sold_marks={"explo": at + 86400})
+        self.assertEqual((u["exploration"]["systems"], u["bio"]["count"]), (0, 1))
+
     def test_bio_pending_value_and_partial_sale(self):
         evs = [ev("08:00", "FSDJump", StarSystem="Alpha", SystemAddress=1),
                # first footfall on body 2: nobody had walked there, then you did
@@ -146,6 +191,156 @@ class TestUnsold(unittest.TestCase):
         self.assertEqual(u["risk"], "moderate")            # little money, but nothing to get again
         sold = evs + [ev("09:00", "MultiSellExplorationData", Discovered=[{"SystemName": "New"}])]
         self.assertEqual(unsold.build_unsold(sold, VALUES)["first_systems"], 0)
+
+
+class TestWhereToSell(unittest.TestCase):
+    """5.0: a station buys only systems 20 ly away or more; a carrier with
+    Universal Cartographics buys all of it (the user's own sales, 17.11.)."""
+
+    def _trip(self):
+        def scan(t, sysname, addr):
+            return ev(t, "Scan", StarSystem=sysname, SystemAddress=addr, BodyID=1, ScanType="Detailed")
+        return [ev("08:00", "FSDJump", StarSystem="Far", SystemAddress=1, StarPos=[0.0, 0.0, 0.0]),
+                scan("08:01", "Far", 1),
+                ev("08:10", "FSDJump", StarSystem="Near", SystemAddress=2, StarPos=[100.0, 0.0, 0.0]),
+                scan("08:11", "Near", 2),
+                ev("08:20", "FSDJump", StarSystem="Here", SystemAddress=3, StarPos=[110.0, 0.0, 0.0]),
+                scan("08:21", "Here", 3)]
+
+    def test_station_only_beyond_20_ly(self):
+        s = unsold.build_unsold(self._trip())["sell"]
+        self.assertEqual((s["station_now"], s["too_near"], s["no_position"]), (1, 2, 0))
+        self.assertEqual(s["min_ly"], 20.0)
+        self.assertIsNone(s["carrier"])
+
+    def test_own_carrier_with_cartographics(self):
+        evs = [ev("07:00", "CarrierStats", Crew=[{"CrewRole": "Exploration", "Activated": True, "Enabled": True}]),
+               ev("07:01", "CarrierLocation", CarrierType="FleetCarrier", StarSystem="Far", SystemAddress=1)]
+        c = unsold.build_unsold(evs + self._trip())["sell"]["carrier"]
+        self.assertEqual((c["system"], c["uc"], c["ly"]), ("Far", True, 110.0))
+        off = [ev("07:00", "CarrierStats", Crew=[{"CrewRole": "Exploration", "Activated": True, "Enabled": False}])]
+        self.assertFalse(unsold.build_unsold(off + evs[1:] + self._trip())["sell"]["carrier"]["uc"])
+
+    def test_no_position_is_not_guessed(self):
+        evs = [ev("08:00", "FSDJump", StarSystem="Blank", SystemAddress=9),
+               ev("08:01", "Scan", StarSystem="Blank", SystemAddress=9, BodyID=1, ScanType="Detailed")]
+        s = unsold.build_unsold(self._trip() + evs)["sell"]
+        self.assertEqual(s["no_position"], 1)
+
+
+def _bodyvalue():
+    """The plugin's bodyvalue, as the FIS loads it."""
+    from fis.config import Config
+    cfg = Config()
+    cfg.plugin_dir = fx.PLUGIN_DIR
+    cfg.use_plugin_path()
+    from fis import model
+    return model.plugin().bodyvalue
+
+
+def _hmc(t, sysname, addr, body, first=False):
+    """A scanned high-metal-content planet (mass 1 EM)."""
+    return ev(t, "Scan", StarSystem=sysname, SystemAddress=addr, BodyID=body, BodyName="%s %d" % (sysname, body),
+              ScanType="Detailed", PlanetClass="High metal content body", MassEM=1.0, TerraformState="",
+              WasDiscovered=not first, WasMapped=True, DistanceFromArrivalLS=100.0 + body)
+
+
+def _sale(t, names, earned):
+    return ev(t, "MultiSellExplorationData", Discovered=[{"SystemName": n, "NumBodies": 1} for n in names],
+              BaseValue=earned, Bonus=0, TotalEarnings=earned)
+
+
+class TestExplorationValue(unittest.TestCase):
+    """B6: the exploration data valued and calibrated on the own sales."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bv = _bodyvalue()
+        cls.one = cls.bv.planet_value("High metal content body", "", 1.0)     # one scan, ~15 k
+        cls.mapped = cls.bv.planet_value("High metal content body", "", 1.0, mapped=True)
+
+    def test_calibration(self):
+        sales = [(1.0, 2e6, 1.8e6), (2.0, 4e6, 4.4e6), (3.0, 1e6, 0.8e6), (4.0, 5e5, 5e6)]    # the last: too small
+        c = unsold.calibration(sales)
+        self.assertEqual((c["n"], c["sales"], c["factor"], c["lo"], c["hi"]), (3, 4, 0.9, 0.8, 1.1))
+        later = unsold.calibration(sales, since=1.5)
+        self.assertEqual((later["n"], later["factor"]), (2, None))          # below three: no factor
+
+    def _system(self, t, name, addr, n, first=False):
+        evs = [ev(t, "FSDJump", StarSystem=name, SystemAddress=addr)]
+        evs += [_hmc(t, name, addr, b, first) for b in range(1, n + 1)]
+        return evs
+
+    def test_unsold_valued_with_the_own_factor(self):
+        evs = []
+        per = 80                                   # bodies per system: 80 x ~15 k = above 1 M estimated
+        for i, f in enumerate((0.8, 0.9, 1.2)):
+            nm = "Sold%d" % i
+            evs += self._system("08:0%d" % i, nm, 10 + i, per)
+            evs.append(_sale("08:3%d" % i, [nm], int(per * self.one * f)))
+        evs += self._system("09:00", "Pending", 20, 10)
+        evs += [ev("09:10", "SAAScanComplete", SystemAddress=20, BodyID=1, BodyName="Pending 1",
+                   ProbesUsed=5, EfficiencyTarget=6)]
+        u = unsold.build_unsold(evs, {}, body_value=self.bv)
+        c = u["exploration"]["calibration"]
+        self.assertEqual((c["n"], c["factor"], c["lo"], c["hi"]), (3, 0.9, 0.8, 1.2))
+        v = u["exploration"]["value"]
+        est = 9 * self.one + self.mapped
+        self.assertEqual(v["est"], est)
+        self.assertTrue(v["calibrated"])
+        self.assertEqual((v["mid"], v["lo"], v["hi"], v["n"]), (round(est * 0.9), round(est * 0.8), round(est * 1.2), 3))
+        self.assertEqual(u["total"], v["mid"])                   # no bio: the loss is the exploration data
+        # a reset of the value model leaves the older sales out
+        u2 = unsold.build_unsold(evs, {}, body_value=self.bv, value_since=10 ** 10)
+        self.assertFalse(u2["exploration"]["value"]["calibrated"])
+        self.assertEqual(u2["total"], 0)                         # not calibrated: not counted in the risk
+
+    def test_unlogged_sale_is_asked_about(self):
+        """SM1 (19.11.2026): the balance rose by about what the carried data
+        is worth, no sale was logged - the FIS asks; a mark at that moment
+        answers it. A rise that does not fit is no question."""
+        import calendar
+        from fis import ledger
+        evs = []
+        for i, f in enumerate((0.8, 0.9, 1.2)):
+            nm = "Sold%d" % i
+            evs += self._system("08:0%d" % i, nm, 10 + i, 80)
+            evs.append(_sale("08:3%d" % i, [nm], int(80 * self.one * f)))
+        evs += self._system("09:00", "Pending", 20, 80)
+        evs.append(ev("09:30", "LoadGame", Credits=1_000_000))
+        evs.append(ev("09:40", "SellOrganicData", BioData=[{"Species_Localised": "Bacterium Aurasus",
+                                                            "Value": 1_000_000, "Bonus": 0}]))
+        sold = int(80 * self.one * 0.9)                    # what Universal Cartographics paid, unlogged
+        bank = [ev("10:17", "CarrierBankTransfer", Deposit=0, PlayerBalance=2_000_000 + sold)]
+        u = unsold.build_unsold(evs + bank, {}, body_value=self.bv,
+                                rises=ledger.unexplained_income(evs + bank))
+        at = float(calendar.timegm((2026, 11, 10, 10, 17, 0)))
+        h = u["unlogged_sale"]
+        self.assertEqual((h["ts"], h["cr"], h["systems"], h["bodies"]), (at, sold, 1, 80))
+        self.assertTrue(h["value"]["calibrated"])
+        # answered with a mark at that moment: nothing unsold, no question
+        u = unsold.build_unsold(evs + bank, {}, body_value=self.bv, sold_marks={"explo": at},
+                                rises=ledger.unexplained_income(evs + bank))
+        self.assertEqual((u["exploration"]["systems"], u["unlogged_sale"]), (0, None))
+        # ten times the value is something else (and the bio sale was logged)
+        far = [ev("10:17", "CarrierBankTransfer", Deposit=0, PlayerBalance=2_000_000 + 10 * sold)]
+        u = unsold.build_unsold(evs + far, {}, body_value=self.bv, rises=ledger.unexplained_income(evs + far))
+        self.assertIsNone(u["unlogged_sale"])
+        self.assertEqual(ledger.unexplained_income(evs), [])
+
+    def test_loss_in_a_crash_has_a_value(self):
+        evs = self._system("08:00", "Gone", 30, 3) + [analyse("08:10", "Bacterium Aurasus"), ev("08:20", "Died")]
+        u = unsold.build_unsold(evs, VALUES, body_value=self.bv)
+        L = u["lost_last"]
+        self.assertEqual((L["systems"], L["bio"], L["bio_value"]), (1, 1, 1000000))
+        self.assertEqual(L["explo"]["est"], 3 * self.one)
+        self.assertFalse(L["explo"]["calibrated"])
+        self.assertEqual(u["exploration"]["systems"], 0)
+
+    def test_only_counted_without_bodyvalue(self):
+        u = unsold.build_unsold(self._system("08:00", "X", 40, 2), {})
+        self.assertIsNone(u["exploration"]["value"])
+        self.assertEqual(u["exploration"]["bodies"], 2)
 
 
 if __name__ == "__main__":

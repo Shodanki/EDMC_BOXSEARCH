@@ -55,6 +55,7 @@ ANCHORS: Dict[str, Tuple[int, int]] = {
     "bottom-right": (900, 690),
 }
 POSITIONS = tuple(ANCHORS)
+STATE_ANCHOR = (16, 440)  # 5.0 (own-3, user 18.11.): left middle, clear of every corner block
 LINE_H = {"small": 16, "normal": 20}
 BRIEFING_GAP = 8          # lines below the targets block where a briefing goes
 MAX_LINES = 8
@@ -132,6 +133,14 @@ def _known_lines(info: Dict[str, Any]) -> List[Line]:
     return []
 
 
+def _odds_line(odds: Dict[str, Any]) -> Line:
+    """FX5: the chance of a find (findodds), how many visits it is learnt
+    from, and the cell that decided it."""
+    p = float(odds.get("p") or 0.0)
+    text = "FIND ~%.0f %% (%d)  %s" % (100 * p, int(odds.get("n") or 0), odds.get("reason") or "")
+    return (text[:44], COL["new"] if p >= 0.15 else COL["data"] if p >= 0.05 else COL["dim"])
+
+
 def _lost_line(lost: Dict[str, Any]) -> Line:
     """Visited, yes - but what you did there went down with the ship."""
     bits = [b for b in ("%d scan" % lost["scan"] if lost.get("scan") else "",
@@ -150,7 +159,8 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
       level ('known' | 'inhabited' | 'checked' | 'unchecked', shells.info_level),
       lost ({scan, map, bio} - data lost there in a crash, not redone yet),
       checked_by (list of sources that covered the position),
-      region (codex region name)
+      region (codex region name),
+      odds ({p, n, reason} - FX5, the chance of a find, findlog.odds_for)
     """
     name = info.get("name") or "?"
     kind = info.get("kind") or "target"
@@ -163,6 +173,8 @@ def briefing_lines(info: Dict[str, Any]) -> List[Line]:
         # 4.10: codex region (klightspeed's region map)
         out.append((("REGION  %s" % info["region"])[:44], COL["dim"]))
     out += _known_lines(info)
+    if info.get("odds"):
+        out.append(_odds_line(info["odds"]))
     if info.get("visited"):
         out.append(("visited before", COL["dim"]))
     lost = info.get("lost")
@@ -223,6 +235,8 @@ class CockpitOverlay:
         self._mute_why: set = set()          # 4.12: why ("mining", "surface") - each lifts its own
         self._pending_brief: Optional[Tuple[List[Line], int, float]] = None
         self._targets_t = 0.0                # when the targets block was last sent
+        self._last_state: List[Line] = []    # 5.0 (own-3): gear, lights, hardpoints
+        self._state_t = 0.0
 
     # -- game screens ------------------------------------------------------
     def set_focus(self, focus: Optional[int]) -> None:
@@ -292,6 +306,10 @@ class CockpitOverlay:
         x, y = ANCHORS.get(self.position, ANCHORS["top-left"])
         if group == "info":
             return self._info_origin()
+        if group == "state":
+            # 5.0 (own-3): left middle (user 18.11.) - the bottom-left corner
+            # sat on the cockpit's own orange panels and went unseen
+            return STATE_ANCHOR
         if group in ("brief", "bio", "nav", "mine"):
             lh = LINE_H.get(self.size, 16)
             down = (self._drawn.get("targets", 0) + 1) * lh
@@ -382,6 +400,28 @@ class CockpitOverlay:
                 or now - self._targets_t < self.TARGETS_REFRESH):
             return False
         return self.draw("targets", self._last_targets, ttl=self.TARGETS_TTL)
+
+    STATE_TTL = 600         # s; sent again after half of it while unchanged
+
+    def show_state(self, lines: Sequence[Line]) -> bool:
+        """5.0 (own-3): what is still out (shipstate.reminder_lines) - drawn
+        when it changes, blanked when nothing is out or a game screen is in
+        front. True while it is on screen."""
+        lines = list(lines)
+        if self.hidden or not lines:
+            if self._drawn.get("state"):
+                self.clear("state")
+            self._last_state = []
+            return False
+        now = time.time()
+        if lines == self._last_state and self._drawn.get("state") and now - self._state_t < self.STATE_TTL / 2:
+            return True
+        if not self.draw("state", lines, ttl=self.STATE_TTL):
+            return False
+        if lines != self._last_state:
+            self.log.info("overlay | still out: %s", lines[0][0])
+        self._last_state, self._state_t = lines, now
+        return True
 
     def show_bio(self, lines: Sequence[Line], seconds: int = 8) -> bool:
         """Exobiology distance line while sampling; held back like a briefing."""

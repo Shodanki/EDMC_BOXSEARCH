@@ -69,14 +69,19 @@ export function create2D(container) {
     // bodies
     for (const b of scene.bodies) {
       const s = P(b.p), r = api.radiusPx(b.size);
+      // seen from above, a ring in the planet's equator is an ellipse: its
+      // short axis lies along the pole's direction in the plane (5.0, K2)
+      const n = b.pole, nl = n ? Math.hypot(n[0], n[1], n[2]) || 1 : 1;
+      const squash = n ? Math.abs(n[1]) / nl : 1, turn = n ? Math.atan2(n[2], n[0]) : 0;
       for (const ring of b.rings) {
+        const R = (ring.inner + ring.outer) / 2 * view.zoom;
         g.strokeStyle = "rgba(220,200,170,.45)";
-        g.lineWidth = Math.max(1, (ring.outer - ring.inner) * view.zoom);
-        g.beginPath(); g.arc(s.x, s.y, (ring.inner + ring.outer) / 2 * view.zoom, 0, Math.PI * 2); g.stroke();
+        g.lineWidth = Math.max(1, (ring.outer - ring.inner) * view.zoom * Math.max(squash, 0.3));
+        g.beginPath(); g.ellipse(s.x, s.y, R * squash, R, turn, 0, Math.PI * 2); g.stroke();
       }
       g.lineWidth = 1;
       g.fillStyle = b.colour;
-      if (b.kind === "Star") { g.shadowColor = b.colour; g.shadowBlur = 12; }
+      if (b.kind === "Star") { g.shadowColor = b.colour; g.shadowBlur = 12 * (b.glow ?? 1); }
       g.beginPath(); g.arc(s.x, s.y, r, 0, Math.PI * 2); g.fill();
       g.shadowBlur = 0;
     }

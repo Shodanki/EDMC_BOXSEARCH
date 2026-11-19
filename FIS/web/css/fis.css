@@ -166,6 +166,11 @@ body.scanlines::before {
   content: ""; pointer-events: none; position: fixed; inset: 0; z-index: 49;
   background: radial-gradient(ellipse at center, rgba(0,0,0,0) 60%, rgba(0,0,0,.45) 100%);
 }
+/* User 18.11.: over the flat panels of Federation classic, Federation bridge and Belt
+   industrial the lines make the picture restless, above all the lettering - those three
+   draw no scanlines, whatever the switch says (standard, station and next keep them) */
+:root[data-theme="console"] body.scanlines::after, :root[data-theme="bridge"] body.scanlines::after,
+:root[data-theme="industrial"] body.scanlines::after { content: none; }
 
 h1, h2, h3, .display {
   font-family: var(--font-display); font-weight: 600; letter-spacing: .08em;
@@ -253,7 +258,9 @@ body.motion .frame.appear > .frame-in { animation: frame-fill var(--t-draw) ease
 .sb-combat .v { font: 600 11px var(--font-display); letter-spacing: .14em; padding: 1px 6px; border: 1px solid currentColor; }
 .sb-combat.ready .v { color: var(--amber); }
 .sb-combat.combat .v { color: var(--red); border-color: var(--red); }
-.sb-combat.alert .v { color: var(--white); background: rgba(var(--red-rgb), .75); border-color: var(--red); animation: annblink 1s steps(2) infinite; }
+.sb-combat.alert .v { color: var(--white); background: rgba(var(--red-rgb), .75); border-color: var(--red); }
+/* an alarm blinks for 8 s from its onset, then stays lit (user 18.11.; blinkFor() in ui.js) */
+.sb-combat.alert.blinking .v { animation: annblink 1s steps(2) 8; }
 body.combat-alert .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--red-rgb), .8); }
 body.combat-ready .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--amber-rgb), .6); }
 body.combat-mode .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--red-rgb), .6); }
@@ -360,9 +367,9 @@ body.combat-mode .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--red-rgb), .6);
 .br-dist .num { font-size: 22px; }
 .br-status { font: 700 18px var(--font-display); letter-spacing: .12em; color: var(--green); }
 .br-status.disc { color: var(--violet); text-shadow: 0 0 10px rgba(var(--violet-rgb), .6); }
-body.motion .br-status.disc { animation: pulse 2.4s ease-in-out infinite; }
+body.motion .br-status.disc.blinking { animation: pulse 2.4s ease-in-out 2; }
 @keyframes pulse { 50% { opacity: .55; } }
-body.motion .blink { animation: pulse 0.9s steps(2) infinite; }
+body.motion .blink { animation: pulse 0.9s steps(2) 4; }
 .navlist { list-style: none; margin: 0; padding: 0; font-size: 12px; }
 .navlist li { display: grid; grid-template-columns: 3ch 1fr 3ch 7ch auto; gap: 8px; padding: 3px 2px; align-items: center; border-bottom: 1px dotted var(--faint); }
 .navlist li.cur { color: var(--amber); background: rgba(var(--amber-rgb), .07); }
@@ -471,21 +478,29 @@ body.solo #views { padding-top: 30px; }   /* room for the solo control */
    taller than a screen, so they scroll inside; the module list never gets cut */
 .ship-view, .carrier-view { overflow-y: auto; overscroll-behavior: contain;
   scrollbar-color: var(--faint) transparent; scrollbar-width: thin; padding-bottom: 16px; }
-.ann { display: grid; grid-template-columns: 130px 1fr 220px; gap: 12px; align-items: stretch; }
+/* (18.11., user: like a real annunciator - one compact matrix, warnings / cautions / advisories in
+   their rows, the columns aligned across all three; no rows stretched over the width that wrap
+   into a staircase. Beside it the ship and its key readings.) */
+.ann { display: grid; grid-template-columns: 130px max-content minmax(240px, 1fr); gap: 16px; align-items: stretch; }
+.ann-side { display: flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 0; }
+.ann-read { display: grid; gap: 3px; }
+.ann-r { display: grid; grid-template-columns: 70px minmax(80px, 1fr) 96px; gap: 8px; align-items: center; font-size: 12px; }
+.ann-r .num { text-align: right; }
 .ann-master { border: 2px solid rgba(var(--green-rgb), .5); display: flex; flex-direction: column; justify-content: center;
   align-items: center; text-align: center; padding: 6px; }
 .ann-master .am-k { font-size: 11px; letter-spacing: .12em; color: var(--dim); }
 .ann-master .am-v { font-size: 20px; letter-spacing: .1em; color: var(--green); }
 .ann-master.caution { border-color: var(--caut); background: rgba(var(--amber-rgb), .12); }
 .ann-master.caution .am-v, .ann-master.caution .am-k { color: var(--caut); }
-.ann-master.warning { border-color: var(--warn); background: rgba(var(--red-rgb), .18); animation: annblink 1s steps(2) infinite; }
+.ann-master.warning { border-color: var(--warn); background: rgba(var(--red-rgb), .18); }
+.ann-master.warning.blinking { animation: annblink 1s steps(2) 8; }
 .ann-master.warning .am-v, .ann-master.warning .am-k { color: var(--warn); }
 @keyframes annblink { 50% { background: rgba(var(--red-rgb), .04); } }
 .ann-bands { display: flex; flex-direction: column; gap: 4px; }
-.ann-band { display: grid; grid-template-columns: 82px 1fr; gap: 6px; align-items: start; }
+.ann-band { display: grid; grid-template-columns: 82px max-content; gap: 6px; align-items: start; }
 .ab-k { font-size: 10px; letter-spacing: .14em; padding-top: 5px; }
 .ann-band.warning .ab-k { color: var(--warn); } .ann-band.caution .ab-k { color: var(--caut); } .ann-band.advisory .ab-k { color: var(--adv); }
-.ab-lamps { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 4px; }
+.ab-lamps { display: grid; grid-template-columns: repeat(6, 124px); gap: 4px; }
 .lamp { font-size: 10.5px; letter-spacing: .06em; text-align: center; padding: 4px 2px; border: 1px solid rgba(var(--dim-rgb), .25);
   color: rgba(var(--dim-rgb), .45); background: rgba(0,0,0,.25); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lamp.warning.on { color: var(--white); background: rgba(var(--red-rgb), .75); border-color: var(--warn); box-shadow: 0 0 10px rgba(var(--red-rgb), .5); }
@@ -686,8 +701,9 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .kc-row.fav { background: rgba(var(--amber-rgb), .04); }
 .kc-main { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .kc-act { display: flex; gap: 4px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
-.kc-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.kc-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; max-width: 100%; }   /* own-6: wraps in a narrow frame (GuV overview) */
 .kc-tabs button.on { color: var(--amber); border-color: var(--amber); }
+.ct-mods { max-height: 260px; }   /* CT1: outfitting stock scrolls inside its frame */
 /* SHIP -> LOST DATA */
 .sh-lost-sum { color: var(--red); border-color: rgba(var(--red-rgb), .5); text-align: left; }
 .sh-hide { padding: 0 6px; margin: 1px 4px 1px 0; font-size: 12px; color: var(--dim); }
@@ -695,6 +711,10 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .sh-copy { padding: 0 6px; margin: 1px 6px 1px 4px; font-size: 11px; color: var(--dim); }
 .sh-copy:hover { color: var(--cyan); border-color: var(--cyan); }
 .sh-unhide { margin-top: 4px; color: var(--cyan); }
+.sh-sold { margin-top: 4px; color: var(--cyan); }
+.hop-row { padding: 2px 0; overflow-wrap: anywhere; }
+.hop-copy { padding: 0 6px; margin-right: 2px; }
+.sh-unlogged { margin-top: 6px; padding: 4px 6px; border-left: 2px solid var(--amber); }
 .sh-caps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
 .sh-lost-row { display: grid; grid-template-columns: 30px minmax(0, 1.4fr) 80px 90px minmax(0, 2fr); gap: 8px;
   align-items: baseline; padding: 3px 0; border-bottom: 1px solid rgba(var(--cyan-rgb), .08); }
@@ -734,18 +754,68 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .stat-view { height: 100%; min-height: 0; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px;
   align-content: start; height: 100%; overflow-y: auto; }
+/* 5.0 (18.11.): STATISTICS - a head with the sub-tabs, then one pane of fixed columns that
+   stack their frames - no frame stretches to a taller neighbour any more */
+.stat-main { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; min-width: 0; }
+.st-headrow { flex-wrap: wrap; }
+.st-tabs { margin: 0 0 0 auto; }
+.st-pane { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.st-cols { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 10px; align-items: start; }
+.st-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* 5.0 GV1: the books of GAIN / LOSS - statement tables and charts drawn with the theme's colours, nothing moves */
+.gv-tab td, .gv-tab th { padding: 1px 6px; }
+.gv-tab .gv-line td { color: var(--text); padding-top: 5px; }
+.gv-tab .gv-sub td:first-child { padding-left: 18px; color: var(--dim); }
+.gv-tab .gv-sum td { border-top: 1px solid var(--line); font-weight: 600; padding-top: 4px; }
+.gv-chart { width: 100%; height: auto; display: block; }
+.gv-chart .gv-pos { fill: rgba(var(--green-rgb), .75); }
+.gv-chart .gv-neg { fill: rgba(var(--red-rgb), .75); }
+.gv-chart .gv-res { fill: var(--cyan); }
+.gv-chart .gv-axis { stroke: var(--line-dim); stroke-width: 1; }
+.gv-chart .gv-lbl { fill: var(--dim); font: 11px var(--font-mono); }
+.gv-chart .gv-val { fill: var(--text); font: 10px var(--font-mono); }
+.gv-chart .gv-l1 { fill: none; stroke: var(--cyan); stroke-width: 1.6; }
+.gv-chart .gv-l2 { fill: none; stroke: var(--amber); stroke-width: 1.6; }
+.gv-legend { display: flex; gap: 14px; flex-wrap: wrap; }
+.gv-l1-key { color: var(--cyan); } .gv-l2-key { color: var(--amber); }
+/* BIO RATES side by side: atmosphere | planet class | main star */
+.st-rate-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 16px; }
+/* TIME PER SYSTEM across the pane: the work beside the system, one line each */
+.st-pane-rates .st-systime { grid-template-columns: minmax(0, 1fr) 64px 84px 44px; }
+.st-pane-rates .st-systime > span:first-child { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 12px; align-items: baseline; }
 .st-rank { display: grid; grid-template-columns: 96px 1fr 90px 44px; gap: 8px; align-items: center; font-size: 12px; margin: 3px 0; }
 .st-row { display: grid; grid-template-columns: 1fr auto 86px; gap: 8px; font-size: 12px; margin: 2px 0;
   border-bottom: 1px solid rgba(var(--cyan-rgb), .06); padding-bottom: 2px; }
 .st-row .num, .st-rank .num { text-align: right; }
+/* ST1: trends and months */
+.st-trend { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 1.3fr) 86px; gap: 8px; align-items: center;
+  font-size: 12px; margin: 2px 0; }
+.st-trend .num { text-align: right; }
+.st-spark { color: var(--cyan); display: block; }
+.st-spark svg { width: 100%; height: 30px; display: block; overflow: visible; }
+.st-spark .sp-hit { fill: transparent; }
+.st-spark .sp-hit:hover { fill: currentColor; fill-opacity: .35; }
+.st-month { grid-template-columns: 64px minmax(0, 1fr) 96px; align-items: center; }
 .lay-phone .stat-grid { grid-template-columns: 1fr; }
+.lay-phone .st-cols, .lay-tablet.orient-portrait .st-cols { grid-template-columns: 1fr; }
+.lay-phone .st-pane-rates .st-systime > span:first-child { display: block; }
 .stat-wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 460px); gap: 10px; height: 100%; min-height: 0; }
 .stat-wrap.solo { grid-template-columns: minmax(0, 1fr); }
 .stat-side { height: 100%; overflow-y: auto; min-width: 0; }
-.st-learning .st-row { grid-template-columns: minmax(0, 1fr) auto 44px; }
+.st-learning .st-row { grid-template-columns: minmax(110px, 1fr) minmax(0, 1.5fr) 44px; }
+.st-learning .st-row > span { min-width: 0; overflow-wrap: anywhere; }
+/* test finding f-tip: a long model line wraps under its own label, the reset row is a plain line */
+.st-learning .st-reset { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+/* test finding st-bio: atmospheres and planet classes are longer than a month ("Carbon dioxide") */
+.st-rate { grid-template-columns: minmax(0, 1.2fr) minmax(48px, 1fr) 104px; }
+.st-rate > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+/* own-4: TIME PER SYSTEM - system and work, time, estimate, ratio */
+.st-systime { grid-template-columns: minmax(0, 1fr) 52px 76px 36px; align-items: start; }
+.st-systime > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .st-learn-h { margin: 8px 0 2px; }
 .lay-phone .stat-wrap, .lay-tablet.orient-portrait .stat-wrap { grid-template-columns: 1fr; overflow-y: auto; align-content: start; }
-.lay-phone .stat-wrap > *, .lay-tablet.orient-portrait .stat-wrap > * { height: auto; overflow: visible; }
+.lay-phone .stat-wrap > *, .lay-tablet.orient-portrait .stat-wrap > *,
+.lay-phone .stat-main > *, .lay-tablet.orient-portrait .stat-main > * { height: auto; overflow: visible; }
 .gal-stage { flex: 1; position: relative; min-height: 300px; }
 .gal-map, .gal-gl, .gal-ov { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 .gal-ov { pointer-events: none; }
@@ -877,9 +947,10 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 :root[data-theme="industrial"] #top {
   position: relative; clip-path: none; border-bottom: 2px solid rgba(var(--dim-rgb), .5);
   background: linear-gradient(180deg, var(--bg-2), var(--bg-1)); }
+/* (18.11., user: no yellow-black stripes at the top - a plain amber edge instead) */
 :root[data-theme="industrial"] #top::after {
-  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 5px; pointer-events: none;
-  background: repeating-linear-gradient(-45deg, rgba(var(--amber-rgb), .8) 0 10px, rgba(var(--bg-rgb), .9) 10px 20px); }
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; pointer-events: none;
+  background: rgba(var(--amber-rgb), .55); }
 :root[data-theme="industrial"] .tac-stage {
   clip-path: polygon(0 0, calc(100% - var(--notch)) 0, 100% var(--notch), 100% 100%, 0 100%); border-width: 2px; }
 :root[data-theme="industrial"] .hbar .track > i {
@@ -927,3 +998,507 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
   :root[data-theme="industrial"] body.motion .frame.appear,
   :root[data-theme="station"] body.motion .frame.appear { animation: none; }
 }
+/* HD1: TRADE - one wide table */
+.trade-grid { grid-template-columns: 1fr; }
+.trade-table th { text-align: left; font-weight: normal; color: var(--dim, inherit); }
+.trade-table td.num { white-space: nowrap; }
+.trade-table th.num { text-align: right; }
+.trade-table tr.trade-hold td:first-child { color: var(--cyan); }
+
+/* 5.0 TH1 (18.11.): LEARNING STATUS is a sub-tab of its own - two columns of rows */
+.st-pane-learning .st-learning > .frame-in { column-count: 2; column-gap: 28px; }
+.st-pane-learning .st-learning .frame-title { column-span: all; }
+.st-pane-learning .st-learning .st-row, .st-pane-learning .st-learning .st-learn-h { break-inside: avoid; }
+.lay-phone .st-pane-learning .st-learning > .frame-in, .lay-tablet.orient-portrait .st-pane-learning .st-learning > .frame-in { column-count: 1; }
+
+/* 5.0 TH1: each theme's own STATISTICS (agreed directions; standard unchanged). Same data,
+   every figure stays visible; only the drawing changes. Meters carry their share in --p. */
+/* -- Federation console: rounded, pills; ranks as rings, values as pill rows */
+:root[data-theme="console"] .stat-view .st-tabs { background: rgba(var(--cyan-rgb), .08); border-radius: 999px; padding: 3px; gap: 2px; }
+:root[data-theme="console"] .stat-view .st-tabs button { border: 0; border-radius: 999px; padding: 4px 14px; }
+:root[data-theme="console"] .stat-view .st-tabs button.on { background: var(--cyan); color: var(--ink); }
+:root[data-theme="console"] .stat-view .st-ranks .frame-in { display: flex; flex-wrap: wrap; gap: 8px 0; }
+:root[data-theme="console"] .stat-view .st-ranks .frame-in > * { flex: 0 0 100%; }
+:root[data-theme="console"] .stat-view .st-ranks .frame-in > .st-rank { flex: 0 0 25%; min-width: 0; }
+:root[data-theme="console"] .stat-view .st-rank { display: grid; grid-template-columns: 1fr; grid-template-areas: "ring" "rank" "lab";
+  justify-items: center; text-align: center; gap: 1px; margin: 0; }
+:root[data-theme="console"] .stat-view .st-rank .meter { grid-area: ring; width: 46px; height: 46px; border-radius: 50%; border: 0;
+  background: conic-gradient(var(--cyan) calc(var(--p, 0) * 1%), rgba(var(--cyan-rgb), .14) 0);
+  -webkit-mask: radial-gradient(circle, transparent 16px, #000 17px); mask: radial-gradient(circle, transparent 16px, #000 17px); }
+:root[data-theme="console"] .stat-view .st-rank .meter i { display: none; }
+:root[data-theme="console"] .stat-view .st-rank .num { grid-area: ring; align-self: center; text-align: center; font-size: 11px; }
+:root[data-theme="console"] .stat-view .st-rank > span:nth-child(1) { grid-area: lab; font-size: 10px; }
+:root[data-theme="console"] .stat-view .st-rank > span:nth-child(2) { grid-area: rank; }
+:root[data-theme="console"] .stat-view .st-card:not(.st-learning) .st-row { grid-template-columns: minmax(0, 1fr) auto 72px; border: 0;
+  background: rgba(var(--cyan-rgb), .06); border-radius: 999px; padding: 2px 10px; margin: 0 0 3px; }
+/* the growth stays in the pill's line - a second line per value made the page long again */
+:root[data-theme="console"] .stat-view .st-card:not(.st-learning) .st-row > .num.small { font-size: 10px; color: var(--green); align-self: center; }
+:root[data-theme="console"] .stat-view .meter:not(.st-rank .meter) { border-radius: 999px; overflow: hidden; }
+:root[data-theme="console"] .stat-view .meter i { border-radius: 999px; }
+
+/* -- Belt industrial (TH1b, 18.11.): a working ship's retrofit console - steel bezels with
+   rivets and stencil plates (the hardware, amber; no hazard stripes - user 18.11.) around dark inset screens with corner
+   brackets (the readout, teal; no line texture - user 18.11.). Warm metal against cold screen; thin lines, small caps,
+   segmented meters with an amber end cap, chevron marks. Own design, static (no blinking). */
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view, .mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view, .settings-view) { --scr: 95, 211, 196; --scr-c: rgb(var(--scr)); }
+/* the bezel: brushed steel plate, rivets on the plate, the screen sunk in (STATISTICS, SHIP, SYSTEM, BRIEFING and CARRIER, TH3-TH6) */
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view, .mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view, .settings-view) .frame { padding: 5px; background:
+  radial-gradient(circle at left 4px top 50%, rgba(var(--dim-rgb), .9) 0 1.4px, transparent 2.2px),
+  radial-gradient(circle at right 4px top 50%, rgba(var(--dim-rgb), .9) 0 1.4px, transparent 2.2px),
+  repeating-linear-gradient(90deg, rgba(var(--white-rgb), .025) 0 1px, transparent 1px 3px),
+  linear-gradient(180deg, #2a2f31, #1b1f21); background-repeat: no-repeat, no-repeat, repeat, no-repeat; }
+:root[data-theme="industrial"] body:not(.obs) :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view, .mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view, .settings-view) .frame > .frame-in { background:
+  linear-gradient(var(--scr-c), var(--scr-c)) left 4px top 4px / 10px 1px,
+  linear-gradient(var(--scr-c), var(--scr-c)) left 4px top 4px / 1px 10px,
+  linear-gradient(var(--scr-c), var(--scr-c)) right 4px top 4px / 10px 1px,
+  linear-gradient(var(--scr-c), var(--scr-c)) right 4px top 4px / 1px 10px,
+  linear-gradient(var(--scr-c), var(--scr-c)) left 4px bottom 4px / 10px 1px,
+  linear-gradient(var(--scr-c), var(--scr-c)) left 4px bottom 4px / 1px 10px,
+  linear-gradient(var(--scr-c), var(--scr-c)) right 4px bottom 4px / 10px 1px,
+  linear-gradient(var(--scr-c), var(--scr-c)) right 4px bottom 4px / 1px 10px,
+  linear-gradient(180deg, #071113, #050b0c);
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(var(--scr), .22), inset 0 6px 14px rgba(0, 0, 0, .55); }
+/* the title is a stencilled plate riveted above the screen, with chevrons running to its edge */
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view, .mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view, .settings-view) .frame-title { background: linear-gradient(180deg, #33393b, #262b2d);
+  margin: -2px -2px 6px; padding: 3px 10px; border-bottom: 1px solid rgba(var(--amber-rgb), .45); }
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view, .mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view, .settings-view) .frame-title h2 { font-family: Impact, "Arial Narrow", "Segoe UI", sans-serif;
+  font-weight: 400; letter-spacing: .24em; font-size: 15px; color: var(--amber); }
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view, .mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view, .settings-view) .frame-title::after { content: "\203A\203A\203A"; margin-left: auto; padding-left: 10px;
+  color: rgba(var(--amber-rgb), .55); letter-spacing: -.05em; font-size: 15px; }
+:root[data-theme="industrial"] :is(.stat-view, .ship-view, .tac-view, .briefing-view, .carrier-view, .mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view, .settings-view) .frame-title .tag { color: rgba(var(--scr), .8); font-size: 10px; letter-spacing: .08em; }
+/* sub-tabs: switch plates; the active one lit on the screen colour with a chevron */
+:root[data-theme="industrial"] .stat-view .st-tabs button { border-radius: 0; border: 1px solid rgba(var(--amber-rgb), .45);
+  background: linear-gradient(180deg, #2f3537, #222729); color: var(--text); letter-spacing: .14em; font-size: 11px; }
+:root[data-theme="industrial"] .stat-view .st-tabs button.on { background: rgba(var(--scr), .18); color: var(--scr-c);
+  border-color: var(--scr-c); box-shadow: inset 3px 0 0 var(--amber); }
+:root[data-theme="industrial"] .stat-view .st-tabs button.on::before { content: "\00BB  "; color: var(--amber); }
+/* rows: labels on the screen, figures in the screen colour, faint scan separators */
+:root[data-theme="industrial"] .stat-view .st-row { border-bottom: 1px dotted rgba(var(--scr), .16); }
+/* labels stay in normal lettering: small caps fell under the 11 px minimum (checked 18.11.) */
+:root[data-theme="industrial"] .stat-view .st-row > span:first-child { color: rgba(var(--text-rgb), .78); letter-spacing: .02em; }
+:root[data-theme="industrial"] .stat-view .st-card:not(.st-learning) .st-row > .num:not(.small) { color: var(--scr-c);
+  border-left: 2px solid rgba(var(--amber-rgb), .5); padding-left: 6px; }
+:root[data-theme="industrial"] .stat-view .st-card:not(.st-learning) .st-row > .num.small:not(:empty) {
+  color: var(--green); border: 1px solid rgba(var(--green-rgb), .35); padding: 0 4px; text-align: center; font-size: 10px; align-self: center; }
+/* meters: screen-colour segments in a dark slot, an amber cap where the share ends */
+:root[data-theme="industrial"] .stat-view .meter { height: 10px; border: 1px solid rgba(var(--scr), .25);
+  background: repeating-linear-gradient(90deg, rgba(var(--scr), .10) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .stat-view .meter i { background: repeating-linear-gradient(90deg, var(--scr-c) 0 6px, transparent 6px 8px);
+  box-shadow: 2px 0 0 var(--amber); }
+:root[data-theme="industrial"] .stat-view .st-rank > span:nth-child(2) { color: var(--scr-c); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .1em; }
+:root[data-theme="industrial"] .stat-view .st-spark { color: var(--scr-c); }
+:root[data-theme="industrial"] .stat-view .st-learn-h { color: var(--amber); font-variant: all-small-caps; letter-spacing: .1em; }
+
+/* -- Station era: phosphor, prompt titles (no blinking cursor - user 18.11.), dot meters, glowing traces */
+:root[data-theme="station"] .stat-view .frame-title h2::before { content: "> "; color: var(--dim); }
+:root[data-theme="station"] .stat-view .meter { border: 0; height: 8px;
+  background: repeating-linear-gradient(90deg, rgba(var(--cyan-rgb), .18) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] .stat-view .meter i { background: repeating-linear-gradient(90deg, var(--green) 0 3px, transparent 3px 6px);
+  filter: drop-shadow(0 0 3px rgba(var(--green-rgb), .8)); }
+:root[data-theme="station"] .stat-view .st-spark { color: var(--green); filter: drop-shadow(0 0 4px rgba(var(--green-rgb), .8)); }
+:root[data-theme="station"] .stat-view .st-row { border-bottom: 1px dotted rgba(var(--cyan-rgb), .2); }
+:root[data-theme="station"] .stat-view .st-tabs button { border-radius: 2px; }
+:root[data-theme="station"] .stat-view .st-tabs button.on { color: var(--green); border-color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), .9); }
+:root[data-theme="station"] .stat-view .st-rank > span:nth-child(2) { color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), .7); }
+
+/* -- Next: flat cards with an accent line, big lead figure, underline tabs */
+:root[data-theme="next"] .stat-view .frame { clip-path: none; background: transparent; padding: 0; border-top: 2px solid var(--cyan); }
+:root[data-theme="next"] .stat-view .frame > .frame-in { clip-path: none; background: rgba(255, 255, 255, .025); }
+:root[data-theme="next"] .stat-view .frame-title { border: 0; }
+:root[data-theme="next"] .stat-view .frame-title h2 { font-family: "Segoe UI", system-ui, sans-serif; font-weight: 600; letter-spacing: .06em; text-shadow: none; }
+:root[data-theme="next"] .stat-view .st-tabs button { border: 0; border-bottom: 2px solid transparent; background: none; border-radius: 0; }
+:root[data-theme="next"] .stat-view .st-tabs button.on { border-bottom-color: var(--cyan); color: var(--cyan); }
+:root[data-theme="next"] .stat-view .st-lead { grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; font-size: 13px; }
+:root[data-theme="next"] .stat-view .st-lead > .num:not(.small) { font: 600 26px "Segoe UI", system-ui, sans-serif; color: var(--cyan); }
+:root[data-theme="next"] .stat-view .st-lead > .num.small { align-self: end; padding-bottom: 4px; }
+:root[data-theme="next"] .stat-view .st-row { border-bottom-color: rgba(255, 255, 255, .05); }
+:root[data-theme="next"] .stat-view .meter { border: 0; background: rgba(255, 255, 255, .06); height: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="station"] .stat-view .meter i, :root[data-theme="station"] .stat-view .st-spark { filter: none; }
+}
+
+/* -- Federation bridge (TH2, 18.11.) ----------------------------------------------------------
+   The newest generation of starship panels, read as principles only - own design and name:
+   near-black glass, muted lavender frames that run thick down the side and thin across the
+   top, joined by one sweep; rounded caps end every bar and make the buttons; three type sizes,
+   two text colours (normal, highlight); a restrained palette - lavender for structure, warm
+   amber for what is active, ice blue for figures, coral only for alerts. Flat, no glow, static. */
+:root[data-theme="bridge"] {
+  --bg: #000000;
+  --bg-1: #07080D;
+  --bg-2: #0E1018;
+  --cyan: #8FC7EA;
+  --green: #8FD9B0;
+  --amber: #F2A65A;
+  --red: #F06A5A;
+  --violet: #A9A6D8;
+  --text: #DCE3F0;
+  --dim: #8E95AE;
+  --faint: #232838;
+  --blue: #8FA8F0;
+  --gold: #F2C46A;
+  --ink: #05060A;
+  --bg-glow: #090B12;
+  --panel: #06070B;
+  --white: #F4F6FB;
+  --cyan-rgb: 143, 199, 234;
+  --green-rgb: 143, 217, 176;
+  --amber-rgb: 242, 166, 90;
+  --red-rgb: 240, 106, 90;
+  --violet-rgb: 169, 166, 216;
+  --dim-rgb: 142, 149, 174;
+  --bg-rgb: 0, 0, 0;
+  --bg-1-rgb: 7, 8, 13;
+  --bg-2-rgb: 14, 16, 24;
+  --white-rgb: 244, 246, 251;
+  --text-rgb: 220, 227, 240;
+  --frame-c: #9EA5C4;            /* the structure: lavender */
+  --sweep: 22px;                 /* the outer radius where side and top meet */
+  --glow: none;
+}
+/* the frame: a thick side bar sweeping into a thin top bar, the side ending in a round cap */
+:root[data-theme="bridge"] .frame { clip-path: none; background: transparent; padding: 0; }
+:root[data-theme="bridge"] .frame > .frame-in { clip-path: none;
+  border-left: 12px solid var(--frame-c); border-top: 3px solid var(--frame-c);
+  border-radius: var(--sweep) 0 0 12px; padding: 6px 12px 8px 14px;
+  background: linear-gradient(180deg, rgba(var(--white-rgb), .035), rgba(var(--white-rgb), .015)); }
+:root[data-theme="bridge"] .frame.warn > .frame-in { border-color: var(--amber); }
+:root[data-theme="bridge"] .frame.alert > .frame-in { border-color: var(--red); }
+:root[data-theme="bridge"] .frame.disc > .frame-in { border-color: var(--violet); }
+/* the title right under the top bar, right-aligned, in the narrow face (on the bar itself it was
+   clipped by scrolling panes); the tag on the left of the same line */
+:root[data-theme="bridge"] .frame-title { border-bottom: 0; justify-content: flex-end; margin: 0 0 6px; padding: 0; }
+:root[data-theme="bridge"] .frame-title h2 { order: 2; color: var(--amber); font: 600 15px var(--font-display);
+  letter-spacing: .12em; text-transform: uppercase; text-shadow: none; }
+:root[data-theme="bridge"] .frame-title .tag { order: 1; margin-right: auto; color: var(--dim); }
+/* buttons and tabs: pills with round caps, structure colour; the active one warm */
+:root[data-theme="bridge"] button { clip-path: none; border: 0; border-radius: 999px; padding: 4px 14px;
+  background: rgba(var(--dim-rgb), .28); color: var(--text); font-family: var(--font-display); letter-spacing: .08em; }
+:root[data-theme="bridge"] button:hover { background: rgba(var(--dim-rgb), .45); }
+:root[data-theme="bridge"] #tabs button[aria-selected="true"] { background: var(--amber); color: var(--ink); text-shadow: none; box-shadow: none; }
+:root[data-theme="bridge"] #top { clip-path: none; background: var(--bg); border-bottom: 3px solid var(--frame-c);
+  border-radius: 0 0 0 var(--sweep); border-left: 12px solid var(--frame-c); }
+:root[data-theme="bridge"] .tac-stage { clip-path: none; border-radius: var(--sweep) 0 0 12px; }
+:root[data-theme="bridge"] .chip { border-radius: 999px; }
+:root[data-theme="bridge"] .hbar .track, :root[data-theme="bridge"] .lbar { border: 0; border-radius: 999px; height: 6px;
+  background: rgba(var(--dim-rgb), .22); }
+:root[data-theme="bridge"] .hbar .track > i, :root[data-theme="bridge"] .lbar i { border-radius: 999px; background: var(--cyan); }
+:root[data-theme="bridge"] .num { color: var(--cyan); }
+/* STATISTICS in the bridge look */
+:root[data-theme="bridge"] .stat-view .st-tabs { gap: 4px; }
+:root[data-theme="bridge"] .stat-view .st-tabs button { text-align: right; min-width: 92px; padding: 6px 12px 3px; font-size: 12px; }
+:root[data-theme="bridge"] .stat-view .st-tabs button.on { background: var(--amber); color: var(--ink); }
+:root[data-theme="bridge"] .stat-view .st-row { border-bottom: 0; padding: 1px 0; }
+:root[data-theme="bridge"] .stat-view .st-row:nth-child(odd) { background: rgba(var(--white-rgb), .025); }
+:root[data-theme="bridge"] .stat-view .st-row > span:first-child { color: var(--dim); }
+:root[data-theme="bridge"] .stat-view .st-row > .num.small:not(:empty) { color: var(--amber); }
+:root[data-theme="bridge"] .stat-view .st-rank > span:nth-child(2) { color: var(--text); font-family: var(--font-display); letter-spacing: .1em;
+  text-transform: uppercase; }
+:root[data-theme="bridge"] .stat-view .meter { height: 6px; }
+:root[data-theme="bridge"] .stat-view .st-lead > .num:not(.small) { font: 600 20px var(--font-display); color: var(--white); }
+:root[data-theme="bridge"] .stat-view .st-learn-h { color: var(--amber); font-family: var(--font-display); letter-spacing: .1em;
+  text-transform: uppercase; }
+:root[data-theme="bridge"] .stat-view .st-spark { color: var(--cyan); }
+
+/* -- TH3 (18.11.): SHIP per theme. The hull meter is new and hidden in the standard look; the
+   hold, fuel and reservoir bars and the module health carry their share (--p) for the themes. */
+.sh-hull-m { display: none; }
+/* Federation classic: rounded - hull as a ring, pill bars, lamps as capsules */
+:root[data-theme="console"] .sh-ann .sh-hull-m { display: block; width: 54px; height: 54px; border: 0; border-radius: 50%; margin: 4px 0;
+  background: conic-gradient(var(--green) calc(var(--p, 0) * 1%), rgba(var(--dim-rgb), .18) 0);
+  -webkit-mask: radial-gradient(circle, transparent 19px, #000 20px); mask: radial-gradient(circle, transparent 19px, #000 20px); }
+:root[data-theme="console"] .sh-ann .sh-hull-m.warn { background: conic-gradient(var(--caut) calc(var(--p, 0) * 1%), rgba(var(--dim-rgb), .18) 0); }
+:root[data-theme="console"] .sh-ann .sh-hull-m.bad { background: conic-gradient(var(--warn) calc(var(--p, 0) * 1%), rgba(var(--dim-rgb), .18) 0); }
+:root[data-theme="console"] .sh-ann .sh-hull-m i { display: none; }
+:root[data-theme="console"] .sh-ann .lamp { border-radius: 999px; }
+:root[data-theme="console"] .sh-ann .ann-master { border-radius: 18px; }
+:root[data-theme="console"] .sh-log .meter, :root[data-theme="console"] .sh-eng .m-h { border-radius: 999px; overflow: hidden; height: 8px; }
+:root[data-theme="console"] .sh-log .meter i, :root[data-theme="console"] .sh-eng .m-h i { border-radius: 999px; }
+
+/* Federation bridge: thin round bars, lamps as pills with a round cap, the hull a thin bar */
+:root[data-theme="bridge"] .sh-ann .sh-hull-m { display: block; width: 150px; margin: 2px 0 4px; }
+:root[data-theme="bridge"] .sh-ann .sh-hull-m.warn i { background: var(--amber); }
+:root[data-theme="bridge"] .sh-ann .sh-hull-m.bad i { background: var(--red); }
+:root[data-theme="bridge"] .sh-ann .lamp { border-radius: 999px; border: 0; background: rgba(var(--dim-rgb), .16); color: var(--dim);
+  text-align: right; padding: 4px 10px; }
+:root[data-theme="bridge"] .sh-ann .ann-master { border-radius: 22px 6px 6px 22px; border-width: 0 0 0 10px; background: rgba(var(--white-rgb), .03); }
+:root[data-theme="bridge"] .sh-ann .ab-k { font-family: var(--font-display); letter-spacing: .12em; }
+:root[data-theme="bridge"] .sh-eng .m-h { height: 5px; border-radius: 999px; background: rgba(var(--dim-rgb), .22); }
+:root[data-theme="bridge"] .sh-eng .m-h i { border-radius: 999px; background: var(--cyan); }
+:root[data-theme="bridge"] .sh-eng .mrow.warn .m-h i { background: var(--amber); }
+:root[data-theme="bridge"] .sh-eng .mrow.bad .m-h i { background: var(--red); }
+:root[data-theme="bridge"] .sh-eng .mg-h { color: var(--amber); font-family: var(--font-display); letter-spacing: .1em; text-transform: uppercase; }
+
+/* Belt industrial: segmented teal meters with an amber cap, lamps as switch plates */
+:root[data-theme="industrial"] .sh-ann .sh-hull-m { display: block; width: 160px; margin: 3px 0; }
+:root[data-theme="industrial"] .sh-log .meter, :root[data-theme="industrial"] .sh-ann .sh-hull-m {
+  height: 10px; border: 1px solid rgba(95, 211, 196, .25); background: repeating-linear-gradient(90deg, rgba(95, 211, 196, .10) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .sh-log .meter i, :root[data-theme="industrial"] .sh-ann .sh-hull-m i {
+  background: repeating-linear-gradient(90deg, rgb(95, 211, 196) 0 6px, transparent 6px 8px); box-shadow: 2px 0 0 var(--amber); }
+:root[data-theme="industrial"] .sh-log .meter.warn i, :root[data-theme="industrial"] .sh-ann .sh-hull-m.warn i {
+  background: repeating-linear-gradient(90deg, var(--amber) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .sh-ann .sh-hull-m.bad i { background: repeating-linear-gradient(90deg, var(--red) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .sh-eng .m-h { height: 8px; background: repeating-linear-gradient(90deg, rgba(95, 211, 196, .10) 0 4px, transparent 4px 6px); }
+:root[data-theme="industrial"] .sh-eng .m-h i { background: repeating-linear-gradient(90deg, rgb(95, 211, 196) 0 4px, transparent 4px 6px); }
+:root[data-theme="industrial"] .sh-eng .mrow.warn .m-h i { background: repeating-linear-gradient(90deg, var(--amber) 0 4px, transparent 4px 6px); }
+:root[data-theme="industrial"] .sh-eng .mrow.bad .m-h i { background: repeating-linear-gradient(90deg, var(--red) 0 4px, transparent 4px 6px); }
+:root[data-theme="industrial"] .sh-ann .lamp { border-radius: 0; border-width: 2px; background: linear-gradient(180deg, #2f3537, #222729);
+  font-weight: 700; letter-spacing: .1em; }
+:root[data-theme="industrial"] .sh-eng .mg-h { color: var(--amber); letter-spacing: .14em; text-transform: uppercase; }
+
+/* Station era: phosphor dot meters, glowing lamps, the hull as a dot row */
+:root[data-theme="station"] .sh-ann .sh-hull-m { display: block; width: 160px; margin: 3px 0; }
+:root[data-theme="station"] .sh-log .meter, :root[data-theme="station"] .sh-ann .sh-hull-m, :root[data-theme="station"] .sh-eng .m-h {
+  border: 0; height: 8px; background: repeating-linear-gradient(90deg, rgba(var(--cyan-rgb), .18) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] .sh-log .meter i, :root[data-theme="station"] .sh-ann .sh-hull-m i, :root[data-theme="station"] .sh-eng .m-h i {
+  background: repeating-linear-gradient(90deg, var(--green) 0 3px, transparent 3px 6px); filter: drop-shadow(0 0 3px rgba(var(--green-rgb), .8)); }
+:root[data-theme="station"] .sh-log .meter.warn i, :root[data-theme="station"] .sh-ann .sh-hull-m.warn i, :root[data-theme="station"] .sh-eng .mrow.warn .m-h i {
+  background: repeating-linear-gradient(90deg, var(--amber) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] .sh-ann .sh-hull-m.bad i, :root[data-theme="station"] .sh-eng .mrow.bad .m-h i {
+  background: repeating-linear-gradient(90deg, var(--red) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] .sh-ann .lamp.on { text-shadow: 0 0 6px currentColor; }
+:root[data-theme="station"] .sh-eng .mg-h::before { content: "> "; color: var(--dim); }
+
+/* Next: flat, the hull figure large in the accent, thin flat bars */
+:root[data-theme="next"] .sh-ann .sh-hull { font: 600 28px "Segoe UI", system-ui, sans-serif; }
+:root[data-theme="next"] .sh-ann .sh-hull-m { display: block; width: 160px; height: 4px; border: 0; background: rgba(255, 255, 255, .08); }
+:root[data-theme="next"] .sh-log .meter, :root[data-theme="next"] .sh-eng .m-h { border: 0; height: 5px; background: rgba(255, 255, 255, .07); }
+:root[data-theme="next"] .sh-ann .lamp { border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="station"] .sh-log .meter i, :root[data-theme="station"] .sh-ann .sh-hull-m i, :root[data-theme="station"] .sh-eng .m-h i { filter: none; }
+}
+
+/* -- TH4 (18.11.): SYSTEM per theme - the frames on the side; the map takes the theme's colours */
+/* Federation classic: the flight plan as capsules, the next stop filled, report headings as pills */
+:root[data-theme="console"] .tac-view .leg { border-left: 0; border-radius: 999px; margin: 0 0 3px; padding: 3px 10px;
+  background: rgba(var(--cyan-rgb), .06); }
+:root[data-theme="console"] .tac-view .leg.next { background: var(--cyan); color: var(--ink); }
+:root[data-theme="console"] .tac-view .leg.next .lg-name, :root[data-theme="console"] .tac-view .leg.next .lg-ls,
+:root[data-theme="console"] .tac-view .leg.next .lg-min, :root[data-theme="console"] .tac-view .leg.next .lg-n { color: var(--ink); }
+:root[data-theme="console"] .tac-view .sr-h { display: inline-block; border-radius: 999px; padding: 1px 10px;
+  background: rgba(var(--violet-rgb), .22); color: var(--text); }
+:root[data-theme="console"] .tac-view .sr-line::before { content: "\25CF  "; font-size: 8px; vertical-align: 2px; }
+
+/* Federation bridge: numbered blocks - the stop number on a lavender cap, the next stop amber */
+:root[data-theme="bridge"] .tac-view .leg { grid-template-columns: 4ch 1fr auto 4ch; border-left: 0; padding: 2px 6px 2px 0; }
+:root[data-theme="bridge"] .tac-view .leg .lg-n { background: var(--frame-c); color: var(--ink); border-radius: 999px 0 0 999px;
+  text-align: right; padding: 0 6px; font-family: var(--font-display); }
+:root[data-theme="bridge"] .tac-view .leg.next { background: rgba(var(--amber-rgb), .10); }
+:root[data-theme="bridge"] .tac-view .leg.next .lg-n { background: var(--amber); }
+:root[data-theme="bridge"] .tac-view .leg .lg-ls, :root[data-theme="bridge"] .tac-view .leg .lg-min { color: var(--cyan); }
+:root[data-theme="bridge"] .tac-view .leg.gs { border-top: 0; margin-top: 6px; }
+:root[data-theme="bridge"] .tac-view .sr-h { color: var(--amber); font: 600 12px var(--font-display); letter-spacing: .14em; text-align: right; }
+:root[data-theme="bridge"] .tac-view .sr-line::before { content: "\2014  "; color: var(--frame-c); }
+:root[data-theme="bridge"] .tac-view .tac-sys { font-size: 20px; text-transform: uppercase; letter-spacing: .1em; }
+
+/* Belt industrial: the stop as a plate row, distance and time in readout boxes, the next lit teal */
+:root[data-theme="industrial"] .tac-view .leg { border-left: 3px solid transparent; border-bottom: 1px dotted rgba(95, 211, 196, .16); }
+:root[data-theme="industrial"] .tac-view .leg .lg-ls, :root[data-theme="industrial"] .tac-view .leg .lg-min { color: rgb(95, 211, 196);
+  background: rgba(0, 0, 0, .35); border: 1px solid rgba(95, 211, 196, .25); padding: 0 4px; }
+:root[data-theme="industrial"] .tac-view .leg.next { border-left-color: var(--amber); background: rgba(95, 211, 196, .12); }
+:root[data-theme="industrial"] .tac-view .leg.next .lg-name { color: rgb(95, 211, 196); font-weight: 700; }
+:root[data-theme="industrial"] .tac-view .sr-h { color: var(--amber); letter-spacing: .2em; }
+:root[data-theme="industrial"] .tac-view .sr-line::before { content: "\203A  "; color: var(--amber); }
+
+/* Station era: the flight plan as terminal lines, the next one marked with a static prompt */
+:root[data-theme="station"] .tac-view .leg { border-left: 0; border-bottom: 1px dotted rgba(var(--cyan-rgb), .18); }
+:root[data-theme="station"] .tac-view .leg .lg-n::before { content: "  "; white-space: pre; }
+:root[data-theme="station"] .tac-view .leg.next { background: none; }
+:root[data-theme="station"] .tac-view .leg.next .lg-n::before { content: "> "; color: var(--green); }
+:root[data-theme="station"] .tac-view .leg.next .lg-name { color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), .7); }
+:root[data-theme="station"] .tac-view .leg .lg-ls, :root[data-theme="station"] .tac-view .leg .lg-min { text-shadow: 0 0 5px rgba(var(--green-rgb), .5); }
+:root[data-theme="station"] .tac-view .sr-h::before { content: "> "; }
+:root[data-theme="station"] .tac-view .sr-line::before { content: "- "; color: var(--dim); }
+
+/* Next: the system name large in the accent, the next stop with an accent line and large figures */
+:root[data-theme="next"] .tac-view .tac-sys { font: 600 24px "Segoe UI", system-ui, sans-serif; color: var(--cyan); letter-spacing: .02em; }
+:root[data-theme="next"] .tac-view .leg { border-left: 0; }
+:root[data-theme="next"] .tac-view .leg.next { box-shadow: inset 3px 0 0 var(--cyan); background: rgba(255, 255, 255, .04); }
+:root[data-theme="next"] .tac-view .leg.next .lg-name { color: var(--cyan); font-size: 14px; }
+:root[data-theme="next"] .tac-view .sr-h { color: var(--cyan); letter-spacing: .08em; }
+:root[data-theme="next"] .tac-view .sr-line::before { content: ""; }
+:root[data-theme="next"] .tac-view .sr-line { padding-left: 0; text-indent: 0; }
+
+/* -- TH5 (18.11.): BRIEFING per theme - the target block, the sphere bars and the navpoints */
+/* Federation classic: keys as violet pills, rows as capsules, the current hop filled */
+:root[data-theme="console"] .briefing-view .br-row { border-bottom: 0; background: rgba(var(--cyan-rgb), .05); border-radius: 999px; padding: 6px 14px; }
+:root[data-theme="console"] .briefing-view .br-k { background: rgba(var(--violet-rgb), .28); color: var(--text); border-radius: 999px;
+  padding: 2px 10px; text-align: center; align-self: center; font-size: 11px; }
+:root[data-theme="console"] .briefing-view .navlist li { border-bottom: 0; border-radius: 999px; padding: 3px 10px; margin-bottom: 3px;
+  background: rgba(var(--cyan-rgb), .05); }
+:root[data-theme="console"] .briefing-view .navlist li.cur { background: var(--cyan); color: var(--ink); }
+:root[data-theme="console"] .briefing-view .navlist li.cur .nl-n, :root[data-theme="console"] .briefing-view .navlist li.cur .nl-ly { color: var(--ink); }
+
+/* Federation bridge: keys as lavender blocks with right-aligned text, the target in white capitals,
+   each hop number on a lavender cap - the current one amber */
+:root[data-theme="bridge"] .briefing-view .br-row { border-bottom: 0; grid-template-columns: 13ch 1fr; }
+:root[data-theme="bridge"] .briefing-view .br-k { background: var(--frame-c); color: var(--ink); text-align: right; padding: 3px 10px 1px;
+  border-radius: 999px 0 0 999px; align-self: center; font-size: 12px; }
+:root[data-theme="bridge"] .briefing-view .br-name { color: var(--white); text-transform: uppercase; letter-spacing: .08em; text-shadow: none; }
+:root[data-theme="bridge"] .briefing-view .br-status { color: var(--amber); }
+:root[data-theme="bridge"] .briefing-view .navlist li { border-bottom: 0; padding: 2px 6px 2px 0; }
+:root[data-theme="bridge"] .briefing-view .navlist .nl-n { background: var(--frame-c); color: var(--ink); border-radius: 999px 0 0 999px;
+  text-align: right; padding: 0 6px; font-family: var(--font-display); }
+:root[data-theme="bridge"] .briefing-view .navlist li.cur { background: rgba(var(--amber-rgb), .10); color: var(--text); }
+:root[data-theme="bridge"] .briefing-view .navlist li.cur .nl-n { background: var(--amber); }
+:root[data-theme="bridge"] .briefing-view .navlist .nl-ly { color: var(--cyan); }
+
+/* Belt industrial: keys as amber stencil, figures teal, the sphere as segmented teal meters with an
+   amber cap, the current hop lit teal behind an amber rule */
+:root[data-theme="industrial"] .briefing-view .br-k { color: var(--amber); letter-spacing: .24em; }
+:root[data-theme="industrial"] .briefing-view .br-row { border-bottom: 1px dotted rgba(95, 211, 196, .16); }
+:root[data-theme="industrial"] .briefing-view .br-dist .num, :root[data-theme="industrial"] .briefing-view .br-status { color: rgb(95, 211, 196); }
+:root[data-theme="industrial"] .briefing-view .hbar .track { height: 10px; border: 1px solid rgba(95, 211, 196, .25);
+  background: repeating-linear-gradient(90deg, rgba(95, 211, 196, .10) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .briefing-view .hbar .track > i { opacity: 1;
+  background: repeating-linear-gradient(90deg, rgb(95, 211, 196) 0 6px, transparent 6px 8px); box-shadow: 2px 0 0 var(--amber); }
+:root[data-theme="industrial"] .briefing-view .hbar .val { color: rgb(95, 211, 196); }
+:root[data-theme="industrial"] .briefing-view .navlist li { border-left: 3px solid transparent; border-bottom: 1px dotted rgba(95, 211, 196, .16); }
+:root[data-theme="industrial"] .briefing-view .navlist li.cur { border-left-color: var(--amber); background: rgba(95, 211, 196, .12);
+  color: rgb(95, 211, 196); }
+
+/* Station era: keys after a prompt, the navpoints as terminal lines, the current one with a static "> " */
+:root[data-theme="station"] .briefing-view .br-k::before { content: "> "; color: var(--dim); }
+:root[data-theme="station"] .briefing-view .br-name, :root[data-theme="station"] .briefing-view .br-status {
+  text-shadow: 0 0 8px rgba(var(--green-rgb), .5); }
+:root[data-theme="station"] .briefing-view .hbar .track { border: 0; background: repeating-linear-gradient(90deg, rgba(var(--cyan-rgb), .18) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] .briefing-view .hbar .track > i { opacity: 1;
+  background: repeating-linear-gradient(90deg, var(--green) 0 3px, transparent 3px 6px); filter: drop-shadow(0 0 3px rgba(var(--green-rgb), .8)); }
+:root[data-theme="station"] .briefing-view .navlist li { grid-template-columns: 5ch 1fr 3ch 7ch auto; }   /* room for the prompt */
+:root[data-theme="station"] .briefing-view .navlist .nl-n::before { content: "  "; white-space: pre; }
+:root[data-theme="station"] .briefing-view .navlist li.cur { background: none; color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), .7); }
+:root[data-theme="station"] .briefing-view .navlist li.cur .nl-n::before { content: "> "; }
+
+/* Next: the target and its distance large in the accent, flat bars, the current hop with an accent line */
+:root[data-theme="next"] .briefing-view .br-name { font: 600 30px "Segoe UI", system-ui, sans-serif; color: var(--cyan); text-shadow: none; }
+:root[data-theme="next"] .briefing-view .br-dist .num { font: 600 26px "Segoe UI", system-ui, sans-serif; }
+:root[data-theme="next"] .briefing-view .br-k { font-family: "Segoe UI", system-ui, sans-serif; letter-spacing: .08em; }
+:root[data-theme="next"] .briefing-view .br-row { border-bottom-color: rgba(255, 255, 255, .05); }
+:root[data-theme="next"] .briefing-view .hbar .track { border: 0; height: 5px; background: rgba(255, 255, 255, .07); }
+:root[data-theme="next"] .briefing-view .navlist li { border-bottom-color: rgba(255, 255, 255, .05); }
+:root[data-theme="next"] .briefing-view .navlist li.cur { background: rgba(255, 255, 255, .04); box-shadow: inset 3px 0 0 var(--cyan); color: var(--cyan); }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="station"] .briefing-view .hbar .track > i { filter: none; }
+}
+
+/* -- TH6 (18.11.): CARRIER per theme - lines, tritium tank, hold, services, last jumps, air wing */
+/* Federation classic: keys as violet pills, the tank and hold as capsules, services as pills */
+:root[data-theme="console"] .carrier-view .ns-row { border-bottom: 0; }
+:root[data-theme="console"] .carrier-view .ns-k { background: rgba(var(--violet-rgb), .24); color: var(--text); border-radius: 999px;
+  padding: 1px 10px; text-align: center; align-self: center; }
+:root[data-theme="console"] .carrier-view .meter, :root[data-theme="console"] .carrier-view .hold-stack { border-radius: 999px; overflow: hidden; }
+:root[data-theme="console"] .carrier-view .meter i { border-radius: 999px; }
+:root[data-theme="console"] .carrier-view .svc .chip { border-radius: 999px; }
+:root[data-theme="console"] .carrier-view .cag-role { border-radius: 16px; }
+
+/* Federation bridge: keys as lavender blocks, thin round tank and hold, services as pills (on: amber) */
+:root[data-theme="bridge"] .carrier-view .ns-row { border-bottom: 0; grid-template-columns: 150px 1fr; }
+/* the keys at the rows' own size (user 18.11.: at 11 px in the narrow face CARRIER looked as if at
+   another resolution than the other pages) */
+:root[data-theme="bridge"] .carrier-view .ns-k { background: var(--frame-c); color: var(--ink); text-align: right; padding: 3px 10px 2px;
+  border-radius: 999px 0 0 999px; align-self: center; font-family: var(--font-display); font-size: 12.5px; font-weight: 600;
+  letter-spacing: .04em; line-height: 1.25; }
+:root[data-theme="bridge"] .carrier-view .ns-name { font-family: var(--font-display); text-transform: uppercase; }
+:root[data-theme="bridge"] .carrier-view .ns-sub { color: var(--amber); font-family: var(--font-display); text-align: right; }
+:root[data-theme="bridge"] .carrier-view .hold-stack { border: 0; height: 8px; border-radius: 999px; overflow: hidden; background: rgba(var(--dim-rgb), .22); }
+:root[data-theme="bridge"] .carrier-view .svc .chip { border-radius: 999px; border: 0; background: rgba(var(--dim-rgb), .22); color: var(--dim); }
+:root[data-theme="bridge"] .carrier-view .svc .chip.mapped { background: var(--frame-c); color: var(--ink); }
+:root[data-theme="bridge"] .carrier-view .svc .chip.warn { background: var(--amber); color: var(--ink); }
+:root[data-theme="bridge"] .carrier-view .ns-tab tr:nth-child(even) td { background: rgba(var(--white-rgb), .025); }
+:root[data-theme="bridge"] .carrier-view .ns-tab td { border-bottom: 0; }
+:root[data-theme="bridge"] .carrier-view .cag-role { border: 0; border-radius: 22px 6px 6px 22px; background: rgba(var(--dim-rgb), .16); }
+:root[data-theme="bridge"] .carrier-view .cag-role.sel { background: var(--amber); color: var(--ink); }
+:root[data-theme="bridge"] .carrier-view .cag-role.sel .cr-v, :root[data-theme="bridge"] .carrier-view .cag-role.sel .cr-b { color: var(--ink); }
+
+/* Belt industrial: amber stencil keys, teal figures, the tank as segments with an amber cap,
+   services as switch plates (on: lit teal), readout cells in the jump table */
+:root[data-theme="industrial"] .carrier-view .ns-k { color: var(--amber); letter-spacing: .2em; }
+:root[data-theme="industrial"] .carrier-view .ns-row { border-bottom: 1px dotted rgba(95, 211, 196, .16); }
+:root[data-theme="industrial"] .carrier-view .ns-v .big { color: rgb(95, 211, 196); }
+:root[data-theme="industrial"] .carrier-view .meter { height: 10px; border: 1px solid rgba(95, 211, 196, .25);
+  background: repeating-linear-gradient(90deg, rgba(95, 211, 196, .10) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .carrier-view .meter i { background: repeating-linear-gradient(90deg, rgb(95, 211, 196) 0 6px, transparent 6px 8px);
+  box-shadow: 2px 0 0 var(--amber); }
+:root[data-theme="industrial"] .carrier-view .meter.warn i { background: repeating-linear-gradient(90deg, var(--amber) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] .carrier-view .svc .chip { border-radius: 0; border-width: 2px; background: linear-gradient(180deg, #2f3537, #222729);
+  letter-spacing: .08em; }
+:root[data-theme="industrial"] .carrier-view .svc .chip.mapped { border-color: rgb(95, 211, 196); color: rgb(95, 211, 196);
+  box-shadow: inset 3px 0 0 var(--amber); }
+:root[data-theme="industrial"] .carrier-view .ns-tab td.num { color: rgb(95, 211, 196); }
+:root[data-theme="industrial"] .carrier-view .ns-sub { color: var(--amber); letter-spacing: .2em; }
+:root[data-theme="industrial"] .carrier-view .cag-role { border-radius: 0; border-width: 2px; background: linear-gradient(180deg, #262b2d, #1c2022); }
+:root[data-theme="industrial"] .carrier-view .cag-role.sel { border-color: rgb(95, 211, 196); box-shadow: inset 3px 0 0 var(--amber); }
+
+/* Station era: keys after a prompt, the tank as phosphor dots, services glowing when on */
+:root[data-theme="station"] .carrier-view .ns-k::before { content: "> "; }
+:root[data-theme="station"] .carrier-view .ns-row { border-bottom: 1px dotted rgba(var(--cyan-rgb), .18); }
+:root[data-theme="station"] .carrier-view .meter { border: 0; height: 8px;
+  background: repeating-linear-gradient(90deg, rgba(var(--cyan-rgb), .18) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] .carrier-view .meter i { background: repeating-linear-gradient(90deg, var(--green) 0 3px, transparent 3px 6px);
+  filter: drop-shadow(0 0 3px rgba(var(--green-rgb), .8)); }
+:root[data-theme="station"] .carrier-view .svc .chip.mapped { color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), .7); }
+:root[data-theme="station"] .carrier-view .ns-tab td { border-bottom: 1px dotted rgba(var(--cyan-rgb), .15); }
+:root[data-theme="station"] .carrier-view .ns-sub::before { content: "> "; }
+
+/* Next: the range and the name large in the accent, flat tank and hold, quiet tags */
+:root[data-theme="next"] .carrier-view .ns-name { font: 600 24px "Segoe UI", system-ui, sans-serif; letter-spacing: .02em; }
+:root[data-theme="next"] .carrier-view .ns-v .big { font: 600 26px "Segoe UI", system-ui, sans-serif; color: var(--cyan); }
+:root[data-theme="next"] .carrier-view .ns-row { border-bottom-color: rgba(255, 255, 255, .05); }
+:root[data-theme="next"] .carrier-view .meter, :root[data-theme="next"] .carrier-view .hold-stack { border: 0; height: 6px; background: rgba(255, 255, 255, .07); }
+:root[data-theme="next"] .carrier-view .svc .chip { border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="station"] .carrier-view .meter i { filter: none; }
+}
+
+/* -- TH7 (18.11.): the remaining pages per theme through their shared building blocks - bars,
+   chips and sub-tabs (GAIN / LOSS and TRADE use the STATISTICS blocks already) */
+:root[data-theme="console"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) :is(.lbar, .hbar .track) { border-radius: 999px; overflow: hidden; }
+:root[data-theme="console"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) :is(.lbar i, .hbar .track > i) { border-radius: 999px; }
+:root[data-theme="console"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .chip { border-radius: 999px; }
+:root[data-theme="console"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .kc-tabs { background: rgba(var(--cyan-rgb), .08); border-radius: 999px; padding: 3px; gap: 2px; display: inline-flex; }
+:root[data-theme="console"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .kc-tabs button { border: 0; border-radius: 999px; }
+:root[data-theme="console"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .kc-tabs button.on { background: var(--cyan); color: var(--ink); }
+
+:root[data-theme="bridge"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .chip { border-radius: 999px; border: 0; background: rgba(var(--dim-rgb), .22); }
+:root[data-theme="bridge"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .kc-tabs button.on { background: var(--amber); color: var(--ink); }
+:root[data-theme="bridge"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) table tr:nth-child(even) td { background: rgba(var(--white-rgb), .025); }
+
+:root[data-theme="industrial"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) :is(.lbar, .hbar .track) { height: 10px; border: 1px solid rgba(95, 211, 196, .25);
+  background: repeating-linear-gradient(90deg, rgba(95, 211, 196, .10) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) :is(.lbar i, .hbar .track > i) { opacity: 1;
+  background: repeating-linear-gradient(90deg, rgb(95, 211, 196) 0 6px, transparent 6px 8px); box-shadow: 2px 0 0 var(--amber); }
+:root[data-theme="industrial"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .lbar.warn i { background: repeating-linear-gradient(90deg, var(--amber) 0 6px, transparent 6px 8px); }
+:root[data-theme="industrial"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .chip { border-radius: 0; border-width: 2px; background: linear-gradient(180deg, #2f3537, #222729); }
+:root[data-theme="industrial"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .kc-tabs button { border-radius: 0; border: 1px solid rgba(var(--amber-rgb), .45); letter-spacing: .14em; }
+:root[data-theme="industrial"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .kc-tabs button.on { background: rgba(95, 211, 196, .18); color: rgb(95, 211, 196); border-color: rgb(95, 211, 196);
+  box-shadow: inset 3px 0 0 var(--amber); }
+
+:root[data-theme="station"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) :is(.lbar, .hbar .track) { border: 0; height: 8px;
+  background: repeating-linear-gradient(90deg, rgba(var(--cyan-rgb), .18) 0 3px, transparent 3px 6px); }
+:root[data-theme="station"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) :is(.lbar i, .hbar .track > i) { opacity: 1;
+  background: repeating-linear-gradient(90deg, var(--green) 0 3px, transparent 3px 6px); filter: drop-shadow(0 0 3px rgba(var(--green-rgb), .8)); }
+:root[data-theme="station"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .kc-tabs button.on { color: var(--green); border-color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), .9); }
+:root[data-theme="station"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .kc-tabs button.on::before { content: "> "; }
+:root[data-theme="station"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) table td { border-bottom: 1px dotted rgba(var(--cyan-rgb), .15); }
+
+:root[data-theme="next"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) :is(.lbar, .hbar .track) { border: 0; height: 6px; background: rgba(255, 255, 255, .07); }
+:root[data-theme="next"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .chip { border-radius: 4px; }
+:root[data-theme="next"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .kc-tabs button { border: 0; border-bottom: 2px solid transparent; background: none; border-radius: 0; }
+:root[data-theme="next"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) .kc-tabs button.on { border-bottom-color: var(--cyan); color: var(--cyan); }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="station"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) :is(.lbar i, .hbar .track > i) { filter: none; }
+}
+
+/* 5.0 CARRIER > JUMP PLAN */
+.jp .jp-q { flex: 1 1 14em; min-width: 10em; }
+.jp-tab tr.jp-done td { color: var(--dim); }
+.jp-tab tr.jp-next td { background: rgba(var(--dim-rgb), .14); }
+.jp-tab .jp-copy { padding: 0 6px; margin-left: 4px; }
+/* headers and numbers centred over each other; the system name stays left */
+.ns-tab.jp-tab th, .ns-tab.jp-tab td, .ns-tab.jp-tab td.num { text-align: center; }
+.ns-tab.jp-tab th:nth-child(2), .ns-tab.jp-tab td:nth-child(2) { text-align: left; }
+.ns-tab.jp-tab td:last-child { text-align: left; white-space: nowrap; }
+.jp-spansh summary { cursor: pointer; }
+.jp-paste { width: 100%; box-sizing: border-box; font: 12px var(--font-mono); }

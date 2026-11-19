@@ -1,4 +1,4 @@
-# SHBOXSEARCH v4.12.1
+# SHBOXSEARCH v5.0.0
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -25,6 +25,11 @@ and shows your key bindings, both on request. Brain Trees with several
 species per signal and belt clusters in the FSS count are no longer
 miscounted, and the surface compass, mining block and bio distance are
 back on the overlay - see [What changed in 4.12](#what-changed-in-412).
+
+**5.0** puts finding systems no database knows first, draws every orbit
+where the game has it, checks every learnt value against what really
+happened, and plans your carrier's jumps - with it the plugin and the FIS
+are feature-complete. See [What changed in 5.0](#what-changed-in-50).
 
 **Licence:** [Mozilla Public License 2.0](LICENSE) since 4.7 - use, change and
 share it freely; whoever passes on a changed file of this project keeps that
@@ -142,9 +147,12 @@ check and are never touched by it.
 
 SHBOX FIS keeps running when EDMC is closed: after an update close its
 window (or end `python -m fis`) so it starts with the new files. Keep
-`FIS/fis.ini`, `FIS/favourites.json`, `FIS/lost_hidden.json` and
-`FIS/vehicle_tanks.json` - your settings, favourites, hidden losses and the
-tank sizes the FIS learnt.
+`FIS/fis.ini`, `FIS/favourites.json`, `FIS/lost_hidden.json`,
+`FIS/vehicle_tanks.json`, `FIS/learn_reset.json`, `FIS/market_means.json` and
+`FIS/jump_plan.json` - your settings, favourites, hidden losses, the tank
+sizes the FIS learnt, when you reset a learnt model (STATISTICS > LEARNING
+STATUS), the galactic mean prices of the markets you opened (TRADE) and your
+carrier's jump plan with your "target full" reports (CARRIER > JUMP PLAN).
 
 ## Files
 
@@ -185,6 +193,8 @@ on first run and is **your data** - never overwrite it on an update.
 | `bodyvalue.py` | 157 | What a body's exploration data is worth - an estimate from the community formula | — |
 | `situation.py` | 478 | The overlay's situation column: the board and its short texts (warnings, landing card, system value, ring, boxel, route fuel, carrier, session) | — |
 | `cockpitinfo.py` | 507 | Feeds the situation column from the journal and Status.json, draws it every 5 s | `situation`, `bodyvalue` |
+| `shipstate.py` | 50 | Out of supercruise: landing gear, lights, hardpoints, cargo scoop still out in the ship, SRV or Nomad - one overlay line on the left | — |
+| `suittemp.py` | 95 | On foot in heat or cold: the suit's health and the time left at the rate it falls now | — |
 | `biosig.py` | 97 | Open biological signals: one signal per genus, but Brain Trees can be several species on one body | — |
 | `journalscan.py` | 325 | Reading the journal files: last location and body, bodies approached, work timings (live and replay), fuel replay | — |
 | `edts_pgnames/` | | Sector names computed with EDTS's algorithm, hand-authored sector table (third-party, BSD 3-Clause, see its `SOURCE.md`) | — |
@@ -363,7 +373,12 @@ licence, so none of its code or text is used.
 * **EDMCModernOverlay** (or the older EDMCOverlay) - optional; the cockpit
   overlay is drawn through its `edmcoverlay` interface when it is installed.
 * **EDDiscovery** - its system database `EDDSystem.sqlite` is read as the
-  local source; nothing is written to it.
+  local source; nothing is written to it. With *learn from EDDiscovery's
+  archive* (settings, Data; off by default) the fuel model and the tonnes
+  per rock also learn from your older journal lines in `EDDUser.sqlite`,
+  and the FIS has the same switch (*Learn from the EDDiscovery archive*)
+  for its statistics, gain / loss and models - read only, only the asked
+  events, never the EDSM API key stored in the same file.
 * **Spansh** and **EDSM** - asked over their public web interfaces, in shells
   and only when needed, at most 50 requests per service and UTC day, one at a
   time through one polite gateway (`netgate.py`). The rules are in
@@ -704,9 +719,15 @@ The plugin notices a locked file and reads it again later.
 
 *FIS.* The flight information system asks Spansh only on your click in
 CARRIER - *online* at a favourite carrier (where it was last reported, at
-most once per carrier every six hours) and *find carriers near me* (the
-carriers within 100 ly, at most once a day per region) - through the same
-gateway and daily cap.
+most once per carrier every six hours), *find carriers near me* (the
+carriers within 100 ly - the one request reaches 5000 ly, so with none that
+close it lists the nearest you may dock at that repair - at most once a day
+per region) and, in JUMP PLAN for
+a target in the bubble, *known carriers in the target* (the same request
+and cache) - through the same gateway and daily cap. The jump plan itself
+is planned on your PC (your systems, then EDDiscovery's file); Spansh's
+fleet carrier router is only opened in your own browser, and the route you
+export there is read back from the page - the FIS sends it nothing.
 
 *Route check.* When you plot a route of two jumps or more through space no
 source was asked about (outside the fetched shells), its systems are checked
@@ -1463,6 +1484,7 @@ what changed in each release from 4.1 on.
 | 4.11.0 | load.py split into modules, relative imports, EDMC's complexity limit kept (journal handling 69 -> 7); FIS: your own limits for unsold data; EDMC closes after the plugin's work; settings through EDMC 5's API; FIS: Python found by itself, no error details to the browser, damaged positions skipped |
 | 4.12.0 | overlay situation column (star ahead, data at stake, landing card, system value, ring, boxel, route fuel, carrier countdown, session tally); ground mining: Rhino and ship hold; ship flown off - recall it; the hovering ship waits, SHIP AWAY from 2.3 km; surface compass stays on the ground, not on foot aboard the carrier; FIS PLANET follows you; settings on tabs; a finished system can get no route; mining overlay: limpets, full in, spare limpets; cockpit overlay in a window of its own (beta); file check at every start; probe names EDSM knows become flight targets; FIS: carriers near you (Spansh, on a click), your key bindings in SHIP; fixes: surface compass, mining block, bio distance and the self test button work again (broken since 4.11), Brain Trees - one signal, several species, belt clusters no longer fill up the FSS count; every function within EDMC's complexity limit, documented, self tests out of the download |
 | 4.12.1 | fix: when EDMC passes on no journal events (the game wrote its journal anew), the plugin warns, stores the missed landings, samples and finds itself and places them by the stored track; a replay fills in positions marks were stored without |
+| 5.0.0 | finding unknown systems first: chance of a find per candidate, probes in the order that pays, proofs of absence, NEXT HOP; orbits in their parent's frame (94 % within 1 %), far companions and brown dwarfs drawn right; a reality check of every learnt model; faster pages; STATISTICS in sub-tabs, forecasts, GAIN / LOSS as a company's books, TRADE, CARRIER TRADE and JUMP PLAN; themes on every page; LIFE SUPPORT lamp; fixes |
 
 ## Fixed since v3.0.8
 
@@ -1753,8 +1775,19 @@ DSS  3 to map ~+9.8 M Cr · 3 first
 What you were paid is read once from your journals at the start; nothing
 leaves your computer.
 
+**Still out (5.0).** Out of supercruise and neither docked nor landed, one
+blue line on the left, half way down, names what is still out - `SHIP
+GEAR DOWN · HARDPOINTS OUT · LIGHTS ON` (and an open cargo scoop); in the
+SRV and the Nomad lander their gear, hardpoints, lights or high beam
+(`NOMAD GEAR DOWN · LIGHTS ON`). The game shows these as small icons; this is the
+second look. On foot in heat or cold the same place shows `SUIT VERY HOT
+812 K`, the suit's health and - once it falls - `~0:40 left` at the rate
+it falls now (measured live from Status.json, with the seconds it rests
+on). Each on/off in the settings.
+
 *Preferences -> SHBOXSEARCH -> Overlay*: on/off, briefing on/off,
 the situation column's warnings, places and session tally each on/off,
+the "still out" line and the suit warning on/off,
 position (four corners). The preferences show whether an overlay plugin was
 found. Without one nothing happens. The overlay is a separate transparent
 window drawn by the overlay plugin - it only displays, nothing is sent to the
@@ -1941,11 +1974,11 @@ Gypseeum Brain Tree         903 m  < 13
   The Nomad gives no such point: the ship flies along at some 2-3 km.
 * **the hovering ship** (4.12) - an SRV dropped from a hovering ship (no
   touchdown before) leaves the ship waiting at the drop point, `SHIP (hover)`.
-  It flies off once the SRV is some 2.3-2.5 km away; the line turns red from
-  1.8 km, so you see it coming.
+  It flies off once the SRV is 2.1 km away (measured in the Rhino); the line
+  turns red from 1.8 km, so you see it coming.
 * **the ship flown off** (4.12) - `SHIP AWAY 12 min    flew off - recall it`.
   The journal writes nothing when a hovering ship leaves, so the plugin
-  marks the moment you pass 2.3 km itself. A landed ship sent away (or
+  marks the moment you pass 2.01 km itself. A landed ship sent away (or
   leaving on its own) says `dismissed`. The line goes when you dock the SRV
   in the recalled ship, board it, or it lands again; flying the ship
   yourself it never shows.
@@ -2612,9 +2645,9 @@ replay. Close the FIS window once so it starts with the new files.
   just as important - what the ship can still take once the Rhino's load
   is aboard, and which of the two is the limit.
 * **The hovering ship, and when it has flown off.** A ship that dropped
-  the Rhino in a hover waits there until the SRV is some 2.3 km away, then
+  the Rhino in a hover waits there until the SRV is 2.1 km away, then
   leaves - the journal writes nothing for either. The compass shows
-  *SHIP (hover)* with the distance, red from 1.8 km, and from 2.3 km
+  *SHIP (hover)* with the distance, red from 1.8 km, and from 2.01 km
   *SHIP AWAY 12 min - flew off, recall it* (and *dismissed* for a landed
   ship sent away) until you are aboard again; FIS PLANET the same.
 * **A finished system can get no route.** Windows: with "show the full tour
@@ -2743,6 +2776,118 @@ journals* once in the settings (Maintenance).
 The rules every change follows - EDMC's plugin rules, fair use of the
 community services, least privilege, licence, code style, versions - are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## What changed in 5.0
+
+**The focus of 5.0**
+
+1. **Finding unknown systems** - systems that no database knows yet: a
+   chance of a find for every candidate, probes in the order that pays,
+   proofs where nothing is, and a log that checks every prediction.
+2. **A better system display** - the SYSTEM page with orbits where the
+   game has them: moons, rings, planets around star pairs, double moons.
+3. **Every calculation checked and faster** - each learning model is
+   measured against what really happened, every learnt value shows its
+   range and "learned from n", and the pages load faster.
+
+Next to these: broader statistics, a GAIN / LOSS that reads like a
+company's books, carrier trade and money, forecasts, and themes on every
+page.
+
+**With 5.0 the plugin and the FIS are feature-complete.** From here on
+they change only when needed: fixes, and what new game updates require.
+
+### 1. Finding unknown systems
+* **Chance of a find per system.** On arrival each candidate gets a chance
+  that a body nobody has reported is there, with its reason - in the
+  overlay, BRIEFING and GALAXY. The chance is kept at the first arrival and
+  compared with what the scans showed.
+* **Probes in the order that pays.** Galaxy map probes are sorted by how
+  systems of the same mass code turned out for you.
+* **Proof of absence.** A sphere's prospect learns from systems checked
+  and found empty, not from sources that simply had nothing.
+* **Nothing left unchecked.** Systems that were never looked up are asked
+  in EDDiscovery's file by their id; a hint shows when a sphere starts near
+  the galactic plane, where finds are rarer.
+* **NEXT HOP.** Where the galaxy map cannot plot a route - regions it
+  wrongly shows as permit-locked - GALAXY lists the systems within one
+  jump and the boxel name prefixes to search, so you go hop by hop.
+
+### 2. A better system display
+* **Orbits where the game has them.** Every orbit is computed in its
+  parent's frame: moons in their planet's equator, rings too, planets
+  around a star pair in the plane of the pair. 94 % of all bodies lie
+  within 1 % of their orbit - in the plugin's database and in the
+  EDDiscovery archive alike.
+* **A Kepler watch.** Every scan checks its body against the game's own
+  distance and says "position checked n/m". Double moons are placed
+  right: all of them within 1 % of their tiny orbits, measured beyond the
+  error their planet already carries.
+* **A clearer map.** Near bodies and moons are drawn apart, a far
+  companion star clear of the arrival group, brown dwarfs dim; SYSTEM
+  shows the time spent here against the route's estimate.
+
+### 3. Every calculation checked and faster
+* **Reality check.** STATISTICS > LEARNING STATUS judges every model
+  against what happened - Kepler positions, double moons, fuel per jump,
+  time per system, surface scan and sample times, exploration value
+  against your sales, the chance of a find, the bio prediction, tonnes per
+  rock, collector lifetime and the fuel scoop rate per star class - each
+  with ok / off / thin and n.
+* **Learnt from your own data.** The fuel model learns per ship and mass;
+  exploration values are calibrated on your sales; tonnes per rock, how
+  long collector waves work, the scoop rate per star class and Brain Trees
+  species per signal come from your journals - each with "~", range and
+  "learned from n", and a reset per model. Optionally also from the older
+  journals EDDiscovery keeps (read only).
+* **Faster pages.** GAIN / LOSS 1.2 s -> 0.2 s, MINING 0.7 s -> 0.2 s, the
+  first STATISTICS 2.6 s -> 0.8 s; the Kepler check runs in the background.
+
+### Statistics, GAIN / LOSS and carrier
+* **STATISTICS in sub-tabs** - overview, over time, rates and times,
+  learning status: daily trends, first discoveries per month, surface maps,
+  bio rates by atmosphere, planet class and main star, systems and value
+  per hour per session.
+* **Forecasts** - the rest of the active sphere in hours, value and finds;
+  jumps until the tank is empty; the chance of life on a landable body.
+* **GAIN / LOSS as a company's books** - income statement per week, month
+  and year, balance sheet, segments, outlook; trade at its full sale, ship
+  running costs per segment.
+* **TRADE and CARRIER TRADE** - your prices against the galactic mean;
+  what your carrier buys and sells, its income, costs and upkeep.
+* **CARRIER > JUMP PLAN** - pick a body or ring in SYSTEM ("carrier
+  target") or type a system: the carrier's jumps are planned on your PC from
+  your own systems, checked and extended with EDDiscovery's star database
+  (permit-locked systems left out), each with tritium, the tank after it,
+  when to move tritium from the hold into the tank, time and arrival, and
+  ticked off when the carrier gets there. Countdown learnt from your own
+  jumps, cooldown 5 min; TRITIUM & RANGE says how long the jumps take.
+  Without a route: the values Spansh's fleet carrier router asks for, ready
+  to copy, and its exported route (JSON or CSV) read back. TARGET FULL?: an
+  estimate learnt from your reports and arrivals, and alternatives within a
+  laden jump of a transporter on board ("fewest ship jumps" switchable).
+
+### Themes
+* Every page drawn by each theme through shared building blocks; new:
+  **Federation bridge** next to Federation classic, Belt industrial
+  reworked; no scanlines in classic, bridge and Belt; alarms blink only at
+  their onset.
+
+### Also new and fixed
+* **Ship and overlay** - a compact annunciator; a LIFE SUPPORT lamp and a
+  red overlay line when life support is (probably) off (the game writes no
+  event for it); what is still out (gear, hardpoints, scoop, lights) for
+  ship, SRV and Nomad; on foot in heat or cold the suit's health and time
+  left; synthesis in its own sub-tab; FSD grade per ship.
+* **Unsold data** - where it can be sold (stations from 20 ly, a carrier
+  with Universal Cartographics at any distance); a first discovery is only
+  possible until it is sold.
+* **Surface** - the ship waiting in a hover counts as gone from 2.01 km
+  (measured: it leaves at 2.1 km), for both SRVs and the Rhino.
+* **Fixes** - thrusters count as on while the ship flies; a stop with bio
+  found by the DSS stays on the route, and is ticked off right after its
+  last species is analysed; a sale the game did not log can be marked as
+  sold; versions compare after SemVer.
 
 ## Releasing (for whoever maintains this)
 

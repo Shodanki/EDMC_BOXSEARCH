@@ -5,7 +5,7 @@
 // Copyright (c) 2025-2026 Shodanki
 // BRIEFING – the next jump, Wing-Commander style.
 
-import { el, frame, fmt, chip, countUp, hbar } from "../ui.js";
+import { blinkFor, el, frame, fmt, chip, countUp, hbar } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 let root = null;
@@ -29,6 +29,26 @@ const STATUS = {
   visited: [N_("ALREADY VISITED"), N_("known in {s}")],
   known: [N_("KNOWN"), N_("known in {s}")],
 };
+
+// FX5: the cell of the find odds that decided (findodds "why": root/height/kind/star/level)
+const WHY = { high: N_("off-plane"), low: N_("near plane"), named: N_("named system"), rest: N_("other star"),
+  known: N_("in a database"), checked: N_("in no database"), unchecked: N_("not checked"), inhabited: N_("inhabited") };
+export function oddsReason(o) {
+  const w = String(o.why || "prior").split("/");
+  if (w[0] === "prior") return t("no own data yet");
+  const parts = [];
+  w.slice(1).forEach((s, i) => {
+    if (s === "?") return;
+    if (i === 1 && s !== "named") parts.push(t("mass code {m}", { m: s }));
+    else if (i === 2 && !WHY[s]) parts.push(t("{s} star", { s }));
+    else parts.push(WHY[s] ? t(WHY[s]) : s);
+  });
+  return parts.join(", ") || t("all own visits");
+}
+
+export function oddsText(o) {
+  return t("~{p} % chance of an undiscovered body", { p: fmt(o.p, 0) });
+}
 
 function expectation(x) {
   if (x.key === "avg_bodies") return t("~{n} bodies (average of {k} known systems in the boxel)", { n: x.n, k: x.of });
@@ -76,8 +96,11 @@ export function update(ctx, reason) {
        tg.boost ? el("span", { class: "c-violet", text: " · ⚡ " + (tg.boost === "neutron" ? t("neutron star: FSD boost ×4 in the jet cone")
          : t("white dwarf: FSD boost ×1.5 in the jet cone")) }) : null]
     : [el("span", { class: "c-dim", text: t("unknown (only at StartJump)") })];
+  // a new target never seen anywhere pulses a few times, not for as long as it is targeted
+  const discBlink = blinkFor("br-disc:" + (tg.name || ""), unknown, 5);
   const statusEl = el("div", {},
-    el("div", { class: unknown ? "br-status disc" : "br-status", text: (unknown ? "■ " : "") + t(st[0]) }),
+    el("div", { class: unknown ? "br-status disc" + (discBlink ? " blinking" : "") : "br-status", style: discBlink || null,
+      text: (unknown ? "■ " : "") + t(st[0]) }),
     el("div", { class: "c-dim", text: st[1] ? t(st[1], { s: known }) : "" }),
     b.status === "unknown" && tg.checked_by && tg.checked_by.length
       ? el("div", { class: "c-dim", text: t("checked: {s}", { s: tg.checked_by.join(", ") }) }) : null);
@@ -97,6 +120,12 @@ export function update(ctx, reason) {
     w: [tg.lost.scan ? t("{n} scans", { n: tg.lost.scan }) : null, tg.lost.map ? t("{n} maps", { n: tg.lost.map }) : null,
       tg.lost.bio && tg.lost.bio.length ? t("bio: {s}", { s: [...new Set(tg.lost.bio)].join(", ") }) : null].filter(Boolean).join(" · ") }) })));
   if (tg.also_by && tg.also_by.length) rows.push(row(t("ALSO"), el("span", { class: "c-dim", text: t("also explored by {n}", { n: tg.also_by.join(", ") }) })));
+  if (tg.odds) {
+    const o = tg.odds, cls = o.p >= 15 ? "c-green" : o.p >= 5 ? "" : "c-dim";
+    rows.push(row(t("FIND"), el("span", { class: cls, text: oddsText(o) }),
+      el("div", { class: "c-dim", text: t("{r} · learnt from {n} visits (range {a}–{b} %)",
+        { r: oddsReason(o), n: o.n, a: fmt(o.low, 0), b: fmt(o.high, 0) }) })));
+  }
   if (b.expectation && b.expectation.length)
     rows.push(row(t("EXPECTED"), el("div", {}, ...b.expectation.map(x => el("div", { text: expectation(x) })))));
   const f = b.fuel;
@@ -142,7 +171,9 @@ export function update(ctx, reason) {
     : el("span", { class: "c-amber", text: t("outside the sphere") }),
     el("span", { class: "c-dim", text: " · " + t("{d} ly from the centre (r {r})", { d: fmt(sp.from_centre_ly, 1), r: fmt(sp.radius, 0) }) })));
   if (tg.remaining_jumps) rows.push(row("ROUTE", t(tg.remaining_jumps === 1 ? "{n} jump to the target" : "{n} jumps to the target", { n: tg.remaining_jumps })));
-  if (ship.jumping) rows.push(row(t("JUMP"), el("span", { class: "c-amber blink", text: t("FSD ACTIVE") + " ⟫ " + (ship.jumping.name || "") })));
+  const jumpBlink = blinkFor("br-jump", !!ship.jumping, 4);
+  if (ship.jumping) rows.push(row(t("JUMP"), el("span", { class: "c-amber" + (jumpBlink ? " blink" : ""), style: jumpBlink || null,
+    text: t("FSD ACTIVE") + " ⟫ " + (ship.jumping.name || "") })));
 
   root.append(frame("BRIEFING", np, el("div", { class: "br-rows" }, ...rows),
     { kind: unknown ? "disc" : "hot", cls: "br-main", appear }));
@@ -192,6 +223,20 @@ function approach(a, appear) {
   return frame(t("APPROACH"), a.short || a.body, rows, { cls: "br-approach", appear });
 }
 
+// B-24: the sphere's rest - hours, value and finds ahead, each with its range and n
+function forecastRows(F) {
+  if (!F || !F.open || !F.hours) return null;
+  const h = (v) => fmt(v, v < 10 ? 1 : 0) + " h";
+  const parts = [t("{n} open", { n: F.open }), "~" + h(F.hours.mid) + " (" + h(F.hours.lo) + "–" + h(F.hours.hi) + ")"];
+  if (F.value) parts.push("~" + fmt(F.value.mid / 1e6, 0) + " M Cr (" + fmt(F.value.lo / 1e6, 0) + "–" + fmt(F.value.hi / 1e6, 0) + ")");
+  if (F.finds) parts.push(t("~{f} finds", { f: fmt(F.finds.mid, 0) }));
+  const from = (F.minutes_from === "sphere" ? t("{n} systems of this sphere", { n: F.hours.n }) : t("{n} of your systems", { n: F.hours.n }))
+    + (F.value ? " · " + t("{n} sessions", { n: F.value.n }) : "") + (F.finds ? " · " + t("{n} first visits", { n: F.finds.n }) : "");
+  return el("div", { class: "sv-forecast" },
+    el("div", { class: F.thin ? "c-amber" : "c-cyan", text: t("AHEAD") + "  " + parts.join(" · ") }),
+    el("div", { class: "c-dim small", text: t("learned from {s}", { s: from }) }));
+}
+
 function surveyTile(s, appear) {
   if (!s || !s.center || !s.systems) return null;
   const n = s.systems;
@@ -204,6 +249,8 @@ function surveyTile(s, appear) {
   ];
   if (s.boxels && s.boxels.total)
     body.push(hbar("BOXEL ✓", s.boxels.complete, s.boxels.total, s.boxels.complete + "/" + s.boxels.total));
+  const fc = forecastRows(s.forecast);
+  if (fc) body.push(fc);
   const extra = [];
   // C1: the survey counts for the main commander
   if (s.commander) extra.push(el("span", { class: "c-dim", text: t("for {n}", { n: s.commander }) +

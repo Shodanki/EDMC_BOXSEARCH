@@ -338,9 +338,14 @@ def tritium_t(ly: float, used_t: Optional[int]) -> int:
     return int(math.ceil(5 + float(ly) * (25000 + int(used_t or 0)) / 200000.0))
 
 
-def genus_open(genera: Sequence[str], analysed: Sequence[str]) -> List[str]:
-    """Genera of a body none of whose species you analysed there."""
-    done = [s.lower() for s in analysed]
+def genus_open(genera: Sequence[str], analysed: Sequence[Any]) -> List[str]:
+    """Genera of a body none of whose species you analysed there.
+
+    analysed: species names, or the database's entries {"species", "genus"}
+    (bio_species) - those reached this as dicts and stopped the landing
+    card of every body with a species analysed (found 17.11.2026)."""
+    done = [str((s.get("species") or s.get("genus") or "") if isinstance(s, dict) else s).lower()
+            for s in analysed]
     out = []
     for g in genera:
         stem = g.lower().rstrip("s")

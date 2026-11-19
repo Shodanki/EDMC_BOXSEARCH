@@ -25,6 +25,26 @@ at "1090 LS" and still be nowhere near each other.
 Positions are resolved recursively through the Parents chain, so a moon is
 placed relative to its planet and the planet relative to its star.
 
+Each level has its own frame (5.0, K1): the angles of an orbit are measured
+in the orbital frame of its parent, not in one frame shared by the whole
+system. The frame of an orbit is
+
+    B = B(parent) * Rz(-AscendingNode) * Rx(Inclination) * Rz(-Periapsis)
+
+and the body sits at B * (x, y, 0), its place in its own orbital plane.
+The children of a body (moons) orbit in its equator, not in its orbital
+plane: their frame is B * Rx(AxialTilt) of the parent (K2).
+The planets around a pair of stars (children of a star barycentre that
+carry no star) orbit in the plane of the pair, measured from the periapsis
+of its first star (the lower BodyID): their frame is turned by that star's
+Rz(-AscendingNode) * Rx(Inclination) * Rz(-Periapsis) (KR1).
+Measured against the game's DistanceFromArrivalLS on 1,989 bodies of the
+developer's journals, this puts 96 % of all bodies within 1 % of their own
+orbit (one shared frame up to 4.12: 40 %), the planets of a companion star
+100 % (1 %), the moons 97 % (2 %), the planets around a star pair that
+orbits another barycentre 97 % (before KR1: 15 %). See
+tests/kepler_reality.py.
+
 Cost model
 ----------
 Supercruise time is dominated by acceleration and deceleration, not by cruise
@@ -53,9 +73,19 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 __all__ = ["Body", "Stop", "SystemRoute", "plan_route", "DEFAULT_MODEL",
            "CostModel", "group_label", "is_moon", "bodies_from_rows",
-           "calibrate_from_journal", "shorten", "resolve_positions"]
+           "calibrate_from_journal", "shorten", "resolve_positions",
+           "orbit_basis", "orbit_points", "equator_pole", "kepler_check",
+           "check_summary", "CHECK_BAR", "TRUST_BAR"]
 
 LS_PER_METRE = 1.0 / 299792458.0
+
+# SK1 (5.0): the Kepler watch. A body lies right when the model puts it
+# within 1 % of its own orbit of the game's DistanceFromArrivalLS, at the
+# time of its scan (the bar of tests/kepler_reality.py). Off by more than
+# 5 % of that distance, the model has failed for the body and the game's
+# figure wins.
+CHECK_BAR = 0.01
+TRUST_BAR = 0.05
 
 # Bodies worth a detailed surface scan
 VALUABLE = {
@@ -185,6 +215,55 @@ def orbital_position(sma_m: float, ecc: float, inc_deg: float,
     return (x * LS_PER_METRE, y * LS_PER_METRE, z * LS_PER_METRE)
 
 
+Matrix = Tuple[Tuple[float, float, float], Tuple[float, float, float], Tuple[float, float, float]]
+IDENTITY: Matrix = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+
+
+def _mat_mul(a: Matrix, b: Matrix) -> Matrix:
+    rows = []
+    for i in range(3):
+        rows.append(tuple(a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j] for j in range(3)))
+    return (rows[0], rows[1], rows[2])  # type: ignore[return-value]
+
+
+def _mat_vec(m: Matrix, v: Sequence[float]) -> Tuple[float, float, float]:
+    return (m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+            m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+            m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2])
+
+
+def _rot_z(deg: float) -> Matrix:
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return ((c, -s, 0.0), (s, c, 0.0), (0.0, 0.0, 1.0))
+
+
+def _rot_x(deg: float) -> Matrix:
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return ((1.0, 0.0, 0.0), (0.0, c, -s), (0.0, s, c))
+
+
+def orbit_basis(inc_deg: float, peri_deg: float, node_deg: float,
+                parent: Matrix = IDENTITY) -> Matrix:
+    """
+    The frame of one orbit, chained onto the frame of its parent (5.0, K1).
+
+    The game measures the angles of an orbit in the orbital frame of the
+    parent body: parent * Rz(-node) * Rx(inc) * Rz(-periapsis). For a flat
+    orbit of a planet of the arrival star this is the same distance as
+    before; for moons and for the planets of a companion star it is what
+    puts them where DistanceFromArrivalLS says (tests/kepler_reality.py).
+    """
+    m = _mat_mul(parent, _rot_z(-(node_deg or 0.0)))
+    m = _mat_mul(m, _rot_x(inc_deg or 0.0))
+    return _mat_mul(m, _rot_z(-(peri_deg or 0.0)))
+
+
+def _plane_point(sma_m: float, ecc: float, mean_anom_deg: float,
+                 period_s: Optional[float] = None, seconds_since: float = 0.0) -> Tuple[float, float, float]:
+    """Place on the orbit in its own plane (periapsis on +x), in LS."""
+    return orbital_position(sma_m, ecc, 0.0, 0.0, 0.0, mean_anom_deg, period_s, seconds_since)
+
+
 # ---------------------------------------------------------------------------
 # Bodies
 # ---------------------------------------------------------------------------
@@ -204,7 +283,8 @@ class Body:
     __slots__ = ("body_id", "name", "short", "kind", "planet_class", "terraform",
                  "landable", "arrival_ls", "parent_id", "pos", "rel",
                  "scanned", "mapped", "was_discovered", "was_mapped",
-                 "sig_bio", "sig_geo", "organics", "rings", "bio_hint")
+                 "sig_bio", "sig_geo", "organics", "rings", "bio_hint",
+                 "orbit", "basis", "tilt", "check", "trusted")
 
     def __init__(self, body_id: int, name: str, **kw):
         self.body_id = body_id
@@ -217,7 +297,19 @@ class Body:
         self.arrival_ls = float(kw.get("arrival_ls") or 0.0)
         self.parent_id = kw.get("parent_id")
         self.rel = kw.get("rel") or (0.0, 0.0, 0.0)
+        # orbital elements (sma, ecc, inc, peri, node, mean_anom, period,
+        # seconds since the scan); with them resolve_positions places the
+        # body in its parent's frame and sets rel and basis (5.0, K1)
+        self.orbit: Optional[Tuple[float, ...]] = kw.get("orbit")
+        self.basis: Optional[Matrix] = None
+        # AxialTilt in radians as the journal writes it: the equator its
+        # moons orbit in is tilted against its own orbit by this (5.0, K2)
+        self.tilt = float(kw.get("tilt") or 0.0)
         self.pos: Optional[Tuple[float, float, float]] = None
+        # SK1: (error in parts of the own orbit, error in parts of the
+        # arrival distance) at the time of the scan; None = not checkable
+        self.check: Optional[Tuple[float, float]] = None
+        self.trusted = False            # placed by the game's figure (SK1)
         self.scanned = bool(kw.get("scanned"))
         self.mapped = bool(kw.get("mapped"))
         # True / False / None (unknown). SQLite hands these over as 1 / 0 /
@@ -298,9 +390,104 @@ def resolve_positions(bodies: Dict[int, Body]) -> None:
     _trust_arrival(bodies)
 
 
-def _resolve_orbits(bodies: Dict[int, Body]) -> None:
-    """Absolute positions from parent-relative orbits; a body without its
-    parent sits at its arrival distance on one axis."""
+def _chain_orbit(b: Body, frame: Matrix) -> None:
+    """rel and basis of a body in the frame of its parent (5.0, K1). A body
+    without orbital elements (hand-built, a barycentre never scanned) keeps
+    its rel and hands its parent's frame on."""
+    if not b.orbit or not b.orbit[0]:
+        b.basis = frame
+        return
+    sma, ecc, inc, peri, node, mean_anom, period, since = b.orbit
+    b.basis = orbit_basis(inc, peri, node, frame)
+    b.rel = _mat_vec(b.basis, _plane_point(sma, ecc, mean_anom, period, since))
+
+
+def _child_frame(parent: Body) -> Matrix:
+    """The frame the children of a body orbit in (5.0, K2): its orbital
+    frame turned by its axial tilt, so moons lie in the planet's equator. A
+    barycentre has no equator; a body without an orbit of its own (the main
+    star) hands on the frame it got."""
+    frame = parent.basis or IDENTITY
+    if parent.tilt and parent.orbit and parent.orbit[0] and parent.kind != "BaryCentre":
+        frame = _mat_mul(frame, _rot_x(math.degrees(parent.tilt)))
+    return frame
+
+
+def equator_pole(b: Body) -> Optional[Tuple[float, float, float]]:
+    """
+    The pole of a body's equator, a unit vector in the system frame: the
+    plane its rings and moons lie in (5.0, K2). None before
+    resolve_positions or for a body without an orbit of its own.
+    """
+    if b.basis is None or not b.orbit or not b.orbit[0]:
+        return None
+    f = _child_frame(b)
+    return (f[0][2], f[1][2], f[2][2])
+
+
+def _has_star(b: Body, kids: Dict[int, List[Body]], depth: int = 0) -> bool:
+    """True for a star or a barycentre with a star below it."""
+    if b.kind == "Star":
+        return True
+    if b.kind != "BaryCentre" or depth > 8:
+        return False
+    return any(_has_star(k, kids, depth + 1) for k in kids.get(b.body_id, ()))
+
+
+def _is_pair(a: Body, b: Body) -> bool:
+    """The two orbits of a pair around their barycentre: one plane, the
+    periapses half a turn apart."""
+    if not (a.orbit and a.orbit[0] and b.orbit and b.orbit[0]):
+        return False
+    inc, peri, node = a.orbit[2] or 0.0, a.orbit[3] or 0.0, a.orbit[4] or 0.0
+    turn = (peri - (b.orbit[3] or 0.0)) % 360.0
+    return (abs(inc - (b.orbit[2] or 0.0)) < 0.01 and abs(node - (b.orbit[4] or 0.0)) < 0.01
+            and abs(turn - 180.0) < 0.1)
+
+
+def _pair_turns(bodies: Dict[int, Body]) -> Dict[int, Matrix]:
+    """
+    KR1 (5.0): the extra turn of the children of a star pair that carry no
+    star - planets and planet pairs around a barycentre of two stars.
+
+    They orbit in the plane of the pair, measured from the periapsis of its
+    first star (the lower BodyID): the frame of their parent turned by that
+    star's Rz(-AscendingNode) * Rx(Inclination) * Rz(-Periapsis). Without
+    it a planet around a star pair that orbits another barycentre missed
+    the game's distance by a median of 25 % of its orbit (Synuefe MQ-M
+    b40-0 ABCD 2: 392 LS). The parent may be missing (the root barycentre
+    has no Scan); then only the signature of a pair counts.
+    Returns {body_id of the child: turn}.
+    """
+    kids: Dict[int, List[Body]] = {}
+    for b in bodies.values():
+        if b.parent_id is not None:
+            kids.setdefault(b.parent_id, []).append(b)
+    out: Dict[int, Matrix] = {}
+    for pid, children in kids.items():
+        parent = bodies.get(pid)
+        if parent is not None and parent.kind != "BaryCentre":
+            continue
+        stars = sorted((c for c in children if _has_star(c, kids)), key=lambda c: c.body_id)
+        if len(stars) != 2 or not _is_pair(stars[0], stars[1]):
+            continue
+        _sma, _ecc, inc, peri, node = stars[0].orbit[:5]
+        turn = orbit_basis(inc, peri, node)
+        for c in children:
+            if not _has_star(c, kids):
+                out[c.body_id] = turn
+    return out
+
+
+def _resolve_orbits(bodies: Dict[int, Body],
+                    turns: Optional[Dict[int, Matrix]] = None) -> None:
+    """Absolute positions from parent-relative orbits, every orbit in the
+    frame of its parent (a planet around a star pair also turned into the
+    plane of the pair, KR1; `turns` from _pair_turns, computed here when
+    None); a body without its parent sits at its arrival distance on one
+    axis."""
+    if turns is None:
+        turns = _pair_turns(bodies)
     done: Dict[int, Tuple[float, float, float]] = {}
 
     def resolve(bid: int, depth: int = 0) -> Tuple[float, float, float]:
@@ -310,12 +497,17 @@ def _resolve_orbits(bodies: Dict[int, Body]) -> None:
         if b is None or depth > 8:
             return (0.0, 0.0, 0.0)
         done[bid] = (0.0, 0.0, 0.0)      # guard against orbital cycles
+        frame = IDENTITY
         if b.parent_id is None or b.parent_id not in bodies:
             base = (0.0, 0.0, 0.0)
             if b.parent_id is not None and b.rel == (0.0, 0.0, 0.0):
                 base = (b.arrival_ls, 0.0, 0.0)
         else:
             base = resolve(b.parent_id, depth + 1)
+            frame = _child_frame(bodies[b.parent_id])
+        if bid in turns:
+            frame = _mat_mul(frame, turns[bid])
+        _chain_orbit(b, frame)
         p = (base[0] + b.rel[0], base[1] + b.rel[1], base[2] + b.rel[2])
         done[bid] = p
         b.pos = p
@@ -329,8 +521,25 @@ def _resolve_orbits(bodies: Dict[int, Body]) -> None:
             b.pos = (b.arrival_ls or 0.0, 0.0, 0.0)
 
 
-def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
-    """--- shift the origin onto the arrival star."""
+def orbit_points(b: Body, centre: Sequence[float], n: int = 72) -> Optional[List[List[float]]]:
+    """
+    The orbit of a body as n + 1 points around `centre` (its parent's place),
+    in the same chained frame as its position - call resolve_positions first.
+    None for a body without orbital elements.
+    """
+    if not b.orbit or not b.orbit[0]:
+        return None
+    basis = b.basis or IDENTITY
+    sma, ecc = b.orbit[0], b.orbit[1]
+    pts = []
+    for k in range(n + 1):
+        x, y, z = _mat_vec(basis, _plane_point(sma, ecc, 360.0 * k / n))
+        pts.append([centre[0] + x, centre[1] + y, centre[2] + z])
+    return pts
+
+
+def _anchor(bodies: Dict[int, Body]) -> Optional[Body]:
+    """The arrival star: the lowest star at 0 LS, else the lowest body at 0 LS."""
     anchor = None
     for b in bodies.values():
         if b.arrival_ls is not None and b.arrival_ls <= 0.01 and b.kind == "Star":
@@ -341,6 +550,12 @@ def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
             if b.arrival_ls is not None and b.arrival_ls <= 0.01:
                 anchor = b
                 break
+    return anchor
+
+
+def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
+    """--- shift the origin onto the arrival star."""
+    anchor = _anchor(bodies)
     if anchor is not None and anchor.pos and anchor.pos != (0.0, 0.0, 0.0):
         ox, oy, oz = anchor.pos
         for b in bodies.values():
@@ -349,19 +564,139 @@ def _shift_to_arrival(bodies: Dict[int, Body]) -> None:
 
 
 def _trust_arrival(bodies: Dict[int, Body]) -> None:
-    """--- final sanity pass against the journal's own arrival distance."""
-    for b in bodies.values():
-        if not b.pos or b.arrival_ls is None or b.arrival_ls <= 1.0:
+    """
+    --- final sanity pass against the journal's own arrival distance.
+
+    SK1 (5.0): a body the Kepler watch has checked is moved only when the
+    model failed for it (more than TRUST_BAR of the arrival distance off at
+    its scan); then it goes onto the game's distance, keeping its direction,
+    and its moons move with it. A body without a check (no scan time, hand
+    built) keeps the old rule: only a factor of 3 off counts.
+    """
+    shift: Dict[int, Tuple[float, float, float]] = {}
+    zero = (0.0, 0.0, 0.0)
+    for b in sorted(bodies.values(), key=lambda x: _depth(bodies, x)):
+        d = shift.get(b.parent_id, zero) if b.parent_id is not None else zero
+        if b.pos and d != zero:
+            b.pos = (b.pos[0] + d[0], b.pos[1] + d[1], b.pos[2] + d[2])
+        if b.pos and _failed(b):
+            before = b.pos
+            b.pos = _onto_arrival(b.pos, b.arrival_ls)
+            b.trusted = True
+            d = (d[0] + b.pos[0] - before[0], d[1] + b.pos[1] - before[1], d[2] + b.pos[2] - before[2])
+        shift[b.body_id] = d
+
+
+def _depth(bodies: Dict[int, Body], b: Body) -> int:
+    """How many parents up to the root (at most 9, cycles guarded)."""
+    n = 0
+    while b.parent_id is not None and b.parent_id in bodies and n < 9:
+        b = bodies[b.parent_id]
+        n += 1
+    return n
+
+
+def _failed(b: Body) -> bool:
+    """True when the game's arrival distance should replace the model's place."""
+    if b.arrival_ls is None or b.arrival_ls <= 1.0:
+        return False
+    if b.check is not None:
+        return b.check[1] > TRUST_BAR
+    r = math.sqrt(b.pos[0] ** 2 + b.pos[1] ** 2 + b.pos[2] ** 2)
+    return r < 1e-6 or r > b.arrival_ls * 3.0 + 10.0 or r < b.arrival_ls / 3.0 - 10.0
+
+
+def _onto_arrival(pos: Tuple[float, float, float], arrival: float) -> Tuple[float, float, float]:
+    """The point at the arrival distance in the direction of pos (on +x
+    without a direction)."""
+    r = math.sqrt(pos[0] ** 2 + pos[1] ** 2 + pos[2] ** 2)
+    if r <= 1e-6:
+        return (arrival, 0.0, 0.0)
+    f = arrival / r
+    return (pos[0] * f, pos[1] * f, pos[2] * f)
+
+
+def _rows_at(rows: List[Dict], t: float) -> List[Dict]:
+    """The rows with every orbit moved to unix time t, also backwards (a
+    parent may have been scanned after its moon)."""
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d.get("period") and d.get("scan_ts") and d.get("mean_anom") is not None:
+            d["mean_anom"] = d["mean_anom"] + 360.0 * (t - float(d["scan_ts"])) / d["period"]
+            d["scan_ts"] = t
+        out.append(d)
+    return out
+
+
+def _chain_ids(bodies: Dict[int, Body], bid: Optional[int]) -> List[int]:
+    """A body and all its parents present in the map."""
+    out: List[int] = []
+    while bid is not None and bid in bodies and bid not in out and len(out) < 10:
+        out.append(bid)
+        bid = bodies[bid].parent_id
+    return out
+
+
+def kepler_check(rows: Iterable) -> Dict[int, Tuple[float, float]]:
+    """
+    SK1 (5.0), the Kepler watch: how far the model places each scanned body
+    from the game's DistanceFromArrivalLS, at the time of its own scan.
+
+    Returns {body_id: (error / own semi-major axis, error / arrival
+    distance)} for every body with an orbit, a scan time and more than 1 LS
+    from the arrival star. Only the body's own parent chain and the arrival
+    star's chain are resolved per scan time, so the cost grows with the
+    depth of the system, not its square.
+    """
+    rows = [dict(r) for r in rows]
+    key = tuple(sorted((r.get("body_id"), r.get("parent_id"), r.get("scan_ts"), r.get("sma"),
+                        r.get("arrival_ls"), r.get("mean_anom"), r.get("axial_tilt")) for r in rows))
+    hit = _CHECKS.get(key)
+    if hit is None:
+        hit = _kepler_check(rows)
+        if len(_CHECKS) > 64:
+            _CHECKS.clear()
+        _CHECKS[key] = hit
+    return dict(hit)
+
+
+# the watch depends only on the scan-time data of a system, not on "now";
+# a survey replays many legs of one system (calibration), so it is kept
+_CHECKS: Dict[tuple, Dict[int, Tuple[float, float]]] = {}
+
+
+def _kepler_check(rows: List[Dict]) -> Dict[int, Tuple[float, float]]:
+    """kepler_check without the cache."""
+    full = _build_bodies(rows, None)
+    turns = _pair_turns(full)           # from all bodies: the stars of a pair may not be in a chain
+    anchor = _anchor(full)
+    anchor_ids = _chain_ids(full, anchor.body_id) if anchor is not None else []
+    out: Dict[int, Tuple[float, float]] = {}
+    for r in rows:
+        ts, sma, arrival = r.get("scan_ts"), r.get("sma"), r.get("arrival_ls")
+        if not ts or not sma or not arrival or arrival <= 1.0 or r.get("body_id") not in full:
             continue
-        r = math.sqrt(b.pos[0] ** 2 + b.pos[1] ** 2 + b.pos[2] ** 2)
-        if r < 1e-6 or r > b.arrival_ls * 3.0 + 10.0 or r < b.arrival_ls / 3.0 - 10.0:
-            # geometry disagrees with the game's own figure - trust the game,
-            # but keep the direction if we have one
-            if r > 1e-6:
-                f = b.arrival_ls / r
-                b.pos = (b.pos[0] * f, b.pos[1] * f, b.pos[2] * f)
-            else:
-                b.pos = (b.arrival_ls, 0.0, 0.0)
+        ids = set(_chain_ids(full, r["body_id"])) | set(anchor_ids)
+        sub = _build_bodies([x for x in _rows_at(rows, float(ts)) if x.get("body_id") in ids], None)
+        _resolve_orbits(sub, turns)
+        _shift_to_arrival(sub)
+        p = sub[r["body_id"]].pos or (0.0, 0.0, 0.0)
+        err = abs(math.sqrt(p[0] ** 2 + p[1] ** 2 + p[2] ** 2) - arrival)
+        out[r["body_id"]] = (err / (float(sma) * LS_PER_METRE), err / arrival)
+    return out
+
+
+def check_summary(bodies: Dict[int, Body]) -> Dict[str, int]:
+    """
+    The Kepler watch for the SYSTEM view: of `checked` bodies, `ok` lie
+    within CHECK_BAR of their own orbit at their scan, `trusted` were moved
+    onto the game's distance (model off by more than TRUST_BAR).
+    """
+    checked = [b for b in bodies.values() if b.check is not None]
+    return {"checked": len(checked),
+            "ok": sum(1 for b in checked if b.check[0] <= CHECK_BAR),
+            "trusted": sum(1 for b in bodies.values() if b.trusted)}
 
 
 # ---------------------------------------------------------------------------
@@ -906,6 +1241,24 @@ def calibrate_from_journal(segments: Iterable[Tuple[float, float]],
 # Building bodies from the database
 # ---------------------------------------------------------------------------
 
+def _row_orbit(r, now: Optional[float]) -> Tuple[Tuple[float, float, float], Optional[Tuple[float, ...]]]:
+    """The orbit of one database row: the place in one shared frame (the
+    fallback while the parent is unknown) and the elements for the chained
+    frames, advanced to `now`."""
+    try:
+        if not r["sma"]:
+            return (0.0, 0.0, 0.0), None
+        elapsed = 0.0
+        ts = _get(r, "scan_ts")
+        if now is not None and ts:
+            elapsed = max(0.0, now - float(ts))
+        orbit = (float(r["sma"]), r["ecc"] or 0.0, r["inc"] or 0.0, r["peri"] or 0.0,
+                 r["node"] or 0.0, r["mean_anom"] or 0.0, r["period"], elapsed)
+        return orbital_position(*orbit), orbit
+    except (KeyError, IndexError, TypeError, ValueError):
+        return (0.0, 0.0, 0.0), None
+
+
 def bodies_from_rows(rows: Iterable, now: Optional[float] = None
                      ) -> Dict[int, Body]:
     """
@@ -914,28 +1267,29 @@ def bodies_from_rows(rows: Iterable, now: Optional[float] = None
     The orbital elements are a snapshot taken when the body was scanned, so
     every body is advanced along its orbit by the time elapsed since. Pass
     now=None to skip that (useful for comparing against the original layout).
+    Every body also carries its Kepler watch (SK1, kepler_check).
     """
+    rows = list(rows)
+    out = _build_bodies(rows, now)
+    try:
+        for bid, c in kepler_check(rows).items():
+            if bid in out:
+                out[bid].check = c
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+        pass                # a row without the fields: no watch, old rule
+    return out
+
+
+def _build_bodies(rows: Iterable, now: Optional[float]) -> Dict[int, Body]:
+    """The Body objects of the rows, without the Kepler watch."""
     out: Dict[int, Body] = {}
     for r in rows:
-        rel = (0.0, 0.0, 0.0)
-        try:
-            if r["sma"]:
-                elapsed = 0.0
-                if now is not None:
-                    ts = _get(r, "scan_ts")
-                    if ts:
-                        elapsed = max(0.0, now - float(ts))
-                rel = orbital_position(r["sma"], r["ecc"] or 0.0,
-                                       r["inc"] or 0.0, r["peri"] or 0.0,
-                                       r["node"] or 0.0, r["mean_anom"] or 0.0,
-                                       r["period"], elapsed)
-        except (KeyError, IndexError, TypeError):
-            pass
+        rel, orbit = _row_orbit(r, now)
         b = Body(r["body_id"], r["name"] or "",
                  kind=r["kind"], planet_class=r["planet_class"],
                  terraform=r["terraform"], landable=r["landable"],
                  arrival_ls=_get(r, "arrival_ls"), parent_id=_get(r, "parent_id"),
-                 rel=rel, scanned=r["scanned"], mapped=r["mapped"],
+                 rel=rel, orbit=orbit, tilt=_get(r, "axial_tilt"), scanned=r["scanned"], mapped=r["mapped"],
                  was_discovered=r["was_discovered"], was_mapped=r["was_mapped"],
                  sig_bio=r["sig_bio"], sig_geo=r["sig_geo"], organics=r["organics"])
         out[b.body_id] = b

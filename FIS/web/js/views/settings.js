@@ -8,7 +8,7 @@
 // start, home network for a tablet - with the address to type there.
 
 import { getJSON, postJSON, withToken } from "../api.js";
-import { el, frame } from "../ui.js";
+import { el, frame, fmt } from "../ui.js";
 import { t } from "../i18n.js";
 import { cockpitRows } from "./cockpit.js";
 
@@ -50,6 +50,7 @@ function render() {
   lang.value = data.language;
   const browser = el("input", { type: "checkbox", checked: data.open_browser ? true : null });
   const controlsBox = el("input", { type: "checkbox", checked: data.show_controls ? true : null });
+  const eddBox = el("input", { type: "checkbox", checked: data.edd_archive ? true : null });
   const lan = el("input", { type: "checkbox", checked: data.lan ? true : null });
   // C1: main commander - survey and statistics; "" = automatic (plugin / suggestion)
   const cmdrs = data.commanders || [];
@@ -59,7 +60,7 @@ function render() {
   main.value = data.main_cmdr || "";
   const save = async () => {
     try {
-      const body = { language: lang.value, open_browser: browser.checked, lan: lan.checked, show_controls: controlsBox.checked };
+      const body = { language: lang.value, open_browser: browser.checked, lan: lan.checked, show_controls: controlsBox.checked, edd_archive: eddBox.checked };
       if (cmdrs.length > 1) body.main_cmdr = main.value;
       data = await postJSON("/api/settings", body);
       msg = data.restart ? t("Saved. Restart the FIS (or EDMC with autostart) for the home network change.") : t("Saved.");
@@ -72,6 +73,9 @@ function render() {
     el("label", { class: "st-set" }, el("span", { text: t("Open the browser when the FIS starts") }), browser),
     el("label", { class: "st-set" }, el("span", { text: t("Show my key bindings in SHIP") }), controlsBox),
     el("div", { class: "c-dim small", text: t("Reads the game's key bindings (Options\\Bindings) while on - read only, never written.") }),
+    el("label", { class: "st-set" }, el("span", { text: t("Learn from the EDDiscovery archive") }), eddBox),
+    el("div", { class: "c-dim small", text: t("Your older journals as EDDiscovery keeps them (EDDUser.sqlite): statistics, gain / loss and the learnt models then reach back years. Read only, only the journal lines - never the EDSM key stored beside them.") }),
+    eddLine(),
     el("label", { class: "st-set" }, el("span", { text: t("Home network (tablet, second PC)") }), lan),
     el("div", { class: "c-dim small", text: t("Other devices need the address below with its token; the FIS then answers the home network too.") }),
     cmdrs.length > 1 ? el("label", { class: "st-set" }, el("span", { text: t("Main commander") }), main) : null,
@@ -109,6 +113,27 @@ function render() {
       { appear: false }),
     data.lan ? frame(t("HOME NETWORK"), "", lanRows.length ? lanRows : el("div", { class: "c-dim", text: t("Save to create the address.") }), { appear: false }) : null,
     el("div", { class: "c-dim small", text: t("Stored in {f}.", { f: data.ini }) })));
+}
+
+// 5.0: what the EDDiscovery archive delivered
+let eddTimer = null;
+function eddLine() {
+  const E = data.edd || {};
+  if (!data.edd_archive) return null;
+  if (E.state === "off") return el("div", { class: "c-amber small edd-line", text: t("EDDUser.sqlite not found - is EDDiscovery installed?") });
+  if (E.state === "error") return el("div", { class: "c-amber small edd-line", text: t("Could not read the archive: {e}", { e: E.error || "?" }) });
+  if (E.state !== "ready") {
+    // still reading: ask again shortly and replace only this line (the form keeps what was typed)
+    if (!eddTimer) eddTimer = setTimeout(async () => {
+      eddTimer = null;
+      try { data.edd = (await getJSON("/api/settings")).edd; } catch (e) { return; }
+      const old = root && root.querySelector(".edd-line"), now = eddLine();
+      if (old && now) old.replaceWith(now);
+    }, 1500);
+    return el("div", { class: "c-dim small edd-line", text: t("Reading the archive …") });
+  }
+  return el("div", { class: "c-green small edd-line", text: t("{n} older events added, since {d} ({s} s).",
+    { n: fmt(E.added || 0, 0), d: E.first ? new Date(E.first).toLocaleDateString() : "–", s: fmt(E.seconds || 0, 1) }) });
 }
 
 // 4.11: the limits of UNSOLD DATA on the SHIP sheet - each commander's own

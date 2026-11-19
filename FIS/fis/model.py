@@ -74,8 +74,24 @@ def plugin():
         p.regionmap = regionmap
         p.biosig = biosig
         p.groundmine = groundmine
+        p.learnreset = _optional("learnreset")     # plugin 5.0+: model resets (SK3)
+        p.bodyvalue = _optional("bodyvalue")       # plugin 4.12+: what exploration data is worth (B6)
+        p.findodds = _optional("findodds")         # plugin 5.0+: chance of a find, V0 (FX3)
         _plugin = p
     return _plugin
+
+
+def _optional(name: str) -> Any:
+    """A plugin module that older plugins lack, or None (no bytecode written)."""
+    import importlib
+    import sys
+    keep, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        return importlib.import_module(name)
+    except ImportError:
+        return None
+    finally:
+        sys.dont_write_bytecode = keep
 
 
 def region_of(pos: Optional[Sequence[float]], id64: Optional[int] = None) -> Optional[Tuple[int, str]]:
@@ -186,20 +202,32 @@ def boost_kind(star_type: Optional[str]) -> Optional[str]:
 # system (TAKTIK)
 # ---------------------------------------------------------------------------
 
-def _orbit_points(row, parent_pos: Sequence[float], n: int = 72
+def _orbit_points(sr: Any, b: Any, parent_pos: Sequence[float], n: int = 72
                   ) -> Optional[List[List[float]]]:
-    sma = row["sma"]
-    if not sma:
+    """The orbit line of a body, in the same chained frame as its position
+    (5.0, K1: every orbit in the frame of its parent)."""
+    pts = sr.orbit_points(b, parent_pos, n)
+    if not pts:
         return None
-    sr = plugin().sysroute
-    pts = []
-    for k in range(n + 1):
-        x, y, z = sr.orbital_position(sma, row["ecc"] or 0.0, row["inc"] or 0.0,
-                                      row["peri"] or 0.0, row["node"] or 0.0,
-                                      360.0 * k / n)
-        pts.append([round(parent_pos[0] + x, 3), round(parent_pos[1] + y, 3),
-                    round(parent_pos[2] + z, 3)])
-    return pts
+    return [[round(v, 3) for v in q] for q in pts]
+
+
+def _pole(sr: Any, b: Any) -> Optional[List[float]]:
+    """The pole of the body's equator (sysroute.equator_pole), rounded; the
+    FIS turns the rings of the body into that plane."""
+    p = sr.equator_pole(b)
+    return [round(v, 4) for v in p] if p else None
+
+
+def _kepler(b: Any) -> Optional[Dict[str, Any]]:
+    """The Kepler watch of one body (sysroute SK1): the error of the model at
+    the scan in % of its own orbit and of the arrival distance, and whether
+    the game's distance placed it. None when the body could not be checked."""
+    c = getattr(b, "check", None)
+    if not c:
+        return None
+    return {"orbit_pct": round(c[0] * 100.0, 2), "arrival_pct": round(c[1] * 100.0, 2),
+            "trusted": bool(getattr(b, "trusted", False))}
 
 
 def _rings(row, hotspots: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> List[Dict[str, Any]]:
@@ -422,8 +450,11 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
 
     for bid, b in sorted(bodies.items()):
         out["bodies"].append(_body_entry(sr, bid, b, by_row[bid], bodies, hs_by_ring))
+    # SK1: the Kepler watch - how many places the game's own distances confirm
+    out["kepler"] = sr.check_summary(bodies) if hasattr(sr, "check_summary") else None
 
     out["bio"] = bio_list(db, id64, rows, out["bodies"])
+    out["bio_multi"] = _multi_stats(db, out["bio"], archive)
     lost = [b for b in out["bodies"] if b["flags"]["lost"]]
     if lost:
         out["lost"] = {"bodies": len(lost),
@@ -557,7 +588,11 @@ def _body_entry(sr: Any, bid: int, b: Any, r: Any, bodies: Any,
         "pos": [round(v, 3) for v in pos],
         # where the orbit is centred (parent body or unscanned barycentre)
         "ppos": [round(v, 3) for v in ppos],
-        "orbit": _orbit_points(r, ppos) if r["kind"] != "Ring" else None,
+        "orbit": _orbit_points(sr, b, ppos) if r["kind"] != "Ring" else None,
+        # the equator: rings and moons lie in it (K2), None when unknown
+        "pole": _pole(sr, b),
+        # SK1: error at the scan in % of the own orbit; placed by the game's distance
+        "kepler": _kepler(b),
         "radius_km": _r(radius / 1000.0, 1) if radius else None,
         "radius_ls": (radius * LS_PER_M) if radius else None,
         "arrival_ls": _r(r["arrival_ls"], 1),
@@ -699,6 +734,35 @@ def bio_list(db: Database, id64: int, rows, bodies: List[Dict[str, Any]]
             "multi": (res or {}).get("multi", []),
             "hint": None if genera else b.get("bio_hint"),
         })
+    return out
+
+
+_MULTI_CACHE: Dict[str, Any] = {"key": None, "val": {}}
+
+
+def _multi_stats(db: Database, bio: List[Dict[str, Any]], archive: Any = None) -> Dict[str, Any]:
+    """BT2: for each multi-species genus on this system's bodies, how many
+    species one signal stood for on the bodies found so far (biosig
+    species_per_signal), worked out again when the database or the archive
+    changed. 5.0 EA2: the archive's codex entries and analyses count too."""
+    genera = sorted({g for b in bio for g in b.get("multi") or []})
+    bs = plugin().biosig
+    if not genera or bs is None or not hasattr(bs, "species_per_signal") or not hasattr(db, "genus_finds"):
+        return {}
+    key = (id(db), db.mtime(), getattr(archive, "rev", None))
+    if _MULTI_CACHE["key"] != key:
+        _MULTI_CACHE.update(key=key, val={})
+    out = {}
+    for g in genera:
+        if g not in _MULTI_CACHE["val"]:
+            suffix = next((s for s, gg in getattr(bs, "_SPECIES_SUFFIX", {}).items() if gg == g), g)
+            try:
+                from .fleet import ALL_COMMANDERS
+                evs = archive.events(ALL_COMMANDERS) if archive is not None else None
+                _MULTI_CACHE["val"][g] = bs.species_per_signal(db.genus_finds(g, suffix, evs))
+            except Exception:
+                _MULTI_CACHE["val"][g] = None
+        out[g] = _MULTI_CACHE["val"][g]
     return out
 
 
@@ -1303,6 +1367,8 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
         _body_journal(out, archive, id64, body_id)
     if (r["sig_bio"] or 0) > 0 or r["landable"]:
         _body_prediction(out, db, p, r)
+    if r["landable"] and not (r["sig_bio"] or 0):
+        out["bio"]["chance"] = _bio_chance(db, r)         # B-24: no signal known yet
     from . import science
     try:
         _ring_mining(db, out["rings"], archive)    # rocks per ring, what to expect at a hotspot
@@ -1673,10 +1739,18 @@ def _fuel_state(live: Dict[str, Any]):
     ds = plugin().deepspace
     ship = live.get("ship") or {}
     fuel = live.get("fuel") or {}
-    return ds.FuelState(capacity=float(ship.get("fuel_capacity") or 0.0),
-                        level=float(fuel.get("main") or 0.0),
-                        max_jump=float(ship.get("max_jump") or 0.0),
-                        jumps=[tuple(j) for j in live.get("jumps") or []])
+    fs = ds.FuelState(capacity=float(ship.get("fuel_capacity") or 0.0),
+                      level=float(fuel.get("main") or 0.0),
+                      max_jump=float(ship.get("max_jump") or 0.0),
+                      jumps=[tuple(j) for j in live.get("jumps") or []])
+    # SK2: the mass now and the FSD's power for the prior
+    try:
+        fs.unladen = float(ship.get("unladen") or 0.0)
+        fs.cargo = float(ship.get("cargo_t") or 0.0)
+    except (TypeError, ValueError):
+        pass
+    fs.fsd = ship.get("fsd")
+    return fs
 
 
 def boxel_info(db: Database, name: str) -> Optional[Dict[str, Any]]:
@@ -1830,6 +1904,22 @@ def _sphere_of(db: Database, pos: Optional[Sequence[float]]) -> Optional[Dict[st
             "active": bool(s["active"])}
 
 
+_BIO_RATES: Dict[str, Any] = {}
+
+
+def _bio_chance(db: Database, r: Any) -> Optional[Dict[str, Any]]:
+    """B-24: the chance that this landable planet carries life, from BQ1's
+    rates (kept while the database stands still)."""
+    try:
+        from . import forecast, learn
+        key = (id(db), db.mtime())
+        if _BIO_RATES.get("key") != key:
+            _BIO_RATES.update(key=key, rates=learn.bio_rates(db))
+        return forecast.bio_chance(dict(r), _BIO_RATES["rates"])
+    except Exception:
+        return None
+
+
 FIND_KINDS = ("codex", "settlement", "screenshot", "material")
 
 
@@ -1940,6 +2030,8 @@ def build_briefing(db: Database, live: Optional[Dict[str, Any]],
     # data, not sentences: the browser words them in the display language
     out["expectation"] = exp
     out["status"] = _briefing_status(known, level, row)
+    from .learn import target_odds          # FX5: the chance of a find there
+    out["target"]["odds"] = target_odds(db, name, star, level, tpos[1] if tpos else None)
     return out
 
 
@@ -2121,7 +2213,8 @@ def build_ship(live: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         fs = _fuel_state(live)
         out["fuel"].update(pct=_r(fs.pct, 1), jumps_left=fs.jumps_left,
                            range_ly=_r(fs.range_left, 0), warning=fs.warning(),
-                           summary=fs.summary(), samples=fs.samples)
+                           summary=fs.summary(), samples=fs.samples,
+                           model=fs.learned() if hasattr(fs, "learned") else None)
     return out
 
 

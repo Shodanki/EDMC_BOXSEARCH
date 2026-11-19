@@ -64,6 +64,14 @@ export function create3D(container) {
     return l;
   }
 
+  // a ring lies in its planet's equator (5.0, K2): turn the flat ring (normal
+  // +Z) onto the pole; without a pole the old fixed tilt
+  const Z = new THREE.Vector3(0, 0, 1);
+  function turnRing(obj, pole) {
+    if (pole) obj.quaternion.setFromUnitVectors(Z, new THREE.Vector3(pole[0], pole[1], pole[2]).normalize());
+    else obj.rotation.x = -Math.PI / 2 + 0.35;
+  }
+
   function build() {
     clear();
     if (!scene) return;
@@ -104,7 +112,7 @@ export function create3D(container) {
         rim.position.copy(m.position); rim.scale.setScalar(b.size * 1.08);
         root.add(rim);
       } else {
-        const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: colour, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
+        const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: colour, transparent: true, opacity: 0.55 * (b.glow ?? 1), depthWrite: false, blending: THREE.AdditiveBlending }));
         s.position.copy(m.position); s.scale.setScalar(b.size * 7);
         root.add(s);
       }
@@ -112,7 +120,7 @@ export function create3D(container) {
         const rg = new THREE.RingGeometry(ring.inner, ring.outer, 64);
         const rm = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({ color: 0xDCC8AA, side: THREE.DoubleSide, transparent: true, opacity: 0.14, depthWrite: false }));
         rm.position.copy(m.position);
-        rm.rotation.x = -Math.PI / 2 + 0.35;
+        turnRing(rm, b.pole);
         root.add(rm);
         // crisp edges: lines first, faint surface second
         for (const rad of [ring.inner, ring.outer]) {
@@ -120,7 +128,7 @@ export function create3D(container) {
           for (let i = 0; i <= 96; i++) { const a = i / 96 * Math.PI * 2; pts.push([Math.cos(a) * rad, Math.sin(a) * rad, 0]); }
           const edge = line(pts, 0xDCC8AA, 0.55);
           edge.position.copy(m.position);
-          edge.rotation.x = -Math.PI / 2 + 0.35;
+          turnRing(edge, b.pole);
           root.add(edge);
         }
       }

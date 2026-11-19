@@ -14,19 +14,27 @@ sorted and pruned. Also the measured work model (DSS, sampling times).
 
 from __future__ import annotations
 
+import itertools
 import math
+import sqlite3
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+import os
+
 from . import groundmine
 from . import journalscan
+from . import learnreset
+from . import eddhistory
+from . import findlog
+from . import miningstat
 from .boxelplan import K_BIO, K_DSS, K_NEW, K_SCAN, Target, bundled_probe_prefix, set_origin
 from .deepspace import best_staging, staging_lines
 from .procgen import boxel_prefix
 from .sysdb import PLAN
 from .sysroute import (bodies_from_rows, calibrate_from_journal, calibrate_work_from_journal,
                        group_label, leg_distance_ls, plan_route, resolve_positions, shorten)
-from .state import CFG, ST, cfg_bool, get_masscodes, logger
+from .state import CFG, ST, cfg_bool, cfg_str, get_masscodes, logger
 from . import maintenance
 from . import panel
 from . import planning
@@ -58,13 +66,50 @@ def _measure_work(ev: str, entry: Dict[str, Any]) -> None:
         logger.exception("work measurement failed")
 
 
+def sold_marks(fid: str) -> Dict[str, float]:
+    """SM1: the commander's sold marks from the FIS (learn_reset.json, read
+    again only when it changed) - for sysdb.apply_sold_marks."""
+    path = learnreset.plugin_path(os.path.dirname(os.path.abspath(__file__)))
+    return learnreset.sold_since(learnreset.load_cached(path), fid)
+
+
+def _learn_marks() -> Dict[str, Any]:
+    """SK3: when the commander reset a model in the FIS (FIS/learn_reset.json)."""
+    return learnreset.load(learnreset.plugin_path(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _replay_legs(files: List[str], work: Any, work_since: Optional[float],
+                 route_since: Optional[float]) -> List[Any]:
+    """The supercruise legs for the route model from route_since on: taken
+    from the work replay when it starts no later, else read once more."""
+    if route_since is not None and (work_since or 0.0) > route_since:
+        work = journalscan.replay_work(files, since=route_since)
+    elif work_since is not None and route_since is None:
+        work = journalscan.replay_work(files)
+    return [leg for leg in work.sc_legs if route_since is None or leg[3] >= route_since]
+
+
+def _work_inputs(d: str) -> Tuple[List[float], List[float], List[Any]]:
+    """DSS and bio timings and supercruise legs of the last 30 journals,
+    each from its model's last reset on (SK3), with a log line per reset."""
+    marks = _learn_marks()
+    work_since, route_since = learnreset.since(marks, "work"), learnreset.since(marks, "route")
+    for part, ts in (("route", route_since), ("work", work_since)):
+        if ts is not None:
+            logger.info("learning | %s model reset %s UTC - older journals left out",
+                        part, time.strftime("%Y-%m-%d %H:%M", time.gmtime(ts)))
+    files = journalscan.journal_files(d, 30)
+    m = journalscan.replay_work(files, since=work_since)
+    return m.dss, m.bio, _replay_legs(files, m, work_since, route_since)
+
+
 def _bootstrap_work_model() -> None:
-    """Measure the work constants once from the existing journals."""
+    """Measure the work constants once from the existing journals - from
+    the last reset of each model on (SK3)."""
     d = maintenance._journal_dir()
     if not d:
         return
-    m = journalscan.replay_work(journalscan.journal_files(d, 30))
-    dss, bio, sc_legs = m.dss, m.bio, m.sc_legs
+    dss, bio, sc_legs = _work_inputs(d)
     ST.work_dss, ST.work_bio = dss, bio
     before = ST.cost_model.as_dict()
     ST.cost_model = calibrate_work_from_journal(dss, bio, [], ST.cost_model)
@@ -118,6 +163,14 @@ def _bootstrap_session() -> None:
     except Exception:
         logger.exception("ground mining bootstrap failed")
     try:
+        _bootstrap_rock_yield()
+    except Exception:
+        logger.exception("rock yield bootstrap failed")
+    try:
+        _bootstrap_body_physics()
+    except Exception:
+        logger.exception("body physics bootstrap failed")
+    try:
         updater._check_for_update()
     except Exception:
         logger.exception("update check failed")
@@ -148,6 +201,61 @@ def _bootstrap_ground() -> None:
     logger.info("ground mining | ship hold from the journal: %s of %s t", gm.ship_cargo, gm.ship_capacity)
 
 
+def _archive_lines(names: Tuple[str, ...], files: List[str], what: str) -> List[Dict[str, Any]]:
+    """5.0 (worker): the lines of EDDiscovery's archive older than ``files``,
+    when the commander switched it on - else none."""
+    if not cfg_bool(CFG["edd_archive"], False):
+        return []
+    path = eddhistory.find(cfg_str(CFG["edd_path"]) or None)
+    if not path:
+        logger.info("EDDiscovery archive | EDDUser.sqlite not found - %s from the journals only", what)
+        return []
+    try:
+        got = list(eddhistory.lines(path, names, eddhistory.first_time(files)))
+    except (sqlite3.Error, OSError) as exc:
+        logger.warning("EDDiscovery archive | not readable (%s) - %s from the journals only", exc, what)
+        return []
+    logger.info("EDDiscovery archive | %d older lines for the %s", len(got), what)
+    return got
+
+
+def _bootstrap_body_physics() -> None:
+    """5.0 (worker): body rows stored without radius and axial tilt get them
+    from EDDiscovery's archive, when it is switched on - only empty columns
+    are filled. Without the tilt a planet's moons miss its equator."""
+    with ST.lock:
+        todo = set(ST.db.bodies_without_physics()) if ST.db else set()
+    if not todo:
+        return
+    lines = _archive_lines(("Scan",), [], "body physics")
+    found = [e for e in lines if (e.get("SystemAddress"), e.get("BodyID")) in todo]
+    if not found:
+        logger.info("body physics | %d bodies without radius and tilt, none in the archive", len(todo))
+        return
+    with ST.lock:
+        n = ST.db.fill_missing_physics(found)
+    logger.info("body physics | %d of %d bodies without radius and tilt filled from the archive", n, len(todo))
+
+
+def _bootstrap_rock_yield() -> None:
+    """5.0 MP1 (worker): tonnes per rock from the last 60 journals, for the
+    ROCK line's expectation; the live tracker learns on from there."""
+    d = maintenance._journal_dir()
+    files = journalscan.journal_files(d, 60) if d else []
+    if not files:
+        return
+    y = miningstat.RockYield()
+    names = ("ProspectedAsteroid", "MiningRefined", "LaunchSRV", "LaunchVessel", "DockSRV", "DockVessel",
+             "SRVDestroyed") + miningstat.YIELD_END
+    for e in _archive_lines(names, files, "tonnes per rock"):
+        y.feed(e)
+    for e in journalscan.read_events_matching(files, tuple('"%s"' % n for n in names)):
+        y.feed(e)
+    with ST.lock:
+        ST.mine.yields = y
+    logger.info("mining | tonnes per rock learnt from %d mined rocks", sum(len(v) for v in y.bins.values()))
+
+
 def _bootstrap_last_body() -> None:
     """Recover the last body we were at (journalscan.last_body)."""
     d = maintenance._journal_dir()
@@ -169,8 +277,14 @@ def _bootstrap_fuel() -> None:
     d = maintenance._journal_dir()
     if not d:
         return
-    journalscan.replay_fuel(journalscan.journal_files(d, 6), ST.fuel)
+    ST.fuel.since = learnreset.fuel_since(_learn_marks())       # SK3: resets per ship
+    files = journalscan.journal_files(d, 6)
+    older = _archive_lines(("Loadout", "Cargo", "FSDJump"), files, "fuel model")
+    journalscan.replay_fuel_events(itertools.chain(older, journalscan.read_events(files)), ST.fuel)
     logger.info("fuel | %s", ST.fuel.summary())
+    lm = ST.fuel.learned()
+    logger.info("learning | fuel model of this ship: %s, power %.2f, %d jumps%s", lm["source"],
+                lm["power"], lm["n"], "" if lm["spread_pct"] is None else ", scatter %.1f %%" % lm["spread_pct"])
 
 
 def _plan_staging() -> None:
@@ -369,6 +483,10 @@ def _start_worker() -> None:
     planning._fetch_local()
     planning._advance_horizon(allow_fetch=True)
     planning._rebuild_plan()
+    hint = findlog.height_hint(ST.center[1] if ST.center else None)
+    if hint:                                # FX4: own finds pay more off the plane
+        logger.info("sphere | %s", findlog.height_hint_text(hint))
+        panel._set_status(findlog.height_hint_text(hint))
 
 
 def _stop_survey() -> None:

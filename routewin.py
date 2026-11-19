@@ -65,6 +65,8 @@ def _rebuild_route() -> None:
         ST.route_full = True
     _route_work_notes(route, rows)
     ST.route = route
+    if not ST.route_full:
+        _keep_estimate(route)
     # Restore the ticks for this system, then drop any that no longer refer to
     # a stop on the current route.
     try:
@@ -82,6 +84,18 @@ def _rebuild_route() -> None:
     for line in route.lines(limit=8):
         logger.info("route | %s", line)
     uithread._ui(_route_window_refresh)
+
+
+def _keep_estimate(route: Any) -> None:
+    """5.0 (own-4): the first estimate after the FSS, for TIME PER SYSTEM."""
+    try:
+        with ST.lock:
+            kept = ST.db.keep_route_estimate(ST.db.view_fid(CURRENT), ST.cur_id64, route.total_s,
+                                             route.travel_s, route.work_s, len(route.stops))
+        if kept:
+            logger.info("route | estimate kept for %s: about %.0f min", ST.cur_system, route.total_s / 60.0)
+    except Exception:
+        logger.debug("route estimate not kept", exc_info=True)
 
 
 def _route_body_rows():
@@ -577,7 +591,17 @@ def _note_position(entry: Dict[str, Any]) -> None:
     uithread._ui(_route_window_refresh)
 
 
-def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
+def _is_stop_body(stop: Any, body: Any) -> bool:
+    """The stop's body, named (ApproachBody, Touchdown, SAAScanComplete) or
+    as its BodyID: ScanOrganic writes "Body" as a number."""
+    if isinstance(body, bool):
+        return False
+    if isinstance(body, int):
+        return stop.body.body_id == body
+    return stop.body.name == body
+
+
+def _route_auto_tick(body_name: Optional[Any], reason: str) -> None:
     """
     Tick a stop off automatically when the journal says you were there.
 
@@ -585,11 +609,19 @@ def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
     directly, so there is no need to tick anything by hand while flying. The
     manual checkbox stays for the cases the journal cannot see - a body you
     looked at and decided to skip.
+
+    ScanOrganic gives the body as its BodyID, not its name (19.11.: B 2 was
+    analysed at 18:37 but only ticked off at the next ApproachBody, 18:43).
     """
-    if not (body_name and ST.route):
+    if body_name is None or body_name == "" or not ST.route:
         return
     for st in ST.route.stops:
-        if st.body.name == body_name and st.body.body_id not in ST.route_done:
+        if _is_stop_body(st, body_name) and st.body.body_id not in ST.route_done:
+            if _bio_open(st.body.body_id):
+                # 5.0 (k-brain): bio still to sample - the stop stays on the
+                # list, amber in NEXT TARGETS, until the last species is done
+                logger.debug("route | %s reached (%s), bio still open", st.body.short, reason)
+                return
             ST.route_done.add(st.body.body_id)
             if ST.db and ST.cur_id64:
                 try:
@@ -601,6 +633,44 @@ def _route_auto_tick(body_name: Optional[str], reason: str) -> None:
                         st.body.short, reason, len(ST.route_done),
                         len(ST.route.stops))
             _route_progress_feedback(st)
+            uithread._ui(_route_window_refresh)
+            uithread._ui(panel._refresh)
+            return
+
+
+def _bio_open(body_id: int) -> int:
+    """Bio signals left on a body of this system for the commander in view."""
+    if not (ST.db and ST.cur_id64):
+        return 0
+    try:
+        with ST.lock:
+            return ST.db.bio_left_of(ST.cur_id64, body_id, ST.db.view_fid(CURRENT))
+    except Exception:
+        logger.debug("bio left failed", exc_info=True)
+        return 0
+
+
+def _route_reopen_bio(body_name: Optional[str]) -> None:
+    """
+    SAASignalsFound: a stop ticked off but with bio found by the DSS goes
+    back on the list.
+
+    The game writes SAAScanComplete before SAASignalsFound, so the mapping
+    tick came before anyone knew of the signal - the Brain Trees found by
+    the DSS on 17.11. never showed in NEXT TARGETS (test finding k-brain).
+    """
+    if not (body_name and ST.route):
+        return
+    for st in ST.route.stops:
+        bid = st.body.body_id
+        if st.body.name == body_name and bid in ST.route_done and _bio_open(bid):
+            ST.route_done.discard(bid)
+            try:
+                with ST.lock:
+                    ST.db.set_route_done(ST.cur_id64, bid, False)
+            except Exception:
+                logger.exception("could not store the reopened stop")
+            logger.info("route | %s back on the list: bio found by the DSS", st.body.short)
             uithread._ui(_route_window_refresh)
             uithread._ui(panel._refresh)
             return

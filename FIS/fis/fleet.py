@@ -39,7 +39,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "ShipyardSell", "ShipyardTransfer", "SellShipOnRebuy", "CarrierStats",
           "CarrierLocation", "CarrierJump", "CarrierJumpRequest", "CarrierJumpCancelled",
           "CarrierDepositFuel", "CarrierBankTransfer", "CarrierFinance", "CarrierCrewServices",
-          "CarrierNameChange", "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
+          "CarrierNameChange", "CarrierTradeOrder", "CarrierDecommission", "CarrierCancelDecommission",
+          "FSDJump", "Location", "ShipTargeted", "Commander", "LoadGame",
           "SAAScanComplete", "SellOrganicData",
           # unsold data at risk (M4)
           "ScanOrganic", "FSSDiscoveryScan", "MultiSellExplorationData", "SellExplorationData",
@@ -52,11 +53,15 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "Statistics", "Rank", "Progress", "Reputation", "MarketSell", "CargoTransfer",
           # raw materials (jumponium)
           "Materials", "MaterialCollected", "MaterialDiscarded", "Synthesis", "EngineerCraft",
+          # 5.0 EN1: which engineers are unlocked, at which rank
+          "EngineerProgress",
           "MaterialTrade", "TechnologyBroker", "MissionCompleted", "ScientificResearch",
           # hazard log and where it happened
           "UnderAttack", "Interdicted", "EscapeInterdiction", "HullDamage", "HeatWarning", "HeatDamage",
           "ShieldState", "CockpitBreached", "SystemsShutdown", "Died", "JetConeDamage", "JetConeBoost",
           "FighterDestroyed", "SRVDestroyed", "ApproachBody", "LeaveBody", "SupercruiseExit", "Touchdown",
+          "AfmuRepairs",                     # R8: a repair of the life support says it was off
+          "FuelScoop", "StartJump",          # B-15: scoop rate per star class
           "Docked",
           # points of interest in SYSTEM (M10): stations, carriers, beacons
           "FSSSignalDiscovered",
@@ -68,8 +73,19 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "NavBeaconScan",
           # unsold exploration data: which bodies you scanned (kept slim)
           "Scan",
+          # 5.0 EA2: bio rates and Brain Trees also from the EDDiscovery archive
+          # (slim: the bio count, biological codex entries only)
+          "FSSBodySignals", "SAASignalsFound", "CodexEntry",
           # which ring the rocks were prospected in (fis/prospect.py)
           "SupercruiseEntry",
+          # 5.0 GAIN / LOSS (fis/ledger.py): what was earned, spent and invested
+          "ModuleBuy", "ModuleBuyAndStore", "ModuleSell", "ModuleSellRemote", "FetchRemoteModule",
+          "BuySuit", "BuyWeapon", "UpgradeSuit", "UpgradeWeapon", "BuyMicroResources", "SellSuit",
+          "SellWeapon", "SellMicroResources", "CarrierBuy", "Repair", "RepairAll", "RefuelAll",
+          "RefuelPartial", "BuyAmmo", "RestockVehicle", "BuyDrones", "SellDrones", "PayFines",
+          "PayBounties", "PayLegacyFines", "NpcCrewPaidWage", "CrewHire", "BuyExplorationData",
+          "BuyTradeData", "RedeemVoucher", "MarketBuy", "SearchAndRescue", "CommunityGoalReward",
+          "PowerplaySalary",
           # first footfall (unsold data: the x5 bonus is paid only there)
           "Disembark")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
@@ -83,13 +99,46 @@ CARRIER_MAX_JUMP = 500.0
 CARRIER_TANK = 1000
 
 
-def tritium_for_jump(ly: float, load_t: float, tritium_t: float) -> int:
+Model = Optional[Tuple[float, float]]      # (base, div) of the formula, None = the fitted default
+LEARN_MIN = 5          # jumps of 20 ly and more before the formula is learnt
+LEARN_LAST = 50        # the newest jumps it is learnt from
+
+
+def tritium_for_jump(ly: float, load_t: float, tritium_t: float, model: Model = None) -> int:
     """Tritium in tonnes a carrier jump of ly costs with this cargo and tritium
-    load (TRITIUM_BASE / TRITIUM_DIV)."""
-    return int(round(5 + ly * (load_t + tritium_t + TRITIUM_BASE) / TRITIUM_DIV))
+    load: 5 + ly x (load + tritium + base) / div - base and div learnt from
+    your own jumps (learn_tritium), else TRITIUM_BASE / TRITIUM_DIV."""
+    b, d = model or (TRITIUM_BASE, TRITIUM_DIV)
+    return int(round(5 + ly * (load_t + tritium_t + b) / d))
 
 
-def carrier_trip(ly: float, load_t: float, tank: int) -> Dict[str, Any]:
+def learn_tritium(jumps: Iterable[Tuple[float, float, float, float]]) -> Dict[str, Any]:
+    """The formula fitted on your own jumps (ly, load, tritium before, used):
+    used - 5 = ly x (load + tritium) / div + ly x base / div, least squares
+    over the newest LEARN_LAST jumps of 20 ly and more. Below LEARN_MIN
+    jumps, or with an implausible fit, the default stays. Says how far the
+    chosen formula is off on those jumps (max_err, t)."""
+    rows = [j for j in jumps if j[0] >= 20 and j[3] > 0][-LEARN_LAST:]
+    out: Dict[str, Any] = {"n": len(rows), "learnt": False, "base": TRITIUM_BASE, "div": TRITIUM_DIV}
+    if len(rows) >= LEARN_MIN:
+        s11 = s12 = s22 = t1 = t2 = 0.0
+        for ly, load, trit, used in rows:
+            x1, x2, y = ly * (load + trit), ly, used - 5
+            s11, s12, s22, t1, t2 = s11 + x1 * x1, s12 + x1 * x2, s22 + x2 * x2, t1 + x1 * y, t2 + x2 * y
+        det = s11 * s22 - s12 * s12
+        if det > 0:
+            a = (t1 * s22 - t2 * s12) / det
+            b = (s11 * t2 - s12 * t1) / det
+            if a > 0 and 100000 <= 1 / a <= 400000 and 0 <= b / a <= 100000:
+                out.update(learnt=True, base=round(b / a, 0), div=round(1 / a, 0))
+    model = (out["base"], out["div"])
+    errs = [used - tritium_for_jump(ly, load, trit, model) for ly, load, trit, used in rows]
+    out["max_err"] = max((abs(e) for e in errs), default=None)
+    out["model"] = model
+    return out
+
+
+def carrier_trip(ly: float, load_t: float, tank: int, model: Model = None) -> Dict[str, Any]:
     """Tritium for a trip of `ly` in equal jumps of at most 500 ly. Tritium
     on board weighs too: when the tank is short, the need is worked out for
     a carrier that carries it."""
@@ -99,7 +148,7 @@ def carrier_trip(ly: float, load_t: float, tank: int) -> Dict[str, Any]:
     def cost(start: float) -> int:
         left, total = float(start), 0
         for _ in range(n):
-            need = tritium_for_jump(hop, load_t, left)
+            need = tritium_for_jump(hop, load_t, left, model)
             total += need
             left -= need
         return total
@@ -114,12 +163,12 @@ def carrier_trip(ly: float, load_t: float, tank: int) -> Dict[str, Any]:
             "short": max(0, int(need) - int(tank))}
 
 
-def carrier_range(tritium: int, load_t: float, hop_ly: float = CARRIER_MAX_JUMP
-                  ) -> Dict[str, Any]:
+def carrier_range(tritium: int, load_t: float, hop_ly: float = CARRIER_MAX_JUMP,
+                  model: Model = None) -> Dict[str, Any]:
     """Full jumps of `hop_ly` the tank allows, then what is left for a short one."""
     left, jumps, ly = int(tritium), 0, 0.0
     while True:
-        need = tritium_for_jump(hop_ly, load_t, left)
+        need = tritium_for_jump(hop_ly, load_t, left, model)
         if need > left:
             break
         left -= need
@@ -133,13 +182,13 @@ def carrier_range(tritium: int, load_t: float, hop_ly: float = CARRIER_MAX_JUMP
         lo, hi = 0.0, hop_ly
         for _ in range(30):
             mid = (lo + hi) / 2
-            if tritium_for_jump(mid, load_t, left) <= left:
+            if tritium_for_jump(mid, load_t, left, model) <= left:
                 lo = mid
             else:
                 hi = mid
         extra = lo
     return {"jumps": jumps, "ly": round(ly + extra, 0), "per_jump": tritium_for_jump(
-        hop_ly, load_t, tritium), "left_after": left}
+        hop_ly, load_t, tritium, model), "left_after": left}
 
 
 # --------------------------------------------------------------- names
@@ -385,6 +434,66 @@ def rate_loadout(lo: Dict[str, Any], vehicles: Optional[Iterable[str]] = None) -
 
 # --------------------------------------------------------------- archive
 
+def _slim_position(e: Dict[str, Any]) -> Dict[str, Any]:
+    """FSDJump / Location: the coordinates (carrier jump distances) - and for
+    a Location the docking: loading the game on a pad writes no Docked, only
+    Location with Docked: true."""
+    slim = {"event": e["event"], "timestamp": e.get("timestamp"),
+            "StarSystem": e.get("StarSystem"), "StarPos": star_pos(e.get("StarPos")),
+            "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
+    if e.get("Docked"):
+        slim.update({k: e.get(k) for k in ("Docked", "StationName", "StationType", "MarketID")})
+    return slim
+
+
+def _slim_scan(e: Dict[str, Any]) -> Dict[str, Any]:
+    """Scan: only who and what - the full scan is in the plugin database."""
+    slim = {k: e.get(k) for k in ("event", "timestamp", "StarSystem", "SystemAddress",
+                                  "BodyID", "BodyName", "ScanType")}
+    # first discovery / first footfall (unsold risk) - only when present
+    slim.update({k: e[k] for k in ("DistanceFromArrivalLS", "WasDiscovered",
+                                   "WasFootfalled", "Landable") if k in e})
+    # B6: what the data is worth (bodyvalue) - class, mass, terraforming
+    slim.update({k: e[k] for k in ("StarType", "StellarMass", "PlanetClass", "MassEM",
+                                   "TerraformState", "WasMapped") if k in e})
+    if e.get("Landable"):
+        slim["AtmosphereType"] = e.get("AtmosphereType") or "None"     # 5.0 EA2: bio rates
+    return slim
+
+
+def _slim_signals(e: Dict[str, Any]) -> Dict[str, Any]:
+    """FSSBodySignals / SAASignalsFound (5.0 EA2): the biological count only."""
+    bio = sum(int(s.get("Count") or 0) for s in e.get("Signals") or []
+              if "Biological" in str(s.get("Type") or ""))
+    return {"event": e["event"], "timestamp": e.get("timestamp"), "SystemAddress": e.get("SystemAddress"),
+            "BodyID": e.get("BodyID"), "bio": bio}
+
+
+def _slim_codex(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """CodexEntry (5.0 EA2): biological entries only - which species where."""
+    if "Biology" not in str(e.get("Category") or ""):
+        return None
+    return {"event": "CodexEntry", "timestamp": e.get("timestamp"), "SystemAddress": e.get("SystemAddress"),
+            "BodyID": e.get("BodyID"), "Name_Localised": e.get("Name_Localised") or e.get("Name")}
+
+
+def _slim_ship_targeted(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """ShipTargeted: only your own unmanned fighters (ship names)."""
+    if not str(e.get("PilotName") or "").startswith("$RolePanel2_unmanned"):
+        return None
+    return {"event": "ShipTargeted", "timestamp": e.get("timestamp"),
+            "Ship": e.get("Ship"), "Ship_Localised": e.get("Ship_Localised")}
+
+
+_SLIM = {
+    "FSDJump": _slim_position, "Location": _slim_position, "Scan": _slim_scan,
+    "FSSBodySignals": _slim_signals, "SAASignalsFound": _slim_signals, "CodexEntry": _slim_codex,
+    "Disembark": lambda e: {k: e.get(k) for k in ("event", "timestamp", "SystemAddress", "Body",
+                                                  "BodyID", "OnPlanet", "SRV")},
+    "ShipTargeted": _slim_ship_targeted,
+}
+
+
 ALL_COMMANDERS = "*"      # Archive.events(ALL_COMMANDERS): every commander's events
 
 
@@ -478,8 +587,82 @@ def _fit_entry(it: Dict[str, Any], lo: Dict[str, Any], vehicles: Iterable[str]) 
     it["value"] = it.get("value") or ((lo.get("HullValue") or 0) + (lo.get("ModulesValue") or 0)) or None
     it["jump"] = lo.get("MaxJumpRange")
     it["cargo"] = lo.get("CargoCapacity")
+    # 5.0 JUMP PLAN: the laden range of a transporter is worked out from these
+    it["mass"] = lo.get("UnladenMass")
+    fc = lo.get("FuelCapacity") or {}
+    it["fuel_cap"] = ((fc.get("Main") or 0) + (fc.get("Reserve") or 0)) if isinstance(fc, dict) else None
     it["rating"] = rate_loadout(lo, it["vehicles"])
     it["modules"] = len([m for m in lo.get("Modules") or [] if slot_group(m.get("Slot")) != "cosmetic"])
+    it["fsd"] = fsd_of(lo)
+
+
+def fsd_of(lo: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """EN1: the frame shift drive of a fitting - module, blueprint, grade,
+    engineer and experimental effect (None for a grade means not engineered)."""
+    for m in lo.get("Modules") or []:
+        if m.get("Slot") == "FrameShiftDrive":
+            g = m.get("Engineering") or {}
+            return {"item": m.get("Item"), "blueprint": g.get("BlueprintName"), "grade": g.get("Level"),
+                    "engineer": g.get("Engineer"), "experimental": g.get("ExperimentalEffect_Localised")
+                    or g.get("ExperimentalEffect")}
+    return None
+
+
+def fsd_engineers(evs: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    EN1: who has engineered a frame shift drive for you, which blueprint up
+    to which grade (EngineerCraft on the FSD slot and the Engineering of
+    your FSD fittings), and whether they are unlocked now (the last
+    EngineerProgress). Only your own data - no table of what an engineer
+    could do: an engineer that never worked on your drive is not listed.
+    """
+    best: Dict[Tuple[str, str], int] = {}
+    progress: Dict[str, Dict[str, Any]] = {}
+    for e in evs:
+        ev = e.get("event")
+        if ev == "EngineerProgress" and e.get("Engineers"):
+            progress = {x.get("Engineer"): x for x in e["Engineers"] if x.get("Engineer")}
+        elif ev == "EngineerCraft" and e.get("Slot") == "FrameShiftDrive":
+            k = (e.get("Engineer") or "", e.get("BlueprintName") or "")
+            best[k] = max(best.get(k, 0), int(e.get("Level") or 0))
+        elif ev == "Loadout":
+            f = fsd_of(e)
+            if f and f["engineer"] and f["blueprint"] and f["grade"]:
+                k = (f["engineer"], f["blueprint"])
+                best[k] = max(best.get(k, 0), int(f["grade"]))
+    out = []
+    for (eng, bp), lvl in best.items():
+        p = progress.get(eng) or {}
+        out.append({"engineer": eng, "blueprint": bp, "max_grade": lvl,
+                    "unlocked": p.get("Progress") == "Unlocked", "rank": p.get("Rank")})
+    return sorted(out, key=lambda x: (-x["max_grade"], x["engineer"]))
+
+
+def fsd_hint(fsd: Optional[Dict[str, Any]], engineers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """EN1, only a hint: a drive below the highest grade an unlocked engineer
+    already gave you for that blueprint (Increased Range when it is not
+    engineered) - {"to": grade, "engineers": [names]} or None."""
+    if not fsd:
+        return None
+    bp = fsd.get("blueprint") or "FSD_LongRange"
+    have = int(fsd.get("grade") or 0)
+    can = [e for e in engineers if e["blueprint"] == bp and e["unlocked"] and e["max_grade"] > have]
+    if not can:
+        return None
+    top = max(e["max_grade"] for e in can)
+    return {"to": top, "blueprint": bp, "engineers": [e["engineer"] for e in can if e["max_grade"] == top]}
+
+
+def _jump_rows(jumps: Iterable[Dict[str, Any]], pos: Dict[str, Any]) -> List[Tuple[float, float, float, float]]:
+    """(ly, load, tritium before, used) of every jump with both ends and
+    the tank before and after known."""
+    rows = []
+    for j in jumps:
+        a, b = pos.get(j["from"]), pos.get(j["to"])
+        if a and b and j.get("before") is not None and j.get("after") is not None:
+            rows.append((math.dist(a, b), float(j.get("load") or 0), float(j["before"]),
+                         float(j["before"] - j["after"])))
+    return rows
 
 
 class _CarrierLog:
@@ -556,9 +739,14 @@ class _CarrierLog:
 
 
 class Archive:
-    """Relevant journal events from every journal, rescanned when files change."""
+    """Relevant journal events from every journal, rescanned when files change.
+
+    5.0: with use_edd() also the older journals EDDiscovery keeps (fis/
+    eddarchive.py) - read once in the background, then only what the journals
+    on disk do not have is added."""
 
     MIN_RESCAN_S = 20.0
+    EDD_RELOAD_S = 3600.0     # EDDiscovery's file changes while it runs: at most hourly
 
     def __init__(self, journal_dir: str) -> None:
         self.journal_dir = journal_dir
@@ -566,6 +754,87 @@ class Archive:
         self._lock = threading.Lock()
         self._scanned = 0.0
         self.rev = 0
+        self._evcache: Tuple[Any, List[Dict[str, Any]]] = (None, [])
+        # the EDDiscovery archive: off until use_edd(path)
+        self._edd_path: Optional[str] = None
+        self._edd_raw: List[Dict[str, Any]] = []     # every event read from it
+        self._edd: List[Dict[str, Any]] = []         # those the journals on disk lack
+        self._edd_sig: Any = None
+        self._edd_loaded = 0.0
+        self._edd_busy = False
+        self.edd_state: Dict[str, Any] = {"state": "off"}
+
+    # ------------------------------------------------------- EDD archive
+    def use_edd(self, path: Optional[str]) -> None:
+        """Read the EDDiscovery archive at ``path`` from now on (None: off,
+        its events are dropped at once)."""
+        with self._lock:
+            if path == self._edd_path:
+                return
+            self._edd_path = path
+            self._edd_raw, self._edd, self._edd_sig = [], [], None
+            self.edd_state = {"state": "waiting", "path": path} if path else {"state": "off"}
+            self.rev += 1
+        self._scanned = 0.0
+        self._kick_edd()
+
+    def edd_source(self) -> Optional[str]:
+        """The EDDiscovery archive read from now on, None while it is off."""
+        return self._edd_path
+
+    def _kick_edd(self) -> None:
+        """Start the background read of the archive when one is due."""
+        with self._lock:
+            due = self._edd_due()
+        if due:
+            threading.Thread(target=self._load_edd, args=(due,), name="fis-edd-archive", daemon=True).start()
+
+    def _edd_due(self) -> Optional[str]:
+        """Under the lock: the path to read now, if a read is due."""
+        path = self._edd_path
+        if not path or self._edd_busy:
+            return None
+        if self._edd_sig is not None:
+            if time.time() - self._edd_loaded < self.EDD_RELOAD_S:
+                return None
+            from . import eddarchive
+            if eddarchive.signature(path) == self._edd_sig:
+                return None
+        self._edd_busy = True
+        self.edd_state = dict(self.edd_state, state="loading", path=path)
+        return path
+
+    def _load_edd(self, path: str) -> None:
+        """Worker: read the archive, hand it over for merging."""
+        from . import eddarchive
+        sig, t0 = eddarchive.signature(path), time.time()
+        try:
+            got: Optional[Dict[str, Any]] = eddarchive.read(path, EVENTS, Archive._take)
+            state: Dict[str, Any] = {"state": "ready", "rows": got["rows"],
+                                     "commanders": len(got["commanders"])}
+        except Exception as exc:           # a broken or foreign file: say so, never stop the FIS
+            got, state = None, {"state": "error", "error": str(exc)[:200]}
+        state.update(path=path, seconds=round(time.time() - t0, 1))
+        with self._lock:
+            self._edd_busy = False
+            if path != self._edd_path:
+                return                         # switched off or moved meanwhile
+            self._edd_loaded = time.time()
+            self._edd_sig = sig if got else ("error",)
+            self.edd_state = state
+            if got:
+                self._edd_raw = got["events"]
+                self._merge_edd()
+                self.rev += 1
+
+    def _merge_edd(self) -> None:
+        """Under the lock: what the archive adds to the journals on disk."""
+        from . import eddarchive
+        local = (e for _p, (_s, lst) in self._files.items() for e in lst)
+        self._edd = eddarchive.missing_from(local, self._edd_raw)
+        if self.edd_state.get("state") == "ready":
+            stamps = [e["timestamp"] for e in self._edd if e.get("event") != "Commander"]
+            self.edd_state.update(added=len(stamps), first=min(stamps) if stamps else None)
 
     def refresh(self, force: bool = False) -> None:
         """Read the journals again - only the files that changed - at most
@@ -591,8 +860,11 @@ class Archive:
                 if p not in paths:
                     del self._files[p]
                     changed = True
+            if changed and self._edd_raw:
+                self._merge_edd()          # the journals on disk changed: what the archive adds, again
             if changed:
                 self.rev += 1
+        self._kick_edd()
 
     @staticmethod
     def _read(path: str) -> List[Dict[str, Any]]:
@@ -614,60 +886,43 @@ class Archive:
                         e = json.loads(raw.decode("utf-8", errors="replace"))
                     except ValueError:
                         continue
-                    if e.get("event") in ("Commander", "LoadGame"):
-                        fid = e.get("FID") or fid
-                        out.append({"event": "Commander", "timestamp": e.get("timestamp"),
-                                    "_fid": fid, "Name": e.get("Name") or e.get("Commander")})
-                        if e.get("event") == "LoadGame":      # session start (hazard log)
-                            out.append({"event": "LoadGame", "timestamp": e.get("timestamp"), "_fid": fid})
-                        continue
-                    e = Archive._slim(e)
-                    if e is None:
-                        continue
-                    e["_fid"] = fid
-                    out.append(e)
+                    fid = Archive._take(e, fid, out)
         except OSError:
             pass
         return out
 
     @staticmethod
+    def _take(e: Dict[str, Any], fid: Optional[str], out: List[Dict[str, Any]]) -> Optional[str]:
+        """One journal line into ``out``, slimmed and tagged with the
+        commander; returns the commander (FID) logged in from then on. The
+        same for the journals on disk and the EDDiscovery archive."""
+        if e.get("event") in ("Commander", "LoadGame"):
+            fid = e.get("FID") or fid
+            out.append({"event": "Commander", "timestamp": e.get("timestamp"),
+                        "_fid": fid, "Name": e.get("Name") or e.get("Commander")})
+            if e.get("event") == "LoadGame":      # session start (hazard log)
+                # GAIN / LOSS needs the balance and the ship at login (AU1, 18.11.)
+                out.append({"event": "LoadGame", "timestamp": e.get("timestamp"), "_fid": fid,
+                            **{k: e[k] for k in ("Credits", "ShipID", "Ship", "ShipName") if k in e}})
+            return fid
+        slim = Archive._slim(e)
+        if slim is not None:
+            slim["_fid"] = fid
+            out.append(slim)
+        return fid
+
+    @staticmethod
     def _slim(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """What the FIS keeps of an event (big ones slimmed); None: not kept."""
-        if e.get("event") in ("FSDJump", "Location"):
-            # the coordinates (carrier jump distances) - and for a
-            # Location the docking: loading the game on a pad
-            # writes no Docked, only Location with Docked: true
-            slim = {"event": e["event"], "timestamp": e.get("timestamp"),
-                    "StarSystem": e.get("StarSystem"), "StarPos": star_pos(e.get("StarPos")),
-                    "SystemAddress": e.get("SystemAddress"), "JumpDist": e.get("JumpDist")}
-            if e.get("Docked"):
-                slim.update({k: e.get(k) for k in ("Docked", "StationName",
-                                                   "StationType", "MarketID")})
-            e = slim
-        elif e.get("event") == "Scan":
-            # only who and what - the full scan is in the plugin database
-            slim = {k: e.get(k) for k in ("event", "timestamp", "StarSystem", "SystemAddress",
-                                          "BodyID", "BodyName", "ScanType")}
-            # first discovery / first footfall (unsold risk) - only when present
-            slim.update({k: e[k] for k in ("DistanceFromArrivalLS", "WasDiscovered",
-                                           "WasFootfalled", "Landable") if k in e})
-            e = slim
-        elif e.get("event") == "Disembark":
-            e = {k: e.get(k) for k in ("event", "timestamp", "SystemAddress", "Body",
-                                       "BodyID", "OnPlanet", "SRV")}
-        elif e.get("event") == "ShipTargeted":
-            if not str(e.get("PilotName") or "").startswith("$RolePanel2_unmanned"):
-                return None
-            e = {"event": "ShipTargeted", "timestamp": e.get("timestamp"),
-                 "Ship": e.get("Ship"), "Ship_Localised": e.get("Ship_Localised")}
-        return e
+        f = _SLIM.get(e.get("event"))
+        return f(e) if f is not None else e
 
     def commander(self) -> Tuple[Optional[str], Optional[str]]:
         """(FID, name) of the commander logged in last."""
         self.refresh()
         with self._lock:
             last = None
-            for _p, (_s, lst) in sorted(self._files.items()):
+            for lst in self._lists():
                 for e in lst:
                     if e["event"] == "Commander" and e.get("_fid"):
                         last = e
@@ -682,11 +937,20 @@ class Archive:
             fid = self.commander()[0]
         every = fid == ALL_COMMANDERS
         with self._lock:
-            evs = [e for _p, (_s, lst) in sorted(self._files.items()) for e in lst
+            key = (self.rev, fid)
+            if self._evcache[0] == key:
+                return list(self._evcache[1])
+            evs = [e for lst in self._lists() for e in lst
                    if e["event"] != "Commander"
                    and (every or fid is None or e.get("_fid") in (fid, None))]
-        evs.sort(key=lambda e: e.get("timestamp") or "")
-        return evs
+            evs.sort(key=lambda e: e.get("timestamp") or "")
+            self._evcache = (key, evs)
+        return list(evs)
+
+    def _lists(self) -> List[List[Dict[str, Any]]]:
+        """Under the lock: the event lists, the EDDiscovery archive first (so
+        the journals on disk name the commander logged in last)."""
+        return [self._edd] + [lst for _p, (_s, lst) in sorted(self._files.items())]
 
     # -------------------------------------------------------------- ships
     def ship_names(self, evs: Iterable[Dict[str, Any]]) -> Dict[str, str]:
@@ -729,8 +993,11 @@ class Archive:
             ships.setdefault(sid, {"id": sid})["type"] = (lo.get("Ship") or "").lower()
             fits[sid] = lo
         vehicles = _launched_vehicles(evs)
+        engineers = fsd_engineers(evs)
         for sid, lo in fits.items():
             _fit_entry(ships[sid], lo, vehicles.get(sid, ()))
+            if ships[sid].get("fsd"):
+                ships[sid]["fsd"]["hint"] = fsd_hint(ships[sid]["fsd"], engineers)
         if current is not None and current in ships:
             ships[current]["current"] = True
         for it in ships.values():
@@ -740,7 +1007,7 @@ class Archive:
                        if stored else None)
         order = sorted(ships.values(), key=lambda s: (not s.get("current"), s.get("stored_at") != "here",
                                                       s.get("type_name") or ""))
-        return {"ships": order, "hangar": stored_info, "names": names}
+        return {"ships": order, "hangar": stored_info, "names": names, "fsd_engineers": engineers}
 
     def dss(self, sys_id64: int, body_id: int) -> Optional[Dict[str, Any]]:
         """Last surface scan of a body: probes used against the efficiency target."""
@@ -795,6 +1062,8 @@ class Archive:
         if c.stats is None:
             return None
         pos, pend, fuel, load = c.pos, c.pend, c.fuel, c.load
+        learn = learn_tritium(_jump_rows(c.jumps, pos))
+        model = learn["model"]
         hist = []
         for j in c.jumps[-12:]:
             a, b = pos.get(j["from"]), pos.get(j["to"])
@@ -802,7 +1071,7 @@ class Archive:
             hist.append({"from": j["from"], "to": j["to"], "ly": round(ly, 1) if ly else None,
                          "used": ((j["before"] - j["after"])
                                   if j.get("before") is not None and j.get("after") is not None else None),
-                         "predicted": tritium_for_jump(ly, j["load"] or 0, j["before"] or 0) if ly else None,
+                         "predicted": tritium_for_jump(ly, j["load"] or 0, j["before"] or 0, model) if ly else None,
                          "ts": j.get("arrived") or j.get("ts")})
         pending = None
         if pend and not pend.get("arrived"):
@@ -810,10 +1079,41 @@ class Archive:
             ly = math.dist(a, b) if a and b else None
             pending = {"to": pend["to"], "body": pend.get("body"), "departure": pend.get("departure"),
                        "ly": round(ly, 1) if ly else None,
-                       "tritium": tritium_for_jump(ly, load or 0, fuel or 0) if ly else None}
+                       "tritium": tritium_for_jump(ly, load or 0, fuel or 0, model) if ly else None}
         return {"stats": c.stats, "location": c.loc, "arrived": c.arrived_ts, "fuel": fuel, "load": load,
+                "tritium_model": learn,
                 "jumps": hist, "pending": pending, "upkeep": weekly_cost(c.balances, c.transfers),
-                "services_changed": c.services}
+                "services_changed": c.services,
+                # PL2: the balance over time and your transfers, for GAIN / LOSS
+                "balances": list(c.balances), "transfers": list(c.transfers)}
+
+
+def type_label(names: Dict[str, str], typ: Optional[str]) -> str:
+    """A ship type for people: the game's own name from the journal, else
+    the internal one made readable ("type9_military" -> "Type9 Military")."""
+    t = (typ or "").lower()
+    return names.get(t) or (t.replace("_", " ").title() if t else "?")
+
+
+def upkeep_between(balances: List[Tuple[float, int]], transfers: List[Dict[str, Any]],
+                   since: Optional[float], min_days: float = 3.0,
+                   until: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """
+    PL2: what the carrier cost over a period - its balance (CarrierStats)
+    at the first and the last reading from `since` on, your own transfers
+    to and from it taken out. An estimate: market income of other
+    commanders at the carrier cannot be told apart, so it can come out too
+    low; positive drift gives no cost. None below min_days of readings.
+    """
+    # `until` (GV1) ends the period: readings from then on are left out
+    pts = [(t, b) for t, b in balances if (since is None or t >= since) and (until is None or t < until)]
+    if len(pts) < 2 or (pts[-1][0] - pts[0][0]) / 86400.0 < min_days:
+        return None
+    (t0, b0), (t1, b1) = pts[0], pts[-1]
+    net_tr = sum(x["deposit"] - x["withdraw"] for x in transfers if t0 < x["ts"] <= t1)
+    drift = b1 - b0 - net_tr
+    return {"cost": int(round(-drift)) if drift < 0 else None, "drift": int(round(drift)),
+            "days": round((t1 - t0) / 86400.0, 1), "readings": len(pts), "from": t0, "to": t1}
 
 
 def weekly_cost(balances: List[Tuple[float, int]], transfers: List[Dict[str, Any]],

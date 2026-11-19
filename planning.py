@@ -582,6 +582,7 @@ def _rebuild_plan() -> None:
         _maybe_extend()
         return
     plan = _fill_probes(_plan_build())
+    _mark_permits(plan)
     with ST.lock:
         ST.stats = ST.planner.statistics(plan)
     ST.flight = plan["flight"]
@@ -623,6 +624,33 @@ def _rebuild_plan() -> None:
                 len(ST.flight), len(ST.probe), ST.plan_counts)
     _update_route_targets()
     _maybe_extend()
+
+
+PERMIT_NOTE = "permit (EDD)"
+
+
+def _mark_permits(plan: Dict[str, Any]) -> int:
+    """5.0 PM1: flight targets and probes that EDDiscovery lists as permit-
+    locked get "permit (EDD)" in their detail - a hint with its source, the
+    target stays in the plan (the game decides, EDD's list can be old).
+    Returns how many were marked; one log line names them."""
+    edd = ST.sources.sources.get("edd") if ST.sources is not None else None
+    if edd is None or not cfg_bool(CFG["src_edd"], True) or not hasattr(edd, "permit_ids"):
+        return 0
+    try:
+        locked = edd.permit_ids()
+    except Exception:
+        logger.debug("permit list unreadable", exc_info=True)
+        return 0
+    hit = [t for t in list(plan.get("flight") or []) + list(plan.get("probe") or [])
+           if t.id64 is not None and t.id64 in locked]
+    for t in hit:
+        if PERMIT_NOTE not in (t.detail or ""):
+            t.detail = (t.detail + ", " if t.detail else "") + PERMIT_NOTE
+    if hit:
+        logger.info("plan: %d target(s) need a permit according to EDDiscovery: %s",
+                    len(hit), ", ".join(t.name for t in hit[:8]) + (" ..." if len(hit) > 8 else ""))
+    return len(hit)
 
 
 def _current_system_from_journal() -> Optional[Tuple[str, int, Tuple[float, float, float]]]:

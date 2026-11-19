@@ -119,13 +119,48 @@ class TestKnown(unittest.TestCase):
             def bodies_of(self, i):
                 return [1] if i == 2 else []
 
-        k = ca.build_known(Arc(), Store(), None, db=Db())
+        k = ca.build_known(Arc(), Store(), None, db=Db(), now=1793577600.0)
         c = next(i for i in k["met"] if i["callsign"] == "Q2W-3ER")
         self.assertEqual(c["services"], ["dock", "refuel", "vistagenomics"])
         self.assertEqual(c["services_ts"], "2026-11-01T10:05:00Z")
         self.assertEqual(c["access"]["state"], "dock")
         self.assertEqual(c["system_id64"], 2)                    # Test Beta (carrier jumped there)
-        self.assertIsNone(ca.build_known(Arc(), Store(), None)["met"][0]["system_id64"])
+        self.assertIsNone(ca.build_known(Arc(), Store(), None, now=1793577600.0)["met"][0]["system_id64"])
+
+    def test_spansh_positions_join_and_old_ones_leave(self):
+        # user 19.11.: what "find carriers near me" showed is known; a
+        # position older than 90 days is stale - gone, favourites stay flagged
+        class Arc:
+            def commander(self):
+                return ("F7", "Tester")
+
+            def events(self):
+                return list(EVS)
+
+        online = {"Z9Z-9ZZ": {"system": "Demo Far", "id64": 9, "pos": [1.0, 2.0, 3.0], "ts": "2026-11-10T12:00:00Z",
+                              "services": ["repair"]},
+                  "Q2W-3ER": {"system": "Demo Newer", "id64": 8, "pos": [5.0, 0.0, 0.0], "ts": "2026-11-10T12:00:00Z"},
+                  "OLD-111": {"system": "Demo Old", "id64": 7, "pos": [0.0, 0.0, 0.0], "ts": "2026-06-01T00:00:00Z"}}
+
+        class Store:
+            def __init__(self, favs):
+                self.favs = favs
+
+            def get(self, fid):
+                return {"favourites": self.favs, "markets": {}, "online": online}
+
+            def remember_position(self, *a):
+                return False
+        nov11 = 1793577600.0 + 9 * 86400
+        k = ca.build_known(Arc(), Store({}), None, now=nov11)
+        every = {i["callsign"]: i for i in k["met"] + k["sighted"]}
+        self.assertEqual((every["Z9Z-9ZZ"]["system"], every["Z9Z-9ZZ"]["how"]), ("Demo Far", "online"))
+        self.assertEqual(every["Q2W-3ER"]["system"], "Demo Newer")          # Spansh newer than the journal
+        self.assertNotIn("OLD-111", every)                                   # 162 days old: stale
+        later = ca.build_known(Arc(), Store({"Q2W-3ER": {"note": ""}}), None, now=nov11 + 200 * 86400)
+        self.assertEqual([i["callsign"] for i in later["favourites"]], ["Q2W-3ER"])
+        self.assertTrue(later["favourites"][0]["stale"])                     # stays, flagged
+        self.assertEqual(later["met"] + later["sighted"], [])
 
     def test_favourite_pois(self):
         poi = [{"kind": "station", "name": "Test Port"},

@@ -32,7 +32,7 @@ TIERS = ("basic", "standard", "premium")
 STARTS = ("LaunchSRV", "LaunchVessel")
 ENDS = ("DockSRV", "DockVessel", "SRVDestroyed", "VesselDestroyed", "Died", "LoadGame", "Shutdown")
 
-_cache: Dict[Tuple[int, int, Optional[str]], Dict[str, Any]] = {}
+_cache: Dict[Tuple[int, int, Optional[str], bool], Dict[str, Any]] = {}
 
 
 def _k(name: Optional[str]) -> str:
@@ -68,17 +68,45 @@ def learn(events: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
             kind, tier = parse_name(name)
             if not name or (kind is None and out_now is None):
                 continue                     # a ship recipe (FSD, limpets ...)
-            mats = [(_k(m.get("Name")), int(m.get("Count") or 1))
-                    for m in e.get("Materials") or [] if m.get("Name")]
-            r = out.setdefault(_k(name), {"name": name, "kind": kind, "tier": tier,
-                                          "materials": mats, "made": 0, "last": None,
-                                          "vehicles": []})
-            r["made"] += 1
-            if mats:
-                r["materials"] = mats
-            r["last"] = e.get("timestamp") or r["last"]
-            if out_now and out_now not in r["vehicles"]:
-                r["vehicles"].append(out_now)
+            _add(out, e, name, kind, tier, out_now)
+    return out
+
+
+def _add(out: Dict[str, Dict[str, Any]], e: Dict[str, Any], name: str, kind: Optional[str],
+         tier: Optional[str], out_now: Optional[str]) -> None:
+    """One Synthesis event into the recipes: count it, the newest materials."""
+    mats = [(_k(m.get("Name")), int(m.get("Count") or 1))
+            for m in e.get("Materials") or [] if m.get("Name")]
+    r = out.setdefault(_k(name), {"name": name, "kind": kind, "tier": tier,
+                                  "materials": mats, "made": 0, "last": None,
+                                  "vehicles": []})
+    r["made"] += 1
+    if mats:
+        r["materials"] = mats
+    r["last"] = e.get("timestamp") or r["last"]
+    if out_now and out_now not in r["vehicles"]:
+        r["vehicles"].append(out_now)
+
+
+def learn_ship(events: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    V2 (5.0): the ship's own recipes - every Synthesis made while no vehicle
+    was out and not one of the vehicle's (Fuel/Ammo/Repair <tier>): FSD
+    injections, limpets, heat sinks, module repair ... as you made them,
+    with their materials. No recipe table: what you never made is not here.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    out_now: Optional[str] = None
+    for e in events:
+        ev = e.get("event")
+        if ev in STARTS:
+            out_now = "out"
+        elif ev in ENDS:
+            out_now = None
+        elif ev == "Synthesis" and out_now is None:
+            name = (e.get("Name") or "").strip()
+            if name and parse_name(name)[0] is None:
+                _add(out, e, name, None, None, None)
     return out
 
 
@@ -130,8 +158,9 @@ def plan(recipes: Dict[str, Dict[str, Any]], have: Dict[str, int],
     return {"recipes": rows, "kinds": kinds}
 
 
-def build_synthesis(archive: Any) -> Dict[str, Any]:
-    """The VEHICLE tab's SYNTHESIS block, computed once per journal change."""
+def build_synthesis(archive: Any, ship: bool = False) -> Dict[str, Any]:
+    """The VEHICLE tab's SYNTHESIS block - or with ship the SHIP's (V2) -
+    computed once per journal change."""
     try:
         archive.refresh()
     except Exception:
@@ -141,13 +170,16 @@ def build_synthesis(archive: Any) -> Dict[str, Any]:
         fid = archive.commander()[0]
     except Exception:
         pass
-    key = (id(archive), int(getattr(archive, "rev", 0) or 0), fid)
+    key = (id(archive), int(getattr(archive, "rev", 0) or 0), fid, ship)
     if key in _cache:
         return _cache[key]
     evs = archive.events()
     st = materials.stock(evs)
-    out = plan(learn(evs), st["have"], names(evs))
+    out = plan(learn_ship(evs) if ship else learn(evs), st["have"], names(evs))
     out["base_ts"] = st["base_ts"]
-    _cache.clear()
+    if ship:
+        out.pop("kinds", None)           # the vehicle's three kinds do not apply
+    if len(_cache) > 4:
+        _cache.clear()
     _cache[key] = out
     return out

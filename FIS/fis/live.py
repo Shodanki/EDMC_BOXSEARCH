@@ -13,11 +13,13 @@ published to a Hub, which the HTTP server turns into Server-Sent Events.
 from __future__ import annotations
 
 import copy
+import functools
 import glob
 import json
 import math
 import os
 import queue
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -41,15 +43,31 @@ def star_pos(v: Any) -> Optional[List[float]]:
     return out
 
 
-def parse_ts(stamp: Optional[str]) -> Optional[float]:
-    """A journal timestamp as Unix time, or None."""
-    if not stamp:
-        return None
+_TS_FAST = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
+
+
+@functools.lru_cache(maxsize=1 << 17)
+def _parse_ts_str(stamp: str) -> Optional[float]:
+    # R1: the pages parse the same 40,000 journal stamps on every request -
+    # the plain shape by slicing (strptime was 7.6 us each), anything else
+    # as before; datetime() checks the ranges like strptime does
     try:
+        if _TS_FAST.match(stamp):
+            return datetime(int(stamp[0:4]), int(stamp[5:7]), int(stamp[8:10]), int(stamp[11:13]),
+                            int(stamp[14:16]), int(stamp[17:19]), tzinfo=timezone.utc).timestamp()
         return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=timezone.utc).timestamp()
     except (TypeError, ValueError):
         return None
+
+
+def parse_ts(stamp: Optional[str]) -> Optional[float]:
+    """A journal timestamp as Unix time, or None."""
+    if not stamp:
+        return None
+    if not isinstance(stamp, str):
+        return None                       # strptime refused these with TypeError
+    return _parse_ts_str(stamp)
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +185,17 @@ def suit_from(e: Dict[str, Any]) -> Dict[str, Any]:
             "loadout": e.get("LoadoutName"), "weapons": weapons}
 
 
+def _jump_point(ship: Dict[str, Any], d: float, u: float, level_after: Any) -> List[float]:
+    """One jump for the fuel model: [ly, t] and, with the Loadout's unladen
+    mass, the ship's mass before the jump (unladen + fuel before + cargo, SK2)."""
+    try:
+        if ship.get("unladen") and level_after is not None:
+            return [d, u, float(ship["unladen"]) + float(level_after) + u + float(ship.get("cargo_t") or 0.0)]
+    except (TypeError, ValueError):
+        pass
+    return [d, u]
+
+
 class LiveTracker:
     """Owns the live state. `feed()` and `feed_status()` are pure enough to
     unit-test; `start()` runs the polling thread against real files."""
@@ -189,6 +218,9 @@ class LiveTracker:
         self.errors = 0
         self._jumps_by_ship: Dict[Any, List[Any]] = {}     # fuel model per ship
         self._jump_ship: Any = None
+        # SK3: fuel model resets by ship key (learnreset.fuel_since), set
+        # before prime(); jumps before a ship's reset are not learnt
+        self.fuel_since: Dict[Any, float] = {}
         # watchdog: when the polling last ran, how often the game rewrote the
         # journal under the same name (06.11.2026: after a lost connection the
         # game started the file anew; reading on at the old offset, past the
@@ -200,16 +232,35 @@ class LiveTracker:
     # ---------------------------------------------------------------- api
     def _fuel_ship(self, e: Dict[str, Any]) -> None:
         """The fuel model learns per ship: the jumps of another ship - or of
-        the other commander's - burn differently (caller holds the lock)."""
+        the other commander's - burn differently (caller holds the lock).
+        SK2: a Loadout adds the unladen-mass step (50 t), as the plugin's
+        deepspace.FuelState does; a LoadGame keeps the step of the same ship."""
         name = e.get("Commander") if e.get("event") == "LoadGame" else None
-        key = (name or self.state.get("commander"), e.get("ShipID"))
+        key: tuple = (name or self.state.get("commander"), e.get("ShipID"))
         cur = getattr(self, "_jump_ship", None)
+        unladen = e.get("UnladenMass") if e.get("event") == "Loadout" else None
+        if unladen:
+            key = key + (int(round(float(unladen) / 50.0)),)
+        elif cur is not None and tuple(cur[:2]) == key:
+            return
         if key == cur:
             return
         if cur is not None:
             self._jumps_by_ship[cur] = self.state["jumps"]
         self._jump_ship = key
+        self.state["fuel_ship"] = list(key)
         self.state["jumps"] = list(self._jumps_by_ship.get(key, []))
+
+    def reset_fuel(self, ts: float) -> Optional[List[Any]]:
+        """SK3: forget the fuel jumps of the current ship; returns its key
+        (None without a ship)."""
+        with self._lock:
+            key = self._jump_ship
+            if key is None:
+                return None
+            self.fuel_since[tuple(key)] = float(ts)
+            self.state["jumps"] = []
+            return list(key)
 
     def snapshot(self) -> Dict[str, Any]:
         """A deep copy of the live state, safe to read in another thread."""
@@ -231,6 +282,8 @@ class LiveTracker:
             s["last_event"], s["last_event_ts"] = ev, ts
             if ev in ("LoadGame", "Loadout") and e.get("ShipID") is not None:
                 self._fuel_ship(e)
+            elif ev == "Cargo" and e.get("Vessel", "Ship") == "Ship" and e.get("Count") is not None:
+                s["ship"]["cargo_t"] = e.get("Count")        # SK2: the mass of a jump
             handler = _FEED.get(ev)
             if handler is not None:
                 out = handler(self, s, e, ev, ts)
@@ -285,8 +338,10 @@ class LiveTracker:
         out: Optional[str] = None
         s["loadout"] = e
         fc = e.get("FuelCapacity") or {}
+        fsd = next((m.get("Item") for m in e.get("Modules") or [] if m.get("Slot") == "FrameShiftDrive"), None)
         s["ship"].update(type=e.get("Ship"), name=e.get("ShipName"),
                          ident=e.get("ShipIdent"),
+                         unladen=e.get("UnladenMass"), fsd=fsd,
                          max_jump=e.get("MaxJumpRange"),
                          hull=e.get("HullHealth"),
                          fuel_capacity=fc.get("Main") if isinstance(fc, dict) else fc,
@@ -305,8 +360,9 @@ class LiveTracker:
             if e.get("FuelLevel") is not None:
                 s["fuel"]["main"] = e.get("FuelLevel")
             d, u = e.get("JumpDist"), e.get("FuelUsed")
-            if d and u:
-                s["jumps"].append([float(d), float(u)])
+            cut = self.fuel_since.get(tuple(self._jump_ship or ()))
+            if d and u and not (cut is not None and ts is not None and ts < cut):
+                s["jumps"].append(_jump_point(s["ship"], float(d), float(u), e.get("FuelLevel")))
                 del s["jumps"][:-60]
         s["jumping"] = None
         s["ship_target"] = None      # a lock never survives a jump
@@ -899,6 +955,7 @@ _FEED = {
     "CockpitBreached": LiveTracker._on_alert,
     "SystemsShutdown": LiveTracker._on_alert,
     "AfmuRepairs": LiveTracker._on_alert,
+    "ModuleInfo": LiveTracker._on_alert,      # R8: the module panel opened - a repair session
     "RepairAll": LiveTracker._on_repair,
     "Repair": LiveTracker._on_repair,
     "Docked": LiveTracker._on_repair,

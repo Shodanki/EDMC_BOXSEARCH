@@ -51,7 +51,7 @@ HULL_WARNING = 0.50
 
 # the panel: (key, level) in fixed order - the browser words and places them
 PANEL = [
-    ("hull_crit", "warning"), ("overheat", "warning"), ("fuel_crit", "warning"),
+    ("hull_crit", "warning"), ("life_support", "warning"), ("overheat", "warning"), ("fuel_crit", "warning"),
     ("danger", "warning"), ("interdicted", "warning"), ("canopy", "warning"),
     ("shutdown", "warning"), ("oxygen", "warning"),
     ("shields_down", "caution"), ("hull", "caution"), ("module_dmg", "caution"),
@@ -93,9 +93,11 @@ def _ammo_full(archive: fl.Archive) -> Dict[tuple, int]:
 
 def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str, db: Any = None,
                      now: Optional[float] = None, lost_hidden: Any = None,
-                     unsold_limits: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+                     unsold_limits: Optional[Dict[str, int]] = None,
+                     value_since: Optional[float] = None,
+                     sold_marks: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """The SHIP view: status, modules, fuel, data at risk (with the own
-    limits), cargo, ships lost or hidden."""
+    limits and the commander's SM1 sold marks), cargo, ships lost or hidden."""
     now = time.time() if now is None else now
     st = live.get("status") or {}
     flags, flags2 = int(st.get("flags") or 0), int(st.get("flags2") or 0)
@@ -119,7 +121,7 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
 
     # ---------------------------------------------------------- modules
     info = _read_json(os.path.join(journal_dir, "ModulesInfo.json")) or {}
-    groups, capacity = _ship_modules(lo, info, archive)
+    groups, capacity = _ship_modules(lo, info, archive, flying=_flying(st, flags))
     allm = [x for g in groups.values() for x in g]
     draw = sum(x["power"] or 0.0 for x in allm)
     by_prio = []
@@ -141,6 +143,7 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
 
     # ---------------------------------------------------------- panel
     panel = _ship_panel(live, st, flags, flags2, hull, alerts, rep, now)
+    _life_support(panel, flags, lo, info, alerts, now)
     master = "warning" if any(p["on"] for p in panel if p["level"] == "warning") else (
         "caution" if any(p["on"] for p in panel if p["level"] == "caution") else "normal")
     out["panel"] = panel
@@ -153,7 +156,7 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
     out["hazards"] = hazards.build_hazards(archive, now=now)
     out["logistics"] = _ship_logistics(live, st, lo, ship, journal_dir)
     out["target"] = build_target(live, db)
-    out["unsold"] = _unsold(archive, unsold_limits)
+    out["unsold"] = _unsold(archive, unsold_limits, value_since, sold_marks)
     if out["unsold"] is not None and db is not None and hasattr(db, "lost_summary"):
         try:
             # where data went down with the ship and is not redone yet - all
@@ -170,10 +173,19 @@ def build_shipstatus(live: Dict[str, Any], archive: fl.Archive, journal_dir: str
     return out
 
 
-def _ship_modules(lo: Dict[str, Any], info: Dict[str, Any], archive: fl.Archive
+def _flying(st: Dict[str, Any], flags: int) -> bool:
+    """In the ship and neither docked nor landed, by Status.json."""
+    return bool(st) and _bit(flags, 24) and not _bit(flags, 0) and not _bit(flags, 1)
+
+
+def _ship_modules(lo: Dict[str, Any], info: Dict[str, Any], archive: fl.Archive, flying: bool = False
                   ) -> Tuple[Dict[str, List[Dict[str, Any]]], Optional[float]]:
     """The modules by group with power, engineering and ammunition, and the
-    power plant's capacity."""
+    power plant's capacity.
+
+    The game writes a Loadout with the thrusters off when the SRV docks on
+    the ground, and none after Liftoff; while the ship flies its thrusters
+    are on, whatever that older Loadout says."""
     power = {m.get("Slot"): m for m in info.get("Modules") or []}
     ammo_full = _ammo_full(archive)
     groups: Dict[str, List[Dict[str, Any]]] = {"hardpoints": [], "utility": [], "core": [], "optional": []}
@@ -187,8 +199,11 @@ def _ship_modules(lo: Dict[str, Any], info: Dict[str, Any], archive: fl.Archive
         if m.get("Slot") == "PowerPlant" and mods.get("PowerCapacity"):
             capacity = float(mods["PowerCapacity"])
         pw = power.get(m.get("Slot")) or {}
+        on = m.get("On", True)
+        if flying and m.get("Slot") == "MainEngines":
+            on = True
         item = {"slot": m.get("Slot"), "size": fl.slot_size(m.get("Slot")),
-                "name": fl.module_name(m.get("Item")), "on": m.get("On", True),
+                "name": fl.module_name(m.get("Item")), "on": on,
                 "priority": (pw.get("Priority", m.get("Priority")) or 0) + 1,
                 "health": m.get("Health"), "power": pw.get("Power"),
                 "eng": ("%s G%s" % (eng.get("BlueprintName", "").split("_")[-1], eng.get("Level"))
@@ -229,6 +244,33 @@ def _ship_report(allm: List[Dict[str, Any]], alerts: List[Dict[str, Any]], capac
     if capacity and draw > capacity:
         report.append({"level": "caution", "key": "power_over", "value": round(100 * draw / capacity)})
     return {"report": report, "damaged": damaged, "off": off, "empty": empty, "lowammo": lowammo}
+
+
+def _life_support(panel: List[Dict[str, Any]], flags: int, lo: Dict[str, Any], info: Dict[str, Any],
+                  alerts: List[Dict[str, Any]], now: float) -> None:
+    """R8: the LIFE SUPPORT lamp (with "?" while only probable) and why
+    DANGER is lit - from the plugin's lifesupport.judge, which the overlay
+    asks too. Without that plugin module the lamp stays dark."""
+    from .model import _optional
+    ls = _optional("lifesupport")
+    lo_ts = parse_ts(lo.get("timestamp"))
+    verdict = None
+    if ls is not None:
+        since = lo_ts or 0.0
+        service = [(a.get("ts"), a.get("event"), a.get("module_key")) for a in alerts
+                   if a.get("event") in ("ModuleInfo", "AfmuRepairs") and (a.get("ts") or 0) >= since]
+        try:
+            verdict = ls.judge(flags, lo, info, service, now, lo_ts, parse_ts(info.get("timestamp")))
+        except Exception:
+            verdict = None
+    for p in panel:
+        if p["key"] == "life_support":
+            p["on"] = bool(verdict)
+            if verdict:
+                p["probable"] = verdict["state"] == "probable"
+        elif p["key"] == "danger" and p["on"]:
+            p["why"] = ("life_support" if verdict else "overheat" if _bit(flags, F["overheating"])
+                        else "interdicted" if _bit(flags, F["interdicted"]) else None)
 
 
 def _ship_panel(live: Dict[str, Any], st: Dict[str, Any], flags: int, flags2: int, hull: Any,
@@ -278,12 +320,20 @@ def _ship_logistics(live: Dict[str, Any], st: Dict[str, Any], lo: Dict[str, Any]
     limpets = sum(c["count"] for c in inv if (c["key"] or "").lower() == "drones")
     locker = _read_json(os.path.join(journal_dir, "ShipLocker.json")) or {}
     fuel = live.get("fuel") or {}
+    jumps = None
+    try:                                     # B-24: jumps until the tank is empty
+        from . import forecast
+        from .model import _fuel_state
+        jumps = forecast.jumps(_fuel_state(live)) if ship.get("fuel_capacity") else None
+    except Exception:
+        jumps = None
     return {
         "cargo": inv, "used": used, "capacity": lo.get("CargoCapacity"),
         "free": (lo.get("CargoCapacity") or 0) - used if lo.get("CargoCapacity") is not None else None,
         "limpets": limpets, "cargo_ts": parse_ts(cargo.get("timestamp")),
         "fuel": {"main": fuel.get("main"), "reservoir": fuel.get("reservoir"),
-                 "capacity": ship.get("fuel_capacity"), "reserve_cap": ship.get("reserve_capacity")},
+                 "capacity": ship.get("fuel_capacity"), "reserve_cap": ship.get("reserve_capacity"),
+                 "jumps": jumps},
         "locker": {k: sum(i.get("Count") or 0 for i in locker.get(k) or [])
                    for k in ("Items", "Components", "Consumables", "Data")},
         "balance": st.get("balance"),
@@ -293,16 +343,34 @@ def _ship_logistics(live: Dict[str, Any], st: Dict[str, Any], lo: Dict[str, Any]
 _UNSOLD_CACHE: Dict[str, Any] = {"key": None, "val": None}
 
 
-def _unsold(archive: Any, limits: Optional[Dict[str, int]] = None) -> Optional[Dict[str, Any]]:
-    """M4, worked out again only when the journals or the commander's limits
-    changed (the SHIP sheet asks about once a second)."""
+def _bodyvalue() -> Any:
+    """The plugin's bodyvalue module (B6), None when the plugin cannot be
+    loaded (then the exploration data is only counted)."""
+    try:
+        from .model import plugin
+        return getattr(plugin(), "bodyvalue", None)
+    except Exception:
+        return None
+
+
+def _unsold(archive: Any, limits: Optional[Dict[str, int]] = None,
+            value_since: Optional[float] = None,
+            sold_marks: Optional[Dict[str, float]] = None) -> Optional[Dict[str, Any]]:
+    """M4, worked out again only when the journals, the commander's limits,
+    the value model's reset (B6) or the sold marks (SM1) changed (the SHIP
+    sheet asks about once a second)."""
     from . import unsold
     try:
         archive.refresh()
-        key = (id(archive), getattr(archive, "rev", None), tuple(sorted((limits or {}).items())))
+        key = (id(archive), getattr(archive, "rev", None), tuple(sorted((limits or {}).items())), value_since,
+               tuple(sorted((sold_marks or {}).items())))
         if key[1] is not None and _UNSOLD_CACHE["key"] == key:
             return _UNSOLD_CACHE["val"]
-        val = unsold.build_unsold(archive.events(), archive.organic_values(), limits)
+        from .ledger import unexplained_income
+        evs, bv = archive.events(), _bodyvalue()
+        val = unsold.build_unsold(evs, archive.organic_values(), limits,
+                                  body_value=bv, value_since=value_since, sold_marks=sold_marks,
+                                  rises=unexplained_income(evs) if bv else None)    # SM1
         _UNSOLD_CACHE.update(key=key, val=val)
         return val
     except Exception:            # a broken journal line must not cost the sheet
@@ -352,7 +420,8 @@ def _tritium_more(archive: fl.Archive, live: Dict[str, Any], c: Dict[str, Any],
     tritium for the end of the plotted route."""
     from . import galaxy, mining
     tank, load = int(c["fuel"] or 0), c["load"] or 0
-    per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank) or 1
+    model = (c.get("tritium_model") or {}).get("model")
+    per = fl.tritium_for_jump(fl.CARRIER_MAX_JUMP, load, tank, model) or 1
     out: Dict[str, Any] = {"to_full": max(0, fl.CARRIER_TANK - tank)}
     hold = hold_tritium(capi_path, now)
     if hold:
@@ -360,12 +429,12 @@ def _tritium_more(archive: fl.Archive, live: Dict[str, Any], c: Dict[str, Any],
         if hold["t"]:
             # tritium in the hold weighs already (it is cargo): as fuel it moves
             # from the load into the tank, jump by jump
-            out["with_hold"] = fl.carrier_range(tank + hold["t"], max(0, load - hold["t"]))
+            out["with_hold"] = fl.carrier_range(tank + hold["t"], max(0, load - hold["t"]), model=model)
     ship = _ship_tritium(journal_dir)
     if ship is not None:
         out["ship"] = ship
         if ship:
-            out["with_ship"] = fl.carrier_range(min(fl.CARRIER_TANK, tank + ship), load)
+            out["with_ship"] = fl.carrier_range(min(fl.CARRIER_TANK, tank + ship), load, model=model)
     s = mining.session(archive.events(), now)
     if s and s["tritium"]:
         out["mined"] = {"t": s["tritium"], "active": s["active"], "end": s["end"],
@@ -378,8 +447,22 @@ def _tritium_more(archive: fl.Archive, live: Dict[str, Any], c: Dict[str, Any],
         dest = route[-1]
         ly = sum((a - b) ** 2 for a, b in zip(dest["pos"], here)) ** 0.5
         if ly > 1:
-            out["trip"] = dict(fl.carrier_trip(ly, load, tank), to=dest.get("name"))
+            out["trip"] = dict(fl.carrier_trip(ly, load, tank, model), to=dest.get("name"))
+    out["time"] = _jump_times(archive, c, out)
     return out
+
+
+def _jump_times(archive: fl.Archive, c: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any]:
+    """5.0 JUMP PLAN: how long the jumps take - countdown learnt from your
+    own jumps, cooldown - for the tank's range and the route's end."""
+    from . import jumpplan
+    tm = jumpplan.timing(archive.own_carrier_events())
+    rng = fl.carrier_range(c["fuel"] or 0, c["load"] or 0, model=(c.get("tritium_model") or {}).get("model"))
+    n = rng["jumps"] + (1 if rng["ly"] > rng["jumps"] * fl.CARRIER_MAX_JUMP + 1 else 0)
+    res = {"timing": tm, "range": jumpplan.trip_time(n, tm)}
+    if out.get("trip"):
+        res["trip"] = jumpplan.trip_time(out["trip"]["jumps"], tm)
+    return res
 
 
 def _capi_hold(capi_path: Optional[str], now: float) -> Optional[Dict[str, Any]]:
@@ -468,7 +551,8 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
     su = s.get("SpaceUsage") or {}
     fin = s.get("Finance") or {}
     loc = c.get("location") or {}
-    rng = fl.carrier_range(c["fuel"] or 0, c["load"] or 0)
+    learn = c.get("tritium_model") or fl.learn_tritium([])
+    rng = fl.carrier_range(c["fuel"] or 0, c["load"] or 0, model=learn["model"])
     up = c.get("upkeep") or {}
     avail = fin.get("AvailableBalance")
     # Frontier's own figure beats the estimate from the balance history
@@ -486,7 +570,8 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
                      "jumps": list(reversed(c.get("jumps") or []))},
         "tritium": {"tank": c["fuel"], "tank_max": fl.CARRIER_TANK, "load": c["load"],
                     "range": rng, "per_max_jump": rng["per_jump"],
-                    "formula": "5 + ly x (load + tritium + %d) / %d" % (fl.TRITIUM_BASE, fl.TRITIUM_DIV),
+                    "formula": "5 + ly x (load + tritium + %d) / %d" % (learn["base"], learn["div"]),
+                    "learnt": {k: learn[k] for k in ("learnt", "n", "max_err")},
                     **_tritium_more(archive, live, c, journal_dir, now, capi_path)},
         "space": {"total": su.get("TotalCapacity"), "crew": su.get("Crew"), "cargo": su.get("Cargo"),
                   "reserved": su.get("CargoSpaceReserved"), "ships": su.get("ShipPacks"),
@@ -503,4 +588,7 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
                       "enabled": x.get("Enabled"), "crew": x.get("CrewName")}
                      for x in s.get("Crew") or []],
     })
+    # CT1: what the carrier buys and sells, and what is still wanted
+    from . import carriertrade
+    out["trade"] = carriertrade.build_trade(capi_path, archive.events(), own_id, now)
     return out

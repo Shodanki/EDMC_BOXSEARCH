@@ -133,5 +133,68 @@ class TestLearningStatus(unittest.TestCase):
         self.assertGreaterEqual(st["thin"]["rocks"], 1)
 
 
+class BioRatesTest(unittest.TestCase):
+    """BQ1: bio rates by atmosphere, planet class and main star, with n and
+    the 95 % interval - and the bio model's leave-one-out check."""
+
+    def test_wilson(self):
+        from fis.learn import wilson
+        self.assertEqual(wilson(0, 0), (None, None))
+        lo, hi = wilson(16, 19)
+        self.assertTrue(60 < lo < 65 and 93 < hi < 96)          # Argon on the developer's data: 62.4-94.5
+        self.assertEqual(wilson(0, 10)[0], 0.0)
+
+    def test_groups(self):
+        import os
+        import sqlite3
+        import tempfile
+        from tests import fixtures as fx
+        from tests.test_api import make_cfg
+        from fis.data import Database
+        from fis import learn
+        tmp = tempfile.mkdtemp(prefix="fis-bq1-")
+        path = fx.make_db(os.path.join(tmp, "db.sqlite"))
+        cx = sqlite3.connect(path)
+        cx.execute("DELETE FROM bodies")
+        rows = [(i, "Planet", 1, "Icy body", "Argon" if i < 6 else None, 1 if i < 4 else 0) for i in range(12)]
+        cx.executemany("INSERT INTO bodies (sys_id64, body_id, kind, landable, planet_class, atmo_type, sig_bio)"
+                       " VALUES (%d,?,?,?,?,?,?)" % fx.SYS_ID, rows)
+        cx.commit()
+        cx.close()
+        make_cfg(path, tmp)
+        out = learn.bio_rates(Database(path))
+        self.assertEqual((out["planets"], out["with_bio"]), (12, 4))
+        by = {g["key"]: g for g in out["atmo"]}
+        self.assertEqual((by["Argon"]["n"], by["Argon"]["bio"], by["Argon"]["pct"]), (6, 4, 66.7))
+        self.assertEqual((by["none"]["n"], by["none"]["bio"]), (6, 0))
+        self.assertEqual(out["pclass"][0]["key"], "Icy body")
+        self.assertIsNotNone(out["v0"])                          # nothing sampled: the check says so
+        # EA2: planets only the archive knows count in the rates (not twice, not in the check)
+        from fis import fleet
+        raw = [{"event": "Scan", "timestamp": "2022-05-01T10:00:00Z", "SystemAddress": 7, "BodyID": 0,
+                "StarType": "M", "DistanceFromArrivalLS": 0.0},
+               {"event": "Scan", "timestamp": "2022-05-01T10:01:00Z", "SystemAddress": 7, "BodyID": 3,
+                "PlanetClass": "Icy body", "Landable": True, "AtmosphereType": "Argon", "Atmosphere": "thin argon"},
+               {"event": "Scan", "timestamp": "2022-05-01T10:01:00Z", "SystemAddress": 7, "BodyID": 4,
+                "PlanetClass": "Icy body", "Landable": True, "AtmosphereType": ""},
+               {"event": "FSSBodySignals", "timestamp": "2022-05-01T10:02:00Z", "SystemAddress": 7, "BodyID": 3,
+                "Signals": [{"Type": "$SAA_SignalType_Biological;", "Count": 2},
+                            {"Type": "$SAA_SignalType_Geological;", "Count": 5}]},
+               {"event": "Scan", "timestamp": "2022-05-01T10:03:00Z", "SystemAddress": fx.SYS_ID, "BodyID": 1,
+                "PlanetClass": "Icy body", "Landable": True, "AtmosphereType": "Argon"}]       # known to the DB
+        evs = [fleet.Archive._slim(e) for e in raw]
+        self.assertEqual(evs[3]["bio"], 2)
+        self.assertNotIn("Atmosphere", evs[1])
+        extra = learn.archive_planets(evs, {(fx.SYS_ID, i) for i in range(12)})
+        self.assertEqual(sorted((p["atmo_type"], p["sig_bio"], p["sys_star"])
+                                for p in extra), [("Argon", 2, "M"), ("None", 0, "M")])
+        old = dict(raw[2], timestamp="2020-05-01T10:01:00Z", BodyID=8)       # before FSSBodySignals: left out
+        self.assertEqual(len(learn.archive_planets(evs + [fleet.Archive._slim(old)], set())), 3)
+        out = learn.bio_rates(Database(path), extra=extra)
+        by = {g["key"]: g for g in out["atmo"]}
+        self.assertEqual((out["planets"], out["with_bio"], out["from_archive"]), (14, 5, 2))
+        self.assertEqual((by["Argon"]["n"], by["Argon"]["bio"]), (7, 5))
+
+
 if __name__ == "__main__":
     unittest.main()

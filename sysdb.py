@@ -313,6 +313,49 @@ CREATE TABLE IF NOT EXISTS cmdr_systems (
     PRIMARY KEY (fid, sys_id64)
 );
 CREATE INDEX IF NOT EXISTS ix_cmdr_sys ON cmdr_systems(sys_id64);
+-- 5.0 (test finding own-4): the route's estimate for a system, the first
+-- one after this commander's FSS was complete - to set against the time
+-- the system really took (FIS STATISTICS > TIME PER SYSTEM)
+CREATE TABLE IF NOT EXISTS route_estimates (
+    fid       TEXT NOT NULL,
+    sys_id64  INTEGER NOT NULL,
+    ts        TEXT NOT NULL,           -- when it was made (UTC, ISO)
+    total_s   REAL NOT NULL,
+    travel_s  REAL,
+    work_s    REAL,
+    stops     INTEGER,
+    PRIMARY KEY (fid, sys_id64)
+);
+-- 5.0 FX3 (V0): the chance of a find predicted on the first arrival in a
+-- system (findodds), to set against what the scans then showed (FIS
+-- STATISTICS > LEARNING STATUS). level = shells.info_level before arrival
+CREATE TABLE IF NOT EXISTS find_log (
+    fid       TEXT NOT NULL,
+    sys_id64  INTEGER NOT NULL,
+    ts        TEXT NOT NULL,           -- arrival (journal time, UTC ISO)
+    name      TEXT,
+    kind      TEXT,                    -- mass code a-h or 'named'
+    star      TEXT,                    -- arrival star class group
+    level     TEXT,                    -- known / checked / unchecked / inhabited
+    height    TEXT,                    -- low / high (|y| 100 ly) / ?
+    p         REAL NOT NULL,
+    low       REAL,
+    high      REAL,
+    n         INTEGER,                 -- visits the deciding cell had
+    PRIMARY KEY (fid, sys_id64)
+);
+
+-- 5.0 FX4: a system the game client proved that a check found in no
+-- database (I1 route check, EDD by id64). Kept for good: the databases
+-- learn the system later (EDSM, Spansh, EDD after the visit), the check's
+-- region expires - but at the time nobody had it. The planner counts its
+-- boxel as a hit of its prospect calibration (boxelplan).
+CREATE TABLE IF NOT EXISTS absence_proofs (
+    id64     INTEGER PRIMARY KEY,
+    name     TEXT NOT NULL,
+    service  TEXT,                     -- edd / edsm / spansh: who was asked
+    ts       REAL NOT NULL             -- when (Unix time)
+);
 CREATE TABLE IF NOT EXISTS cmdr_bodies (
     fid            TEXT NOT NULL,
     sys_id64       INTEGER NOT NULL,
@@ -336,6 +379,13 @@ CREATE TABLE IF NOT EXISTS cmdr_bodies (
 );
 CREATE INDEX IF NOT EXISTS ix_cmdr_bod ON cmdr_bodies(sys_id64);
 """
+
+# SM1: what a sold mark clears for one commander (open becomes sold)
+_SOLD_SQL = {
+    "explo": "UPDATE cmdr_bodies SET scan_sold=MAX(scan_sold,scan_open), map_sold=MAX(map_sold,map_open), "
+             "scan_open=0, map_open=0 WHERE fid=? AND (scan_open=1 OR map_open=1)",
+    "bio": "UPDATE cmdr_bodies SET bio_open=NULL WHERE fid=? AND bio_open IS NOT NULL",
+}
 
 # C1: the full journal replay that fills the per-commander tables; until it
 # has run, readers fall back to the shared columns (any commander).
@@ -604,6 +654,9 @@ class SystemDB:
         self.fid_name: Optional[str] = None
         self.plan_fid: Optional[str] = None
         self._cmdr_written: Optional[Tuple[str, Optional[str]]] = None
+        # SM1: fid -> the commander's sold marks from the FIS ({"explo": ts,
+        # "bio": ts}), set by the plugin (survey.sold_marks); None: no marks
+        self.sold_marks: Optional[Callable[[str], Dict[str, float]]] = None
         self.prune_external_calls()
         self.prune_shells()
         self.sectors = SectorRegistry()
@@ -1103,6 +1156,27 @@ class SystemDB:
         """Every name the galaxy map said does not exist."""
         return {r[0] for r in self.cx.execute("SELECT name FROM absent")}
 
+    def probe_outcomes(self) -> Dict[int, List[int]]:
+        """FX4: the galaxy map's own verdicts per mass code, [hits, n]:
+        hits are procgen systems it confirmed (target selected, quality
+        confirmed, no database source), misses the names it ruled out
+        (absent). A probe later flown to counts no more (its quality rose) -
+        a bias towards misses, the same for every mass code."""
+        out: Dict[int, List[int]] = {}
+        for (name,) in self.cx.execute("SELECT name FROM absent"):
+            p = parse_name(name)
+            if p is not None:
+                out.setdefault(p.mc, [0, 0])[1] += 1
+        ext = set(self.EXTERNAL_SOURCES) | {"external"}
+        for name, src in self.cx.execute("SELECT name, sources FROM systems WHERE quality=?", (Q_CONFIRMED,)):
+            p = parse_name(name)
+            if p is None or {v for v in (src or "").split(",") if v} & ext:
+                continue
+            c = out.setdefault(p.mc, [0, 0])
+            c[0] += 1
+            c[1] += 1
+        return out
+
     # ------------------------------------------------------------------ boxel
     def _touch_boxel(self, name: str, n2_end: Optional[int] = None) -> None:
         p = parse_name(name)
@@ -1500,6 +1574,7 @@ class SystemDB:
         body stays.
         """
         a, ts = entry.get("SystemAddress"), entry.get("timestamp")
+        self.apply_sold_marks(ts)                      # SM1: a sale the game did not log
         if ev == "Scan" and a and entry.get("BodyID") is not None and entry.get("ScanType") != "NavBeaconDetail":
             self._carry_scan(ev, entry, a, ts)
         elif ev == "SAAScanComplete" and a and entry.get("BodyID") is not None:
@@ -1514,6 +1589,35 @@ class SystemDB:
         elif ev == "Died":
             self._carry_died(ev, entry, a, ts)
         self.cx.commit()
+
+    def apply_sold_marks(self, ts: Any = None) -> int:
+        """
+        SM1 (5.0): the game logged no sale, so the commander marked their
+        data as sold in the FIS. Once the events (a journal timestamp) or the
+        clock (ts None) are past a mark, every open scan and map (part
+        "explo") or analysed species ("bio") of this commander counts as
+        sold. Each mark is applied once (meta sold_mark:<fid>:<part>), so a
+        later start or replay does not take newer data with it. Returns how
+        many parts were applied.
+        """
+        if not self.fid or self.sold_marks is None:
+            return 0
+        try:
+            marks = self.sold_marks(self.fid) or {}
+        except Exception:
+            logger.debug("sold marks unreadable", exc_info=True)
+            return 0
+        at = _epoch(ts) if isinstance(ts, str) else (time.time() if ts is None else float(ts))
+        n = 0
+        for part, mark in marks.items():
+            key = "sold_mark:%s:%s" % (self.fid, part)
+            done = self.get_meta(key)
+            if at is None or at <= mark or part not in _SOLD_SQL or (done and float(done) >= mark):
+                continue
+            self.cx.execute(_SOLD_SQL[part], (self.fid,))
+            self.set_meta(key, repr(float(mark)))       # commits
+            n += 1
+        return n
 
     def _carry_scan(self, ev: str, entry: dict, a: Any, ts: Any) -> None:
         """A scan is open (unsold) until the system's data is sold."""
@@ -1776,6 +1880,84 @@ class SystemDB:
             return max(0, (r["sig_bio"] or 0) - (r["organics"] or 0))
         genera = [g.strip() for g in (r["genuses"] or "").split(",") if g.strip()]
         return open_bio(r["sig_bio"] or 0, genera, analysed, seen)["open"]
+
+    def keep_route_estimate(self, fid: Optional[str], sys_id64: int, total_s: float, travel_s: float,
+                            work_s: float, stops: int) -> bool:
+        """The first route estimate of a system once the commander's FSS is
+        complete; later ones (the route shrinks as you work) are not kept.
+        True when this one was stored."""
+        if not fid or not sys_id64 or not stops:
+            return False
+        own = self.cx.execute("SELECT fss_complete FROM cmdr_systems WHERE fid=? AND sys_id64=?",
+                              (fid, sys_id64)).fetchone()
+        if not own or not own["fss_complete"]:
+            return False
+        cur = self.cx.execute("INSERT OR IGNORE INTO route_estimates (fid, sys_id64, ts, total_s, travel_s, "
+                              "work_s, stops) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                              (fid, sys_id64, _now(), float(total_s), float(travel_s), float(work_s), int(stops)))
+        self.cx.commit()
+        return cur.rowcount > 0
+
+    def has_own_scans(self, fid: Optional[str], sys_id64: int) -> bool:
+        """True when this commander has scanned a body of the system."""
+        return bool(self.cx.execute("SELECT 1 FROM cmdr_bodies WHERE fid=? AND sys_id64=? AND scanned=1 LIMIT 1",
+                                    (fid, sys_id64)).fetchone())
+
+    def proofs_from_checks(self, client: Iterable[str], radius: float = 0.1) -> int:
+        """FX4: keep an absence proof for every system with a client source
+        (``client``) inside a still valid check region that held nothing
+        (r_max <= radius) - unless another service's check at the same place
+        had it (I1: EDD had nothing, EDSM had the name). Returns how many
+        were new."""
+        client = set(client)
+        new = 0
+        for sh in self.cx.execute("SELECT service, cx, cy, cz, fetched_at FROM fetched_shells "
+                                  "WHERE systems=0 AND r_max<=? AND expires_at>?",
+                                  (radius + 1e-9, time.time())).fetchall():
+            if self.cx.execute("SELECT 1 FROM fetched_shells WHERE systems>0 AND r_max<=? AND ABS(cx-?)<? "
+                               "AND ABS(cy-?)<? AND ABS(cz-?)<? LIMIT 1",
+                               (radius + 1e-9, sh[1], radius, sh[2], radius, sh[3], radius)).fetchone():
+                continue
+            for r in self.cx.execute("SELECT name, id64, sources FROM systems WHERE x BETWEEN ? AND ? "
+                                     "AND y BETWEEN ? AND ? AND z BETWEEN ? AND ? AND id64 IS NOT NULL",
+                                     (sh[1] - radius, sh[1] + radius, sh[2] - radius, sh[2] + radius,
+                                      sh[3] - radius, sh[3] + radius)).fetchall():
+                if set((r[2] or "").split(",")) & client:
+                    new += self.cx.execute("INSERT OR IGNORE INTO absence_proofs (id64, name, service, ts) "
+                                           "VALUES (?, ?, ?, ?)", (r[1], r[0], sh[0], sh[4])).rowcount
+        self.cx.commit()
+        return new
+
+    def absence_names(self) -> Set[str]:
+        """FX4: the names of the systems with an absence proof (none when
+        the table is missing - a read-only copy from before FX4)."""
+        try:
+            return {r[0] for r in self.cx.execute("SELECT name FROM absence_proofs")}
+        except sqlite3.OperationalError:
+            return set()
+
+    def keep_find_prediction(self, fid: Optional[str], sys_id64: int, ts: str, name: str,
+                             pred: Dict[str, Any]) -> bool:
+        """FX3 (V0): the find prediction of a commander's first visit to a
+        system (the caller checks has_own_scans at the jump); a second one
+        for the same system is not kept. True when stored."""
+        if not fid or not sys_id64:
+            return False
+        cur = self.cx.execute("INSERT OR IGNORE INTO find_log (fid, sys_id64, ts, name, kind, star, level, "
+                              "height, p, low, high, n) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              (fid, sys_id64, ts or _now(), name, pred.get("kind"), pred.get("star"),
+                               pred.get("level"), pred.get("height"), float(pred["p"]), pred.get("low"),
+                               pred.get("high"), int(pred.get("n") or 0)))
+        self.cx.commit()
+        return cur.rowcount > 0
+
+    def bio_left_of(self, sys_id64: int, body_id: int, fid: Optional[str]) -> int:
+        """Biological signals still to sample on one body for one commander
+        (biosig.open_bio, with the species the codex saw there)."""
+        row = next((r for r in self.bodies_for(sys_id64, fid) if r["body_id"] == body_id), None)
+        if row is None:
+            return 0
+        return self._bio_left(row, self.codex_species(sys_id64).get(body_id, ()))
 
     def bodies_for(self, sys_id64: int, fid: Optional[str]) -> List[Any]:
         """The bodies of a system as one commander explored them: the shared
@@ -2964,6 +3146,35 @@ class SystemDB:
         out.sort(key=lambda h: (h["dist"] if h["dist"] is not None else 1e9,
                                 -h["count"]))
         return out[:limit]
+
+    def bodies_without_physics(self) -> List[Tuple[int, int]]:
+        """5.0: (system, body) of the stars and planets that were stored without
+        their physics (no radius and no axial tilt) - e.g. from a source that
+        knew only the orbit. Their moons are placed without the equator then."""
+        return [(r[0], r[1]) for r in self.cx.execute(
+            "SELECT sys_id64, body_id FROM bodies WHERE kind IN ('Star','Planet') "
+            "AND radius IS NULL AND axial_tilt IS NULL")]
+
+    def fill_missing_physics(self, entries: Iterable[dict]) -> int:
+        """5.0: take the physics of older Scan lines (journal or EDDiscovery's
+        archive) into body rows - only into columns that are still empty, a
+        value already stored is never overwritten. Returns the rows filled."""
+        n = 0
+        for e in entries:
+            a, bid = e.get("SystemAddress"), e.get("BodyID")
+            if a is None or bid is None:
+                continue
+            vals = {k: v for k, v in _scan_physics(e).items() if v is not None}
+            if not vals:
+                continue
+            cur = self.cx.execute(
+                "UPDATE bodies SET %s WHERE sys_id64=? AND body_id=? AND (%s)" % (
+                    ",".join("%s=COALESCE(%s,?)" % (k, k) for k in vals),
+                    " OR ".join("%s IS NULL" % k for k in vals)),
+                list(vals.values()) + [a, bid])
+            n += cur.rowcount
+        self.cx.commit()
+        return n
 
     def bodies_of(self, sys_id64: int) -> List[sqlite3.Row]:
         """The shared body rows of a system (no commander view)."""

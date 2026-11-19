@@ -28,6 +28,7 @@ CARRIER view has it already. Read only, nothing is sent anywhere.
 from __future__ import annotations
 
 import math
+import time
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -228,20 +229,56 @@ def _dist(a: Any, b: Any) -> Optional[float]:
         return None
 
 
+KNOWN_DAYS = 90          # user 19.11.: a position not seen for this long is stale and leaves the list
+_clock = time.time       # tests set a fixed day
+
+
+def _with_online(known: Dict[str, Dict[str, Any]], online: Dict[str, Any]) -> None:
+    """Carriers Spansh showed (favourites.json "online") join the journal's:
+    a carrier new to you is "reported online"; a known one moves when
+    Spansh's report is newer than what your journal saw."""
+    for cs, o in (online or {}).items():
+        k = known.get(cs)
+        if k is not None and (k.get("ts") or "") >= (o.get("ts") or ""):
+            continue
+        if k is None:
+            k = known[cs] = {"callsign": cs, "name": None, "market_id": None, "first_ts": o.get("ts"),
+                             "docked_n": 0, "last_docked": None, "sightings": 0, "started": []}
+        k.update(system=o.get("system"), id64=o.get("id64"), pos=o.get("pos"), ts=o.get("ts"), how="online")
+        if o.get("services") and not k.get("services"):
+            k["services_online"] = o["services"]
+
+
+def _edge(now: float) -> str:
+    """The time before which a position is stale (KNOWN_DAYS)."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - KNOWN_DAYS * 86400))
+
+
+def _fresh(known: Dict[str, Dict[str, Any]], favs: Dict[str, Any], edge: str) -> Dict[str, Dict[str, Any]]:
+    """Without the carriers whose position was last seen before ``edge`` -
+    favourites always stay (their position is flagged stale instead)."""
+    return {cs: k for cs, k in known.items() if cs in favs or not k.get("ts") or k["ts"] >= edge}
+
+
 def build_known(archive: Any, store: Any, live: Optional[Dict[str, Any]] = None,
-                sighted: int = MAX_SIGHTED, db: Any = None) -> Dict[str, Any]:
+                sighted: int = MAX_SIGHTED, db: Any = None, now: Optional[float] = None) -> Dict[str, Any]:
     """
     K4 data for /api/carriers/known: favourites first, then the carriers you
     docked at or started something from, then the newest sightings. Each
     with the last known position (journal, or the position stored with the
     favourite when the journal no longer has it), its distance from you and
-    - K3 - the last market seen there.
+    - K3 - the last market seen there. Carriers "find carriers near me"
+    showed are known too; what was not seen for KNOWN_DAYS leaves the list,
+    favourites stay (user 19.11.).
     """
     fid, name = archive.commander()
     evs = archive.events()
     known = known_carriers(evs)
     saved = store.get(fid) if store is not None else {"favourites": {}, "markets": {}}
     favs, markets = saved["favourites"], saved["markets"]
+    _with_online(known, saved.get("online") or {})
+    edge = _edge(_clock() if now is None else now)
+    known = _fresh(known, favs, edge)
     here = ((live or {}).get("system") or {}).get("pos")
     try:
         access = docking_access(evs, markets, favs)        # A1: may we dock
@@ -250,6 +287,8 @@ def build_known(archive: Any, store: Any, live: Optional[Dict[str, Any]] = None,
     view = _KnownView(known, favs, markets, here, access, db)
     item = view.item
     fav_items = sorted((item(cs) for cs in favs), key=lambda i: i.get("ts") or "", reverse=True)
+    for it in fav_items:
+        it["stale"] = bool(it.get("ts") and it["ts"] < edge)     # position older than KNOWN_DAYS
     rest = [cs for cs in known if cs not in favs]
     met = sorted((item(cs) for cs in rest if known[cs]["docked_n"] or known[cs]["started"]
                   or known[cs]["last_docked"] or known[cs]["how"] == "jump"),

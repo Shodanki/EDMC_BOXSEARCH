@@ -39,7 +39,7 @@ else:               # on its own: the FIS, plain imports
     from procgen import star_pos
 
 __all__ = ["journal_files", "newest_location", "last_body", "approached_bodies", "WorkMeter",
-           "replay_work", "replay_fuel", "read_events", "read_events_matching"]
+           "replay_work", "replay_fuel", "replay_fuel_events", "read_events", "read_events_matching"]
 
 LOCATION_EVENTS = ("FSDJump", "Location", "CarrierJump")
 BODY_EVENTS = ("ApproachBody", "SupercruiseExit", "Touchdown", "Liftoff", "SAAScanComplete")
@@ -289,37 +289,33 @@ class WorkMeter:
         return None
 
 
-def replay_work(files: Iterable[str]) -> WorkMeter:
-    """A WorkMeter fed with every timed event of the files."""
+def replay_work(files: Iterable[str], since: Optional[float] = None) -> WorkMeter:
+    """A WorkMeter fed with every timed event of the files - from `since`
+    on, when the model was reset then (SK3, learnreset)."""
     m = WorkMeter()
     for e in read_events(files):
         ts = event_time(e)
-        if ts is not None:
+        if ts is not None and (since is None or ts >= since):
             m.feed(e, ts)
     return m
 
 
 def replay_fuel(files: Iterable[str], fuel: Any) -> Any:
-    """Ship, tank, jump range and fuel per jump into a deepspace.FuelState."""
+    """Ship, tank, jump range, mass and fuel per jump into a
+    deepspace.FuelState (its feed(), as the plugin does live)."""
+    return replay_fuel_events(read_events(files), fuel)
+
+
+def replay_fuel_events(events: Iterable[Dict[str, Any]], fuel: Any) -> Any:
+    """replay_fuel() for any journal lines in order - 5.0: the EDDiscovery
+    archive's older lines first, then the journal files."""
     cmdr: Optional[str] = None
-    for e in read_events(files):
+    for e in events:
         v = e.get("event")
         try:
             if v in ("Commander", "LoadGame"):
                 cmdr = e.get("Name") or e.get("Commander") or cmdr
-            if v in ("LoadGame", "Loadout") and e.get("ShipID") is not None:
-                fuel.set_ship((cmdr, e.get("ShipID")))
-            if v == "Loadout":
-                if e.get("MaxJumpRange"):
-                    fuel.max_jump = float(e["MaxJumpRange"])
-                cap = (e.get("FuelCapacity") or {}).get("Main")
-                if cap:
-                    fuel.capacity = float(cap)
-            elif v == "FSDJump":
-                if e.get("FuelUsed") is not None:
-                    fuel.add_jump(e.get("JumpDist"), e.get("FuelUsed"))
-                if e.get("FuelLevel") is not None:
-                    fuel.level = float(e["FuelLevel"])
-        except (TypeError, ValueError):
+            fuel.feed(e, cmdr, event_time(e))
+        except (TypeError, ValueError, AttributeError):
             continue
     return fuel

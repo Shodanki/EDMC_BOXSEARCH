@@ -17,7 +17,8 @@ and its state files (`Status.json`, `NavRoute.json`, `ModulesInfo.json`,
 a service on the internet in two cases only, both on your click in CARRIER:
 *online* at a favourite carrier - where someone last reported it, at most once
 per carrier every six hours - and *find carriers near me* - the carriers
-within 100 ly of you, at most once a day per region of space. Each is one
+within 100 ly of you, at most once a day per region of space (the same
+request reaches 5000 ly for a rescue list, see below). Each is one
 request to Spansh, through the plugin's polite gateway (pacing, the daily cap
 shared with the plugin, the plugin's *offline* switch).
 
@@ -115,6 +116,38 @@ in use per part, read only, never written) - and the active fire group from
 A preset that comes with the game keeps its bindings in the game folder,
 which the FIS does not read; the block says so.
 
+### The EDDiscovery archive (optional)
+
+The journals on disk are rarely the whole story: a new PC, a cleaned
+folder or a rewritten journal, and the years before are gone - but
+EDDiscovery keeps every journal line it ever read in its user database,
+`EDDUser.sqlite`. The settings page has *Learn from the EDDiscovery
+archive* (off by default). While it is on, the FIS reads those lines once
+in the background (a few seconds; again at most hourly while EDDiscovery
+adds to the file) and adds what the journals on disk do not have: the
+same moment and event counts once. STATISTICS, GAIN / LOSS, TRADE,
+MINING and the learnt models then reach back as far as EDDiscovery does.
+The bio rates (STATISTICS) add the landable planets the plugin database
+does not have (scans since Odyssey, when FSS signals began), and the
+species per Brain Trees signal the archive's codex entries and analyses.
+
+* The file is found beside the `EDDSystem.sqlite` the plugin is set to, or
+  in EDDiscovery's own folder (`%LOCALAPPDATA%\EDDiscovery`).
+* It is opened read only and never written. Only the journal lines are
+  read, and of EDDiscovery's commanders only id and name - the EDSM API
+  key stored in the same file is never read.
+* Every line counts for the commander its own login names; lines of a
+  commander that never logged in there are left out. As everywhere in
+  the FIS, statistics count for the active commander only.
+* Events that only matter live (signals, cargo, damage, market lists)
+  are not taken; of the body signals only the biological count is kept,
+  of the codex only the biological entries. Nothing is copied, stored or sent: the events stay in
+  the FIS's memory. Switching it off drops them at once.
+* The settings page says how many older events were added and since when.
+
+EDDiscovery is Apache-2.0 software by the EDDiscovery Team; no part of it
+ships with the FIS, only its file is read.
+
 ### Unsold data: your own limits
 
 SHIP calls losing your unsold data a low, moderate or high risk and, from a
@@ -132,7 +165,7 @@ The map of the body you are on follows you while you drive or walk
 marker moves across it; dragging the map switches it off too. **Me**,
 **Ship** and **SRV** centre on you, the landed ship and the parked SRV -
 the last two appear only when their position is known. A ship that dropped
-the Rhino in a hover waits there (*SHIP HOVERING 1240 m · leaves at 2.3 km*); once
+the Rhino in a hover waits there (*SHIP HOVERING 1240 m · leaves at 2.1 km*); once
 it has flown off (the SRV went too far, or the ship was sent away) it shows
 as *SHIP AWAY · 12 min ago · flew off - recall it* until you are aboard again.
 Double-click resets the view.
@@ -207,7 +240,7 @@ folder is copied from the release ZIP again.
 | | **VEHICLE** | the SRV or Nomad out now, or the last trip: edition, state, its own tank and use (against the full tank once a refuel synthesis showed its size), cargo and refined tonnes, position and heading with distance and direction to the ship, switches, bio scans and landings; SYNTHESIS: refuel, ammunition and repair per tier as you made them (learnt from your own synthesis, nothing copied), with how often each can still be made from the materials on board and what limits it |
 | 8 | **CARRIER** | your fleet carrier as a ship's sheet: position and jumps, tritium and range (with the tritium in your ship and - from EDMC's Frontier data - in the carrier's hold, what you mined and the trip to your route's end), hold with its goods, finances, services - and the air wing: every ship in the hangar with role ratings (combat, mining, transport, exploration, passengers, search and rescue); docked at someone else's carrier: what its market buys (what you carry first, tritium next) and sells, from the market you opened; **known carriers** - also without a carrier of your own: the carriers you docked at, started a mission or community goal from, rode along with or saw in the FSS, with their last known system, how old that is and how far from you, what you started there and what their market bought when you last opened it. Mark the ones you want to find again with ☆ (and a note); favourites come first, get a ★ in SYSTEM's points of interest and on the GALAXY map. With a carrier of your own the known carriers have a tab of their own; each shows whether you may dock, the services it offered when you docked, its last market to unfold (with its date), the system name to copy - and *open system* when the plugin database knows that system's bodies |
 | 9 | **MINING** | everything about mining, tritium first: the session (yield per hour, limpets, best and last rock), tritium for the carrier (tank, in your ship, mined, delivered), the best hotspots for you (nearby hotspots ranked by your own tonnes per hour), ring hotspots near you, mining ships, goods with what selling them earned against the carrier's upkeep, every session so far |
-| 0 | **STATISTICS** | the game's own record of you (written at every login): ranks with progress, exploration, exobiology, mining, the carrier, wealth and time played - with the growth over 24 h, 7, 30 or 90 days; *learning status*: how many rocks, mining runs, rigs and analysed bodies the FIS has learnt from, and where it is still thin |
+| 0 | **STATISTICS** | the game's own record of you (written at every login): ranks with progress, exploration, exobiology, mining, the carrier, wealth and time played - with the growth over 24 h, 7, 30 or 90 days; *learning status*: how many rocks, mining runs, rigs and analysed bodies the FIS has learnt from, and where it is still thin; *time per system* (5.0): how long each system took and on what (maps, species, landings), against the plugin's first route estimate after your FSS (kept from 5.0 on) |
 
 Planet, system, galaxy: the same place at three scales. Addresses work with the
 names too (`/#system`, `/#planetinfo`, `/#stats`).
@@ -216,32 +249,64 @@ names too (`/#system`, `/#planetinfo`, `/#stats`).
 
 Demo data: a copy of a real plugin database with the commander's current
 area, carrier, earnings and surface tracks removed; commander and ship are
-called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English.
+called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English, theme
+standard. Every page, in the order of the tabs.
 
-**SYSTEM** - the system in 3D with Kepler orbits, flight plan legs, bio and
-first-footfall marks, and a rule-based system report.
+**BRIEFING** - the next target and the sphere ahead: what is left, the chance of a find, the time and value still to come.
+
+![BRIEFING view](docs/screenshots/demo_briefing.png)
+
+**PLANET** - the surface around you: bio finds, samples and their spacing.
+
+![PLANET view](docs/screenshots/demo_planet.png)
+
+**SYSTEM** - the system in 3D with Kepler orbits, flight plan legs, bio and first-footfall marks, and a rule-based system report.
 
 ![SYSTEM view](docs/screenshots/demo_system.png)
 
-**GALAXY** - the survey sphere and its boxels in 3D, flight path, known
-systems; the focus panel and flight log on the right.
+**GALAXY** - the survey sphere and its boxels in 3D, flight path, known systems, the next hop; the focus panel and flight log on the right.
 
-![GALAXY view in 3D](docs/screenshots/demo_galaxy.png)
+![GALAXY view](docs/screenshots/demo_galaxy.png)
 
-**PLANET INFO** - datasheet, science report, atmosphere and surface, biology
-of the selected body.
+**PLANET INFO** - datasheet, science report, atmosphere and surface, biology of the selected body.
 
 ![PLANET INFO view](docs/screenshots/demo_planetinfo.png)
 
-**SHIP** - status lamps from `Status.json`, schematic cutaway, damage and
-function report, engineer view of power and module health.
+**ATLAS** - signals, rings, materials and finds of every known body, nearest first, with a top view around you.
+
+![ATLAS view](docs/screenshots/demo_atlas.png)
+
+**SHIP** - the annunciator from `Status.json`, schematic cutaway, damage and function report, engineer view of power and module health.
 
 ![SHIP view](docs/screenshots/demo_ship.png)
 
-**ATLAS** - signals, rings, materials and finds of every known body, nearest
-first, with a top view around you.
+**VEHICLE** - SRV, Nomad and Scarab: tanks, cargo, synthesis.
 
-![ATLAS view](docs/screenshots/demo_atlas.png)
+![VEHICLE view](docs/screenshots/demo_vehicle.png)
+
+**CARRIER** - your fleet carrier: position, tritium and range with the time per jump, jump plan, carrier trade, known carriers.
+
+![CARRIER view](docs/screenshots/demo_carrier.png)
+
+**MINING** - rocks, tonnes and limpets, learnt from your own runs.
+
+![MINING view](docs/screenshots/demo_mining.png)
+
+**STATISTICS** - overview, history, rates and times, and the learning status with the reality check of every model.
+
+![STATISTICS view](docs/screenshots/demo_statistics.png)
+
+**LEDGER** - gain and loss like a business statement: segments, balance, outlook.
+
+![LEDGER view](docs/screenshots/demo_ledger.png)
+
+**TRADE** - commodity trades against the galactic mean.
+
+![TRADE view](docs/screenshots/demo_trade.png)
+
+**SETTINGS** - language, display links, unsold-data limits, the app.
+
+![SETTINGS view](docs/screenshots/demo_settings.png)
 
 ## Third-party parts
 
@@ -287,11 +352,18 @@ third-party parts of the project, and Frontier's data:
   Spansh request, shown with its date). *Find carriers near me* lists the
   carriers Spansh knows within 100 ly - callsign, system, distance, who may
   dock, services, when it was reported; a carrier starred there keeps that
-  position without a second request. Favourites,
+  position without a second request. It is a rescue anchor too: the one
+  request reaches 5000 ly; with nothing within 100 ly it shows the three
+  nearest carriers anyone may dock at that repair - Vista Genomics and
+  Universal Cartographics first. With none at all it points to Spansh and
+  Inara. Favourites,
   notes and the last market of each visited carrier are kept per commander
   in `favourites.json` next to `fis.ini` (personal - keep it out of anything
-  you share). Starring works from the tablet too (with the home-network
-  token); the settings stay on the game PC.
+  you share), and with them where Spansh placed the carriers *find carriers
+  near me* showed - KNOWN CARRIERS lists those too. A position not seen for
+  90 days is stale: such a carrier leaves the list; a favourite stays, its
+  position marked outdated. Starring works from the tablet too (with the
+  home-network token); the settings stay on the game PC.
 * Entries you hide from the list of data lost with the ship are kept per
   commander in `lost_hidden.json` next to `fis.ini` - like `favourites.json`
   keep it when you update.

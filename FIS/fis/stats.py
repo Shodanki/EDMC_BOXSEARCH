@@ -15,7 +15,7 @@ Reads the journal only.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from . import fleet as fl
 from .live import parse_ts
@@ -47,6 +47,189 @@ RANK_ORDER = ["Explore", "Exobiologist", "Trade", "Combat", "Soldier", "CQC", "E
 SECTIONS = ("Exploration", "Exobiology", "Mining", "FLEETCARRIER", "Bank_Account", "Trading", "Combat",
             "Search_And_Rescue", "Passengers", "Crafting", "Material_Trader_Stats", "Crime", "Crew",
             "Smuggling")
+
+
+# ST1 (5.0): the numbers drawn over time - one value per UTC day (the last
+# login of the day), from the Statistics events of the period
+SERIES = (("Exploration", "Systems_Visited"), ("Exploration", "Exploration_Profits"),
+          ("Exploration", "Planets_Scanned_To_Level_3"), ("Exobiology", "Organic_Data_Profits"),
+          ("Mining", "Quantity_Mined"), ("Bank_Account", "Current_Wealth"))
+DSS_GAP_S = 15 * 60      # two maps in one system further apart than this: not one stretch of work
+
+
+def series(stats: List[Dict[str, Any]], since: Optional[float]) -> Dict[str, List[List[float]]]:
+    """ST1: "Section.Key" -> [[day start (unix), value], ...] from `since` on,
+    the last Statistics event of each UTC day."""
+    by_day: Dict[int, Dict[str, Any]] = {}
+    for e in stats:
+        t = parse_ts(e.get("timestamp"))
+        if t is None or (since is not None and t < since):
+            continue
+        by_day[int(t // 86400)] = e
+    out: Dict[str, List[List[float]]] = {}
+    for sec, key in SERIES:
+        pts = [[day * 86400, (e.get(sec) or {}).get(key)] for day, e in sorted(by_day.items())]
+        pts = [p for p in pts if isinstance(p[1], (int, float)) and not isinstance(p[1], bool)]
+        if len(pts) >= 2:
+            out[sec + "." + key] = pts
+    return out
+
+
+def first_discoveries(evs: List[Dict[str, Any]], months: int = 12) -> List[Dict[str, Any]]:
+    """ST1: per calendar month (UTC) the bodies you scanned yourself (no nav
+    beacon) and how many of them nobody had discovered before
+    (WasDiscovered false) - each body once, at its first scan; the newest
+    `months` months that have scans."""
+    seen = set()
+    by: Dict[str, List[int]] = {}
+    for e in evs:
+        if e.get("event") != "Scan" or e.get("ScanType") == "NavBeaconDetail" or "WasDiscovered" not in e:
+            continue
+        key = (e.get("SystemAddress"), e.get("BodyID") if e.get("BodyID") is not None else e.get("BodyName"))
+        t = parse_ts(e.get("timestamp"))
+        if key in seen or t is None:
+            continue
+        seen.add(key)
+        m = time.strftime("%Y-%m", time.gmtime(t))
+        row = by.setdefault(m, [0, 0])
+        row[0] += 1
+        row[1] += 1 if e.get("WasDiscovered") is False else 0
+    return [{"month": m, "scanned": v[0], "first": v[1], "pct": round(100.0 * v[1] / v[0], 1)}
+            for m, v in sorted(by.items())[-months:]]
+
+
+def dss_tiles(evs: List[Dict[str, Any]], since: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """
+    ST1: the detailed surface scans of the period - how many, how many
+    efficient (probes within the target), probes per map (median), and the
+    time per map: the gap between two maps in one system when it is under
+    DSS_GAP_S (flight and mapping together) - median, quartiles and n.
+    """
+    maps = [e for e in evs if e.get("event") == "SAAScanComplete"
+            and (since is None or (parse_ts(e.get("timestamp")) or 0) >= since)]
+    if not maps:
+        return None
+    eff = [e for e in maps if e.get("ProbesUsed") is not None and e.get("EfficiencyTarget") is not None]
+    good = sum(1 for e in eff if e["ProbesUsed"] <= e["EfficiencyTarget"])
+    probes = sorted(e["ProbesUsed"] for e in eff)
+    gaps: List[float] = []
+    prev: Dict[Any, float] = {}
+    for e in maps:
+        t = parse_ts(e.get("timestamp"))
+        a = e.get("SystemAddress")
+        if t is None:
+            continue
+        if a in prev and 0 < t - prev[a] < DSS_GAP_S:
+            gaps.append(t - prev[a])
+        prev[a] = t
+    gaps.sort()
+    q = (lambda xs, f: xs[min(len(xs) - 1, int(f * len(xs)))]) if gaps else None
+    return {"maps": len(maps), "rated": len(eff), "efficient": good,
+            "efficient_pct": round(100.0 * good / len(eff), 1) if eff else None,
+            "probes_median": probes[len(probes) // 2] if probes else None,
+            "gap_n": len(gaps), "gap_median_s": round(q(gaps, 0.5)) if q else None,
+            "gap_q1_s": round(q(gaps, 0.25)) if q else None, "gap_q3_s": round(q(gaps, 0.75)) if q else None}
+
+
+SESSION_GAP_S = 30 * 60     # RT1: no event for this long ends a session
+SESSION_MIN_S = 30 * 60     # ... and only sessions this long go into the medians
+
+
+def _median(xs: List[float]) -> Optional[float]:
+    xs = sorted(xs)
+    n = len(xs)
+    return None if not n else (xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0)
+
+
+class _Session:
+    """One game session of play_sessions: time, jumps, bodies, value."""
+
+    def __init__(self, t: float) -> None:
+        self.start = self.end = t
+        self.jumps = 0
+        self.bodies: Dict[Any, Dict[str, Any]] = {}
+        self.explo = 0.0
+        self.bio = 0.0
+        self.scans = 0      # FX0: Scan events of any body, seen before or not
+
+    def has_value(self) -> bool:
+        """FX0: whether the session's value is known - the EDD archive keeps
+        the jumps of 2020-22 but hardly any scans; such a session is left
+        out of the value median instead of counting as 0 Cr/h."""
+        return bool(self.scans or self.bio)
+
+    def out(self) -> Dict[str, Any]:
+        """The session as the view shows it, with systems and value per hour."""
+        h = max(1e-9, (self.end - self.start) / 3600.0)
+        value = self.explo + self.bio
+        return {"start": self.start, "minutes": round((self.end - self.start) / 60.0), "jumps": self.jumps,
+                "bodies": len(self.bodies), "explo": int(self.explo), "bio": int(self.bio),
+                "jumps_h": round(self.jumps / h, 1), "value_h": int(value / h) if self.has_value() else None}
+
+
+def play_sessions(evs: List[Dict[str, Any]], body_value: Any = None,
+                  bio_values: Optional[Dict[str, Dict[str, int]]] = None, keep: int = 12) -> Dict[str, Any]:
+    """
+    RT1 (5.0): systems and value per hour, per game session - a LoadGame,
+    or a pause of SESSION_GAP_S, starts a new one. Value is what you
+    gathered, not what you sold: the bodyvalue estimate of the bodies you
+    scanned first in it (mapped ones at their mapped value) plus your own
+    prices of the species you analysed (unsold.BONUS_FACTOR left out) - so
+    "~". FX0 (user 18.11.2026, the whole picture): every scanned and mapped
+    body counts, discovered by others or not, and a body scanned in an
+    earlier session counts when you map it in this one. Medians over the
+    sessions of at least SESSION_MIN_S; the value median only over those
+    whose value is known (_Session.has_value).
+    """
+    from .unsold import _row_values, _scan_row
+    seen: Dict[Any, Dict[str, Any]] = {}       # every body scanned so far -> its row
+    cur: Optional[_Session] = None
+    done: List[_Session] = []
+    for e in evs:
+        t = parse_ts(e.get("timestamp"))
+        if t is None:
+            continue
+        if cur is None or e.get("event") == "LoadGame" or t - cur.end > SESSION_GAP_S:
+            if cur is not None:
+                done.append(cur)
+            cur = _Session(t)
+        cur.end = t
+        _session_event(cur, e, seen, body_value, bio_values or {}, _row_values, _scan_row)
+    if cur is not None:
+        done.append(cur)
+    rows = [s.out() for s in done if s.jumps or s.bodies or s.bio]
+    long_ = [r for r in rows if r["minutes"] * 60 >= SESSION_MIN_S]
+    worth = [r["value_h"] for r in long_ if r["value_h"] is not None]
+    return {"sessions": list(reversed(rows[-keep:])), "n": len(long_), "n_value": len(worth),
+            "jumps_h": _median([r["jumps_h"] for r in long_]), "value_h": _median(worth),
+            "valued": body_value is not None}
+
+
+def _session_event(cur: "_Session", e: Dict[str, Any], seen: Dict[Any, Dict[str, Any]], bv: Any,
+                   bio_values: Dict[str, Dict[str, int]], row_values: Any, scan_row: Any) -> None:
+    """One event into a session: a jump, a scan, a map, an analysis."""
+    ev = e.get("event")
+    if ev == "FSDJump":
+        cur.jumps += 1
+    elif ev == "Scan" and e.get("ScanType") != "NavBeaconDetail" and bv is not None:
+        cur.scans += 1
+        key = (e.get("SystemAddress"), e.get("BodyID"))
+        if key not in seen:
+            r = seen[key] = scan_row(e)
+            cur.bodies[key] = r
+            cur.explo += row_values(bv, r)[0]
+    elif ev == "SAAScanComplete" and bv is not None:
+        key = (e.get("SystemAddress"), e.get("BodyID"))
+        r = seen.get(key)
+        if r is not None and not r.get("mapped_once"):
+            r["mapped_once"] = True         # the game pays a map once
+            cur.scans += 1
+            cur.bodies[key] = r
+            scan, full = row_values(bv, r)
+            cur.explo += full - scan
+    elif ev == "ScanOrganic" and e.get("ScanType") == "Analyse":
+        v = bio_values.get(e.get("Species_Localised") or e.get("Species") or "")
+        cur.bio += (v or {}).get("value") or 0
 
 
 def rank_name(kind: str, n: Optional[int]) -> Optional[str]:
@@ -106,4 +289,8 @@ def build_statistics(archive: fl.Archive, days: Optional[float] = None,
     ex = sections.get("Exploration") or {}
     if ex.get("Total_Hyperspace_Jumps"):
         out["derived"] = {"avg_jump": round(ex["Total_Hyperspace_Distance"] / ex["Total_Hyperspace_Jumps"], 1)}
+    # ST1: over time, first discoveries per month, surface scans
+    out["series"] = series(stats, now - days * 86400 if days else None)
+    out["first_discoveries"] = first_discoveries(evs)
+    out["dss"] = dss_tiles(evs, now - days * 86400 if days else None)
     return out

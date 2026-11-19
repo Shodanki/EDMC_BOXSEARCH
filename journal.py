@@ -14,6 +14,7 @@ work to worker threads.
 
 from __future__ import annotations
 
+import calendar
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -21,8 +22,11 @@ from typing import Any, Dict, List, Optional
 from . import groundmine
 from . import journalgap
 from . import journalscan
+from . import lifesupport
 from . import miningstat
 from . import overlay
+from . import shipstate
+from . import suittemp
 from . import surfacenav
 from .biopredict import COLONY_RANGE_M, surface_distance_m
 from .procgen import star_pos
@@ -31,6 +35,8 @@ from .sysroute import calibrate_from_journal, leg_distance_ls
 from .state import CFG, POSITION_EVENTS, ST, cfg_bool, logger
 from . import cockpit
 from . import cockpitinfo
+from . import eddcheck
+from . import findlog
 from . import panel
 from . import planning
 from . import routewin
@@ -99,6 +105,8 @@ def _before_ingest(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> boo
     if entry.get("BodyID") is not None and ev in POSITION_EVENTS:
         routewin._note_position(entry)
     _mining_event(ev, entry, state)
+    _VEHICLE.feed(ev, entry)                 # 5.0 (own-3): SRV or Nomad for the left line
+    _LIFE.feed(ev, entry, _event_ts(entry))  # 5.0 (R8): life support off - Loadout, AFMU repairs
     # EDMC enriches NavRoute with the full Route array
     if ev == "NavRoute" and entry.get("Route"):
         cockpit._note_navroute(entry.get("Route"))
@@ -197,13 +205,16 @@ def _system_time(ev: str) -> None:
 
 
 def _fuel_on_jump(ev: str, entry: Dict[str, Any]) -> None:
-    """Fuel used per jump, the level after it, and a warning when low."""
+    """Fuel used per jump with the ship's mass (SK2), the level after it,
+    the hold (Cargo), and a warning when low."""
+    if ev == "Cargo":
+        try:
+            ST.fuel.feed(entry)
+        except (TypeError, ValueError):
+            pass
     if ev == "FSDJump" and entry.get("FuelUsed") is not None:
         try:
-            ST.fuel.add_jump(entry.get("JumpDist"),
-                             entry.get("FuelUsed"))
-            if entry.get("FuelLevel") is not None:
-                ST.fuel.level = float(entry["FuelLevel"])
+            ST.fuel.feed(entry, ts=journalscan.event_time(entry))
             w = ST.fuel.warning()
             if w:
                 logger.info("fuel | %s", w)
@@ -236,9 +247,12 @@ def _on_arrival(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, Any]
         survey._prune_queues()
         survey._resort_queues()
         uithread._ui(survey._copy_flight)
+    eddcheck.backfill()                  # FX4: once per session, local
+    findlog.warm()                       # FX5: the briefing's find odds
     if ev == "FSDJump":
         cockpit._overlay_briefing("arrival", ST.cur_system, ST.cur_id64,
                                   entry.get("StarClass") or None)
+        findlog.on_jump(entry)           # FX3: V0 prediction of a find
         if ST.active:
             threading.Thread(target=planning._update_route_targets, daemon=True,
                              name="SHBOX-navroute").start()
@@ -274,16 +288,14 @@ def _on_approach(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, Any
 
 
 def _on_loadout(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, Any]) -> None:
-    """Loadout: the ship, its jump range and tank."""
-    if entry.get("ShipID") is not None:
-        ST.fuel.set_ship((cmdr, entry.get("ShipID")))
+    """Loadout: the ship, its mass step and FSD, its jump range and tank."""
+    try:
+        ST.fuel.feed(entry, cmdr)
+    except (TypeError, ValueError, AttributeError):
+        pass
     mj = entry.get("MaxJumpRange")
     if mj:
         ST.max_jump = float(mj)
-        ST.fuel.max_jump = float(mj)
-    cap = (entry.get("FuelCapacity") or {}).get("Main")
-    if cap:
-        ST.fuel.capacity = float(cap)
 
 
 def _on_startup(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, Any]) -> None:
@@ -327,6 +339,8 @@ def _on_body_scan(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, An
     if ev in ("SAAScanComplete", "ScanOrganic"):
         routewin._route_auto_tick(entry.get("BodyName") or entry.get("Body"),
                                   "mapped" if ev == "SAAScanComplete" else "sampled")
+    if ev == "SAASignalsFound":
+        routewin._route_reopen_bio(entry.get("BodyName"))
     if ev in ("FSSAllBodiesFound", "SAAScanComplete", "ScanOrganic",
               "FSSBodySignals", "SAASignalsFound"):
         planning._request_route()
@@ -339,6 +353,7 @@ def _on_fsd_target(ev: str, entry: Dict[str, Any], cmdr: str, state: Dict[str, A
     nm = entry.get("Name")
     cockpit._overlay_briefing("target", nm, entry.get("SystemAddress"),
                               entry.get("StarClass"))
+    eddcheck.check_target(entry)         # FX4: EDD by id64 before the jump
     t = survey.current_probe()
     if t and nm == t.name:
         panel._set_status("confirmed: %s" % nm)
@@ -635,6 +650,7 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
         _mining_overlay()                    # rate and ages move on; at most every 5 s
     except Exception:
         logger.debug("mining overlay failed", exc_info=True)
+    _state_overlay(entry)                    # 5.0 (own-3): its own guard - a mining error must not hide it
     if not ST.db or not cfg_bool(CFG["harvest_destination"], True):
         return
     try:
@@ -642,6 +658,54 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
         _status_destination(entry)
     except Exception:
         logger.exception("dashboard_entry failed")
+
+
+_SUIT = suittemp.SuitWatch()
+_VEHICLE = shipstate.VehicleWatch()
+_LIFE = lifesupport.LifeSupportWatch()
+
+
+def _event_ts(entry: Dict[str, Any]) -> Optional[float]:
+    """A journal event's time as Unix time, or None."""
+    try:
+        return float(calendar.timegm(time.strptime(str(entry.get("timestamp"))[:19], "%Y-%m-%dT%H:%M:%S")))
+    except (TypeError, ValueError):
+        return None
+
+
+def _life_lines(entry: Dict[str, Any], now: float) -> List[Any]:
+    """R8: the red line while life support is (probably) off; an INFO line
+    in the log at every change."""
+    verdict, changed = _LIFE.check(entry.get("Flags"), now)
+    if changed:
+        logger.info("life support | %s", "%s (%s)" % (verdict["state"], verdict["why"]) if verdict else "on")
+    return lifesupport.overlay_lines(verdict)
+
+
+def _state_overlay(entry: Dict[str, Any]) -> None:
+    """The left line: out of supercruise gear, lights, hardpoints still out
+    in the ship, SRV or Nomad (shipstate, setting "overlay_state"); on foot
+    in heat or cold the suit's health and time left (suittemp, setting
+    "overlay_suit"); first of all life support off (lifesupport, R8).
+    Never raises; a failure is logged once."""
+    global _STATE_FAILED
+    ov = getattr(ST, "overlay", None)
+    if ov is None or ("Flags" not in entry and "Flags2" not in entry):
+        return
+    try:
+        lines: List[Any] = _life_lines(entry, time.time()) if ov.enabled else []
+        if not lines and ov.enabled and cfg_bool(CFG["overlay_suit"], True):
+            lines = _SUIT.feed(time.time(), entry.get("Flags2"), entry.get("Health"), entry.get("Temperature"))
+        if not lines and ov.enabled and cfg_bool(CFG["overlay_state"], True):
+            lines = shipstate.reminder_lines(entry.get("Flags"), _VEHICLE.kind)
+        ov.show_state(lines)
+    except Exception:
+        if not _STATE_FAILED:
+            logger.warning("overlay | still-out line failed", exc_info=True)
+        _STATE_FAILED = True
+
+
+_STATE_FAILED = False
 
 
 def _status_fuel(entry: Dict[str, Any]) -> None:

@@ -39,7 +39,7 @@ from .sysroute import ALL_FILTERS, DEFAULT_MODEL, F_OUTSTANDING
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-VERSION = "4.12.1"
+VERSION = "5.0.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 for _mod in (_sysdb_mod, _sources_mod, netgate, _overlay_mod):
@@ -60,6 +60,8 @@ CFG = {
     "src_edsm": "%s_src_edsm" % PLUGIN_NAME,
     "offline": "%s_offline" % PLUGIN_NAME,
     "edd_path": "%s_edd_path" % PLUGIN_NAME,
+    # 5.0: the fuel model and the tonnes per rock also learn from EDDUser.sqlite
+    "edd_archive": "%s_edd_archive" % PLUGIN_NAME,
     "jump_range": "%s_jump_range" % PLUGIN_NAME,
     "harvest_navroute": "%s_harvest_navroute" % PLUGIN_NAME,
     "harvest_destination": "%s_harvest_dest" % PLUGIN_NAME,
@@ -90,6 +92,8 @@ CFG = {
     "overlay_brief": "%s_overlay_brief" % PLUGIN_NAME,
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
     "overlay_mining": "%s_overlay_mining" % PLUGIN_NAME,
+    "overlay_state": "%s_overlay_state" % PLUGIN_NAME,       # 5.0 (own-3): gear, lights, hardpoints
+    "overlay_suit": "%s_overlay_suit" % PLUGIN_NAME,         # 5.0 (own-2): suit heat / cold, time left
     "overlay_backend": "%s_overlay_backend" % PLUGIN_NAME,   # D3: "modern" | "window"
     # 4.12: the situation column (cockpitinfo) - warnings, places, session tally
     "overlay_info_warn": "%s_overlay_info_warn" % PLUGIN_NAME,
@@ -150,6 +154,11 @@ class State:
         self.edd_next_try = 0.0
         # 4.10: probe candidates already looked up in EDD's file by id64
         self.edd_asked: Set[int] = set()
+        # FX4: systems never looked up were asked in EDD's file this session
+        self.edd_backfilled = False
+        # FX5: the counted find odds (findodds.FindOdds) for the briefing
+        self.find_model: Any = None
+        self.find_warming = False
         self.planner: Optional[Planner] = None
 
         self.active = False

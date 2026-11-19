@@ -26,10 +26,20 @@ jobs:
         run: python tests/surfacenav_selftest.py
       - name: mining overlay self test
         run: python tests/miningstat_selftest.py
+      - name: EDDiscovery archive self test
+        run: python tests/eddhistory_selftest.py
       - name: cockpit overlay self test
         run: python tests/overlay_selftest.py
       - name: in-system route self test
         run: python tests/sysroute_selftest.py
+      - name: Kepler positions against the game's DistanceFromArrivalLS (real scans, every orbit in its parent's frame)
+        run: python tests/kepler_reality.py
+      - name: fuel model with the ship's mass (dist * mass, per ship and mass step, FSD prior, reset)
+        run: python tests/fuel_model.py
+      - name: resetting a learnt model (marks in FIS/learn_reset.json, replays from the reset on)
+        run: python tests/learn_reset.py
+      - name: permit hint (EDD's permit list marks sphere targets, never removes them)
+        run: python tests/permit_hint.py
       - name: database backup self test
         run: python tests/sysdb_selftest.py
       - name: network gateway self test (no network)
@@ -70,8 +80,16 @@ jobs:
         run: python tests/edsm_names.py
       - name: open bio signals (Brain Trees - one signal, several species)
         run: python tests/biosig.py
+      - name: life support off (no event from the game - Loadout, ModulesInfo.json, AFMU repairs with DANGER)
+        run: python tests/life_support.py
+      - name: reality check from the command line (every model's row over a scripted journal)
+        run: python tests/realitycheck.py
       - name: EDMC passes on no journal events (warning, missed events stored, track positions)
         run: python tests/journal_gap.py
+      - name: chance of a find (FX3, kept at the first arrival, set against the scans)
+        run: python tests/findodds.py
+      - name: never looked-up systems asked in EDD's file by id64 (FX4, local)
+        run: python tests/eddcheck.py
       - name: package import (relative imports, both of EDMC's ways to load a plugin)
         run: python tests/package_import.py
       - name: code style (flake8 with EDMC's line length, see .flake8)
@@ -87,7 +105,7 @@ jobs:
       - name: complexity (EDMC's limit 15, every function of the plugin and the FIS)
         run: python tests/complexity.py
       - name: plain-python modules import without EDMC
-        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan, biosig, bodyvalue, situation, groundmine, edts_pgnames, regionmap; assert procgen._edts is not None; assert regionmap.find_region(0, 0, 0)[1] == 'Inner Orion Spur'; print('imports ok')"
+        run: python -c "import procgen, sysdb, sysroute, boxelplan, sources, deepspace, overlay, biopredict, surfacenav, miningstat, netgate, shells, journalscan, biosig, bodyvalue, situation, groundmine, learnreset, findodds, shipstate, suittemp, lifesupport, edts_pgnames, regionmap; assert procgen._edts is not None; assert regionmap.find_region(0, 0, 0)[1] == 'Inner Orion Spur'; print('imports ok')"
       - name: FIS tests (flight information system)
         working-directory: FIS
         run: python -m unittest discover -s tests -t .

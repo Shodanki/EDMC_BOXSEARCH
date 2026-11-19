@@ -392,7 +392,7 @@ function render() {
     const where = v.dist_m !== undefined ? fmt(v.dist_m, 0) + " m · " + fmt(v.bearing, 0) + "°" : t("position saved");
     const what = key === "parked" ? t("{v} PARKED", { v: vehicleLabel(key, v) })
       : v.hover ? t("SHIP HOVERING") : t("SHIP LANDED");
-    const leaves = v.hover ? " · " + t("leaves at 2.3 km") : "";
+    const leaves = v.hover ? " · " + t("leaves at 2.1 km") : "";
     info.append(el("div", { class: "sf-park " + colr }, (key === "parked" ? "◆ " : "▼ ") + what + "  " + where + leaves));
   }
   // 4.12: dropped from a hover or sent away - the ship has flown off
