@@ -123,6 +123,22 @@ class RouteTest(unittest.TestCase):
         plan = jumpplan.make_plan(START, target, own, None, 0.0)
         self.assertEqual(plan["source"], "own+edd")
 
+    def test_permit_systems_are_never_a_hop(self):
+        own = jumpplan.OwnStars(_line(14, 100.0))
+        own.drop({1005})                                 # Own 5 permit-locked
+        hops = jumpplan.route_own(START, TARGET, own)
+        self.assertNotIn("Own 5", [h["name"] for h in hops])
+        self.assertNotIn("Own 5", own.by_name)
+
+        class Src:
+            def fetch(self, c, r):
+                return [{"name": "Free", "id64": 1, "x": 0, "y": 0, "z": 0},
+                        {"name": "Locked", "id64": 2, "x": 1, "y": 0, "z": 0}]
+
+            def permit_ids(self):
+                return {2}
+        self.assertEqual([s["name"] for s in jumpplan.EddStars(Src()).near((0, 0, 0), 5)], ["Free"])
+
     def test_target_within_one_jump(self):
         near = {"name": "Near", "pos": (300.0, 0.0, 0.0)}
         self.assertEqual(jumpplan.route_own(START, near, jumpplan.OwnStars([])), [near])
@@ -254,6 +270,86 @@ class SpanshTest(unittest.TestCase):
         self.assertTrue(h["url"].startswith("https://spansh.co.uk/"))
 
 
+def _sig(ts, sys_id, callsign):
+    return {"event": "FSSSignalDiscovered", "timestamp": ts, "SystemAddress": sys_id,
+            "SignalName": "DEMO CARRIER " + callsign, "IsStation": True}
+
+
+class FullTest(unittest.TestCase):
+    NOW = jumpplan.parse_ts("2026-05-10T12:00:00Z")
+
+    def test_sightings_count_different_carriers_of_30_days(self):
+        sight = jumpplan.sightings([_sig("2026-05-09T10:00:00Z", 9, "AAA-111"), _sig("2026-05-09T11:00:00Z", 9, "AAA-111"),
+                                    _sig("2026-05-08T10:00:00Z", 9, "BBB-222"), _sig("2026-03-01T10:00:00Z", 9, "CCC-333"),
+                                    {"event": "FSSSignalDiscovered", "SystemAddress": 9, "SignalName": "Nav Beacon",
+                                     "timestamp": "2026-05-09T10:00:00Z"}])
+        self.assertEqual(jumpplan.seen_at(sight, 9, self.NOW), 2)
+        self.assertEqual(jumpplan.seen_at(sight, None, self.NOW), 0)
+
+    def test_arrivals_from_requests(self):
+        evs = JUMPS + [_req("2026-05-01T12:00:00Z", "2026-05-01T12:15:00Z", "Demo D"), _loc("2026-05-01T12:40:00Z", "Demo X")]
+        self.assertEqual([a["system"] for a in jumpplan.arrivals(evs)], ["Demo A", "Demo B", "Demo C"])
+
+    def test_estimate_unknown_until_three_reports_then_learnt(self):
+        tgt = {"name": "Target", "id64": 9}
+        sight = jumpplan.sightings([_sig("2026-05-09T10:00:00Z", 9, "AAA-%03d" % i) for i in range(5)])
+        rep = [{"system": "Busy", "id64": 7, "ts": self.NOW - 3600, "seen": 6}]
+        f = jumpplan.full_estimate(tgt, rep, [], sight, self.NOW)
+        self.assertEqual((f["state"], f["seen"], f["reports"]), ("unknown", 5, 1))
+        rep += [{"system": "Busy", "id64": 7, "ts": self.NOW - 7200, "seen": 8},
+                {"system": "Target", "id64": 9, "ts": self.NOW - 600, "seen": 5}]
+        got_in = [{"system": "Quiet", "id64": 3, "ts": self.NOW - 999}]      # 0 carriers seen there: not alike
+        f = jumpplan.full_estimate(tgt, rep, got_in, sight, self.NOW)
+        self.assertEqual((f["state"], f["p"], f["n"]), ("likely full", 100, 3))
+        self.assertEqual(f["reported_full"], self.NOW - 600)
+        old = [dict(r, ts=self.NOW - 400 * 86400) for r in rep]           # older than 180 days: forgotten
+        self.assertEqual(jumpplan.full_estimate(tgt, old, [], sight, self.NOW)["state"], "unknown")
+
+
+class AlternativesTest(unittest.TestCase):
+    SHIPS = [{"id": 1, "name": "Hauler", "type_name": "Type-9", "stored_at": "here", "loadout_ts": "T1", "jump": 30.0,
+              "mass": 600.0, "fuel_cap": 64, "cargo": 700, "rating": {"roles": {"transport": 5}}},
+             {"id": 2, "name": "Bulk", "type_name": "Panther", "current": True, "loadout_ts": "T2", "jump": 40.0,
+              "mass": 900.0, "fuel_cap": 64, "cargo": 1000, "rating": {"roles": {"transport": 5}}},
+             {"id": 3, "name": "Away", "stored_at": "remote", "loadout_ts": "T3", "jump": 40.0, "mass": 500.0,
+              "cargo": 500, "rating": {"roles": {"transport": 5}}},
+             {"id": 4, "name": "Small", "stored_at": "here", "loadout_ts": "T4", "jump": 40.0, "mass": 100.0,
+              "cargo": 64, "rating": {"roles": {"transport": 2}}}]
+
+    def test_transporters_on_board_with_laden_range(self):
+        evs = [{"event": "Loadout", "ShipID": 2, "timestamp": "T2", "CargoCapacity": 1000},
+               {"event": "Cargo", "Vessel": "Ship", "Count": 950},
+               {"event": "FSDJump", "JumpDist": 21.5}, {"event": "FSDJump", "JumpDist": 19.0},
+               {"event": "Cargo", "Vessel": "Ship", "Count": 10}, {"event": "FSDJump", "JumpDist": 39.0}]
+        ts = jumpplan.transporters(self.SHIPS, jumpplan.laden_seen(evs))
+        self.assertEqual([t["name"] for t in ts], ["Hauler", "Bulk"])            # on board, 4-5 stars, shortest first
+        self.assertEqual((ts[0]["src"], ts[0]["laden"]), ("estimate", round(30 * 600 / (600 + 64 + 700), 1)))
+        self.assertEqual((ts[1]["src"], ts[1]["laden"], ts[1]["n"]), ("seen", 21.5, 2))
+
+    def test_alternatives_fewest_jumps_and_reach(self):
+        tgt = {"name": "Target", "pos": (1000.0, 0.0, 0.0)}
+        stars = jumpplan.OwnStars([
+            {"name": "Near", "id64": 1, "pos": (1010.0, 0, 0)}, {"name": "Busy", "id64": 2, "pos": (1005.0, 0, 0)},
+            {"name": "Mid", "id64": 3, "pos": (1035.0, 0, 0)}, {"name": "Beyond", "id64": 4, "pos": (1000.0, 0, 30.0)},
+            {"name": "Full", "id64": 5, "pos": (1002.0, 0, 0)}, {"name": "Target", "id64": 6, "pos": (1000.0, 0, 0)}])
+        sight = jumpplan.sightings([_sig("2026-05-09T10:00:00Z", 2, "AAA-%03d" % i) for i in range(3)])
+        now = jumpplan.parse_ts("2026-05-10T12:00:00Z")
+        before = (520.0, 0.0, 0.0)                        # "Mid" at 515 ly from the jump before: out of reach
+        a = jumpplan.alternatives(tgt, before, [stars], 20.0, True, ["full"], sight, now)
+        self.assertEqual([x["name"] for x in a], ["Near", "Busy"])                # fewest carriers seen first
+        self.assertEqual(a[1]["seen"], 3)
+        a = jumpplan.alternatives(tgt, (900.0, 0, 0), [stars], 20.0, False, [], sight, now)
+        self.assertEqual([x["name"] for x in a], ["Full", "Busy", "Near", "Beyond", "Mid"])
+        self.assertEqual([x["ship_jumps"] for x in a], [1, 1, 1, 2, 2])
+
+    def test_bubble(self):
+        self.assertTrue(jumpplan.in_bubble((300.0, 0, 400.0)))
+        self.assertFalse(jumpplan.in_bubble((-9530.5, -910.28, 19808.125)))
+        res = {"checked": "x", "carriers": [{"callsign": "A", "system": "Target", "distance": 0.0},
+                                            {"callsign": "B", "system": "Other", "distance": 4.0}]}
+        self.assertEqual(jumpplan.carriers_in(res, {"name": "target"})["callsigns"], ["A"])
+
+
 def _fsd(ts, name, pos):
     return {"timestamp": ts, "event": "FSDJump", "StarSystem": name, "StarPos": list(pos)}
 
@@ -319,6 +415,11 @@ class ApiTest(_Base):
         self.assertEqual([r["name"] for r in g["rows"]], ["Demo 5", "Demo 10", "Demo 14"])
         self.assertTrue(g["rows"][0]["next"])
         self.assertEqual(g["plan"]["target"]["body"], "Demo 14 A 1")
+        self.assertEqual(g["full"]["state"], "unknown")
+        code, res = self._post("/api/jumpplan/full", {"report": True, "fewest": False}, w)
+        self.assertEqual((code, res["reported"], res["laden"]), (200, True, jumpplan.DEFAULT_LADEN))
+        self.assertEqual(self._get()["full"]["reports"], 1)
+        self.assertEqual(self._post("/api/jumpplan/online", {}, w)[0], 409)      # 1400 ly from Sol: not the bubble
         code, res = self._post("/api/jumpplan/import", {"text": json.dumps(SPANSH_JSON)}, w)
         self.assertEqual((code, res["plan"]["source"], res["other_start"]), (200, "spansh", False))
         g = self._get()

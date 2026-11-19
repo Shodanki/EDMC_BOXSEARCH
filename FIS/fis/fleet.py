@@ -554,6 +554,10 @@ def _fit_entry(it: Dict[str, Any], lo: Dict[str, Any], vehicles: Iterable[str]) 
     it["value"] = it.get("value") or ((lo.get("HullValue") or 0) + (lo.get("ModulesValue") or 0)) or None
     it["jump"] = lo.get("MaxJumpRange")
     it["cargo"] = lo.get("CargoCapacity")
+    # 5.0 JUMP PLAN: the laden range of a transporter is worked out from these
+    it["mass"] = lo.get("UnladenMass")
+    fc = lo.get("FuelCapacity") or {}
+    it["fuel_cap"] = ((fc.get("Main") or 0) + (fc.get("Reserve") or 0)) if isinstance(fc, dict) else None
     it["rating"] = rate_loadout(lo, it["vehicles"])
     it["modules"] = len([m for m in lo.get("Modules") or [] if slot_group(m.get("Slot")) != "cosmetic"])
     it["fsd"] = fsd_of(lo)

@@ -1051,6 +1051,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(409, "carrier position unknown")
         edd = app.edd_stars()
         own = jumpplan.own_stars(app.db, app.archive.events())
+        permits = edd.permits() if edd else set()
+        own.drop(permits)                    # a carrier cannot go to a permit-locked system
         try:
             id64 = int(body["id64"]) if body.get("id64") else None
         except (TypeError, ValueError):
@@ -1064,6 +1066,7 @@ class Handler(BaseHTTPRequestHandler):
         plan = jumpplan.make_plan({"name": car["system"], "pos": car["pos"]}, target, own, edd, time.time(),
                                   body=str(body.get("body") or "")[:80] or None,
                                   body_id=bid if isinstance(bid, int) else None)
+        plan["target"]["permit"] = bool(target.get("id64") and int(target["id64"]) in permits)
         if plan["hops"]:
             app.jumpplans.set_plan(app.archive.commander()[0], plan)
         return self._json({"ok": bool(plan["hops"]), "plan": plan, "spansh": not plan["hops"]})
@@ -1089,6 +1092,62 @@ class Handler(BaseHTTPRequestHandler):
         car = app.carrier_now() or {}
         return self._json({"ok": True, "plan": plan,
                            "other_start": (car.get("system") or "").lower() != plan["start"]["name"].lower()})
+
+    def _post_jumpplan_full(self, raw: bytes) -> None:
+        """JUMP PLAN: the target is full - with "report" the commander's
+        report is kept for learning (a system fills and empties within
+        minutes: a hint, never a rule); always the alternatives: other bodies
+        of the system, then systems near it within a laden jump of a
+        transporter on board, reachable from the jump before the target."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "plans only from the FIS page")
+        body = self._body(raw) or {}
+        from . import jumpplan
+        app = self.app
+        fid = app.archive.commander()[0]
+        saved = app.jumpplans.get(fid)
+        plan = saved["plan"]
+        if not plan or not plan.get("hops") or not plan["target"].get("pos"):
+            return self._error(409, "no plan with a target position")
+        tgt, now, evs = plan["target"], time.time(), app.archive.events()
+        sight = jumpplan.sightings(evs)
+        if body.get("report"):
+            app.jumpplans.report_full(fid, {"system": tgt["name"], "id64": tgt.get("id64"), "body": tgt.get("body"),
+                                            "ts": now, "seen": jumpplan.seen_at(sight, tgt.get("id64"), now)})
+        ships = jumpplan.transporters(app.archive.fleet()["ships"], jumpplan.laden_seen(evs))
+        pick = next((x for x in ships if x["id"] == body.get("ship")), ships[0] if ships else None)
+        laden = pick["laden"] if pick else jumpplan.DEFAULT_LADEN
+        hops = plan["hops"]
+        before = hops[-2]["pos"] if len(hops) > 1 and hops[-2].get("pos") else plan["start"]["pos"]
+        own = jumpplan.own_stars(app.db, evs)
+        if app.edd_stars():
+            own.drop(app.edd_stars().permits())
+        finders = [own] + ([app.edd_stars()] if app.edd_stars() else [])
+        avoid = [r["system"] for r in app.jumpplans.get(fid)["full"] if now - (r.get("ts") or 0) <= jumpplan.FULL_FRESH]
+        alts = jumpplan.alternatives(tgt, before, finders, laden, bool(body.get("fewest", True)), avoid, sight, now)
+        bodies = []
+        if tgt.get("id64") and app.db.exists:
+            bodies = [b["name"] for b in app.db.bodies_of(int(tgt["id64"])) if b["name"] != tgt.get("body")][:8]
+        return self._json({"alternatives": alts, "bodies": bodies, "ship": pick, "laden": laden,
+                           "fewest": bool(body.get("fewest", True)), "reported": bool(body.get("report"))})
+
+    def _post_jumpplan_online(self, raw: bytes = b"") -> None:
+        """JUMP PLAN: the carriers Spansh knows in the target - only in the
+        bubble, only on a click, through the same gateway, cache and daily
+        cap as "carriers near me" (online.CarrierLookup.nearby)."""
+        if not self._page_write_ok():
+            self._note_fail()
+            return self._error(403, "lookups only from the FIS page")
+        from . import jumpplan
+        plan = self.app.jumpplans.get(self.app.archive.commander()[0])["plan"]
+        tgt = (plan or {}).get("target") or {}
+        if not tgt.get("pos") or not jumpplan.in_bubble(tgt["pos"]):
+            return self._error(409, "only for targets in the bubble")
+        res = self.app.lookup.nearby(tgt["pos"])
+        if res.get("error"):
+            return self._json(res, 503 if res["error"] != "offline" else 409)
+        return self._json(jumpplan.carriers_in(res, tgt))
 
     def _post_jumpplan_clear(self, raw: bytes = b"") -> None:
         if not self._page_write_ok():
@@ -1361,6 +1420,14 @@ class Handler(BaseHTTPRequestHandler):
                              int((hold or {}).get("t") or 0), time.time())
         out.update(carrier=car, hold_info=hold, edd=app.edd_stars() is not None,
                    spansh=jumpplan.spansh_help(car, saved["plan"], int((hold or {}).get("t") or 0)))
+        plan = saved["plan"]
+        if plan and plan.get("hops") and not out.get("arrived"):
+            evs = app.archive.events()
+            out["full"] = jumpplan.full_estimate(plan["target"], saved["full"],
+                                                 jumpplan.arrivals(app.archive.own_carrier_events()),
+                                                 jumpplan.sightings(evs), time.time())
+            out["transporters"] = jumpplan.transporters(app.archive.fleet()["ships"], jumpplan.laden_seen(evs))
+            out["bubble"] = bool(plan["target"].get("pos")) and jumpplan.in_bubble(plan["target"]["pos"])
         return self._json(out)
 
     def _get_carriers_known(self, qs: Dict[str, Any]) -> None:
@@ -1624,6 +1691,8 @@ _POST_ROUTES = {
     "/api/jumpplan/plan": Handler._post_jumpplan,
     "/api/jumpplan/clear": Handler._post_jumpplan_clear,
     "/api/jumpplan/import": Handler._post_jumpplan_import,
+    "/api/jumpplan/full": Handler._post_jumpplan_full,
+    "/api/jumpplan/online": Handler._post_jumpplan_online,
     "/api/ship/lost_hidden": Handler._post_lost_hidden,
     "/api/learning/reset": Handler._post_learning_reset,
     "/api/settings": Handler._post_settings,

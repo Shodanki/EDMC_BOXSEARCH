@@ -70,7 +70,7 @@ export function planView() {
 function draw() {
   if (!box) return;
   const has = data && data.plan && data.plan.hops && data.plan.hops.length;
-  box.replaceChildren(head(), ...(has ? [summary(), table()] : []), spansh());
+  box.replaceChildren(head(), ...(has ? [summary(), fullFrame(), table()].filter(Boolean) : []), spansh());
 }
 
 function head() {
@@ -102,7 +102,8 @@ function summary() {
   const line = (k, ...v) => el("div", { class: "ns-row" }, el("div", { class: "ns-k", text: k }), el("div", { class: "ns-v" }, ...v));
   const rows = [
     line(t("Target"), el("span", { class: "c-cyan", text: p.target.name }),
-      p.target.body ? el("span", { class: "c-dim", text: "  · " + p.target.body }) : null),
+      p.target.body ? el("span", { class: "c-dim", text: "  · " + p.target.body }) : null,
+      p.target.permit ? el("span", { class: "c-red", text: "  · " + t("permit-locked (EDDiscovery's list) - a carrier cannot go there") }) : null),
     line(t("Jumps"), el("span", { text: data.arrived ? t("arrived") : t("{l} of {n} to go", { l: data.left, n: p.hops.length }) }),
       el("span", { class: "c-dim", text: p.ideal ? "  · " + t("ideal {n}", { n: p.ideal }) : "" })),
     line(t("Planned with"), el("span", { text: t(SOURCE[p.source] || p.source || "?") }),
@@ -190,4 +191,96 @@ function spansh() {
     area, el("button", { text: t("read pasted route"), disabled: busy || null, onclick: () => { if (paste.trim()) importRoute(paste); } }));
   if (needSpansh) det.open = true;
   return frame("SPANSH", t("optional"), [det], { appear: false });
+}
+
+// Target full (user 19.11.): decided by you at the last jump; the FIS only
+// estimates from your own reports and arrivals - a system fills and empties
+// within minutes. Alternatives: other bodies, then systems within a laden
+// jump of a transporter (4-5 stars) on board, reachable from the jump before.
+let alt = null, altMsg = "", online = null, fewest = store("fis.jumpplan.fewest") !== "0", shipPick = null;
+
+async function full(report) {
+  altMsg = ""; busy = true; draw();
+  const r = await post("/api/jumpplan/full", { report, fewest, ship: shipPick });
+  busy = false;
+  if (r.status !== 200) altMsg = t("No alternatives: {e}", { e: r.data.error || r.status });
+  else alt = r.data;
+  if (report) await load();
+  draw();
+}
+
+async function askOnline() {
+  altMsg = ""; busy = true; draw();
+  const r = await post("/api/jumpplan/online", {});
+  busy = false;
+  if (r.status !== 200) altMsg = t("Online lookup failed: {e}", { e: r.data.error || r.status });
+  else online = r.data;
+  draw();
+}
+
+function ago(ts) {
+  const m = Math.round((Date.now() / 1000 - ts) / 60);
+  return m < 90 ? t("{n} min ago", { n: Math.max(1, m) }) : t("{n} h ago", { n: Math.round(m / 60) });
+}
+
+function estimateLine(f) {
+  const seen = t("carriers you saw there (30 days): {n}", { n: f.seen });
+  if (f.state === "unknown") return el("div", { class: "c-dim small", text: t("Estimate: unknown - {r} of {m} \"full\" reports so far, {a} arrivals", { r: f.reports, m: 3, a: f.arrivals }) + " · " + seen });
+  return el("div", { class: f.state === "likely full" ? "c-amber" : "c-green",
+    text: (f.state === "likely full" ? t("~{p} % likely full", { p: f.p }) : t("~{p} % likely full - probably room", { p: f.p }))
+      + " · " + t("learnt from {n}", { n: f.n }) + " · " + seen });
+}
+
+function fullFrame() {
+  const f = data.full;
+  if (!f) return null;
+  const rows = [];
+  if (data.left <= 2) rows.push(el("div", { class: "c-amber", text: t("Shortly before the target: check in the carrier's galaxy map that it has room. A system fills and empties within minutes.") }));
+  rows.push(estimateLine(f));
+  if (f.reported_full) rows.push(el("div", { class: "c-amber small", text: t("You reported it full {a}.", { a: ago(f.reported_full) }) }));
+  const ships = data.transporters || [];
+  const sel = ships.length ? el("select", { onchange: (e) => { shipPick = Number(e.target.value); } },
+    ...ships.map((s) => el("option", { value: s.id, selected: (shipPick === s.id || (shipPick === null && s === ships[0])) ? true : null,
+      text: s.name + " · " + "★".repeat(s.stars) + " · " + (s.src === "seen" ? t("{l} ly laden (your jumps: {n})", { l: fmt(s.laden, 1), n: s.n })
+        : t("~{l} ly laden (empty {e} ly)", { l: fmt(s.laden, 1), e: fmt(s.empty, 1) })) })))
+    : el("span", { class: "c-dim small", text: t("No transporter rated 4-5 on board: 20 ly assumed.") });
+  const fw = el("input", { type: "checkbox", checked: fewest ? true : null,
+    onchange: (e) => { fewest = e.target.checked; store("fis.jumpplan.fewest", fewest ? "1" : "0"); } });
+  rows.push(el("div", { class: "cag-tools" }, el("span", { class: "c-dim small", text: t("Transporter") }), sel,
+    el("label", { class: "small", title: t("only systems one laden jump from the target - fewer jumps with a full hold, fewer pirates") }, fw, " " + t("fewest ship jumps"))));
+  rows.push(el("div", { class: "cag-tools" },
+    el("button", { text: t("target is full"), disabled: busy || null, title: t("note it for the estimate and show alternatives"), onclick: () => full(true) }),
+    el("button", { text: t("show alternatives"), disabled: busy || null, onclick: () => full(false) }),
+    data.bubble ? el("button", { text: t("known carriers in the target (online)"), disabled: busy || null,
+      title: t("ask Spansh once - through the plugin's gateway, at most once a day per region"), onclick: askOnline }) : null));
+  if (online) rows.push(el("div", { class: "small", text: t("Spansh knows {n}{p} carriers in the target", { n: online.count, p: online.capped ? "+" : "" })
+    + (online.checked ? " · " + t("asked {d}", { d: new Date(online.checked).toLocaleString() }) : "") + " · " + t("not a count of free places") }));
+  if (altMsg) rows.push(el("div", { class: "c-red small", text: altMsg }));
+  if (alt) rows.push(...altRows());
+  return frame(t("TARGET FULL?"), "", rows, { appear: false });
+}
+
+function altRows() {
+  const out = [];
+  if (alt.bodies && alt.bodies.length) {
+    out.push(el("div", { class: "ns-sub", text: t("OTHER BODIES IN THE SYSTEM") }));
+    out.push(el("div", { class: "c-dim small", text: t("Unconfirmed whether the limit is per body - try one in the carrier's galaxy map.") }));
+    out.push(el("div", { class: "small", text: alt.bodies.join(" · ") }));
+  }
+  out.push(el("div", { class: "ns-sub", text: t("NEARBY SYSTEMS") + " · " + (alt.fewest ? t("within {l} ly (one laden jump)", { l: fmt(alt.laden, 1) })
+    : t("within {l} ly (three laden jumps)", { l: fmt(alt.laden * 3, 0) })) }));
+  if (!alt.alternatives.length) {
+    out.push(el("div", { class: "c-dim small", text: t("None known that the carrier reaches from the jump before. Switch off \"fewest ship jumps\" for a wider search.") }));
+    return out;
+  }
+  out.push(el("table", { class: "ns-tab jp-tab" },
+    el("tr", {}, ...[t("system"), t("ly to target"), t("ship jumps"), t("carriers seen"), ""].map((h) => el("th", { text: h }))),
+    ...alt.alternatives.map((a) => el("tr", {},
+      el("td", {}, el("span", { text: a.name }), a.src === "edd" ? el("span", { class: "c-dim small", text: " ·E" }) : null),
+      el("td", { class: "num", text: fmt(a.ly, 1) }), el("td", { class: "num", text: String(a.ship_jumps) }),
+      el("td", { class: "num", text: String(a.seen) }),
+      el("td", {}, el("button", { text: t("plan here"), disabled: busy || null, onclick: () => { alt = null; plan({ name: a.name, id64: a.id64 }); } }),
+        el("button", { class: "jp-copy", text: "⧉", title: t("copy the system name - paste it in the carrier's galaxy map"),
+          onclick: (e) => copyText(a.name, e.currentTarget) }))))));
+  return out;
 }

@@ -122,6 +122,15 @@ class OwnStars:
     def __len__(self) -> int:
         return len(self.by_name)
 
+    def drop(self, ids: Iterable[int]) -> None:
+        """Leave these id64s out (permit-locked systems)."""
+        ids = set(ids)
+        if not ids:
+            return
+        for key, items in self.cells.items():
+            self.cells[key] = [s for s in items if s.get("id64") not in ids]
+        self.by_name = {k: v for k, v in self.by_name.items() if v.get("id64") not in ids}
+
     def _cell(self, p: Sequence[float]) -> Tuple[int, int, int]:
         return (int(p[0] // self.CELL), int(p[1] // self.CELL), int(p[2] // self.CELL))
 
@@ -144,6 +153,18 @@ class EddStars:
 
     def __init__(self, source: Any) -> None:
         self.source = source
+        self._permits: Optional[set] = None
+
+    def permits(self) -> set:
+        """id64s EDDiscovery lists as permit-locked (the plugin's reader, read
+        once): a carrier cannot go there, so they are never a hop. Empty with
+        an older plugin."""
+        if self._permits is None:
+            try:
+                self._permits = set(getattr(self.source, "permit_ids", lambda: set())() or ())
+            except Exception:
+                self._permits = set()
+        return self._permits
 
     def near(self, center: Sequence[float], radius: float) -> List[Dict[str, Any]]:
         """Systems within radius of center (names decoded by the plugin)."""
@@ -151,8 +172,9 @@ class EddStars:
             rows = self.source.fetch(tuple(center), radius)
         except Exception:      # a locked or changing file: no candidates this time
             return []
+        blocked = self.permits()
         return [{"name": r["name"], "id64": r.get("id64"), "pos": (r["x"], r["y"], r["z"]), "src": self.src}
-                for r in rows if r.get("name")]
+                for r in rows if r.get("name") and r.get("id64") not in blocked]
 
     def by_id64(self, id64: int) -> Optional[Dict[str, Any]]:
         """One system by its id64, or None."""
@@ -642,3 +664,158 @@ def spansh_help(carrier: Optional[Dict[str, Any]], plan: Optional[Dict[str, Any]
     dest = ((plan or {}).get("target") or {}).get("name")
     return {"url": SPANSH_ROUTER, "source": c.get("system"), "destination": dest,
             "used": c.get("used"), "tank": c.get("fuel"), "hold": hold}
+
+
+# ------------------------------------------------------------------ target full
+DAY = 86400.0
+SEEN_WINDOW = 30 * DAY        # carriers seen in a system count this long
+LEARN_WINDOW = 180 * DAY      # how far back "full" and "got in" are learnt
+FULL_FRESH = DAY              # a "full" report this new is shown as such
+MIN_FULL = 3                  # "full" reports before an estimate is given
+DEFAULT_LADEN = 20.0          # ly, when no transporter rated 4-5 is on board
+
+
+def sightings(evs: Iterable[Dict[str, Any]]) -> Dict[int, List[Tuple[float, str]]]:
+    """System id64 -> (time, callsign) of every carrier you saw there in
+    the FSS (FSSSignalDiscovered)."""
+    from .carriers import parse_signal
+    out: Dict[int, List[Tuple[float, str]]] = {}
+    for e in evs:
+        if e.get("event") != "FSSSignalDiscovered" or not e.get("SystemAddress"):
+            continue
+        sig = parse_signal(e.get("SignalName"))
+        ts = parse_ts(e.get("timestamp"))
+        if sig and ts is not None:
+            out.setdefault(int(e["SystemAddress"]), []).append((ts, sig["callsign"]))
+    return out
+
+
+def seen_at(sight: Dict[int, List[Tuple[float, str]]], id64: Optional[int], at: float) -> int:
+    """Different carriers you saw in a system in the 30 days before `at`."""
+    if not id64:
+        return 0
+    return len({cs for ts, cs in sight.get(int(id64), ()) if at - SEEN_WINDOW <= ts <= at})
+
+
+def arrivals(carrier_evs: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Every time your carrier got into the system it was sent to (the
+    first CarrierJump/CarrierLocation there after a CarrierJumpRequest)."""
+    out, target = [], None
+    for e in carrier_evs:
+        ev = e.get("event")
+        if ev == "CarrierJumpRequest":
+            target = e.get("SystemName")
+        elif ev in ("CarrierJump", "CarrierLocation") and target and e.get("StarSystem") == target:
+            out.append({"system": target, "id64": e.get("SystemAddress"), "ts": parse_ts(e.get("timestamp"))})
+            target = None
+    return out
+
+
+def full_estimate(target: Dict[str, Any], reports: List[Dict[str, Any]], got_in: List[Dict[str, Any]],
+                  sight: Dict[int, List[Tuple[float, str]]], now: float) -> Dict[str, Any]:
+    """How likely the target is full, learnt from your own reports ("full",
+    by hand) and arrivals (got in, from the journal), each with the carriers
+    you had seen there then. A system fills and empties within minutes, so
+    this is only a hint: unknown until MIN_FULL reports exist."""
+    seen = seen_at(sight, target.get("id64"), now)
+    recent = [r for r in reports if r.get("ts") and now - r["ts"] <= LEARN_WINDOW]
+    obs = [(r.get("seen") or 0, True) for r in recent]
+    obs += [(seen_at(sight, a.get("id64"), a["ts"]), False) for a in got_in
+            if a.get("ts") and now - a["ts"] <= LEARN_WINDOW]
+    mine = [r["ts"] for r in recent if _same(r, target)]
+    out: Dict[str, Any] = {"seen": seen, "reports": len(recent), "arrivals": len(obs) - len(recent),
+                           "reported_full": max(mine) if mine else None}
+    alike = [full for s, full in obs if s >= seen]
+    if len(recent) < MIN_FULL or not alike:
+        out["state"] = "unknown"
+        return out
+    p = sum(alike) / len(alike)
+    out.update(state="likely full" if p >= 0.5 else "likely free", p=round(100 * p), n=len(alike))
+    return out
+
+
+def _same(r: Dict[str, Any], target: Dict[str, Any]) -> bool:
+    if r.get("id64") and target.get("id64"):
+        return int(r["id64"]) == int(target["id64"])
+    return (r.get("system") or "").lower() == (target.get("name") or "").lower()
+
+
+# ------------------------------------------------------------------ alternatives
+def laden_seen(evs: Iterable[Dict[str, Any]]) -> Dict[Tuple[int, Any], Tuple[float, int]]:
+    """(ship id, fitting time) -> (longest jump, jumps) flown with the hold
+    at least 90 % full - your own laden jumps."""
+    out: Dict[Tuple[int, Any], Tuple[float, int]] = {}
+    sid, lo_ts, cap, cargo = None, None, 0, 0
+    for e in evs:
+        ev = e.get("event")
+        if ev == "Loadout" and e.get("ShipID") is not None:
+            sid, lo_ts, cap = int(e["ShipID"]), e.get("timestamp"), e.get("CargoCapacity") or 0
+        elif ev == "Cargo" and e.get("Vessel", "Ship") == "Ship":
+            cargo = e.get("Count") or 0
+        elif ev == "FSDJump" and sid is not None and cap >= 8 and cargo >= 0.9 * cap and e.get("JumpDist"):
+            best, n = out.get((sid, lo_ts), (0.0, 0))
+            out[(sid, lo_ts)] = (max(best, float(e["JumpDist"])), n + 1)
+    return out
+
+
+def transporters(ships: Iterable[Dict[str, Any]], seen: Dict[Tuple[int, Any], Tuple[float, int]]
+                 ) -> List[Dict[str, Any]]:
+    """Ships on board (or flown now) rated 4-5 for transport, with their
+    laden jump range: your own laden jumps with this fitting first, else
+    ~ the empty range x unladen mass / (unladen mass + fuel + full hold) -
+    the range falls with the mass. Shortest first."""
+    out = []
+    for s in ships:
+        r = (s.get("rating") or {}).get("roles") or {}
+        if r.get("transport", 0) < 4 or not (s.get("stored_at") == "here" or s.get("current")):
+            continue
+        obs = seen.get((s.get("id"), s.get("loadout_ts")))
+        m, f, c, j = s.get("mass"), s.get("fuel_cap") or 0, s.get("cargo") or 0, s.get("jump")
+        est = j * m / (m + f + c) if j and m else None
+        rng, src = (obs[0], "seen") if obs else (est, "estimate")
+        if rng:
+            out.append({"id": s.get("id"), "name": s.get("name") or s.get("type_name"), "type": s.get("type_name"),
+                        "stars": r["transport"], "cargo": c, "empty": j, "laden": round(rng, 1), "src": src,
+                        "n": obs[1] if obs else 0})
+    return sorted(out, key=lambda x: x["laden"])
+
+
+def alternatives(target: Dict[str, Any], before: Sequence[float], finders: Sequence[Any], laden: float,
+                 fewest: bool, avoid: Iterable[str], sight: Dict[int, List[Tuple[float, str]]], now: float,
+                 jump: float = CARRIER_MAX_JUMP, limit: int = 12) -> List[Dict[str, Any]]:
+    """Systems near a full target the carrier can reach from the jump before
+    it. With `fewest` only those one laden ship jump away, fewest carriers
+    seen first; otherwise up to three ship jumps, nearest first."""
+    radius = laden if fewest else 3 * laden
+    skip = {a.lower() for a in avoid} | {target["name"].lower()}
+    found: Dict[str, Dict[str, Any]] = {}
+    for f in finders:
+        for s in f.near(target["pos"], radius):
+            if s["name"].lower() in skip or s["name"] in found or _dist(s["pos"], before) > jump:
+                continue
+            d = _dist(s["pos"], target["pos"])
+            found[s["name"]] = {"name": s["name"], "id64": s.get("id64"), "pos": list(s["pos"]), "ly": round(d, 1),
+                                "ship_jumps": max(1, math.ceil(d / laden)), "seen": seen_at(sight, s.get("id64"), now),
+                                "src": s.get("src", "own")}
+    if fewest:
+        return sorted(found.values(), key=lambda a: (a["ship_jumps"], a["seen"], a["ly"]))[:limit]
+    return sorted(found.values(), key=lambda a: (a["ly"], a["seen"]))[:limit]
+
+
+BUBBLE_LY = 1000.0            # "the bubble": within this of Sol
+
+
+def in_bubble(pos: Sequence[float]) -> bool:
+    """True for a position within BUBBLE_LY of Sol."""
+    return _dist(pos, (0.0, 0.0, 0.0)) <= BUBBLE_LY
+
+
+def carriers_in(res: Dict[str, Any], target: Dict[str, Any]) -> Dict[str, Any]:
+    """From Spansh's carriers near the target (nearest first, at most
+    online.NEARBY_SIZE): those in the target system itself."""
+    from .online import NEARBY_SIZE
+    cs = res.get("carriers") or []
+    here = [c for c in cs if (c.get("system") or "").lower() == target["name"].lower()
+            or (c.get("distance") is not None and c["distance"] < 0.5)]
+    return {"count": len(here), "capped": len(here) >= NEARBY_SIZE, "checked": res.get("checked"),
+            "cached": res.get("cached"), "callsigns": [c.get("callsign") for c in here]}
