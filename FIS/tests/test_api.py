@@ -676,7 +676,7 @@ class TestSettings(_Base):
             with mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": [9000.0, 0.0, 9000.0]}}):
                 with post(hdr) as r:
                     r.read()
-            self.assertEqual(deeps, [False, True])          # the bubble asks 100 ly, deep space 5000 ly
+            self.assertEqual(deeps, [True, True])           # always up to 5000 ly: the rescue list needs no border
             with mock.patch.object(self.app, "live_state", lambda: {"system": {"pos": "garbage"}}):
                 with self.assertRaises(urllib.error.HTTPError) as e:
                     post(hdr)

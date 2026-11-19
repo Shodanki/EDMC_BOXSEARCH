@@ -1731,9 +1731,9 @@ const DE = /*DE*/{
   "Formula learnt from {n} of your jumps (±{e} t), it follows every new jump: {f}": "Formel gelernt aus {n} deiner Sprünge (±{e} t), passt sich mit jedem neuen Sprung an: {f}",
   "learnt from 5 jumps of 20 ly and more - {n} so far": "gelernt wird ab 5 Sprüngen von mind. 20 ly – bisher {n}",
   "Default formula: {f}": "Standardformel: {f}",
-  "ask Spansh once for the carriers within 100 ly of you - outside the bubble up to 5000 ly, as a rescue anchor - at most once a day per region": "einmal bei Spansh nach Trägern im Umkreis von 100 ly fragen – außerhalb der Bubble bis 5000 ly, als Rettungsanker – höchstens einmal am Tag je Region",
   "Spansh knows no carrier within 100 ly, and none within 5000 ly where anyone may dock and repair.": "Spansh kennt keinen Träger im Umkreis von 100 ly und keinen bis 5000 ly, an dem jeder andocken und reparieren kann.",
   "Look for one yourself:": "Selbst suchen:",
   "NOTHING WITHIN 100 LY - NEAREST TO DOCK AND REPAIR": "NICHTS IM UMKREIS VON 100 LY – NÄCHSTE ZUM ANDOCKEN UND REPARIEREN",
-  "Up to 5000 ly: carriers anyone may dock at that repair; Vista Genomics and Universal Cartographics first, then the nearer.": "Bis 5000 ly: Träger, an denen jeder andocken kann und die reparieren; Vista Genomics und Universal Cartographics zuerst, dann die näheren."
+  "Up to 5000 ly: carriers anyone may dock at that repair; Vista Genomics and Universal Cartographics first, then the nearer.": "Bis 5000 ly: Träger, an denen jeder andocken kann und die reparieren; Vista Genomics und Universal Cartographics zuerst, dann die näheren.",
+  "ask Spansh once for the carriers within 100 ly of you - with none that close, up to 5000 ly as a rescue anchor - at most once a day per region": "einmal bei Spansh nach Trägern im Umkreis von 100 ly fragen – ist keiner so nah, bis 5000 ly als Rettungsanker – höchstens einmal am Tag je Region"
 }/*END*/;

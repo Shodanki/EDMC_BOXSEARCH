@@ -46,9 +46,9 @@ CARRIER_TYPES = ["Drake-Class Carrier"]
 NEARBY_LY = 100           # H2: how far to look
 NEARBY_SIZE = 15          # how many carriers, nearest first
 NEARBY_CACHE_S = 24 * 3600.0
-# outside the bubble (user 19.11.): one request reaches DEEP_LY; what lies
-# within NEARBY_LY is shown as in the bubble, and only when nothing does, a
-# rescue list - the nearest carriers anyone may dock at that repair, those
+# a rescue anchor (user 19.11.): one request reaches DEEP_LY; what lies
+# within NEARBY_LY is shown as ever (in the bubble that is all of it), and
+# only when nothing does, a rescue list - the nearest carriers anyone may dock at that repair, those
 # with Vista Genomics and Universal Cartographics first
 DEEP_LY = 5000
 DEEP_SIZE = 50            # carriers of that answer, nearest first

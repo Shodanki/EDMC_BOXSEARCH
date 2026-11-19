@@ -153,7 +153,7 @@ function nearbyRow(c) {
 function nearbyRows() {
   const rows = [el("div", { class: "sr-h", text: t("NEAR YOU - ONLINE") }),
     el("div", { class: "kc-act" }, el("button", { text: t("find carriers near me"),
-      title: t("ask Spansh once for the carriers within 100 ly of you - outside the bubble up to 5000 ly, as a rescue anchor - at most once a day per region"),
+      title: t("ask Spansh once for the carriers within 100 ly of you - with none that close, up to 5000 ly as a rescue anchor - at most once a day per region"),
       onclick: (e) => findNearby(e.currentTarget) }))];
   if (nearbyMsg) rows.push(el("div", { class: "c-red small", text: nearbyMsg }));
   if (nearby && nearby.carriers) {

@@ -17,8 +17,8 @@ and its state files (`Status.json`, `NavRoute.json`, `ModulesInfo.json`,
 a service on the internet in two cases only, both on your click in CARRIER:
 *online* at a favourite carrier - where someone last reported it, at most once
 per carrier every six hours - and *find carriers near me* - the carriers
-within 100 ly of you, at most once a day per region of space (outside the
-bubble the same request reaches 5000 ly, see below). Each is one
+within 100 ly of you, at most once a day per region of space (the same
+request reaches 5000 ly for a rescue list, see below). Each is one
 request to Spansh, through the plugin's polite gateway (pacing, the daily cap
 shared with the plugin, the plugin's *offline* switch).
 
@@ -320,11 +320,11 @@ third-party parts of the project, and Frontier's data:
   Spansh request, shown with its date). *Find carriers near me* lists the
   carriers Spansh knows within 100 ly - callsign, system, distance, who may
   dock, services, when it was reported; a carrier starred there keeps that
-  position without a second request. Outside the bubble (more than 1000 ly
-  from Sol) it is a rescue anchor: the one request reaches 5000 ly; with
-  nothing within 100 ly it shows the three nearest carriers anyone may dock
-  at that repair - Vista Genomics and Universal Cartographics first. With
-  none at all it points to Spansh and Inara. Favourites,
+  position without a second request. It is a rescue anchor too: the one
+  request reaches 5000 ly; with nothing within 100 ly it shows the three
+  nearest carriers anyone may dock at that repair - Vista Genomics and
+  Universal Cartographics first. With none at all it points to Spansh and
+  Inara. Favourites,
   notes and the last market of each visited carrier are kept per commander
   in `favourites.json` next to `fis.ini` (personal - keep it out of anything
   you share). Starring works from the tablet too (with the home-network
