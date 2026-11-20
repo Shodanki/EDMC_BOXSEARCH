@@ -58,7 +58,7 @@ The rules were checked against EDMC 6.1.2 on 13.11.2026, and again on 14.11.2026
 * Files are read only where they belong: the plugin folder, the journal folder, EDDiscovery's system database (read only), for the plugin and the FIS - only while the commander has the EDDiscovery archive switched on (each off by default) - the journal lines in EDDiscovery's user database (`EDDUser.sqlite`: `JournalEntries`, and of `Commanders` only id and name, never the EDSM API key kept there; read only), and, for the FIS, the plugin's own `shboxsearch_*` keys in EDMC's settings file and - only while the commander has the controls view switched on (off by default) - the game's key bindings (`Options\Bindings`, read only, never written). Nothing else on the PC is touched.
 * **The FIS:**
   * By default it serves this PC only: it binds to 127.0.0.1 and accepts only a localhost Host.
-  * The home-network mode is the user's choice. In that mode every request needs the access token.
+  * The home-network mode is the user's choice. In that mode every request from another device needs the access token; the game PC itself (loopback address with a local Host header) does not.
   * The narrow firewall rule is created only after the user's explicit yes.
   * The FIS does not start with EDMC unless the user switches that on.
 * No elevated rights, except that one firewall rule after the yes. No services, no autostart entries, no registry changes.

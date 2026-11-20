@@ -747,33 +747,64 @@ class TestLanToken(_Base):
         cls.srv.server_close()
         cls.cfg.lan = False
 
+    def _lan(self, path, **headers):
+        """A request as from the tablet: addressed to this PC's LAN address."""
+        headers.setdefault("Host", "192.168.0.10:%d" % self.srv.server_address[1])
+        return urllib.request.Request(self.base + path, headers=headers)
+
     def test_token(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:
-            urllib.request.urlopen(self.base + "/api/health", timeout=5)
+            urllib.request.urlopen(self._lan("/api/health"), timeout=5)
         self.assertEqual(cm.exception.code, 401)
         cm.exception.close()
         with self.assertRaises(urllib.error.HTTPError) as cm:
-            urllib.request.urlopen(self.base + "/api/health?token=wrong", timeout=5)
+            urllib.request.urlopen(self._lan("/api/health?token=wrong"), timeout=5)
         cm.exception.close()
-        with urllib.request.urlopen(self.base + "/api/health?token=secret-token", timeout=5) as r:
+        with urllib.request.urlopen(self._lan("/api/health?token=secret-token"), timeout=5) as r:
             self.assertEqual(r.status, 200)
-        req = urllib.request.Request(self.base + "/api/ship",
-                                     headers={"X-FIS-Token": "secret-token"})
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(self._lan("/api/ship", **{"X-FIS-Token": "secret-token"}), timeout=5) as r:
             self.assertEqual(r.status, 200)
+
+    def test_this_pc_needs_no_token(self):
+        """5.0.1 (user 20.11.): with LAN on, the app and Chrome on the game PC
+        got 'token required' or a bare page - the PC itself passes now."""
+        for path in ("/", "/api/health", "/css/fis.css"):
+            with urllib.request.urlopen(self.base + path, timeout=5) as r:
+                self.assertEqual(r.status, 200, path)
+                self.assertIsNone(r.headers.get("Set-Cookie"), path)   # no token given, none set
+        req = urllib.request.Request(self.base + "/api/health", headers={"Host": "evil.example:80"})
+        with self.assertRaises(urllib.error.HTTPError) as cm:      # another site's name: not this PC
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, 401)
+        cm.exception.close()
 
     def test_page_cookie_is_the_stored_token(self):
         # the cookie carries the stored token - nothing a request sends ends
         # up in a header (S1: CodeQL http-response-splitting)
-        with urllib.request.urlopen(self.base + "/?token=secret-token", timeout=5) as r:
-            self.assertIn("fis_token=secret-token;", r.headers.get("Set-Cookie", ""))
+        with urllib.request.urlopen(self._lan("/?token=secret-token"), timeout=5) as r:
+            cookie = r.headers.get("Set-Cookie", "")
+            etag = r.headers.get("ETag")
+        self.assertIn("fis_token=secret-token;", cookie)
+        self.assertIn("Max-Age=%d" % (30 * 86400), cookie)       # kept across browser restarts
+        # 5.0.1: the page from the browser's cache (304) sets it too
         import http.client
         c = http.client.HTTPConnection("127.0.0.1", self.srv.server_address[1], timeout=5)
-        c.request("GET", "/?token=secret-token%0d%0aX-Evil:%201")
+        c.request("GET", "/?token=secret-token", headers={"If-None-Match": etag,
+                                                          "Host": "192.168.0.10"})
+        r = c.getresponse()
+        r.read()
+        self.assertEqual(r.status, 304)
+        self.assertIn("fis_token=secret-token;", r.getheader("Set-Cookie") or "")
+        c.request("GET", "/?token=secret-token%0d%0aX-Evil:%201", headers={"Host": "192.168.0.10"})
         r = c.getresponse()
         r.read()
         self.assertEqual(r.status, 401)               # not the stored token
         self.assertIsNone(r.getheader("X-Evil"))
+        c.request("GET", "/?token=wrong")             # this PC too: a wrong token given is wrong
+        r = c.getresponse()
+        r.read()
+        self.assertEqual(r.status, 401)
+        self.assertIsNone(r.getheader("Set-Cookie"))
         c.close()
 
 

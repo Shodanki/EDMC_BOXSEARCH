@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 
 from fis.favourites import FavouriteStore, MAX_NOTE
-from fis.server import App, make_server
+from fis.server import App, Handler, make_server
 from tests.test_api import _Base, fed_tracker
 from tests.test_carriers import EVS
 
@@ -200,6 +200,8 @@ class TestApiLan(TestApi):
 
     def test_tablet_needs_the_token(self):
         star = {"callsign": "Q2W-3ER", "on": True}
+        old, Handler.LOCAL = Handler.LOCAL, ()      # every caller a LAN device (the tablet)
+        self.addCleanup(setattr, Handler, "LOCAL", old)
         self.assertEqual(self._code(star, {"X-FIS-Settings": "1"}), 403)
         self.assertEqual(self._code(star, {"X-FIS-Settings": "1", "X-FIS-Token": "wrong"}), 403)
         self.assertEqual(self._code(star, {"X-FIS-Settings": "1", "X-FIS-Token": "secret-token"}), 200)

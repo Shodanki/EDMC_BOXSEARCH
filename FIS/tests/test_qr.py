@@ -93,8 +93,11 @@ class TestQrEndpoint(_Base):
             self.assertEqual(r.read().decode("utf-8"), qr.svg(urls[0]))
 
     def test_needs_token(self):
+        # 5.0.1: the game PC itself passes without a token - a wrong one is refused
+        with urllib.request.urlopen(self.base + "/api/settings/qr", timeout=5) as r:
+            self.assertEqual(r.status, 200)
         with self.assertRaises(urllib.error.HTTPError) as cm:
-            urllib.request.urlopen(self.base + "/api/settings/qr", timeout=5)
+            urllib.request.urlopen(self.base + "/api/settings/qr?token=wrong", timeout=5)
         self.assertEqual(cm.exception.code, 401)
         cm.exception.close()
 

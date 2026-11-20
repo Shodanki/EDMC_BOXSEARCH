@@ -1,6 +1,6 @@
 # SHBOXSEARCH 5.0.0 - SHA-256 of every file of this version (line endings as LF)
 ffeb7b49c0297bfbcda30d382aa23d85a5635419b5ae91929104da62aea08bdb  AI_TRANSPARENCY.md
-9b9e73e2f2372fedd6588815342b8a56d52b32fbb1c9cdb93b326fcc3085a3d8  FIS/README.md
+4038a9ae051ed2573a5dc09e54dc26d8be597b5b7b63746c6ec48ce9bb7a9d35  FIS/README.md
 cbd6cfd3c24e38f8ca3147e6e64284c5b515f6b1da604d3409b9e9848552e3c2  FIS/fis.ini.example
 1ddbf244c05e54e375e55f4e52f04de92f7a81a8fe01712ef392e2515779a99f  FIS/fis/__init__.py
 8f859af9b37149a53e8168caa4cb75cf843d1d1167fea88a7eb718f45e43803e  FIS/fis/__main__.py
@@ -35,7 +35,7 @@ d494f1b79136240add65d01904835cce84d19812fb5a140585d93d00016415b7  FIS/fis/online
 c068081a5e0edba33983782266c4835608b0949e5018d52810607607dff220d1  FIS/fis/realitycheck.py
 9df1b85a9f5329f11fda70ac59fb298884decd7614eda054aa7589472ac21147  FIS/fis/science.py
 4eac517d0cab21e5bb42c462c89946330bb1561e7ec08eab9cfc029585fe5c7c  FIS/fis/scooprate.py
-e8da6aeaa514cf6d1f4354e5c6ccaee5a99c6bcf1582b9918e1b534f9ab37b3a  FIS/fis/server.py
+f8823c5ae2f5b8344ab665fd5f6c992ead457ffddaef5fb821aa4b56476599bc  FIS/fis/server.py
 6f0aab304d6a309786bfd62c6e8376a87f9a75aa62a8fc2851c3d25dedcc964c  FIS/fis/setup.py
 f07766b552797f2f46453dde4b7552d736b015743f496deebed21dbd2b470382  FIS/fis/shipview.py
 bb9bd07050f688aa33ccb9b0876a0250a06d05fa16886f6a882518ebf255b64e  FIS/fis/statement.py

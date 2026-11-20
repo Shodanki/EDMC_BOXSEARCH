@@ -6,8 +6,9 @@
 """HTTP server: static web files, JSON API and Server-Sent Events.
 
 Standard library only (ThreadingHTTPServer). Default bind 127.0.0.1; with
---lan it binds 0.0.0.0 and every request needs the token from fis.ini, as
-`?token=...` or header `X-FIS-Token`.
+--lan it binds 0.0.0.0 and every request from another device needs the token
+from fis.ini, as `?token=...` or header `X-FIS-Token`; this PC itself (loopback
+with a local Host) passes without it (5.0.1).
 """
 
 from __future__ import annotations
@@ -697,6 +698,12 @@ class Handler(BaseHTTPRequestHandler):
         if not cfg.lan:
             return True
         tok = (qs.get("token") or [""])[0] or self.headers.get("X-FIS-Token", "")
+        if not tok and self._local_client():
+            # 5.0.1: the token guards the home network; the game PC itself
+            # opens the FIS as it does without LAN (the app's start page has
+            # no token, a browser restart dropped the page's cookie, an old
+            # cookie after a new token). A wrong token given is still wrong.
+            return True
         cookie = self.headers.get("Cookie", "")
         m = re.search(r"fis_token=([A-Za-z0-9_\-]+)", cookie)
         if not tok and m:
@@ -874,6 +881,12 @@ class Handler(BaseHTTPRequestHandler):
         if not self.app.cfg.lan:
             return self._local_host()
         return self._authorised({})
+
+    def _local_client(self) -> bool:
+        """A request of this PC to this PC: from the loopback address AND
+        with a local Host header - a tablet, or this PC asking by its LAN
+        address, still needs the token."""
+        return self._local() and bool((self.headers.get("Host") or "").strip()) and self._local_host()
 
     def _local_host(self) -> bool:
         """The Host header names this PC (127.0.0.1, localhost, [::1]). A page
@@ -1722,23 +1735,38 @@ class Handler(BaseHTTPRequestHandler):
         # the 3D view gave up after 8 s there (11.11.)
         st = os.stat(full)
         etag = '"%x-%x"' % (int(st.st_mtime_ns // 1000), st.st_size)
+        cookie = self._token_cookie(qs)
         if etag in [t.strip() for t in (self.headers.get("If-None-Match") or "").split(",")]:
             self.send_response(304)
             self.send_header("ETag", etag)
             self.send_header("Cache-Control", "no-cache")
+            if cookie:
+                # 5.0.1: also here - a page served from the cache otherwise
+                # left its modules without the cookie (bare page, 401s)
+                self.send_header("Set-Cookie", cookie)
             self.end_headers()
             return
         with open(full, "rb") as fh:
             body = fh.read()
         ctype = self.STATIC_TYPES.get(os.path.splitext(full)[1].lower(), "application/octet-stream")
         extra = {"ETag": etag}
-        cfg = self.app.cfg
-        if cfg.lan and cfg.token and (qs.get("token") or [""])[0]:
-            # remember the token for the module and API requests of this
-            # page - the stored one: the request's token was checked equal
-            # to it, and nothing a request sends ends up in a header
-            extra["Set-Cookie"] = "fis_token=%s; Path=/; SameSite=Strict; HttpOnly" % cfg.token
+        if cookie:
+            extra["Set-Cookie"] = cookie
         self._send(200, body, ctype, extra, cache="no-cache")
+
+    COOKIE_DAYS = 30
+
+    def _token_cookie(self, qs: Dict[str, Any]) -> str:
+        """The cookie that remembers the token for the module and API
+        requests of this page - the stored token (the request's was checked
+        equal to it; nothing a request sends ends up in a header), kept
+        across browser restarts (5.0.1)."""
+        cfg = self.app.cfg
+        tok = (qs.get("token") or [""])[0]
+        if not (cfg.lan and cfg.token and tok and hmac.compare_digest(tok, cfg.token)):
+            return ""     # this PC passes without a token - a wrong one sets nothing
+        return "fis_token=%s; Path=/; Max-Age=%d; SameSite=Strict; HttpOnly" % (
+            cfg.token, self.COOKIE_DAYS * 86400)
 
 
 class _Server(ThreadingHTTPServer):
