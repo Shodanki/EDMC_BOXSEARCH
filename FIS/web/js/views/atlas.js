@@ -188,6 +188,75 @@ function onMapMove(e) {
   setHover(best);
 }
 
+// TH8 (5.1.0) map styles: radar (standard, station: phosphor rings and spokes,
+// glowing hits), scope (Federation classic: a bearing bezel), survey (Belt: a
+// survey grid, hits as crosses), tactical (bridge: dashed rings, full axes,
+// hits as diamonds), plain (next: as it was). Nothing moves.
+const MAP_STYLE = { standard: "radar", station: "radar", console: "scope", industrial: "survey", bridge: "tactical" };
+
+function mapGrid(g, style, m) {
+  const { W, H, R, cx, cy, rings, scale } = m;
+  g.fillStyle = C.dim; g.font = "10px monospace"; g.lineWidth = 1;
+  g.strokeStyle = style === "radar" ? alpha("green", .30) : style === "plain" ? alpha("cyan", .14) : alpha("cyan", .22);
+  g.setLineDash(style === "tactical" ? [4, 4] : []);
+  if (style === "radar") {
+    g.beginPath();
+    for (let a = 0; a < 8; a++) { g.moveTo(cx, cy); g.lineTo(cx + R * Math.cos(a * Math.PI / 4), cy + R * Math.sin(a * Math.PI / 4)); }
+    g.stroke();
+  } else if (style === "survey") surveyGrid(g, W, H, cx, cy, rings.length ? scale(rings[0]) : R / 4);
+  else if (style === "tactical") {
+    g.beginPath(); g.moveTo(0, cy); g.lineTo(W, cy); g.moveTo(cx, 0); g.lineTo(cx, H); g.stroke();
+  }
+  for (const r of rings) {
+    const rr = scale(r);
+    g.beginPath(); g.arc(cx, cy, rr, 0, Math.PI * 2); g.stroke();
+    g.fillText(fmt(r, 0) + " ly", cx + rr * 0.71 + 3, cy - rr * 0.71 - 3);
+  }
+  g.setLineDash([]);
+  if (style === "scope") bezel(g, cx, cy, R);
+}
+
+// Federation classic: ticks every 10° round the edge, longer every 30°, the
+// bearing from the core direction (000) clockwise
+function bezel(g, cx, cy, R) {
+  g.strokeStyle = alpha("amber", .55); g.fillStyle = C.amber;
+  g.beginPath();
+  for (let a = 0; a < 360; a += 10) {
+    const r0 = R + (a % 30 ? 4 : 0), rad = (a - 90) * Math.PI / 180;
+    g.moveTo(cx + r0 * Math.cos(rad), cy + r0 * Math.sin(rad)); g.lineTo(cx + (R + 9) * Math.cos(rad), cy + (R + 9) * Math.sin(rad));
+  }
+  g.stroke();
+  g.textAlign = "center";
+  for (const [a, txt] of [[0, "000"], [90, "090"], [180, "180"], [270, "270"]]) {
+    const rad = (a - 90) * Math.PI / 180;
+    g.fillText(txt, cx + (R - 10) * Math.cos(rad), cy + (R - 10) * Math.sin(rad) + 3);
+  }
+  g.textAlign = "start"; g.fillStyle = C.dim;
+}
+
+// Belt: a survey grid at the first range step, from the centre out
+function surveyGrid(g, W, H, cx, cy, step) {
+  if (!(step > 6)) return;
+  const save = g.strokeStyle;
+  g.strokeStyle = alpha("amber", .10);
+  g.beginPath();
+  for (let x = cx % step; x < W; x += step) { g.moveTo(x, 0); g.lineTo(x, H); }
+  for (let y = cy % step; y < H; y += step) { g.moveTo(0, y); g.lineTo(W, y); }
+  g.stroke();
+  g.strokeStyle = save;
+}
+
+function mapHit(g, style, x, y, s) {
+  g.beginPath();
+  if (style === "survey") {
+    g.lineWidth = 2; g.moveTo(x - s, y - s); g.lineTo(x + s, y + s); g.moveTo(x + s, y - s); g.lineTo(x - s, y + s); g.stroke(); g.lineWidth = 1;
+  } else if (style === "tactical") {
+    g.moveTo(x, y - s - 1); g.lineTo(x + s + 1, y); g.lineTo(x, y + s + 1); g.lineTo(x - s - 1, y); g.closePath(); g.fill();
+  } else if (style === "scope") {
+    g.arc(x, y, s, 0, Math.PI * 2); g.fill(); g.beginPath(); g.arc(x, y, s + 3, 0, Math.PI * 2); g.stroke();
+  } else { g.arc(x, y, s, 0, Math.PI * 2); g.fill(); }
+}
+
 function drawMap() {
   if (!cv) return;
   const dpr = window.devicePixelRatio || 1;
@@ -207,36 +276,27 @@ function drawMap() {
   // keep room, the far ones still fit)
   const sq = !state.max && far > 250;
   const scale = (d) => R * (sq ? Math.sqrt(d / maxd) : d / maxd);
-  // TH8 (5.1.0): in station the map is a radar - phosphor rings and spokes, glowing hits
-  const radar = document.documentElement.dataset.theme === "station";
-  g.strokeStyle = radar ? alpha("green", .30) : alpha("cyan", .14); g.fillStyle = C.dim; g.font = "10px monospace";
-  if (radar) {
-    g.beginPath();
-    for (let a = 0; a < 8; a++) { g.moveTo(cx, cy); g.lineTo(cx + R * Math.cos(a * Math.PI / 4), cy + R * Math.sin(a * Math.PI / 4)); }
-    g.stroke();
-  }
+  // TH8 (5.1.0): a map style per theme, all still (user 24.11.: the radar
+  // also in standard; something of their own for the others; next as it was)
+  const style = MAP_STYLE[document.documentElement.dataset.theme] || "plain";
   const rings = sq ? [25, 100, 250, 500, 1000, 2000, 5000, 10000, 20000].filter(r => r <= maxd * 1.05)
     : (() => { const st = maxd > 400 ? 200 : maxd > 150 ? 50 : maxd > 60 ? 25 : 10; const a = []; for (let r = st; r <= maxd * 1.05; r += st) a.push(r); return a; })();
-  for (const r of rings) {
-    const rr = scale(r);
-    g.beginPath(); g.arc(cx, cy, rr, 0, Math.PI * 2); g.stroke();
-    g.fillText(fmt(r, 0) + " ly", cx + rr * 0.71 + 3, cy - rr * 0.71 - 3);
-  }
+  mapGrid(g, style, { W, H, R, cx, cy, rings, scale });
   g.beginPath(); g.moveTo(cx - 6, cy); g.lineTo(cx + 6, cy); g.moveTo(cx, cy - 6); g.lineTo(cx, cy + 6);
-  g.strokeStyle = C.text; g.stroke();
+  g.strokeStyle = C.text; g.setLineDash([]); g.stroke();
   // hits: galactic x to the right, z up (towards the core)
-  const col = radar ? C.green : TONE[state.view] || C.cyan;
-  if (radar) { g.shadowColor = C.green; g.shadowBlur = 6; }
+  const col = style === "radar" ? C.green : TONE[state.view] || C.cyan;
+  if (style === "radar") { g.shadowColor = C.green; g.shadowBlur = 6; }
   for (const p of pts) {
     const d = Math.hypot(p.it.rel[0], p.it.rel[2]) || 1e-9;
     const k = Math.min(scale(d), R + 4) / d;
     const x = cx + p.it.rel[0] * k, y = cy - p.it.rel[2] * k;
     dots.push({ x, y, i: p.i });
     const hot = p.i === hover;
-    g.fillStyle = hot ? C.white : col;
+    g.fillStyle = hot ? C.white : col; g.strokeStyle = hot ? C.white : col;
     g.globalAlpha = hot ? 1 : 0.75;
-    g.beginPath(); g.arc(x, y, hot ? 5 : 3, 0, Math.PI * 2); g.fill();
-    if (hot) { g.font = "11px monospace"; g.fillText(p.it.system + (p.it.body_short ? " " + p.it.body_short : ""), x + 8, y - 6); }
+    mapHit(g, style, x, y, hot ? 5 : 3);
+    if (hot) { g.fillStyle = C.white; g.font = "11px monospace"; g.fillText(p.it.system + (p.it.body_short ? " " + p.it.body_short : ""), x + 8, y - 6); }
   }
   g.globalAlpha = 1;
   g.shadowBlur = 0;

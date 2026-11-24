@@ -31,16 +31,18 @@ def _block(css, start):
 class TH8Test(unittest.TestCase):
     css = _read("css", "fis.css")
 
-    def _scoped_and_still(self, block):
+    def _scoped_and_still(self, block, standard=False):
         """Every rule of a TH8 block is scoped to a non-standard theme (or only
-        hides / shows a theme element), and nothing moves."""
+        hides / shows a theme element), and nothing moves. ``standard``: the
+        user asked for this one in standard too (ATLAS radar, 24.11.)."""
         rules = re.sub(r"/\*.*?\*/", "", block, flags=re.S)
         self.assertNotIn("animation", rules)
         self.assertNotIn("@keyframes", rules)
         self.assertNotIn("blink", rules)
         for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", rules):
             sel = sel.strip()
-            themed = ':root[data-theme="' in sel and 'data-theme="standard"' not in sel
+            themed = ('[data-theme="' in sel and sel.startswith(":root")
+                      and (standard or 'data-theme="standard"' not in sel))
             neutral = body.strip() in ("display: none;", "font-weight: inherit;")    # keeps standard as it was
             self.assertTrue(themed or neutral, "unscoped TH8 rule: " + sel)
 
@@ -109,12 +111,21 @@ class TH8Test(unittest.TestCase):
 
     def test_atlas_radar_in_station(self):
         js = _read("js", "views", "atlas.js")
-        self.assertIn('const radar = document.documentElement.dataset.theme === "station";', js)
         self.assertIn("g.shadowBlur = 0;", js)                       # the glow ends with the hits
         self.assertNotIn("requestAnimationFrame", js)                # a still radar, no sweep
         block = _block(self.css, "/* -- TH8 (5.1.0) ATLAS")
-        self._scoped_and_still(block)
-        self.assertIn(':root[data-theme="station"] .atlas-view .at-side { order: -1; }', block)
+        self._scoped_and_still(block, standard=True)
+        self.assertIn(':root:is([data-theme="station"], [data-theme="standard"]) .atlas-view .at-side { order: -1; }', block)
+
+    def test_atlas_map_style_per_theme(self):
+        """User 24.11.: the station radar also in standard, something of their
+        own for the other themes, next as it was."""
+        js = _read("js", "views", "atlas.js")
+        self.assertIn('const MAP_STYLE = { standard: "radar", station: "radar", console: "scope", industrial: "survey", '
+                      'bridge: "tactical" };', js)
+        self.assertIn('MAP_STYLE[document.documentElement.dataset.theme] || "plain"', js)     # next: plain
+        for f in ("function bezel(", "function surveyGrid(", "function mapHit(", "function mapGrid("):
+            self.assertIn(f, js)
 
     def test_galaxy_next_hop_can_be_switched_off(self):
         """User 24.11.: NEXT HOP in GALAXY on and off - one more entry under
