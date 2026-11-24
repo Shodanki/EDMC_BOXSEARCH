@@ -1068,12 +1068,14 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(hide, list) or not hide or len(hide) > 50:
             self._error(400, "bad request")
             return None
+        from .jsonsafe import as_id64
         for h in hide:
-            if not isinstance(h, dict) or not isinstance(h.get("id64"), int) \
-                    or isinstance(h.get("id64"), bool) or not losthidden.valid_what(h.get("what")):
+            # 5.1.0: a large id64 comes back as text (jsonsafe)
+            sid = as_id64(h.get("id64")) if isinstance(h, dict) else None
+            if sid is None or not losthidden.valid_what(h.get("what")):
                 self._error(400, "bad entry")
                 return None
-            items.append((h["id64"], h.get("what")))
+            items.append((sid, h.get("what")))
         return items
 
     def _post_lookup(self, raw: bytes) -> None:
@@ -1258,8 +1260,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(res)
 
     def _json(self, obj: Any, code: int = 200) -> None:
-        body = json.dumps(obj, ensure_ascii=False, separators=(",", ":"),
-                          default=str).encode("utf-8")
+        from . import jsonsafe                 # id64 beyond 2^53 as text (5.1.0)
+        body = jsonsafe.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
         self._send(code, body, "application/json; charset=utf-8")
 
     def _error(self, code: int, msg: str) -> None:
@@ -1732,7 +1734,8 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def _sse_write(self, event: str, data: Any) -> None:
-        payload = json.dumps(data, ensure_ascii=False, default=str)
+        from . import jsonsafe
+        payload = jsonsafe.dumps(data, ensure_ascii=False, default=str)
         self.wfile.write(("event: %s\ndata: %s\n\n" % (event, payload)).encode("utf-8"))
         self.wfile.flush()
 
