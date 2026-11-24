@@ -97,6 +97,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     _frame.columnconfigure(1, weight=1)
     uithread._ui_target = _frame.winfo_toplevel()  # updates sent by worker threads
     uithread._ui_target.bind(uithread._UI_EVENT, uithread._ui_drain, add="+")
+    _frame.after(0, uithread._ui_drain)          # M6: what workers sent before the panel existed
 
     _v_status = tk.StringVar(value=ST.status or "ready")   # a note from the start (LM1)
     _v_target = tk.StringVar(value="-")
