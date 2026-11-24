@@ -106,6 +106,36 @@ class TestReader(unittest.TestCase):
         # read only: the file is unchanged
         self.assertEqual(digest(self.db), before)
 
+    def test_eddiscovery_can_write_while_we_read(self):
+        """0g (22.11.2026): EDDiscovery died on "database is locked" while we
+        read its file - no WAL, so an open statement blocks every commit.
+        Now no statement stays open while a line is handled: a writer that
+        does not wait at all (timeout 0) commits in the middle of the read,
+        in the archive and in the market means."""
+        writes = []
+
+        def edd_writes():
+            w = sqlite3.connect(self.db, timeout=0)
+            w.execute("INSERT INTO Commanders (Name, EdsmApiKey) VALUES ('W', '')")
+            w.commit()
+            w.close()
+            writes.append(1)
+
+        def take(e, fid, out):
+            edd_writes()
+            return fleet.Archive._take(e, fid, out)
+        with mock.patch.object(eddarchive, "WINDOW", 2), mock.patch.object(eddarchive, "PAUSE_S", 0):
+            got = eddarchive.read(self.db, fleet.EVENTS, take)
+            real_loads = json.loads
+            with mock.patch.object(eddarchive.json, "loads", lambda d: (edd_writes(), real_loads(d))[1]):
+                eddarchive.market_means(self.db)
+        self.assertGreaterEqual(len(writes), got["rows"])
+        self.assertEqual(got["commanders"], {"ONE": FID, "TWO": OTHER})
+        # the same lines as one big read, in the same order
+        with mock.patch.object(eddarchive, "WINDOW", 10 ** 9):
+            whole = eddarchive.read(self.db, fleet.EVENTS, fleet.Archive._take)
+        self.assertEqual(got["events"], whole["events"])
+
     def test_the_connection_cannot_write(self):
         con = eddarchive._connect(self.db)
         with self.assertRaises(sqlite3.OperationalError):

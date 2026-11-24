@@ -69,12 +69,12 @@ def lines(path: str, names: Iterable[str], before: Optional[float] = None) -> It
     con = connect(path)
     try:
         # Id only: the same table holds the EDSM API key
-        cids = [cid for (cid,) in con.execute("SELECT Id FROM Commanders ORDER BY Id")]
-        q = ("SELECT EventType, EventData FROM JournalEntries WHERE CommanderId = ? AND EventTime < ? "
-             "AND EventType IN (%s) ORDER BY Id" % ",".join("?" * len(wanted)))
+        cids = [cid for (cid,) in con.execute("SELECT Id FROM Commanders ORDER BY Id").fetchall()]
+        where = ("+CommanderId = ? AND +EventTime < ? AND +EventType IN (%s)"
+                 % ",".join("?" * len(wanted)))
         for cid in cids:
             seen_login = False
-            for kind, data in con.execute(q, [cid, cut] + wanted):
+            for kind, data in by_id(con, "EventType, EventData", where, [cid, cut] + wanted):
                 seen_login = seen_login or kind in LOGIN
                 if not seen_login:
                     continue
@@ -86,6 +86,30 @@ def lines(path: str, names: Iterable[str], before: Optional[float] = None) -> It
                     yield e
     finally:
         con.close()
+
+
+# 0g (5.0.1): EDDiscovery's file runs without WAL, so a reader blocks its
+# writes while one statement is open. Up to 5.0.0 each commander was one
+# statement, held open while the caller parsed every line (about 3 s per
+# read at each EDMC start, twice) - EDDiscovery died on "database is
+# locked" on 22.11.2026. Now WINDOW ids per statement (under 10 ms), each
+# finished before a line is handed on, with PAUSE_S between them.
+WINDOW = 4000
+PAUSE_S = 0.005
+
+
+def by_id(con: sqlite3.Connection, cols: str, where: str, params: List[Any]) -> Iterator[Any]:
+    """Rows of JournalEntries in Id order, WINDOW ids per statement. The
+    terms in ``where`` carry "+" (no index), so each statement is a short
+    range of the primary key."""
+    top = con.execute("SELECT max(Id) FROM JournalEntries").fetchone()[0] or 0
+    q = "SELECT %s FROM JournalEntries WHERE Id > ? AND Id <= ? AND %s ORDER BY Id" % (cols, where)
+    lo = 0
+    while lo < top:
+        rows = con.execute(q, [lo, lo + WINDOW] + list(params)).fetchall()
+        lo += WINDOW
+        yield from rows
+        time.sleep(PAUSE_S)
 
 
 def first_time(files: List[str]) -> Optional[float]:
