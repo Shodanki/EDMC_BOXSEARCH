@@ -1826,5 +1826,8 @@ const DE = /*DE*/{
   "Nothing in the ship locker.": "Nichts im Schiffsspind.",
   "OTHER": "SONSTIGES",
   "grade {g} · at most {c}": "Grad {g} · höchstens {c}",
-  "Counted from the journal since the login. Raw materials stop at their grade's maximum; for manufactured and encoded ones the game does not say when one is full - the next login sets the true count.": "Seit dem Login aus dem Journal gezählt. Rohmaterialien enden beim Höchstwert ihres Grads; bei gefertigten und Daten sagt das Spiel nicht, wann eines voll ist - der nächste Login setzt die echte Zahl."
+  "Counted from the journal since the login. Raw materials stop at their grade's maximum; for manufactured and encoded ones the game does not say when one is full - the next login sets the true count.": "Seit dem Login aus dem Journal gezählt. Rohmaterialien enden beim Höchstwert ihres Grads; bei gefertigten und Daten sagt das Spiel nicht, wann eines voll ist - der nächste Login setzt die echte Zahl.",
+  "insurance: what losing the ship costs - amber when your credits would not pay it": "Versicherung: was der Verlust des Schiffs kostet - amber, wenn deine Credits sie nicht bezahlen würden",
+  "{n} Cr short": "{n} Cr fehlen",
+  "Your credits: {c} Cr - the rebuy turns amber where they would not pay it.": "Deine Credits: {c} Cr - der Rebuy wird amber, wo sie ihn nicht bezahlen würden."
 }/*END*/;

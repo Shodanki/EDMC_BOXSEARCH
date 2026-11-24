@@ -100,6 +100,8 @@ jobs:
         run: python tests/false_losses.py
       - name: bio display variant 1 - PLANET rows, overlay finished species, hide switch (5.1.0)
         run: python tests/bio_display.py
+      - name: overlay warns when the credits would not pay the rebuy (RB1, 5.1.0)
+        run: python tests/rebuy_warn.py
       - name: the FIS starts from an argument list, no shell (M11)
         run: python tests/fis_launch.py
       - name: package import (relative imports, both of EDMC's ways to load a plugin)

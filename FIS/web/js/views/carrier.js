@@ -546,7 +546,7 @@ function airWing() {
   if (q) list = list.filter(s => [s.name, s.type_name, whereOf(s)].some(v => v && String(v).toLowerCase().includes(q)));
   // a clicked column sorts (again: other direction); empty values always last
   const SORT = { ship: s => (s.name || s.type_name || "").toLowerCase(), where: s => s.current ? "0" : s.stored_at === "here" ? "1" : "2" + whereOf(s).toLowerCase(),
-    hull: s => s.hull, jump: s => s.jump, cargo: s => s.cargo, fit: s => s.loadout_ts };
+    hull: s => s.hull, jump: s => s.jump, cargo: s => s.cargo, rebuy: s => s.rebuy, fit: s => s.loadout_ts };
   for (const [k] of ROLES) SORT[k] = s => s.rating ? s.rating.roles[k] : null;
   if (SORT[sortKey]) {
     const f = SORT[sortKey];
@@ -569,7 +569,9 @@ function airWing() {
   // role columns: the full name and how the dots are earned on hover
   const head = el("tr", {}, el("th", { text: "" }), th("ship", t("Ship")), th("where", t("Where")),
     ...ROLES.map(([k, l]) => th(k, t(l).slice(0, 4), { title: t(ROLE_HELP[k]), class: "role-h" })),
-    th("hull", t("Hull")), th("jump", "ly"), th("cargo", "t"), th("fit", t("Fitting")));
+    th("hull", t("Hull")), th("jump", "ly"), th("cargo", "t"),
+    th("rebuy", t("Rebuy"), { title: t("insurance: what losing the ship costs - amber when your credits would not pay it") }),
+    th("fit", t("Fitting")));
   const search = el("input", { type: "search", class: "cag-q", placeholder: t("filter ships"), value: shipQuery,
     oninput: (e) => { shipQuery = e.target.value; const pos = e.target.selectionStart; render();
       const n = root.querySelector(".cag-q"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (err) { /* type=search */ } } } });
@@ -589,13 +591,24 @@ function airWing() {
       el("td", { class: "num", text: s.hull !== undefined && s.hull !== null ? Math.round(s.hull * 100) + "%" : "–" }),
       el("td", { class: "num", text: s.jump ? fmt(s.jump, 1) : "–" }, fsdBadge(s.fsd)),
       el("td", { class: "num", text: s.cargo !== undefined && s.cargo !== null ? fmt(s.cargo, 0) : "–" }),
+      rebuyCell(s.rebuy, data.credits),
       el("td", { class: "c-dim small", text: s.loadout_ts ? day(s.loadout_ts) : t("unknown") }));
   });
   const fsdNote = el("div", { class: "c-dim small", text: t("FSD: the grade of the drive's engineering; ↑ an unlocked engineer already took your drive higher (hover). Only a hint from your own engineering.") });
   const note = el("div", { class: "c-dim small", text: t("Ratings 0–5 from the last known fitting (hover for the reasons). Ships without a fitting were not flown since your journals begin – fly or outfit them once.") });
   const hang = data.hangar;
   return frame(t("AIR WING"), hang ? t("{n} ships · hangar list of {d}", { n: ships.length, d: day(hang.ts) }) : String(ships.length),
-    [board, tools, el("div", { class: "scroll cag-list" }, el("table", { class: "ns-tab cag" }, head, ...rows)), note, fsdNote], { cls: "ns-cag", appear: false });
+    [board, tools, el("div", { class: "scroll cag-list" }, el("table", { class: "ns-tab cag" }, head, ...rows)), note, fsdNote,
+      data.credits !== null && data.credits !== undefined ? el("div", { class: "c-dim small", text: t("Your credits: {c} Cr - the rebuy turns amber where they would not pay it.", { c: fmt(data.credits, 0) }) }) : null],
+    { cls: "ns-cag", appear: false });
+}
+
+// RB1 (5.1.0): the rebuy per ship - amber when the credits would not pay it
+function rebuyCell(rebuy, credits) {
+  if (!rebuy) return el("td", { class: "num c-dim", text: "–" });
+  const short = credits !== null && credits !== undefined && credits < rebuy;
+  return el("td", { class: "num" + (short ? " c-amber" : ""), title: short ? t("{n} Cr short", { n: fmt(rebuy - credits, 0) }) : "",
+    text: rebuy >= 1e6 ? fmt(rebuy / 1e6, 1) + " M" : fmt(rebuy, 0) });
 }
 
 // EN1: the FSD's grade under the jump range, with an arrow when an unlocked

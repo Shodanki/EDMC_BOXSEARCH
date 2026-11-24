@@ -532,6 +532,19 @@ def visiting_carrier(archive: Any, live: Dict[str, Any], journal_dir: Optional[s
             "buys": buys, "sells": sells}
 
 
+def credits_now(archive: fl.Archive, live: Optional[Dict[str, Any]]) -> Optional[int]:
+    """RB1: the commander's credits - live from Status.json (Balance), else
+    from the last login (LoadGame Credits); None when neither is known."""
+    bal = ((live or {}).get("status") or {}).get("balance")
+    if bal is not None:
+        return int(bal)
+    last = None
+    for e in archive.events():
+        if e["event"] == "LoadGame" and e.get("Credits") is not None:
+            last = e["Credits"]
+    return int(last) if last is not None else None
+
+
 def build_carrier(archive: fl.Archive, live: Dict[str, Any],
                   now: Optional[float] = None, journal_dir: Optional[str] = None,
                   capi_path: Optional[str] = None) -> Dict[str, Any]:
@@ -539,7 +552,8 @@ def build_carrier(archive: fl.Archive, live: Dict[str, Any],
     now = time.time() if now is None else now
     c = archive.carrier()
     fleet = archive.fleet()
-    out: Dict[str, Any] = {"generated": now, "fleet": fleet["ships"], "hangar": fleet["hangar"]}
+    out: Dict[str, Any] = {"generated": now, "fleet": fleet["ships"], "hangar": fleet["hangar"],
+                           "credits": credits_now(archive, live)}
     own_id = ((c or {}).get("stats") or {}).get("CarrierID")
     vis = visiting_carrier(archive, live or {}, journal_dir, own_id)
     if vis:
