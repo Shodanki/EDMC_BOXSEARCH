@@ -663,6 +663,20 @@ class Handler(BaseHTTPRequestHandler):
     _hits: Dict[str, Any] = {}
     _fails: Dict[str, Any] = {}
     _blocked: Dict[str, float] = {}
+    TRACK_MAX = 256                   # M12: addresses kept before the old ones are dropped
+
+    @classmethod
+    def _prune(cls, now: float) -> None:
+        """M12 (under _brake_lock): forget addresses with nothing in their
+        window any more - the three dicts grew with every device ever seen."""
+        if len(cls._hits) + len(cls._fails) + len(cls._blocked) <= cls.TRACK_MAX:
+            return
+        for ip in [k for k, q in cls._hits.items() if not q or now - q[-1] > cls.RATE_WINDOW_S]:
+            del cls._hits[ip]
+        for ip in [k for k, q in cls._fails.items() if not q or now - q[-1] > cls.FAIL_WINDOW_S]:
+            del cls._fails[ip]
+        for ip in [k for k, until in cls._blocked.items() if now >= until]:
+            del cls._blocked[ip]
 
     def _braked(self) -> Optional[float]:
         """None = go on; else seconds to wait (answer 429)."""
@@ -672,6 +686,7 @@ class Handler(BaseHTTPRequestHandler):
         now = time.monotonic()
         cls = Handler
         with cls._brake_lock:
+            cls._prune(now)
             until = cls._blocked.get(ip)
             if until is not None:
                 if now < until:

@@ -171,6 +171,19 @@ class TestNearby(unittest.TestCase):
         self.assertIsNone(self.lk.from_nearby("JFM-21Z"))
         self.assertEqual(len(FakeSession.sent), 1)       # nothing asked for any of this
 
+    def test_nearby_memory_is_bounded(self):
+        """M12: expired cells go, at most NEARBY_CELLS stay - the dict grew
+        with every region asked."""
+        from fis import online
+        for i in range(online.NEARBY_CELLS + 10):
+            self.lk._keep_nearby((i, 0, 0, False), {"carriers": []})
+            self.now += 1
+        self.assertEqual(len(self.lk._nearby), online.NEARBY_CELLS)
+        self.assertNotIn((0, 0, 0, False), self.lk._nearby, "the oldest went first")
+        self.now += online.NEARBY_CACHE_S + 1
+        self.lk._keep_nearby((999, 0, 0, False), {"carriers": []})
+        self.assertEqual(list(self.lk._nearby), [(999, 0, 0, False)], "expired ones went")
+
     def test_offline_cap_and_errors(self):
         self.offline = True
         self.assertEqual(self.lk.nearby([0.0, 0.0, 0.0]), {"error": "offline"})

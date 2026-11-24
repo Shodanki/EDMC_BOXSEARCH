@@ -425,6 +425,27 @@ class TestServer(_Base):
         st, js = self.getj("/api/health")
         self.assertFalse(js["ai_at_runtime"])
 
+    def test_brake_memory_is_bounded(self):
+        """M12: addresses with nothing in their window are forgotten once more
+        than TRACK_MAX are tracked."""
+        from fis.server import Handler
+        with Handler._brake_lock:
+            saved = (dict(Handler._hits), dict(Handler._fails), dict(Handler._blocked))
+            try:
+                now = 1000.0
+                for i in range(300):
+                    Handler._hits["10.0.%d.%d" % (i // 250, i % 250)] = [now - 60]        # long ago
+                Handler._hits["10.9.9.9"] = [now - 1]                                       # still counting
+                Handler._blocked["10.8.8.8"] = now + 30
+                Handler._blocked["10.7.7.7"] = now - 1
+                Handler._prune(now)
+                self.assertEqual(set(Handler._hits), {"10.9.9.9"})
+                self.assertEqual(set(Handler._blocked), {"10.8.8.8"})
+            finally:
+                Handler._hits.clear(); Handler._hits.update(saved[0])        # noqa: E702
+                Handler._fails.clear(); Handler._fails.update(saved[1])      # noqa: E702
+                Handler._blocked.clear(); Handler._blocked.update(saved[2])  # noqa: E702
+
     def test_statistics_cached_and_days_whitelisted(self):
         """M2: ?days= only as a span the pages offer; M3: STATISTICS is built
         once while the database and the journals stay as they are."""

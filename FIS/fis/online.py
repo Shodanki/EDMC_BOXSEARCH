@@ -38,6 +38,7 @@ import time
 import urllib.error
 import urllib.request
 import math
+import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 SPANSH_STATIONS = "https://spansh.co.uk/api/stations/search"
@@ -46,6 +47,7 @@ CARRIER_TYPES = ["Drake-Class Carrier"]
 NEARBY_LY = 100           # H2: how far to look
 NEARBY_SIZE = 15          # how many carriers, nearest first
 NEARBY_CACHE_S = 24 * 3600.0
+NEARBY_CELLS = 64             # M12: cells kept at most (the oldest go first)
 # a rescue anchor (user 19.11.): one request reaches DEEP_LY; what lies
 # within NEARBY_LY is shown as ever (in the bubble that is all of it), and
 # only when nothing does, a rescue list - the nearest carriers anyone may dock at that repair, those
@@ -129,6 +131,7 @@ class CarrierLookup:
         self._clock = clock
         self._gw = None
         self._nearby: Dict[Tuple[int, int, int], Tuple[float, Dict[str, Any]]] = {}
+        self._nearby_lock = threading.Lock()     # M12: request threads read it while one writes
 
     def _gateway(self) -> Any:
         if self._gw is None:
@@ -190,7 +193,8 @@ class CarrierLookup:
         DEEP_LY; with nothing within NEARBY_LY the answer has a 'rescue' list
         (see rescue())."""
         cell = self._cell(pos) + (bool(deep),)
-        hit = self._nearby.get(cell)
+        with self._nearby_lock:
+            hit = self._nearby.get(cell)
         if hit and self._clock() - hit[0] < NEARBY_CACHE_S:
             return dict(_shaped(hit[1], pos), cached=True)
         if self._offline():
@@ -213,14 +217,26 @@ class CarrierLookup:
             return {"error": "Spansh answer unreadable"}
         out = {"checked": _now_iso(), "ref": [float(c) for c in pos], "deep": bool(deep),
                "carriers": [c for c in (_nearby_row(r) for r in rows) if c]}
-        self._nearby[cell] = (self._clock(), out)
+        self._keep_nearby(cell, out)
         return dict(_shaped(out, pos), cached=False)
+
+    def _keep_nearby(self, cell: Any, out: Dict[str, Any]) -> None:
+        """M12: remember an answer; expired ones go, and at most NEARBY_CELLS stay."""
+        now = self._clock()
+        with self._nearby_lock:
+            self._nearby[cell] = (now, out)
+            for k in [k for k, (at, _a) in self._nearby.items() if now - at >= NEARBY_CACHE_S]:
+                del self._nearby[k]
+            while len(self._nearby) > NEARBY_CELLS:
+                del self._nearby[min(self._nearby, key=lambda k: self._nearby[k][0])]
 
     def from_nearby(self, callsign: str) -> Optional[Dict[str, Any]]:
         """A carrier of a fresh nearby answer, shaped like lookup()'s answer -
         a carrier starred from that list keeps where Spansh saw it, without
         asking again."""
-        for at, ans in self._nearby.values():
+        with self._nearby_lock:
+            seen = list(self._nearby.values())
+        for at, ans in seen:
             if self._clock() - at >= NEARBY_CACHE_S:
                 continue
             for c in ans["carriers"]:
