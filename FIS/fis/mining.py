@@ -26,6 +26,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import miningmethods
 from .live import parse_ts
 
 GAP_S = 30 * 60
@@ -595,6 +596,7 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     # ---------------------------------------------------------- goods: mined, sold, against upkeep
     goods = _mined_goods(evs, car, month, to_carrier)
     out["goods"] = sorted(goods.values(), key=lambda g: (-g["refined"]))
+    out["methods"] = miningmethods.compare(hist, out["goods"])        # MP2: laser - core - ground
     rev30 = sum(g["revenue_30d"] for g in goods.values())
     from . import capi
     fup = (capi.load(capi_path, now) or {}).get("upkeep") or {}
@@ -634,6 +636,7 @@ def _session_ships(hist: List[Dict[str, Any]], evs: List[Dict[str, Any]]) -> Non
         if lo:
             s["ship_type"] = (lo.get("Ship") or "").lower()
             s["ship_name"] = lo.get("ShipName")
+            s["tools"] = miningmethods.tools(lo)           # MP2: lasers, abrasion, seismic, sub-surface
 
 
 def _tritium_moved(evs: List[Dict[str, Any]], month: float) -> Tuple[Dict[str, int], Dict[str, int]]:

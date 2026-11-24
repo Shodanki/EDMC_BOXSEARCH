@@ -71,7 +71,7 @@ function render() {
   liveBox = null;
   if (tab === "history") {
     root.append(el("div", { class: "mine-grid" }, el("div", { class: "mine-col" }, history()),
-      el("div", { class: "mine-col" }, goods())));          // TRITIUM only under LIVE (user 24.11.)
+      el("div", { class: "mine-col" }, methods(), goods())));          // TRITIUM only under LIVE (user 24.11.)
   } else if (tab === "places") {
     root.append(el("div", { class: "mine-grid" }, el("div", { class: "mine-col" }, hotspots(), ships()),
       el("div", { class: "mine-col" }, hotspotRank())));
@@ -317,6 +317,29 @@ function goods() {
 }
 
 // ------------------------------------------------------------ sessions
+// MP2 (5.1.0): the mining methods compared, from your own sessions
+const METHOD = { laser: N_("Laser"), core: N_("Core"), ground: N_("Ground (SRV)") };
+const TOOL = { laser: N_("mining laser"), abrasion: N_("abrasion blaster"), seismic: N_("seismic charges"),
+  subsurface: N_("sub-surface missiles") };
+function methods() {
+  const M = data.methods || [];
+  if (!M.length) return null;
+  const best = Math.max(...M.map(m => m.cr_per_hour || 0));
+  const rows = M.map(m => el("tr", { class: best && m.cr_per_hour === best && M.length > 1 ? "c-green" : "" },
+    el("td", { title: m.tools.length ? t("tools aboard: {t}", { t: m.tools.map(x => t(TOOL[x])).join(", ") }) : "", text: t(METHOD[m.method]) }),
+    el("td", { class: "num", text: fmt(m.sessions, 0) }), el("td", { class: "num", text: fmt(m.hours, 1) }),
+    el("td", { class: "num", text: m.per_hour !== null ? fmt(m.per_hour, 0) : "–" }),
+    el("td", { class: "num", text: m.per_rock !== null ? fmt(m.per_rock, 1) : "–" }),
+    el("td", { class: "num", text: m.limpets_per_t !== null ? fmt(m.limpets_per_t, 2) : "–" }),
+    el("td", { class: "num", text: m.cr_per_hour ? cr(m.cr_per_hour) : "–" }),
+    el("td", { class: "small c-dim", text: m.top.map(g => g.name).join(", ") })));
+  return frame(t("METHODS"), t("{n} sessions", { n: M.reduce((s, m) => s + m.sessions, 0) }), [
+    el("table", { class: "mine-table" },
+      el("tr", {}, ...[t("Method"), t("Sessions"), "h", "t/h", t("t/rock"), t("limpets/t"), t("Cr/h"), t("mostly")].map(h => el("th", { text: h }))), ...rows),
+    el("div", { class: "c-dim small", text: t("From your own sessions: Core = a core was cracked in the session (it mines with lasers too), Ground = from the SRV, Laser = the rest. Cr/h at your own average sale price, only where it is known for most of the tonnes. The journal does not say which tool brought which tonne - the tools aboard show on hover.") }),
+  ], { appear: false });
+}
+
 function history() {
   if (!data.sessions.length) return null;
   return frame(t("SESSIONS"), String(data.sessions.length), el("table", { class: "mine-table" },

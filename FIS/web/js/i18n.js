@@ -1829,5 +1829,21 @@ const DE = /*DE*/{
   "Counted from the journal since the login. Raw materials stop at their grade's maximum; for manufactured and encoded ones the game does not say when one is full - the next login sets the true count.": "Seit dem Login aus dem Journal gezählt. Rohmaterialien enden beim Höchstwert ihres Grads; bei gefertigten und Daten sagt das Spiel nicht, wann eines voll ist - der nächste Login setzt die echte Zahl.",
   "insurance: what losing the ship costs - amber when your credits would not pay it": "Versicherung: was der Verlust des Schiffs kostet - amber, wenn deine Credits sie nicht bezahlen würden",
   "{n} Cr short": "{n} Cr fehlen",
-  "Your credits: {c} Cr - the rebuy turns amber where they would not pay it.": "Deine Credits: {c} Cr - der Rebuy wird amber, wo sie ihn nicht bezahlen würden."
+  "Your credits: {c} Cr - the rebuy turns amber where they would not pay it.": "Deine Credits: {c} Cr - der Rebuy wird amber, wo sie ihn nicht bezahlen würden.",
+  "Laser": "Laser",
+  "Core": "Kern",
+  "Ground (SRV)": "Boden (SRV)",
+  "mining laser": "Bergbaulaser",
+  "abrasion blaster": "Abrasionsstrahler",
+  "seismic charges": "Seismische Ladungen",
+  "sub-surface missiles": "Untergrund-Raketen",
+  "tools aboard: {t}": "Werkzeuge an Bord: {t}",
+  "METHODS": "METHODEN",
+  "Method": "Methode",
+  "Sessions": "Sitzungen",
+  "t/rock": "t/Brocken",
+  "limpets/t": "Limpets/t",
+  "Cr/h": "Cr/h",
+  "mostly": "meist",
+  "From your own sessions: Core = a core was cracked in the session (it mines with lasers too), Ground = from the SRV, Laser = the rest. Cr/h at your own average sale price, only where it is known for most of the tonnes. The journal does not say which tool brought which tonne - the tools aboard show on hover.": "Aus deinen eigenen Sitzungen: Kern = in der Sitzung wurde ein Kern gesprengt (dazu auch Laser), Boden = aus dem SRV, Laser = der Rest. Cr/h zu deinem eigenen Durchschnitts-Verkaufspreis, nur wo er für die meisten Tonnen bekannt ist. Das Journal sagt nicht, welches Werkzeug welche Tonne brachte - die Werkzeuge an Bord zeigt der Hover."
 }/*END*/;
