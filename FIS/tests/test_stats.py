@@ -207,6 +207,22 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertEqual(css.count("3ch minmax(7ch, max-content) auto"), 2)          # base and station
         self.assertNotIn("3ch 7ch auto", css)
 
+    def test_ship_bar_has_room(self):
+        """KL1 (5.0.1): at 1600 px the tabs left the ship bar ~375 px and cut
+        "SYS W…", "FUEL 1…", "TARGET D…"; below 2560 px it takes a row of its
+        own in every theme, the tablet and phone rules come later and win."""
+        import re
+        css = self._read("css", "fis.css")
+        kl1 = css[css.index("@media (max-width: 2559px) {"):]
+        kl1 = kl1[:kl1.index("\n}\n")]
+        self.assertIn("#top { grid-template-columns: auto 1fr; row-gap: 6px; }", kl1)
+        self.assertIn(".shipbar { grid-column: 1 / -1; justify-content: space-between; }", kl1)
+        self.assertIn(".sb-target .v, .sb-system .v { max-width: 40ch; }", kl1)
+        self.assertLess(css.index("@media (max-width: 2559px)"), css.index("@media (max-width: 1100px) {\n  .tac-view"))
+        # no theme sets its own header grid, so the row holds in all six
+        for m in re.finditer(r':root\[data-theme="\w+"\] #top \{([^}]*)\}', css):
+            self.assertNotIn("grid-template-columns", m.group(1))
+
     def test_bio_rates_and_learning_rows(self):
         js, css = self._read("js", "views", "statistics.js"), self._read("css", "fis.css")
         # BIO RATES: not the month row's fixed 64 px name column

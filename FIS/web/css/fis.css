@@ -243,8 +243,16 @@ body.motion .frame.appear > .frame-in { animation: frame-fill var(--t-draw) ease
 .sb-cell { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; }
 .sb-cell .k { font: 600 10px var(--font-display); letter-spacing: .14em; color: var(--dim); }
 .sb-cell .v { overflow: hidden; text-overflow: ellipsis; }
-.sb-target .v { max-width: 24ch; color: var(--amber); }
-.sb-system .v { max-width: 24ch; color: var(--cyan); }
+.sb-target .v { max-width: 32ch; color: var(--amber); }
+.sb-system .v { max-width: 32ch; color: var(--cyan); }
+/* KL1 (5.0.1): below 2560 px the tabs leave the ship bar no room (1600 px:
+   "SYS W…", "FUEL 1…", "TARGET D…") - it gets a row of its own, as on a
+   tablet; the narrower widths further down keep their own rules */
+@media (max-width: 2559px) {
+  #top { grid-template-columns: auto 1fr; row-gap: 6px; }
+  .shipbar { grid-column: 1 / -1; justify-content: space-between; }
+  .sb-target .v, .sb-system .v { max-width: 40ch; }
+}
 /* back to the live system from a pinned one */
 .sys-back { width: 100%; margin: 0 0 6px; padding: 4px 8px; font: 600 12px var(--font-display); letter-spacing: .08em;
   color: var(--amber); background: rgba(var(--amber-rgb), .08); border: 1px solid rgba(var(--amber-rgb), .55); cursor: pointer; }
