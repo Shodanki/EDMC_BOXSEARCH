@@ -328,6 +328,11 @@ class App:
                 out["collectors"] = realitycheck.collectors(mining.collector_waves(evs))
             except Exception:
                 out["collectors"] = None
+            try:
+                from . import fieldodds                     # MP4: field odds, each field left out in turn
+                out["fields"] = fieldodds.reality(fieldodds.model(evs, self.db)[2])
+            except Exception:
+                out["fields"] = None
             return out
         return self.cached("mining_reality", sig, build)
 
@@ -1605,7 +1610,8 @@ class Handler(BaseHTTPRequestHandler):
         """The mining session now."""
         app = self.app
         from . import mining
-        return self._json(mining.build_live(app.archive, app.live_state(), app.cfg.journal_dir))
+        return self._json(mining.build_live(app.archive, app.live_state(), app.cfg.journal_dir,
+                                            db=app.db))
 
     def _get_mining(self, qs: Dict[str, Any]) -> None:
         """MINING: sessions, hold, limpets, rings."""

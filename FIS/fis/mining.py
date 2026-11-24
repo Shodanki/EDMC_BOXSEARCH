@@ -456,7 +456,7 @@ def _target_material(live: Dict[str, Any]) -> Optional[str]:
 
 
 def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
-               now: Optional[float] = None) -> Dict[str, Any]:
+               now: Optional[float] = None, db: Any = None) -> Dict[str, Any]:
     """What the miner needs right now: the hold (limpets / goods / free), the
     refining rate, the target hotspot, the last prospector reports - and how
     far cargo space and limpets will go."""
@@ -497,6 +497,8 @@ def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
     rh = rhino_hold(live, cargo, evs=evs, now=now)
     if rh:
         out["rhino"] = rh
+    if db is not None:
+        out["odds"] = _live_odds(evs, db, live, out["target"] or (s and s["main"]))
     if s:
         recent = [t for t in s["ticks"] if now - t <= RATE_WINDOW_S]
         out["active"] = s["active"]
@@ -543,6 +545,51 @@ def _collectors_now(evs: List[Dict[str, Any]], runs: List[List[Dict[str, Any]]],
     last = _waves(runs[-1])[1] if runs and s and s.get("active") else None
     return {"life": life, "label": controller_label(c),
             "last_wave_ago": round(now - last) if last is not None else None}
+
+
+def _field_odds(evs: List[Dict[str, Any]], db: Any, hotspots: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """MP4: the chance of a good field for each hotspot shown, and what the
+    model rests on."""
+    from . import fieldodds
+    try:
+        m, rf, smp = fieldodds.model(evs, db)
+    except Exception:
+        return {"fields": 0, "min": fieldodds.MIN_FIELDS}
+    for h in hotspots:
+        h["odds"] = fieldodds.odds_for(m, rf, h["ring"], h["key"])
+    return {"fields": m.fields, "good": m.n[1], "min": fieldodds.MIN_FIELDS, "thin": fieldodds.THIN_FIELDS}
+
+
+def _live_ring(db: Any, live: Dict[str, Any]) -> Optional[str]:
+    """The ring ahead: the destination (a hotspot is a ring's body), else
+    the ring the ship is at."""
+    st = live.get("status") or {}
+    dest = st.get("destination") or {}
+    if dest.get("system") is not None and dest.get("body") is not None:
+        try:
+            rows = db.query("SELECT body_name FROM hotspots WHERE sys_id64 = ? AND body_id = ? LIMIT 1",
+                            (dest["system"], dest["body"]))
+            if rows and rows[0]["body_name"]:
+                return rows[0]["body_name"]
+        except Exception:
+            pass
+    name = st.get("body_name") or ""
+    return name if name.endswith(("Ring", "Belt")) else None
+
+
+def _live_odds(evs: List[Dict[str, Any]], db: Any, live: Dict[str, Any],
+               key: Optional[str]) -> Optional[Dict[str, Any]]:
+    """MP4 on the approach: the chance for the ring ahead and its material."""
+    from . import fieldodds
+    ring = _live_ring(db, live)
+    if not ring or not key:
+        return None
+    try:
+        m, rf, _smp = fieldodds.model(evs, db)
+    except Exception:
+        return None
+    o = fieldodds.odds_for(m, rf, ring, key)
+    return dict(o, ring=ring) if o else None
 
 
 def _ly(a, b) -> Optional[float]:
@@ -610,6 +657,7 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     pos = (live.get("system") or {}).get("pos")
     out["hotspots"] = hotspots_near(db, pos)
     out["from"] = (live.get("system") or {}).get("name")
+    out["field_odds"] = _field_odds(evs, db, out["hotspots"])        # MP4: good field before mining?
     # L3: the nearby hotspots ranked by what YOU mined there per hour - in
     # that ring, else in rings of its class, else in any ring
     try:

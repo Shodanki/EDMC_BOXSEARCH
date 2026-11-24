@@ -117,6 +117,10 @@ function liveStatus() {
   ];
   if (L.rhino) rows.unshift(rhinoHold(L.rhino));
   if (L.target_name) rows.push(el("div", { class: "small", text: t("Target") + ": " + L.target_name }));
+  const O = L.odds;
+  if (O && O.p !== null && O.p !== undefined)            // MP4: before the first laser shot
+    rows.push(el("div", { class: "small " + (O.thin ? "c-dim" : ODDS_CLS[O.verdict] || ""), title: oddsTitle(O),
+      text: t("{r}: {p} % chance of a good field ({n} fields)", { r: O.ring.replace(/^.* Sector /, ""), p: fmt(100 * O.p, 0), n: O.n }) }));
   // how far cargo space and limpets go
   const est = [];
   if (L.full_in_min !== undefined) est.push(t("full in ~{m} min at this rate", { m: fmt(L.full_in_min, 0) }));
@@ -278,10 +282,34 @@ function hotspots() {
     el("div", { class: "gal-row" }, el("span", { class: "c-dim", text: t("Material") }), sel),
     list.length ? el("div", { class: "mine-list" }, ...list.map(h => el("div", { class: "cg mine-hs", title: h.system, onclick: () => detail(h.id) },
       el("span", { text: h.ring + (h.count > 1 ? "  ×" + h.count : "") + (sel.value ? "" : " · " + h.material) }),
+      oddsSpan(h.odds),
       el("span", { class: "num", text: h.ly === null ? "?" : h.ly < 0.1 ? t("here") : fmt(h.ly, 1) + " ly" }))))
       : el("div", { class: "c-dim", text: t("No hotspots known for this material - scan rings with the DSS.") }),
     el("div", { class: "c-dim small", text: t("Rings you mapped (plugin database). A click opens the system.") }),
+    oddsNote(),
   ], { appear: false });
+}
+
+// MP4: the chance of a good field before mining, learnt from your rated fields
+const ODDS_CLS = { good: "c-green", open: "", poor: "c-amber" };
+function oddsTitle(o) {
+  return t("chance of a good field (not poor) from {n} rated fields, {m} of this material - known: {k}",
+    { n: o.n, m: o.n_mat, k: o.known.map(k => t(ODDS_FEAT[k])).join(", ") });
+}
+const ODDS_FEAT = { cls: N_("ring class"), reserve: N_("reserve"), spot: N_("hotspot"), overlap: N_("overlapping hotspots"), mat: N_("material") };
+function oddsSpan(o) {
+  if (!o || o.p === null || o.p === undefined) return el("span", { class: "num c-dim", text: "" });
+  return el("span", { class: "num " + (o.thin ? "c-dim" : ODDS_CLS[o.verdict] || ""), title: oddsTitle(o),
+    text: fmt(100 * o.p, 0) + " %" });
+}
+
+function oddsNote() {
+  const F = data.field_odds;
+  if (!F) return null;
+  return el("div", { class: "c-dim small", text: F.fields < F.min
+    ? t("Chance of a good field: learning - {n} of {m} rated fields (MINING › HISTORY › FIELDS).", { n: F.fields, m: F.min })
+    : t("% = chance of a good field before mining, learnt from your {n} rated fields ({g} good or fair); it learns from every field you mine. Dim: fewer than {t} fields or the material not mined yet.",
+      { n: F.fields, g: F.good, t: F.thin }) });
 }
 
 // L3: the nearby hotspots by what YOU refined there per hour
@@ -294,6 +322,7 @@ function hotspotRank() {
       el("span", { text: h.ring + " · " + h.material }),
       el("span", { class: "num" + (h.rate.thin ? " c-dim" : " c-green"), text: fmt(h.rate.t_h, 1) + " t/h"
         + (h.rate.runs > 1 ? " (" + fmt(h.rate.lo, 0) + "–" + fmt(h.rate.hi, 0) + ")" : "") }),
+      oddsSpan(h.odds),
       el("span", { class: "num", text: h.ly === null ? "?" : h.ly < 0.1 ? t("here") : fmt(h.ly, 1) + " ly" })))),
     el("div", { class: "c-dim small", text: t("From your own mining runs (all commanders): the main refined material per hour - in that ring, else rings of its class, else any ring. Dim: fewer than 3 runs.") }),
   ], { appear: false });

@@ -784,6 +784,7 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .mine-grid { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(380px, 1.2fr); gap: 10px; align-content: start; }
 .mine-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .mine-hs { cursor: pointer; } .mine-hs:hover { color: var(--cyan); }
+.mine-hs { gap: 10px; } .mine-hs > span:first-child { flex: 1; min-width: 0; } .mine-hs > .num { min-width: 3.6em; text-align: right; }  /* MP4: ring | odds | ly */
 .mine-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .mine-table th { text-align: left; color: var(--dim); font-weight: normal; border-bottom: 1px solid rgba(var(--cyan-rgb), .2); padding: 2px 4px; }
 .mine-table td { padding: 2px 4px; border-bottom: 1px solid rgba(var(--cyan-rgb), .06); }

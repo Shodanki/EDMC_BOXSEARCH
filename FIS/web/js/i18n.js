@@ -1917,6 +1917,15 @@ const DE = /*DE*/{
   "good rock: at least {p} % (your typical rock of it); your average {a} prospectors": "guter Brocken: mindestens {p} % (dein typischer Brocken davon); dein Schnitt {a} Prospektoren",
   "Per ring and the material you mostly refined there: purity = rocks that held it; prosp./good = prospectors per rock with at least your typical share of it; by-catch = the other tonnes. Rated against your own average for that material.": "Je Ring und dem Material, das du dort am meisten raffiniert hast: Reinheit = Brocken, die es enthielten; Prosp./guter = Prospektoren je Brocken mit mindestens deinem typischen Anteil davon; Beifang = die übrigen Tonnen. Bewertet gegen deinen eigenen Schnitt für dieses Material.",
   "good field": "gutes Feld",
+  "chance of a good field (not poor) from {n} rated fields, {m} of this material - known: {k}": "Chance auf ein gutes Feld (nicht schlecht) aus {n} bewerteten Feldern, {m} davon mit diesem Material - bekannt: {k}",
+  "ring class": "Ringtyp",
+  "reserve": "Reserve",
+  "hotspot": "Hotspot", "overlapping hotspots": "überlagerte Hotspots",
+  "material": "Material",
+  "Chance of a good field: learning - {n} of {m} rated fields (MINING › HISTORY › FIELDS).": "Chance auf ein gutes Feld: lernt noch - {n} von {m} bewerteten Feldern (MINING › HISTORY › FIELDS).",
+  "% = chance of a good field before mining, learnt from your {n} rated fields ({g} good or fair); it learns from every field you mine. Dim: fewer than {t} fields or the material not mined yet.": "% = Chance auf ein gutes Feld vor dem Abbau, gelernt aus deinen {n} bewerteten Feldern ({g} gut oder mittel); jedes abgebaute Feld lehrt mit. Gedimmt: weniger als {t} Felder oder das Material noch nie abgebaut.",
+  "{r}: {p} % chance of a good field ({n} fields)": "{r}: {p} % Chance auf ein gutes Feld ({n} Felder)",
+  "Field odds before mining (good / poor)": "Feldprognose vor dem Abbau (gut / schlecht)",
   "fair field": "mittleres Feld",
   "poor field": "schwaches Feld"
 }/*END*/;

@@ -253,7 +253,7 @@ function findRows(F, line, head) {
 const REALITY = { kepler: N_("Kepler positions"), kepler_moons: N_("Kepler: double moons"), fuel: N_("Fuel per jump"), route: N_("Time per system vs. route estimate"),
   work: N_("Surface scan / bio sample"), value: N_("Exploration value vs. sales"), finds: N_("Chance of a find vs. scans"),
   bio: N_("Bio prediction (genera in top 3)"), rocks: N_("Tonnes per rock (mining)"), collectors: N_("Collector lifetime"),
-  scoop: N_("Fuel scoop rate per star class") };
+  scoop: N_("Fuel scoop rate per star class"), fields: N_("Field odds before mining (good / poor)") };
 
 let realityWait = null;     // R1: one reload while the Kepler check is computed in the background
 
