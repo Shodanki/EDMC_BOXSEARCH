@@ -106,6 +106,38 @@ class MiningTest(unittest.TestCase):
         self.assertEqual(r["by_type"]["lakonminer"]["sessions"], 1)
         self.assertEqual(r["all"]["per_rock_prospector"], 1.1)
 
+    def test_limpet_learning(self):
+        """MO2 (5.1.0): recent sessions weigh more, the reserve follows the
+        spread once five sessions of the hull are in; before that 10 %."""
+        def run(i, lim, t):
+            return {"start": 1000.0 * i, "total": t, "kind": "space", "asteroids": 30, "ship_type": "lakonminer",
+                    "drones": {"prospector": lim // 3, "collection": lim - lim // 3}}
+        # the developer's seven sessions, oldest first (17.11. measure: 0.37-0.47)
+        seven = [run(i, lim, t) for i, (lim, t) in enumerate(
+            [(89, 241), (97, 208), (89, 197), (105, 244), (126, 272), (112, 279), (103, 275)])]
+        r = mining.limpet_ratio(seven)["by_type"]["lakonminer"]
+        self.assertEqual(r["ratio"], 0.42)
+        self.assertLess(r["recent"], r["ratio"], "the better recent sessions count more")
+        self.assertTrue(r["learnt"])
+        self.assertEqual(r["need"], 0)
+        self.assertTrue(mining.RESERVE_MIN <= r["reserve"] <= mining.LIMPET_RESERVE)
+        self.assertAlmostEqual(r["reserve"], r["spread"], places=3)
+        three = mining.limpet_ratio(seven[:3])["by_type"]["lakonminer"]
+        self.assertFalse(three["learnt"])
+        self.assertEqual((three["need"], three["reserve"]), (2, mining.LIMPET_RESERVE))
+        steady = [run(i, 100, 250) for i in range(6)]
+        self.assertEqual(mining.limpet_ratio(steady)["all"]["reserve"], mining.RESERVE_MIN,
+                         "no spread: the minimum reserve, never none")
+        rat = mining.limpet_ratio(seven)
+        plans = mining._limpet_plans(rat, [{"name": "MINER", "type": "Type-11", "type_key": "lakonminer",
+                                            "cargo": 322, "current": False},
+                                           {"name": "OTHER", "type": "Type-9", "type_key": "type9",
+                                            "cargo": 256, "current": False}], 0)
+        self.assertTrue(plans[0]["learnt"] and plans[0]["own"] and plans[0]["sessions"] == 7)
+        self.assertEqual(plans[0]["limpets"], 147)          # 149 with the plain mean and 10 %
+        self.assertFalse(plans[1]["learnt"] or plans[1]["own"])
+        self.assertEqual(plans[1]["reserve"], mining.LIMPET_RESERVE)
+
     def test_type_key(self):
         self.assertEqual(mining.type_key("$tritium_name;"), "tritium")
         self.assertEqual(mining.type_key("LowTemperatureDiamond"), "lowtemperaturediamond")

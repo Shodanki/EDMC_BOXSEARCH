@@ -192,10 +192,20 @@ function limpets() {
       text: t("On board {h}", { h: cur.on_board }) + " · " + (Math.abs(cur.diff) <= 2 ? t("about right")
         : cur.diff > 0 ? t("take {n} more", { n: cur.diff }) : t("{n} too many - room for ore", { n: -cur.diff })) }) : null,
     el("div", { class: "c-dim small", text: basis }),
+    ...learning(P),
     ...collectorLife(P),
-    el("div", { class: "c-dim small", text: t("Limpets = r × cargo + {p} % reserve: every limpet launched frees its tonne, so the hold can end full of ore. Ore = what the hold holds at the end. * no session with this hull - your average.",
-      { p: Math.round(P.reserve * 100) }) }),
+    el("div", { class: "c-dim small", text: t("Limpets = r × cargo + reserve ({lo}-{hi} %, the spread of your sessions): every limpet launched frees its tonne, so the hold can end full of ore. Ore = what the hold holds at the end. r counts recent sessions most. * no session with this hull - your average.",
+      { lo: Math.round((P.reserve_min || P.reserve) * 100), hi: Math.round(P.reserve * 100) }) }),
   ], { appear: false });
+}
+
+// MO2 (5.1.0): from when the limpet count is learnt, per hull with own sessions
+function learning(P) {
+  return P.ships.filter(s => s.own && s.sessions).map(s => s.learnt
+    ? el("div", { class: "small c-green", text: s.name + ": " + t("limpet count learnt from {n} sessions, spread ±{s} % - reserve {p} %",
+        { n: s.sessions, s: Math.round((s.spread || 0) * 100), p: Math.round(s.reserve * 100) }) })
+    : el("div", { class: "small c-amber", text: s.name + ": " + t("limpet count still learning - {n} of {m} sessions, until then {p} % reserve",
+        { n: s.sessions, m: P.learn_sessions || 5, p: Math.round(s.reserve * 100) }) }));
 }
 
 // ------------------------------------------------------------ tritium -> carrier

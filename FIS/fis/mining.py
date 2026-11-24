@@ -262,6 +262,16 @@ WAVE_GAP_S = 60.0
 _GRADE = {"1": "E", "2": "D", "3": "C", "4": "B", "5": "A"}
 LIMPET_RESERVE = 0.10
 MIN_TONNES = 20              # sessions shorter than this tell nothing
+# MO2 (5.1.0, user 24.11.: "still too many"): on the developer's journals
+# (7 sessions, Type-11, 0.37-0.47 limpets per tonne, the last two 0.40 and
+# 0.375) the plain mean 0.42 plus 10 % left ~40 limpets in a full hold. The
+# advice now weights recent sessions more (half-life RECENT_HALF sessions,
+# your technique improves), and once LEARN_SESSIONS sessions of the hull
+# are in, the reserve is their spread (relative SD) between RESERVE_MIN and
+# LIMPET_RESERVE instead of a flat 10 %.
+LEARN_SESSIONS = 5
+RECENT_HALF = 3.0
+RESERVE_MIN = 0.05
 
 
 def controller_of(loadout: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -368,6 +378,27 @@ def room_for(free: int, ratio: float) -> int:
     return int(free / (1.0 - ratio)) if ratio < 1 else free
 
 
+def _ratio_learning(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """MO2: the recent ratio (recency-weighted, tonne-weighted), the spread of
+    the sessions, the reserve it gives and whether the hull is learnt."""
+    lst = sorted(lst, key=lambda r: r.get("start") or 0)
+    n = len(lst)
+    w = [0.5 ** ((n - 1 - i) / RECENT_HALF) for i in range(n)]
+    lim = sum(wi * (r["drones"]["prospector"] + r["drones"]["collection"]) for wi, r in zip(w, lst))
+    ton = sum(wi * r["total"] for wi, r in zip(w, lst))
+    rs = [(r["drones"]["prospector"] + r["drones"]["collection"]) / r["total"] for r in lst if r["total"]]
+    spread = None
+    if len(rs) >= 3:
+        mean = sum(rs) / len(rs)
+        sd = math.sqrt(sum((x - mean) ** 2 for x in rs) / (len(rs) - 1))
+        spread = round(sd / mean, 3) if mean else None
+    learnt = n >= LEARN_SESSIONS
+    reserve = (min(LIMPET_RESERVE, max(RESERVE_MIN, spread)) if learnt and spread is not None
+               else LIMPET_RESERVE)
+    return {"recent": round(lim / ton, 3) if ton else None, "spread": spread, "reserve": round(reserve, 3),
+            "learnt": learnt, "need": max(0, LEARN_SESSIONS - n)}
+
+
 def limpet_ratio(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Limpets launched per refined tonne over your sessions, overall and
     per hull type, with what it rests on."""
@@ -379,6 +410,7 @@ def limpet_ratio(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
         t = sum(r["total"] for r in lst)
         rocks = sum(r["asteroids"] for r in lst)
         return {"ratio": round(lim / t, 3) if t else None, "sessions": len(lst), "tonnes": t, "limpets": lim,
+                **_ratio_learning(lst),
                 "per_rock_prospector": round(sum(r["drones"]["prospector"] for r in lst) / rocks, 2) if rocks else None,
                 "per_rock_collector": round(sum(r["drones"]["collection"] for r in lst) / rocks, 2) if rocks else None,
                 "tonnes_per_rock": round(t / rocks, 1) if rocks else None}
@@ -572,6 +604,7 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     # ---------------------------------------------------------- limpet load per mining ship
     rat = limpet_ratio(hist)
     out["limpet_plan"] = {"ratio": rat, "default": DEFAULT_RATIO, "reserve": LIMPET_RESERVE,
+                          "reserve_min": RESERVE_MIN, "learn_sessions": LEARN_SESSIONS,
                           "ships": _limpet_plans(rat, out["ships"], out["limpets"]),
                           "collector_life": list(collector_life(evs).values())}
     return out
@@ -709,9 +742,13 @@ def _limpet_plans(rat: Dict[str, Any], ships: List[Dict[str, Any]], limpets: int
     for s in ships:
         typ = (s.get("type_key") or "").lower()
         basis = rat["by_type"].get(typ) or rat["all"]
-        r = basis["ratio"] if basis and basis["ratio"] else DEFAULT_RATIO
-        p = dict(limpet_load(int(s["cargo"] or 0), r), name=s["name"] or s["type"], cargo=s["cargo"], ratio=r,
-                 own=bool(rat["by_type"].get(typ)), current=s["current"])
+        r = (basis.get("recent") or basis["ratio"]) if basis and basis["ratio"] else DEFAULT_RATIO
+        own = bool(rat["by_type"].get(typ))
+        reserve = basis["reserve"] if basis and own else LIMPET_RESERVE
+        p = dict(limpet_load(int(s["cargo"] or 0), r, reserve), name=s["name"] or s["type"], cargo=s["cargo"],
+                 ratio=r, own=own, current=s["current"], reserve=reserve,
+                 learnt=bool(own and basis["learnt"]), sessions=basis["sessions"] if own else 0,
+                 need=basis["need"] if own else LEARN_SESSIONS, spread=basis["spread"] if own else None)
         if s["current"]:
             p["on_board"] = limpets
             p["diff"] = p["limpets"] - limpets
