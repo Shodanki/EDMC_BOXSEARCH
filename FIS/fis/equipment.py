@@ -332,9 +332,9 @@ def _rows(items: List[Dict[str, Any]], ships: List[Dict[str, Any]], carrier_id: 
             g = groups[k] = {"item": x["item"], "name": x["name"], "code": mod, "group": c["group"],
                              "mount": next((m for m in ("fixed", "gimbal", "turret") if "_%s_" % m in x["item"]), None),
                              "size": c["size"], "cls": fl._CLASS.get(str(c["cls"])) if c["cls"] else None,
-                             "eng": _grade(x), "bp": _blueprint(x), "hot": x["hot"], "count": 0, "value": 0, "priced": 0,
-                             "place": place, "where": where, "system": x["system"], "transit_s": 0,
-                             "fits": [], "better": []}
+                             "eng": _grade(x), "bp": _blueprint(x), "hot": x["hot"],
+                             "count": 0, "value": 0, "priced": 0, "place": place, "where": where,
+                             "system": x["system"], "transit_s": 0, "fits": [], "better": []}
             for s in ships:
                 fit, upg = _ship_fit(x["item"], c, bool(x["eng"]), s)
                 if fit:
