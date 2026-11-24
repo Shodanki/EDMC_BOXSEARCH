@@ -55,7 +55,8 @@ class Database:
 
     def connect(self) -> sqlite3.Connection:
         """A new read-only connection (mode=ro) with rows by column name."""
-        uri = "file:%s?mode=ro" % self.path.replace("\\", "/")
+        # M7 (5.0.1): ? and # in a folder name are part of the path, not of the URI
+        uri = "file:%s?mode=ro" % self.path.replace("\\", "/").replace("?", "%3f").replace("#", "%23")
         cx = sqlite3.connect(uri, uri=True, timeout=2.0, check_same_thread=False)
         cx.row_factory = sqlite3.Row
         return cx

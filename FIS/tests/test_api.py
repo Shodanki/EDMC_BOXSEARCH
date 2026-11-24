@@ -78,6 +78,25 @@ class TestData(_Base):
         self.assertEqual(h["systems"], 2)
 
 
+class TestDbPath(unittest.TestCase):
+    def test_hash_in_the_folder_name(self):
+        """M7 (audit 21.11.): the read-only URI took '#' in a folder name for
+        the start of a fragment and opened a different, missing file."""
+        d = os.path.join(tempfile.mkdtemp(), "Elite #1 & co")
+        os.makedirs(d)
+        path = os.path.join(d, "shboxsearch.sqlite")
+        cx = sqlite3.connect(path)
+        cx.execute("CREATE TABLE t (x)")
+        cx.execute("INSERT INTO t VALUES (42)")
+        cx.commit()
+        cx.close()
+        ro = Database(path).connect()
+        try:
+            self.assertEqual(ro.execute("SELECT x FROM t").fetchone()[0], 42)
+        finally:
+            ro.close()
+
+
 class TestModel(_Base):
     def test_system_positions_and_route(self):
         live = fed_tracker().snapshot()
