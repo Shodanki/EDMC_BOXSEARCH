@@ -425,6 +425,20 @@ class TestServer(_Base):
         st, js = self.getj("/api/health")
         self.assertFalse(js["ai_at_runtime"])
 
+    def test_calls_today_with_own_requests(self):
+        """A4: the cap counts the plugin's call log plus fis_calls.json."""
+        import callcount
+        base = self.app._calls_today().get("spansh", 0)
+        try:
+            self.app._note_own_calls({"spansh": 2})
+            self.assertEqual(self.app._calls_today().get("spansh", 0), base + 2)
+            self.assertEqual(callcount.today(self.app.own_calls_path).get("spansh"), 2)
+        finally:
+            try:
+                os.remove(self.app.own_calls_path)
+            except OSError:
+                pass
+
     def test_brake_memory_is_bounded(self):
         """M12: addresses with nothing in their window are forgotten once more
         than TRACK_MAX are tracked."""

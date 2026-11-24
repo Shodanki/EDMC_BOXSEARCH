@@ -123,12 +123,14 @@ class CarrierLookup:
 
     def __init__(self, version: str, calls_today: Callable[[], Dict[str, int]],
                  offline: Callable[[], bool], session_factory: Any = None,
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time,
+                 note_calls: Optional[Callable[[Dict[str, int]], None]] = None) -> None:
         self._version = version
         self._calls_today = calls_today
         self._offline = offline
         self._factory = session_factory or UrllibSession
         self._clock = clock
+        self._note_calls = note_calls      # A4: the requests sent, for the FIS's own count
         self._gw = None
         self._nearby: Dict[Tuple[int, int, int], Tuple[float, Dict[str, Any]]] = {}
         self._nearby_lock = threading.Lock()     # M12: request threads read it while one writes
@@ -144,6 +146,21 @@ class CarrierLookup:
             pass
         return self._gw
 
+    def _ask(self, gw: Any, body: Dict[str, Any]) -> Any:
+        """One Spansh station search through the gateway; what was sent is
+        counted (A4: every attempt the gateway recorded, retries included)."""
+        try:
+            return gw.request("spansh", "POST", SPANSH_STATIONS, "stations/search", json=body, timeout=20)
+        finally:
+            sent: Dict[str, int] = {}
+            for rec in (gw.drain() if hasattr(gw, "drain") else []):
+                sent[rec[1]] = sent.get(rec[1], 0) + 1
+            if sent and self._note_calls is not None:
+                try:
+                    self._note_calls(sent)
+                except Exception:
+                    pass
+
     def cached(self, fav: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """The stored answer while it is younger than CACHE_S."""
         on = (fav or {}).get("online")
@@ -158,8 +175,7 @@ class CarrierLookup:
         gw = self._gateway()
         body = {"filters": {"name": {"value": callsign}, "type": {"value": CARRIER_TYPES}},
                 "size": 10, "page": 0}
-        resp = gw.request("spansh", "POST", SPANSH_STATIONS, "stations/search", json=body,
-                          timeout=20)
+        resp = self._ask(gw, body)
         if resp is None:
             why = gw.resting("spansh") if hasattr(gw, "resting") else None
             return {"error": why or "Spansh did not answer"}
@@ -204,8 +220,7 @@ class CarrierLookup:
                             "distance": {"min": "0", "max": str(DEEP_LY if deep else NEARBY_LY)}},
                 "sort": [{"distance": {"direction": "asc"}}], "size": DEEP_SIZE if deep else NEARBY_SIZE, "page": 0,
                 "reference_coords": {"x": float(pos[0]), "y": float(pos[1]), "z": float(pos[2])}}
-        resp = gw.request("spansh", "POST", SPANSH_STATIONS, "stations/search", json=body,
-                          timeout=20)
+        resp = self._ask(gw, body)
         if resp is None:
             why = gw.resting("spansh") if hasattr(gw, "resting") else None
             return {"error": why or "Spansh did not answer"}

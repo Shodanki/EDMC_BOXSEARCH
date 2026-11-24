@@ -102,6 +102,8 @@ jobs:
         run: python tests/bio_display.py
       - name: overlay warns when the credits would not pay the rebuy (RB1, 5.1.0)
         run: python tests/rebuy_warn.py
+      - name: the FIS's own online requests count into the daily cap (A4, 5.1.0)
+        run: python tests/call_count.py
       - name: the FIS starts from an argument list, no shell (M11)
         run: python tests/fis_launch.py
       - name: package import (relative imports, both of EDMC's ways to load a plugin)

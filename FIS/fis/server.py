@@ -79,8 +79,10 @@ class App:
         self._edd_stars: Any = None
         # K5: the one online lookup of the FIS (on a click, through the plugin's gateway)
         from .online import CarrierLookup
+        # A4: the FIS's own requests per UTC day, kept in fis_calls.json
+        self.own_calls_path = os.path.join(os.path.dirname(cfg.ini_path), "fis_calls.json")
         self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
-                                    offline=self._plugin_offline)
+                                    offline=self._plugin_offline, note_calls=self._note_own_calls)
         # SK3: when a learnt model was reset (FIS-owned file next to fis.ini,
         # read by the plugin at start-up too)
         self.learn_reset_path = os.path.join(os.path.dirname(cfg.ini_path), "learn_reset.json")
@@ -342,14 +344,26 @@ class App:
         return val
 
     def _calls_today(self) -> Dict[str, int]:
-        """Today's requests from the plugin's call log (read only) - one cap for both."""
+        """Today's requests: the plugin's call log (read only) plus the FIS's
+        own (fis_calls.json, A4) - one cap for both."""
+        out: Dict[str, int] = {}
         try:
             day0 = int(time.time() // 86400) * 86400
             rows = self.db.query("SELECT service, COUNT(*) n FROM external_calls WHERE ts >= ? "
                                  "GROUP BY service", (day0,))
-            return {r["service"]: int(r["n"]) for r in rows}
+            out = {r["service"]: int(r["n"]) for r in rows}
         except Exception:
-            return {}
+            pass
+        cc = self.model.plugin().callcount
+        for k, n in (cc.today(self.own_calls_path) if cc is not None else {}).items():
+            out[k] = out.get(k, 0) + n
+        return out
+
+    def _note_own_calls(self, counts: Dict[str, int]) -> None:
+        """A4: requests the FIS just sent, counted in fis_calls.json."""
+        cc = self.model.plugin().callcount
+        if cc is not None and counts:
+            cc.add(self.own_calls_path, counts)
 
     def _plugin_offline(self) -> bool:
         """The plugin's "offline" switch (EDMC config.toml) holds for the FIS too."""

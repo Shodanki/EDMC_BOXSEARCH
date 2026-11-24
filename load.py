@@ -67,6 +67,7 @@ try:
     from .sources import SourceManager  # noqa: E402
     from .sysdb import SystemDB  # noqa: E402
     from .state import CFG, DB_FILE, ST, VERSION, _PLUGIN_DIR, cfg_bool, cfg_str, logger  # noqa: E402
+    from . import callcount  # noqa: E402
     from . import cockpit  # noqa: E402
     from . import cockpitinfo  # noqa: E402
     from . import maintenance  # noqa: E402
@@ -114,7 +115,8 @@ def plugin_start3(plugin_dir: str) -> str:
     ST.net.offline = cfg_bool(CFG["offline"], False)
     try:
         day0 = time.time() // 86400 * 86400
-        ST.net.seed_today({k: ST.db.external_calls_since(day0, k)
+        fis_calls = callcount.today(callcount.plugin_path(_PLUGIN_DIR))   # A4: one cap with the FIS
+        ST.net.seed_today({k: ST.db.external_calls_since(day0, k) + fis_calls.get(k, 0)
                            for k in ("edsm", "spansh")})
     except Exception:
         logger.exception("could not read today's external calls")

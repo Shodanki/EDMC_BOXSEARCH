@@ -77,6 +77,7 @@ def plugin():
         p.learnreset = _optional("learnreset")     # plugin 5.0+: model resets (SK3)
         p.bodyvalue = _optional("bodyvalue")       # plugin 4.12+: what exploration data is worth (B6)
         p.findodds = _optional("findodds")         # plugin 5.0+: chance of a find, V0 (FX3)
+        p.callcount = _optional("callcount")       # plugin 5.1+: the FIS's own online requests (A4)
         _plugin = p
     return _plugin
 
