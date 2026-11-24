@@ -1502,3 +1502,26 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 .ns-tab.jp-tab td:last-child { text-align: left; white-space: nowrap; }
 .jp-spansh summary { cursor: pointer; }
 .jp-paste { width: 100%; box-sizing: border-box; font: 12px var(--font-mono); }
+
+/* TB1 (5.0.1, user 20.11.): every table, every page, every theme - a column
+   of numbers (any cell td.num) is centred, its heading with it; a text
+   column (names, dates, notes) keeps heading and cells left, so names stay
+   readable. Up to 5.0.0 the headings stood left and the numbers right, so
+   neither lined up. One rule for all tables (16 columns are enough); it
+   comes last, so no table or theme block overrides it. */
+table:has(td.num:nth-child(1)) :is(th, td):nth-child(1),
+table:has(td.num:nth-child(2)) :is(th, td):nth-child(2),
+table:has(td.num:nth-child(3)) :is(th, td):nth-child(3),
+table:has(td.num:nth-child(4)) :is(th, td):nth-child(4),
+table:has(td.num:nth-child(5)) :is(th, td):nth-child(5),
+table:has(td.num:nth-child(6)) :is(th, td):nth-child(6),
+table:has(td.num:nth-child(7)) :is(th, td):nth-child(7),
+table:has(td.num:nth-child(8)) :is(th, td):nth-child(8),
+table:has(td.num:nth-child(9)) :is(th, td):nth-child(9),
+table:has(td.num:nth-child(10)) :is(th, td):nth-child(10),
+table:has(td.num:nth-child(11)) :is(th, td):nth-child(11),
+table:has(td.num:nth-child(12)) :is(th, td):nth-child(12),
+table:has(td.num:nth-child(13)) :is(th, td):nth-child(13),
+table:has(td.num:nth-child(14)) :is(th, td):nth-child(14),
+table:has(td.num:nth-child(15)) :is(th, td):nth-child(15),
+table:has(td.num:nth-child(16)) :is(th, td):nth-child(16) { text-align: center; }

@@ -174,6 +174,29 @@ class StatsLayoutTest(unittest.TestCase):
         with open(os.path.join(self.WEB, *parts), encoding="utf-8") as fh:
             return fh.read()
 
+    def test_tables_centre_numbers_and_their_headings(self):
+        """TB1 (5.0.1, user 20.11.): in every table a column of numbers is
+        centred with its heading, text columns stay left - one shared rule,
+        last in the file so no table or theme block can undo it, and every
+        table cell with a number carries the class num it keys on."""
+        import glob
+        import re
+        css = self._read("css", "fis.css")
+        rule = css[css.index("/* TB1 (5.0.1"):]
+        for n in range(1, 17):
+            self.assertIn("table:has(td.num:nth-child(%d)) :is(th, td):nth-child(%d)" % (n, n), rule)
+        self.assertTrue(rule.rstrip().endswith("{ text-align: center; }"), "TB1 is the last rule")
+        self.assertEqual(rule.count("{"), 1)
+        # every view that builds a table marks its number cells
+        for path in glob.glob(os.path.join(self.WEB, "js", "**", "*.js"), recursive=True):
+            with open(path, encoding="utf-8") as fh:
+                js = fh.read()
+            if 'el("table"' not in js:
+                continue
+            self.assertRegex(js, r'el\("td", \{ class: "num', os.path.basename(path))
+            for m in re.finditer(r'el\("td", \{ (class: "([^"]*)", )?text: (fmt|CR|cr)\(', js):
+                self.assertIn("num", m.group(2) or "", "%s: a number cell without num" % os.path.basename(path))
+
     def test_bio_rates_and_learning_rows(self):
         js, css = self._read("js", "views", "statistics.js"), self._read("css", "fis.css")
         # BIO RATES: not the month row's fixed 64 px name column
