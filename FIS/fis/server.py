@@ -1931,7 +1931,10 @@ def main(argv: Optional[list] = None) -> int:
     threading.Thread(target=lambda: app.archive.refresh(force=True), name="fis-archive",
                      daemon=True).start()
     local = "http://127.0.0.1:%d/" % cfg.port
-    print("SHBOX FIS %s - reads only, writes nothing, no AI at runtime." % __version__)
+    # M15: the FIS writes its own files (fis.ini, favourites, hidden losses, tanks,
+    # jump plan ...) - never the game's, the journals or the plugin's database
+    print("SHBOX FIS %s - reads the game's files, sends nothing to the game, writes only its own"
+          " files, no AI at runtime." % __version__)
     print("Database  : %s (%s)" % (cfg.db_path, "ok" if app.db.exists else "MISSING"))
     print("Journal   : %s" % cfg.journal_dir)
     if cfg.lan:
