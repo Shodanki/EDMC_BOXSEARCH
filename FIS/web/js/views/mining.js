@@ -17,6 +17,8 @@ const CONTENT = { low: N_("low"), medium: N_("medium"), high: N_("high") };
 const VERDICT = { good: N_("good rock"), fair: N_("fair"), poor: N_("poor - move on") };
 let root = null, data = null, busy = false, live = null, liveBusy = false, liveBox = null;
 let material = localStorage.getItem("fis.mine.material") || "tritium";
+// TH8 (5.1.0): sub-tabs LIVE | HISTORY | PLACES (KONZEPT 2.2) - one long page before
+let tab = (() => { try { return localStorage.getItem("fis.mine.tab") || "live"; } catch (e) { return "live"; } })();
 
 export function mount(r) {
   root = r;
@@ -63,10 +65,21 @@ function render() {
   if (!root) return;
   root.replaceChildren();
   if (!data) { root.append(frame(t("MINING"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
-  root.append(el("div", { class: "mine-grid" },
-    // the sessions under the mining ships: the left column has the room (11.11.)
-    el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session(), limpets(), ships(), history()),
-    el("div", { class: "mine-col" }, tritium(), hotspotRank(), hotspots(), goods())));
+  const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
+    onclick: () => { tab = k; try { localStorage.setItem("fis.mine.tab", k); } catch (e) { /* private window */ } render(); } });
+  root.append(el("div", { class: "kc-tabs" }, tb("live", t("LIVE")), tb("history", t("HISTORY")), tb("places", t("PLACES"))));
+  liveBox = null;
+  if (tab === "history") {
+    root.append(el("div", { class: "mine-grid" }, el("div", { class: "mine-col" }, history()),
+      el("div", { class: "mine-col" }, goods(), tritium())));
+  } else if (tab === "places") {
+    root.append(el("div", { class: "mine-grid" }, el("div", { class: "mine-col" }, hotspots(), ships()),
+      el("div", { class: "mine-col" }, hotspotRank())));
+  } else {
+    root.append(el("div", { class: "mine-grid" },
+      el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session()),
+      el("div", { class: "mine-col" }, limpets(), tritium())));
+  }
 }
 
 // ------------------------------------------------------------ live status
@@ -74,6 +87,12 @@ function render() {
 // marked) and the refining of the last 10 minutes (one tick per tonne - the
 // game writes nothing about the refinery's bins, only each finished tonne)
 const GOOD_COL = [C.green, C.amber, C.violet, C.blue, "#E8A06A"];
+
+// TH8: a number as one element per digit - plain text in most themes, counter
+// segments in Belt industrial
+function counter(n) {
+  return el("span", { class: "mh-count", title: String(n) }, ...String(n).split("").map(d => el("b", { text: d })));
+}
 
 function liveStatus() {
   const L = live;
@@ -84,7 +103,7 @@ function liveStatus() {
   const hold = el("div", { class: "mh-bar" }, ...segs,
     L.advice ? el("b", { class: "mh-mark", style: { left: pct(L.advice.limpets) }, title: t("advised: {n} limpets", { n: L.advice.limpets }) }) : null);
   const legend = el("div", { class: "mh-legend small" },
-    el("span", { class: "c-cyan", text: "■ " + t("Limpets") + " " + L.limpets }),
+    el("span", { class: "c-cyan" }, "■ " + t("Limpets") + " ", counter(L.limpets)),
     ...L.goods.map((g, i) => el("span", { style: { color: GOOD_COL[i % GOOD_COL.length] }, text: "■ " + g.name + " " + g.count + " t" })),
     el("span", { class: "c-dim", text: "□ " + t("free") + " " + fmt(L.free, 0) + " / " + fmt(cap, 0) + " t" }));
   const ticks = el("div", { class: "mh-bar mh-ticks", title: t("each tonne refined in the last 10 minutes") },
@@ -143,6 +162,7 @@ function session() {
   // M2: ground mining (SRV Rhino) has no limpets and no asteroids
   const ground = m.kind === "ground";
   return frame(t("MINING"), (ground ? t("ground · {v}", { v: m.vehicle || "SRV" }) + " · " : "") + (m.active ? t("active") : stamp(m.end)), [
+    el("div", { class: "mine-rate-big", text: fmt(m.per_hour, 1) + " t/h" }),
     el("div", { class: "gal-big" }, el("span", { class: "c-cyan", text: fmt(m.total, 0) + " t" }),
       el("span", { class: "c-dim", text: "  " + t("{h} t/h · {m} per minute · {n} min", { h: fmt(m.per_hour, 1), m: fmt(m.per_min, 2), n: m.minutes }) })),
     ...m.refined.map(r => el("div", { class: "cg" }, el("span", { text: r.name }),

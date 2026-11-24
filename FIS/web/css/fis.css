@@ -1506,6 +1506,19 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
   :root[data-theme="station"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) :is(.lbar i, .hbar .track > i) { filter: none; }
 }
 
+/* -- TH8 (5.1.0) MINING: sub-tabs (all themes); Belt: the limpet count as counter
+   segments; station: the session's rate as a large phosphor figure; bridge: the
+   hotspot lists striped like CARRIER's tables. Standard stays as it was. */
+.mh-count b { font-weight: inherit; }
+.mine-rate-big { display: none; }
+:root[data-theme="industrial"] .mine-view .mh-count b { display: inline-block; min-width: 1.1em; margin-right: 1px; text-align: center;
+  font: 600 12px var(--font-mono); color: rgb(95, 211, 196); background: linear-gradient(180deg, #2f3537, #1c2022);
+  border: 1px solid rgba(95, 211, 196, .35); box-shadow: inset 0 -1px 0 rgba(var(--amber-rgb), .6); }
+:root[data-theme="station"] .mine-view .mine-rate-big { display: block; font: 600 34px var(--font-mono); letter-spacing: .04em;
+  color: var(--green); text-shadow: 0 0 8px rgba(var(--green-rgb), .75); margin: 2px 0 4px; }
+:root[data-theme="bridge"] .mine-view .mine-list .cg:nth-child(even) { background: rgba(var(--white-rgb), .025); }
+:root[data-theme="bridge"] .mine-view .mine-list .cg { padding: 2px 6px; }
+
 /* 5.0 CARRIER > JUMP PLAN */
 .jp .jp-q { flex: 1 1 14em; min-width: 10em; }
 .jp-tab tr.jp-done td { color: var(--dim); }

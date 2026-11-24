@@ -559,6 +559,8 @@ const DE = /*DE*/{
   "{n} more signals - map the body (DSS) for the genera": "{n} weitere Signale – Körper kartieren (DSS) für die Gattungen",
   "estimated from your sales of this genus": "geschätzt aus deinen Verkäufen dieser Gattung",
   "paid in your own sales": "aus deinen eigenen Verkäufen",
+  "LIVE": "LIVE",
+  "PLACES": "ORTE",
   "{s} analysed": "{s} analysiert",
   "no position": "ohne Position",
   "Distance scale": "Entfernungsskala",
