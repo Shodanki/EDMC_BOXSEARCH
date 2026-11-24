@@ -56,6 +56,18 @@ class TH8Test(unittest.TestCase):
         self.assertIn(".mine-rate-big { display: none; }", block)                          # standard unchanged
         self.assertIn(':root[data-theme="bridge"] .mine-view .mine-list .cg:nth-child(even)', block)
 
+    def test_vehicle_tank_meter_and_switches(self):
+        js = _read("js", "views", "vehicle.js")
+        self.assertIn('meter(pct, 100, "vh-fuel"', js)
+        self.assertNotIn('"bar vh-fuel', js)
+        self.assertIn('el("div", { class: "vh-switches" }, ...switches)', js)
+        # standard: the meter drawn as the old bar (green / amber / red, glow)
+        self.assertIn(".vh-fuel.lbar i { background: var(--green); box-shadow: 0 0 6px rgba(var(--green-rgb), .5); }", self.css)
+        block = _block(self.css, "/* -- TH8 (5.1.0) VEHICLE")
+        self._scoped_and_still(block)
+        self.assertIn(':root[data-theme="console"] .vehicle-view .vh-switches .chip', block)       # capsules
+        self.assertIn(':root[data-theme="industrial"] .vehicle-view .vh-switches .chip::before', block)  # plaques
+
 
 if __name__ == "__main__":
     unittest.main()

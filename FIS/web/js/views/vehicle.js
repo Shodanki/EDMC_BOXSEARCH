@@ -12,7 +12,7 @@
 // and how often each can still be made from the materials on board.
 
 import { getJSON } from "../api.js";
-import { el, frame, fmt, chip, kv, num, withPopout, minutesAgo } from "../ui.js";
+import { el, frame, fmt, chip, kv, num, meter, withPopout, minutesAgo } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 const FLAG = {
@@ -146,8 +146,8 @@ function render() {
   const base = v.capacity || v.fuel_start;
   if (base) {
     const pct = Math.max(0, Math.min(100, 100 * (v.fuel || 0) / base));
-    tank.push(el("div", { class: "bar vh-fuel" + (pct < 25 ? " alert" : pct < 50 ? " warn" : "") },
-      el("i", { style: { width: pct.toFixed(1) + "%" } })));
+    // TH8 (5.1.0): the shared meter, so every theme draws the tank its way
+    tank.push(meter(pct, 100, "vh-fuel" + (pct < 25 ? " alert" : pct < 50 ? " warn" : "")));
     tank.push(el("div", { class: "c-dim small", text: v.capacity
       ? t("{p} % of the full tank - learnt after a refuel synthesis, {d}", { p: fmt(pct, 0), d: stamp(v.capacity_ts) || "–" })
       : t("compared with the tank at launch") + " · " + t("the full tank is learnt after a refuel synthesis") }));
@@ -185,7 +185,7 @@ function render() {
     frame(t("TANK"), t("the vehicle's own"), tank, { appear: false, kind: base && v.fuel / base < 0.25 ? "warn" : "" }),
     frame(t("CARGO"), v.type === "mev_rhino" ? t("Rhino: refined from rigs") : "", cargo, { appear: false }),
     frame(t("POSITION"), "", where.length ? where : el("div", { class: "c-dim", text: "–" }), { appear: false }),
-    frame(t("SWITCHES"), "Status.json", switches.length ? el("div", {}, ...switches) : el("div", { class: "c-dim", text: live && v.on_foot ? t("on foot") : "–" }), { appear: false }),
+    frame(t("SWITCHES"), "Status.json", switches.length ? el("div", { class: "vh-switches" }, ...switches) : el("div", { class: "c-dim", text: live && v.on_foot ? t("on foot") : "–" }), { appear: false }),
     frame(t("ACTIVITY"), "", [work, el("div", { class: "c-dim small vh-note",
       text: t("Hull, ammunition and modules of a vehicle are in no game file - the edition is the pack it was bought in.") })], { appear: false }),
     synthesis()));
