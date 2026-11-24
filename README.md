@@ -9,6 +9,9 @@
 
 Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
 
+![SHBOX FIS - the SYSTEM view: every orbit, the in-system route and the system report (demo data)](FIS/docs/screenshots/demo_system.png)
+*SHBOX FIS, SYSTEM view: the bodies on their real orbits, the in-system route leg by leg, and the system report (demo data).*
+
 **SHBOX FIS** (since 4.4), a flight information system for a second screen,
 tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
 info, atlas, ship status, carrier, mining and statistics - in the `FIS`
@@ -55,6 +58,7 @@ failure that actually hurts.
 
 **Contents**
 
+0. [What you get](#what-you-get) - the plugin and the FIS in short
 1. [Operation](#operation) - what you need, install, update, files, first
    start and maintenance, preferences, known limits
 2. [Third-party parts](#third-party-parts) - what is shipped with it, what
@@ -63,6 +67,31 @@ failure that actually hurts.
    names, gap logic, existence checks, sources, routing, fuel, learning
 4. [Version history](#version-history) - every release, oldest first
 5. [For maintainers](#for-maintainers) - releasing
+
+## What you get
+
+**SHBOXSEARCH – EDMC plugin for exploration**
+
+- **Finds systems no database knows:** it plans a survey sphere boxel by boxel and computes the game's own system names. Each candidate gets a chance of a find, and galaxy-map probes come in the order that pays. Where the galaxy map cannot plot a route, NEXT HOP lists the systems within one jump.
+- **In-system route:** it puts the bodies worth scanning, mapping and sampling in the best order, with a time estimate. Stops are ticked off by themselves as you go.
+- **Cockpit overlay:**
+  - next targets, the star ahead, unsold data at risk, fuel and the carrier countdown;
+  - a surface compass to your samples, SRV and ship;
+  - warnings for gear or hardpoints still out, life support off, suit temperature, and a ship that has flown off.
+- **Biology and mining:** bio predictions and the signals still open; tonnes per rock and limpet use.
+- **Learns from your own journals:** fuel use, exploration values and times, each with a range and "learned from n". Optionally it also reads your older EDDiscovery history, read only.
+- **Fair and safe:** it only reads and displays, and never sends input to the game. Online it uses public APIs only, capped per day and with an offline switch.
+
+**SHBOX FIS – flight information system in your browser** (local, also on a tablet or second screen)
+
+- **BRIEFING:** the next target and the sphere ahead, with time, value and the chance of finds.
+- **SYSTEM and GALAXY:** the system in 3D with real orbits; the survey sphere in 3D.
+- **PLANET, PLANET INFO and ATLAS:** surface, datasheets, biology, rings and signals.
+- **SHIP and VEHICLE:** annunciator, damage and modules; SRV, Nomad and Scarab.
+- **CARRIER:** tritium and range, a jump plan with the time per jump, carrier trade, carriers near you.
+- **STATISTICS:** trends, rates, forecasts, and a reality check of every learnt model.
+- **LEDGER and TRADE:** gain and loss like a company's books; your prices against the galactic mean.
+- Six themes, English and German, an OBS source, and it installs as an app.
 
 ---
 
