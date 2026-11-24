@@ -233,6 +233,10 @@ CREATE TABLE IF NOT EXISTS surface_track (
     mode      TEXT,              -- 'ship', 'srv', 'foot'
     PRIMARY KEY (sys_id64, body_name, ts)
 );
+-- R1 (5.1.0): every MiningRefined looks for a Rhino fix within 15 s by
+-- time - without this index each refined tonne scanned the whole track
+-- in EDMC's main thread (3.7 ms a tonne on 17 000 rows, growing)
+CREATE INDEX IF NOT EXISTS surface_track_ts ON surface_track(ts);
 CREATE TABLE IF NOT EXISTS surface_marks (
     ts        TEXT NOT NULL,
     sys_id64  INTEGER NOT NULL,

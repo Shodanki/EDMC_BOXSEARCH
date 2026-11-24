@@ -104,6 +104,8 @@ jobs:
         run: python tests/rebuy_warn.py
       - name: the FIS's own online requests count into the daily cap (A4, 5.1.0)
         run: python tests/call_count.py
+      - name: a refined tonne looks the Rhino up by an index, not a table scan (R1, 5.1.0)
+        run: python tests/surface_track_index.py
       - name: the FIS starts from an argument list, no shell (M11)
         run: python tests/fis_launch.py
       - name: package import (relative imports, both of EDMC's ways to load a plugin)
