@@ -1,4 +1,4 @@
-# SHBOXSEARCH v5.0.0
+# SHBOXSEARCH v5.0.1
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -1514,6 +1514,7 @@ what changed in each release from 4.1 on.
 | 4.12.0 | overlay situation column (star ahead, data at stake, landing card, system value, ring, boxel, route fuel, carrier countdown, session tally); ground mining: Rhino and ship hold; ship flown off - recall it; the hovering ship waits, SHIP AWAY from 2.3 km; surface compass stays on the ground, not on foot aboard the carrier; FIS PLANET follows you; settings on tabs; a finished system can get no route; mining overlay: limpets, full in, spare limpets; cockpit overlay in a window of its own (beta); file check at every start; probe names EDSM knows become flight targets; FIS: carriers near you (Spansh, on a click), your key bindings in SHIP; fixes: surface compass, mining block, bio distance and the self test button work again (broken since 4.11), Brain Trees - one signal, several species, belt clusters no longer fill up the FSS count; every function within EDMC's complexity limit, documented, self tests out of the download |
 | 4.12.1 | fix: when EDMC passes on no journal events (the game wrote its journal anew), the plugin warns, stores the missed landings, samples and finds itself and places them by the stored track; a replay fills in positions marks were stored without |
 | 5.0.0 | finding unknown systems first: chance of a find per candidate, probes in the order that pays, proofs of absence, NEXT HOP; orbits in their parent's frame (94 % within 1 %), far companions and brown dwarfs drawn right; a reality check of every learnt model; faster pages; STATISTICS in sub-tabs, forecasts, GAIN / LOSS as a company's books, TRADE, CARRIER TRADE and JUMP PLAN; themes on every page; LIFE SUPPORT lamp; fixes |
+| 5.0.1 | fixes: in-system route reaches the best order; EDDiscovery's archive read in short pieces; false "lost in a crash" marks taken back; ships stored after the hangar list keep their place; FIS header, tables and BRIEFING readable at 1600 px; FIS hardening (token, writing calls, fis.ini) |
 
 ## Fixed since v3.0.8
 
@@ -2917,6 +2918,44 @@ they change only when needed: fixes, and what new game updates require.
   found by the DSS stays on the route, and is ticked off right after its
   last species is analysed; a sale the game did not log can be marked as
   sold; versions compare after SemVer.
+
+### 5.0.1 - fixes
+
+* **In-system route: the best order.** The route got stuck in a good but
+  not the best order and could fly out far and back again; in one system
+  of 30 bodies 22 % of the distance was wasted. It now also moves the
+  first stop and whole groups of stops, from several starts. In five real
+  systems it finds the best order; the FIS's SYSTEM route uses the same
+  code.
+* **EDDiscovery keeps writing.** EDDiscovery's database has no write-ahead
+  log, so a long read blocks its writes. The plugin and the FIS read its
+  archive in short pieces now - milliseconds instead of up to 3 s.
+* **No false "lost in a crash".** After a lost connection the game can
+  write its journal anew; *Replay journals* then met an old, real death
+  again and marked data gathered long after it as lost - even after it
+  was sold. A replayed death now takes only what was open before it, and
+  on every start and replay the plugin takes back every mark no real
+  death carries (*n false loss marks taken back* in the panel and the
+  log). The work counts as done again: sold if the system was sold since.
+* **Ships stored after the hangar list.** A ship swapped, bought or
+  transferred after the game's last hangar list showed "?" as its place;
+  it now shows the station - also your carrier.
+* **FIS readable at 1600 px.** The ship bar (SYS, FUEL, TARGET, FOCUS) gets
+  a row of its own below 2560 px; tables centre their numbers; BRIEFING
+  keeps distances and sphere counts on one line.
+* **FIS hardening.** A token with non-ASCII characters gets a plain
+  "wrong token"; writing calls answer with an error instead of dropping
+  the connection; `fis.ini` is written in one step and a damaged one still
+  loads; a `#` in a folder name no longer breaks reading the database; the
+  plugin starts the FIS without a shell; the game PC opens the FIS without
+  the token when LAN is on.
+* **Texts.** The survey statistics say *in no database* where a system is
+  only unknown to the databases, not undiscovered; two German spellings.
+
+**Updating to 5.0.1:** close EDMC and the FIS and unpack the ZIP over the
+old folder (it carries none of your files). No database change you have to
+make: the new column for open work is added on the first start, and false
+loss marks are taken back by themselves.
 
 ## Releasing (for whoever maintains this)
 
