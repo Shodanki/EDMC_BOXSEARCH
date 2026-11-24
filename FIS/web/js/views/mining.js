@@ -71,7 +71,7 @@ function render() {
   liveBox = null;
   if (tab === "history") {
     root.append(el("div", { class: "mine-grid" }, el("div", { class: "mine-col" }, history()),
-      el("div", { class: "mine-col" }, methods(), goods())));          // TRITIUM only under LIVE (user 24.11.)
+      el("div", { class: "mine-col" }, fields(), methods(), goods())));          // TRITIUM only under LIVE (user 24.11.)
   } else if (tab === "places") {
     root.append(el("div", { class: "mine-grid" }, el("div", { class: "mine-col" }, hotspots(), ships()),
       el("div", { class: "mine-col" }, hotspotRank())));
@@ -337,6 +337,31 @@ function methods() {
     el("table", { class: "mine-table" },
       el("tr", {}, ...[t("Method"), t("Sessions"), "h", "t/h", t("t/rock"), t("limpets/t"), t("Cr/h"), t("mostly")].map(h => el("th", { text: h }))), ...rows),
     el("div", { class: "c-dim small", text: t("From your own sessions: Core = a core was cracked in the session (it mines with lasers too), Ground = from the SRV, Laser = the rest. Cr/h at your own average sale price, only where it is known for most of the tonnes. The journal does not say which tool brought which tonne - the tools aboard show on hover.") }),
+  ], { appear: false });
+}
+
+// MP3 (5.1.0, user 24.11.): the fields rated - purity, prospectors per good rock, by-catch
+const RATING = { good: [N_("good field"), "c-green"], fair: [N_("fair field"), "c-dim"], poor: [N_("poor field"), "c-amber"] };
+let showAllFields = false;
+function fields() {
+  const F = data.fields || [];
+  if (!F.length) return null;
+  const list = showAllFields ? F : F.slice(0, 6);
+  const short = (ring) => ring.replace(/^.* Sector /, "").replace(/ Ring$/, "");
+  const rows = list.map(f => el("tr", {},
+    el("td", { title: f.ring }, el("div", { text: f.mat_name }), el("div", { class: "c-dim small", text: short(f.ring) })),
+    el("td", { class: "num", text: fmt(f.sessions, 0) }),
+    el("td", { class: "num", title: t("{n} of {m} rocks held it, {s} % on average", { n: Math.round(f.rocks * (f.purity || 0) / 100), m: f.rocks, s: fmt(f.mean_share, 1) }),
+      text: f.purity !== null ? f.purity + " %" : "–" }),
+    el("td", { class: "num", title: f.good_pct ? t("good rock: at least {p} % (your typical rock of it); your average {a} prospectors", { p: fmt(f.good_pct, 1), a: fmt(f.avg_per_good, 1) }) : "",
+      text: f.per_good !== null ? fmt(f.per_good, 1) : "–" }),
+    el("td", { class: "num", title: f.bycatch.map(b => b.name + " " + b.t + " t").join(", "), text: f.bycatch_pct + " %" }),
+    el("td", { class: (RATING[f.rating] || ["", "c-dim"])[1], text: f.rating ? t(RATING[f.rating][0]) : "–" })));
+  return frame(t("FIELDS"), t("{n} rated", { n: F.length }), [
+    el("table", { class: "mine-table" }, el("tr", {}, ...[t("Field"), t("Sessions"), t("purity"), t("prosp./good"), t("by-catch"), ""].map(h => el("th", { text: h }))), ...rows),
+    F.length > 6 ? el("button", { class: "linkish small", text: showAllFields ? t("fewer") : t("show {n} more", { n: F.length - 6 }),
+      onclick: () => { showAllFields = !showAllFields; render(); } }) : null,
+    el("div", { class: "c-dim small", text: t("Per ring and the material you mostly refined there: purity = rocks that held it; prosp./good = prospectors per rock with at least your typical share of it; by-catch = the other tonnes. Rated against your own average for that material.") }),
   ], { appear: false });
 }
 

@@ -53,7 +53,7 @@ class MiningMethodsTest(unittest.TestCase):
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "js", "views",
                                "mining.js"), encoding="utf-8") as fh:
             js = fh.read()
-        self.assertIn('el("div", { class: "mine-col" }, methods(), goods())', js)
+        self.assertIn('el("div", { class: "mine-col" }, fields(), methods(), goods())', js)   # MP3 above it
         self.assertIn("function methods()", js)
 
 

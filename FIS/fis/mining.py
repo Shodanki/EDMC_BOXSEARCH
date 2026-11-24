@@ -597,6 +597,8 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     goods = _mined_goods(evs, car, month, to_carrier)
     out["goods"] = sorted(goods.values(), key=lambda g: (-g["refined"]))
     out["methods"] = miningmethods.compare(hist, out["goods"])        # MP2: laser - core - ground
+    from . import fieldrating
+    out["fields"] = fieldrating.rate_fields(evs)                         # MP3: purity, prospectors, by-catch
     rev30 = sum(g["revenue_30d"] for g in goods.values())
     from . import capi
     fup = (capi.load(capi_path, now) or {}).get("upkeep") or {}

@@ -1906,5 +1906,17 @@ const DE = /*DE*/{
   "{s} species · analysed {n}×": "{s} Arten · {n}× analysiert",
   "variants: {v}": "Varianten: {v}",
   "first analysed {d}": "zuerst analysiert {d}",
-  "Species you analysed (all three samples); value = your own sale price, where you sold it. Hover a species for its colour variants and the day you first analysed it.": "Arten, die du analysiert hast (alle drei Proben); Wert = dein eigener Verkaufspreis, wo du verkauft hast. Eine Art zeigt beim Überfahren ihre Farbvarianten und den Tag der ersten Analyse."
+  "Species you analysed (all three samples); value = your own sale price, where you sold it. Hover a species for its colour variants and the day you first analysed it.": "Arten, die du analysiert hast (alle drei Proben); Wert = dein eigener Verkaufspreis, wo du verkauft hast. Eine Art zeigt beim Überfahren ihre Farbvarianten und den Tag der ersten Analyse.",
+  "FIELDS": "FELDER",
+  "{n} rated": "{n} bewertet",
+  "Field": "Feld",
+  "purity": "Reinheit",
+  "prosp./good": "Prosp./guter",
+  "by-catch": "Beifang",
+  "{n} of {m} rocks held it, {s} % on average": "{n} von {m} Brocken enthielten es, im Schnitt {s} %",
+  "good rock: at least {p} % (your typical rock of it); your average {a} prospectors": "guter Brocken: mindestens {p} % (dein typischer Brocken davon); dein Schnitt {a} Prospektoren",
+  "Per ring and the material you mostly refined there: purity = rocks that held it; prosp./good = prospectors per rock with at least your typical share of it; by-catch = the other tonnes. Rated against your own average for that material.": "Je Ring und dem Material, das du dort am meisten raffiniert hast: Reinheit = Brocken, die es enthielten; Prosp./guter = Prospektoren je Brocken mit mindestens deinem typischen Anteil davon; Beifang = die übrigen Tonnen. Bewertet gegen deinen eigenen Schnitt für dieses Material.",
+  "good field": "gutes Feld",
+  "fair field": "mittleres Feld",
+  "poor field": "schwaches Feld"
 }/*END*/;
