@@ -1648,6 +1648,12 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 @media (max-width: 1400px) { .inv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 800px) { .inv-grid { grid-template-columns: 1fr; } }
 
+/* -- RECORDS & ATLAS (5.1.0): system names as links, the journey line wide */
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--cyan); cursor: pointer; text-align: left; }
+.linkish:hover { text-decoration: underline; }
+.st-spark-wide svg { width: 100%; height: 90px; }
+.st-records td:nth-child(3) { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* TB1 (5.0.1, user 20.11.): every table, every page, every theme - a column
    of numbers (any cell td.num) is centred, its heading with it; a text
    column (names, dates, notes) keeps heading and cells left, so names stay

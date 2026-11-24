@@ -9,7 +9,7 @@
 // period (the Statistics event from back then against the latest one).
 
 import { getJSON, postJSON } from "../api.js";
-import { el, frame, fmt, meter, withPopout } from "../ui.js";
+import { el, frame, fmt, hbar, meter, withPopout } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 import { carrierMoneyRows } from "../carriermoney.js";
 
@@ -100,6 +100,8 @@ const PANES = [
   ["trends", N_("HISTORY"), [[["overTime", "surfaceMaps"], ["firstFinds"], ["perSession"]]]],
   ["rates", N_("RATES & TIMES"), [[["bioRates"]], [["timePerSystem"]]]],
   ["learning", N_("LEARNING STATUS"), [[["learning"]]]],
+  // ST2/ST6/ST8/ST9 (5.1.0, user 24.11.): records and the atlas of your travels, all time
+  ["atlas", N_("RECORDS & ATLAS"), [[["records"], ["regions"]], [["starsWorlds"], ["journey"]]]],
 ];
 let sub = localStorage.getItem("fis.stat.sub") || "overview";
 
@@ -155,7 +157,8 @@ function render() {
 
 const BUILD = { ranks: () => ranks(), overTime: () => overTime(), firstFinds: () => firstFinds(), surfaceMaps: () => surfaceMaps(),
   bioRates: () => bioRates(), perSession: () => perSession(), timePerSystem: () => timePerSystem(), learning: () => learning(),
-  carrierMoney: () => carrierMoney() };
+  carrierMoney: () => carrierMoney(), records: () => records(), regions: () => regions(),
+  starsWorlds: () => starsWorlds(), journey: () => journey() };
 for (const c of CARDS) BUILD[c[0]] = () => card(c);
 
 /** One sub-tab: its rows of columns; empty frames and columns drop out. */
@@ -329,6 +332,89 @@ const SERIES = [["Exploration.Systems_Visited", N_("systems visited"), "n"], ["E
   ["Exploration.Planets_Scanned_To_Level_3", N_("bodies scanned"), "n"], ["Exobiology.Organic_Data_Profits", N_("exobiology earned"), "cr"],
   ["Mining.Quantity_Mined", N_("tonnes mined"), "t"], ["Bank_Account.Current_Wealth", N_("wealth"), "cr"]];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ------------------------------------------------------------ RECORDS & ATLAS (ST2/ST6/ST8/ST9)
+const RECORD = {
+  star_biggest: [N_("Biggest star"), "R☉", 2], star_heaviest: [N_("Heaviest star"), "M☉", 2], star_hottest: [N_("Hottest star"), "K", 0],
+  planet_biggest: [N_("Biggest planet (radius)"), "km", 0], planet_smallest: [N_("Smallest planet (radius)"), "km", 0],
+  planet_heaviest: [N_("Heaviest planet"), "M⊕", 1], gravity_scanned: [N_("Highest gravity scanned"), "g", 2],
+  gravity_landed: [N_("Highest gravity landed on"), "g", 2], planet_hottest: [N_("Hottest planet"), "K", 0],
+  planet_coldest: [N_("Coldest planet"), "K", 0], spin_fastest: [N_("Fastest spin"), "s", 2],
+  jump_longest: [N_("Longest jump"), "ly", 2], farthest_sol: [N_("Farthest from Sol"), "ly", 0], jumps_one_day: [N_("Most jumps in a day"), "", 0] };
+const day = (ts) => ts ? new Date(ts * 1000).toLocaleDateString() : "–";
+function openSystem(id) {
+  if (!id) return;
+  const w = window.open(location.pathname + "?solo=tactical&system=" + id, "fis-detail", "popup,width=1280,height=860");
+  if (w) w.focus();
+}
+
+function records() {
+  const A = data.atlas;
+  if (!A || !A.records.length) return null;
+  const rows = A.records.map(r => {
+    const [label, unit, dig] = RECORD[r.key] || [r.key, "", 0];
+    const where = r.body || r.system || "";
+    return el("tr", {},
+      el("td", { class: "c-dim", text: t(label) }),
+      el("td", { class: "num c-cyan", text: fmt(r.value, dig) + (unit ? " " + unit : "") }),
+      el("td", {}, where ? el("button", { class: "linkish", text: where, title: r.id64 ? t("open the system") : "",
+        onclick: () => openSystem(r.id64) }) : ""),
+      el("td", { class: "small c-dim", text: day(r.ts) }));
+  });
+  return frame(t("PERSONAL RECORDS"), t("all time"), [el("table", { class: "mine-table st-records" }, ...rows),
+    el("div", { class: "c-dim small", text: t("From your own scans, jumps and landings (with the EDDiscovery archive when it is on); each body counts once.") })],
+  { cls: "st-card", appear: false });
+}
+
+function regions() {
+  const R = data.atlas && data.atlas.regions;
+  if (!R || !R.visited.length) return null;
+  const rows = R.visited.map(r => el("tr", {},
+    el("td", { text: r.name }), el("td", { class: "num", text: fmt(r.jumps, 0) }), el("td", { class: "num", text: fmt(r.systems, 0) }),
+    el("td", { class: "num", text: r.bio ? fmt(r.bio, 0) : "–" }),
+    el("td", { class: "small c-dim", text: day(r.first) + (r.last - r.first > 86400 ? " – " + day(r.last) : "") })));
+  return frame(t("REGIONS"), t("{n} of {m} visited", { n: R.visited.length, m: R.total }), [
+    meter(R.visited.length, R.total, "st-regions"),
+    el("table", { class: "mine-table" }, el("tr", {}, ...[t("Region"), t("jumps"), t("systems"), t("bio codex"), t("visited")].map(h => el("th", { text: h }))), ...rows),
+    R.unvisited && R.unvisited.length ? el("div", { class: "c-dim small", text: t("Not yet: {r}", { r: R.unvisited.join(", ") }) }) : null,
+    el("div", { class: "c-dim small", text: t("Regions from the RegionMap; bio codex = biological codex entries there (the archive keeps no others).") }),
+  ], { cls: "st-card", appear: false });
+}
+
+const WORLD = { "Earthlike body": N_("Earth-like worlds"), "Water world": N_("Water worlds"), "Ammonia world": N_("Ammonia worlds"),
+  terraformable: N_("Terraformable planets") };
+const STARG = { "brown dwarf": N_("brown dwarf"), "white dwarf": N_("white dwarf"), "neutron star": N_("neutron star"),
+  "black hole": N_("black hole"), carbon: N_("carbon star"), exotic: N_("exotic") };
+function starGroup(g) {
+  if (g.endsWith(" giant")) return t("{c} giant", { c: g.slice(0, -6) });
+  return STARG[g] ? t(STARG[g]) : g;
+}
+function starsWorlds() {
+  const S = data.atlas && data.atlas.stars;
+  if (!S || (!S.stars.length && !S.worlds.some(w => w.found))) return null;
+  const max = Math.max(1, ...S.stars.map(s => s.n));
+  const total = S.stars.reduce((a, s) => a + s.n, 0);
+  return frame(t("STARS & WORLDS"), t("{n} arrival stars", { n: fmt(total, 0) }), [
+    ...S.stars.map(s => hbar(starGroup(s.group), s.n, max, fmt(s.n, 0) + " · " + fmt(100 * s.n / total, 0) + " %")),
+    el("table", { class: "mine-table" }, el("tr", {}, ...[t("World"), t("scanned"), t("first discovered")].map(h => el("th", { text: h }))),
+      ...S.worlds.map(w => el("tr", {}, el("td", { text: t(WORLD[w.kind] || w.kind) }), el("td", { class: "num", text: fmt(w.found, 0) }),
+        el("td", { class: "num" + (w.first ? " c-green" : " c-dim"), text: fmt(w.first, 0) })))),
+    el("div", { class: "c-dim small", text: t("Arrival stars by class (the star you arrive at); first discovered = nobody had scanned it before you.") }),
+  ], { cls: "st-card", appear: false });
+}
+
+function journey() {
+  const J = data.atlas && data.atlas.journey;
+  if (!J || !J.points.length) return null;
+  const big = spark(J.points, "ly");
+  big.classList.add("st-spark-wide");
+  return frame(t("THE WAY THROUGH THE GALAXY"), t("{d} days of travel", { d: fmt(J.days, 0) }), [
+    big,
+    el("div", { class: "small" }, el("span", { class: "c-cyan", text: t("now {n} ly from Sol", { n: fmt(J.now, 0) }) }),
+      el("span", { class: "c-dim", text: " · " + t("farthest {n} ly", { n: fmt(J.max, 0) }) + " · " + t("{n} ly jumped", { n: fmt(J.ly, 0) }) })),
+    el("div", { class: "c-dim small", text: t("Distance to Sol at the last jump of each day you travelled; hover a point for the day.") }),
+  ], { cls: "st-card", appear: false });
+}
 
 function spark(pts, kind) {
   const W = 220, H = 44, P = 6;

@@ -1716,6 +1716,13 @@ class Handler(BaseHTTPRequestHandler):
             out["learning"]["reality"] = app.reality(out)                # V0: every model against reality
         except Exception:
             out["learning"] = None
+        try:                          # ST2/ST6/ST8/ST9 (5.1.0): RECORDS & ATLAS, all time
+            from . import records
+            rm = app.model.plugin().regionmap
+            out["atlas"] = records.build(app.archive.events(), rm.find_region if rm else None,
+                                         rm.region_names() if rm else ())
+        except Exception:
+            out["atlas"] = None
         return out
 
     def _get_galaxy(self, qs: Dict[str, Any]) -> None:

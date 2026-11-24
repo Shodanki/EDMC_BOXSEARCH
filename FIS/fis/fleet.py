@@ -459,6 +459,8 @@ def _slim_scan(e: Dict[str, Any]) -> Dict[str, Any]:
     # B6: what the data is worth (bodyvalue) - class, mass, terraforming
     slim.update({k: e[k] for k in ("StarType", "StellarMass", "PlanetClass", "MassEM",
                                    "TerraformState", "WasMapped") if k in e})
+    # ST2 (5.1.0): personal records - size, gravity, temperature, spin
+    slim.update({k: e[k] for k in ("Radius", "SurfaceGravity", "SurfaceTemperature", "RotationPeriod") if k in e})
     if e.get("Landable"):
         slim["AtmosphereType"] = e.get("AtmosphereType") or "None"     # 5.0 EA2: bio rates
     return slim

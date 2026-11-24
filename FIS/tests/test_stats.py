@@ -391,7 +391,7 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertNotIn("animation", block.split("@media (prefers-reduced-motion")[0])
         self.assertNotIn('content: "_"', block)
         # the views hand the share to the theme through meter(); the lead figure is marked
-        self.assertEqual(js.count("meter("), 3)
+        self.assertEqual(js.count("meter("), 4)                  # 5.1.0: + regions visited (RECORDS & ATLAS)
         self.assertIn('rows.length ? "st-row" : "st-row st-lead"', js)
 
     def test_sub_tabs_hold_every_frame_once(self):
@@ -401,13 +401,14 @@ class StatsLayoutTest(unittest.TestCase):
         js, css, i18n = self._read("js", "views", "statistics.js"), self._read("css", "fis.css"), self._read("js", "i18n.js")
         block = js[js.index("const PANES = ["):js.index("];", js.index("const PANES = ["))]
         keys = re.findall(r'"([A-Za-z]+)"', re.sub(r'N_\("[^"]*"\)', "", block))
-        panes = ["overview", "trends", "rates", "learning"]
+        panes = ["overview", "trends", "rates", "learning", "atlas"]
         frames = list(keys)
         for k in panes:                     # each pane id once; "learning" is a pane and its frame
             frames.remove(k)
         cards = re.findall(r'^  \["([A-Z]+)", N_\(', js, re.M)
         expected = ["ranks", "overTime", "firstFinds", "surfaceMaps", "bioRates", "perSession", "timePerSystem", "learning",
                     "carrierMoney"] + cards          # CT2: the carrier's money in OVERVIEW
+        expected += ["records", "regions", "starsWorlds", "journey"]      # 5.1.0 ST2/ST6/ST8/ST9
         self.assertEqual(sorted(frames), sorted(expected))          # each once, none missing
         for k in expected[:9]:
             self.assertIn(k + ": () => " + k + "()", js)
