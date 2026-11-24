@@ -425,6 +425,24 @@ class TestServer(_Base):
         st, js = self.getj("/api/health")
         self.assertFalse(js["ai_at_runtime"])
 
+    def test_statistics_cached_and_days_whitelisted(self):
+        """M2: ?days= only as a span the pages offer; M3: STATISTICS is built
+        once while the database and the journals stay as they are."""
+        from fis import server, stats
+        self.assertEqual([server._days({"days": [v]}) for v in ("7", "30.0", "0", "3.5", "1e400", "x", "90")],
+                         [7, 30, None, None, None, None, 90])
+        calls = []
+        real = stats.build_statistics
+        stats.build_statistics = lambda *a, **k: calls.append(a[1:]) or real(*a, **k)
+        try:
+            for q in ("", "?days=7", "?days=7", "?days=7.0", "?days=3.14159"):
+                self.assertEqual(self.getj("/api/statistics" + q)[0], 200)
+        finally:
+            stats.build_statistics = real
+        # all time, 7 days - the repeats and 3.14159 (= all time) come from the cache
+        self.assertLessEqual(len(calls), 2 + 1, calls)              # +1: a minute may turn over
+        self.assertNotIn(("3.14159",), calls)
+
     def test_config_language(self):
         st, js = self.getj("/api/config")
         self.assertEqual(st, 200)

@@ -626,6 +626,19 @@ class App:
         }
 
 
+DAY_SPANS = (1, 7, 30, 90)        # the period buttons of STATISTICS, GAIN / LOSS, GALAXY
+
+
+def _days(qs: Dict[str, Any]) -> Optional[int]:
+    """M2: ?days= as one of DAY_SPANS, else None (all time) - any other value
+    would only fill the answer cache with copies."""
+    try:
+        d = int(float((qs.get("days") or ["0"])[0]))
+    except (ValueError, OverflowError):
+        return None
+    return d if d in DAY_SPANS else None
+
+
 class Handler(BaseHTTPRequestHandler):
     """The FIS's HTTP handler: static files and the JSON API, local only unless
     the home network is switched on (token)."""
@@ -1568,10 +1581,7 @@ class Handler(BaseHTTPRequestHandler):
         """5.0 GAIN / LOSS of the active commander, per ship, over ?days= (0: all)."""
         app = self.app
         from . import ledger
-        try:
-            days = float((qs.get("days") or ["0"])[0]) or None
-        except ValueError:
-            days = None
+        days = _days(qs)              # M2: only the spans the pages offer
         app.archive.refresh()
         evs = app.archive.events()
         bal = ((app.live_state() or {}).get("status") or {}).get("balance")
@@ -1625,11 +1635,16 @@ class Handler(BaseHTTPRequestHandler):
     def _get_statistics(self, qs: Dict[str, Any]) -> None:
         """STATISTICS, with what the FIS has learnt so far."""
         app = self.app
+        days = _days(qs)              # M2: only the spans the pages offer
+        app.archive.refresh()
+        # M3: rebuilt only when the database or the journals moved, at most a minute old
+        sig = (app.db.mtime(), app.archive.rev, int(time.time() // 60))
+        return self._json(app.cached("statistics:%s" % days, sig, lambda: self._statistics(days)))
+
+    def _statistics(self, days: Optional[int]) -> Dict[str, Any]:
+        """The STATISTICS answer (cached by _get_statistics)."""
+        app = self.app
         from . import stats
-        try:
-            days = float((qs.get("days") or ["0"])[0]) or None
-        except ValueError:
-            days = None
         out = stats.build_statistics(app.archive, days)
         try:
             # CT2: the carrier's money over the period
@@ -1663,7 +1678,7 @@ class Handler(BaseHTTPRequestHandler):
             out["learning"]["reality"] = app.reality(out)                # V0: every model against reality
         except Exception:
             out["learning"] = None
-        return self._json(out)
+        return out
 
     def _get_galaxy(self, qs: Dict[str, Any]) -> None:
         """GALAXY layers for a mass code and period (cached while nothing changes)."""
@@ -1673,10 +1688,7 @@ class Handler(BaseHTTPRequestHandler):
             mc = int((qs.get("mc") or [""])[0])
         except ValueError:
             mc = None
-        try:
-            days = float((qs.get("days") or ["0"])[0]) or None
-        except ValueError:
-            days = None
+        days = _days(qs)              # M2: only the spans the pages offer
         live = app.live_state()
         pos = tuple((live.get("system") or {}).get("pos") or ())
         nav = len(live.get("navroute") or [])
