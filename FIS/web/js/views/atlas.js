@@ -207,7 +207,14 @@ function drawMap() {
   // keep room, the far ones still fit)
   const sq = !state.max && far > 250;
   const scale = (d) => R * (sq ? Math.sqrt(d / maxd) : d / maxd);
-  g.strokeStyle = alpha("cyan", .14); g.fillStyle = C.dim; g.font = "10px monospace";
+  // TH8 (5.1.0): in station the map is a radar - phosphor rings and spokes, glowing hits
+  const radar = document.documentElement.dataset.theme === "station";
+  g.strokeStyle = radar ? alpha("green", .30) : alpha("cyan", .14); g.fillStyle = C.dim; g.font = "10px monospace";
+  if (radar) {
+    g.beginPath();
+    for (let a = 0; a < 8; a++) { g.moveTo(cx, cy); g.lineTo(cx + R * Math.cos(a * Math.PI / 4), cy + R * Math.sin(a * Math.PI / 4)); }
+    g.stroke();
+  }
   const rings = sq ? [25, 100, 250, 500, 1000, 2000, 5000, 10000, 20000].filter(r => r <= maxd * 1.05)
     : (() => { const st = maxd > 400 ? 200 : maxd > 150 ? 50 : maxd > 60 ? 25 : 10; const a = []; for (let r = st; r <= maxd * 1.05; r += st) a.push(r); return a; })();
   for (const r of rings) {
@@ -218,7 +225,8 @@ function drawMap() {
   g.beginPath(); g.moveTo(cx - 6, cy); g.lineTo(cx + 6, cy); g.moveTo(cx, cy - 6); g.lineTo(cx, cy + 6);
   g.strokeStyle = C.text; g.stroke();
   // hits: galactic x to the right, z up (towards the core)
-  const col = TONE[state.view] || C.cyan;
+  const col = radar ? C.green : TONE[state.view] || C.cyan;
+  if (radar) { g.shadowColor = C.green; g.shadowBlur = 6; }
   for (const p of pts) {
     const d = Math.hypot(p.it.rel[0], p.it.rel[2]) || 1e-9;
     const k = Math.min(scale(d), R + 4) / d;
@@ -231,6 +239,7 @@ function drawMap() {
     if (hot) { g.font = "11px monospace"; g.fillText(p.it.system + (p.it.body_short ? " " + p.it.body_short : ""), x + 8, y - 6); }
   }
   g.globalAlpha = 1;
+  g.shadowBlur = 0;
   g.fillStyle = C.dim; g.font = "10px monospace";
   g.fillText(t("you") + " +   " + t("core") + " ↑" + (sq ? "   " + t("√ scale") : ""), 8, H - 8);
 }

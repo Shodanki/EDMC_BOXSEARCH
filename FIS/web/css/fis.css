@@ -1603,6 +1603,12 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
   :root[data-theme="station"] .settings-view .st-set input[type="checkbox"]:checked { box-shadow: none; }
 }
 
+/* -- TH8 (5.1.0) ATLAS: in station the surroundings map stands above the list as a
+   radar (drawn in atlas.js); the list stays below it */
+:root[data-theme="station"] .atlas-view .at-grid { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 42vh) minmax(0, 1fr); }
+:root[data-theme="station"] .atlas-view .at-side { order: -1; }
+:root[data-theme="station"] .atlas-view .at-map { min-height: 280px; }
+
 /* 5.0 CARRIER > JUMP PLAN */
 .jp .jp-q { flex: 1 1 14em; min-width: 10em; }
 .jp-tab tr.jp-done td { color: var(--dim); }

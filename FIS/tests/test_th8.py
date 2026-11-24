@@ -107,6 +107,15 @@ class TH8Test(unittest.TestCase):
             self.assertIn(':root[data-theme="%s"] .settings-view .st-set input[type="checkbox"]:checked' % theme, block)
         self.assertIn("border-bottom: 2px solid var(--cyan)", block)       # next: underlined fields
 
+    def test_atlas_radar_in_station(self):
+        js = _read("js", "views", "atlas.js")
+        self.assertIn('const radar = document.documentElement.dataset.theme === "station";', js)
+        self.assertIn("g.shadowBlur = 0;", js)                       # the glow ends with the hits
+        self.assertNotIn("requestAnimationFrame", js)                # a still radar, no sweep
+        block = _block(self.css, "/* -- TH8 (5.1.0) ATLAS")
+        self._scoped_and_still(block)
+        self.assertIn(':root[data-theme="station"] .atlas-view .at-side { order: -1; }', block)
+
 
 if __name__ == "__main__":
     unittest.main()
