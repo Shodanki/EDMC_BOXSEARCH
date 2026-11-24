@@ -1308,7 +1308,10 @@ class Handler(BaseHTTPRequestHandler):
         settings: only the game PC itself ever sees it."""
         if not self._local():
             return self._error(403, "settings only on the game PC")
-        urls = self._settings()["lan_urls"]
+        # M13 (5.0.1): only the addresses - the whole settings record asked
+        # the firewall (netsh, 0.6 s and more each time) for every QR code
+        cfg = self.app.cfg
+        urls = setup.lan_urls(cfg.port, cfg.token) if cfg.lan and cfg.token else []
         if not urls:
             return self._error(404, "home network is off")
         try:

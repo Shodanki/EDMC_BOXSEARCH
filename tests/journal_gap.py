@@ -46,7 +46,7 @@ except ImportError:
 
 import plugin_pkg  # noqa: E402
 load = plugin_pkg.import_plugin()
-from SHBOXSEARCH import cockpitinfo, journalgap, maintenance, panel, planning, state, uithread  # noqa: E402
+from SHBOXSEARCH import cockpitinfo, eddcheck, journalgap, maintenance, panel, planning, state, uithread  # noqa: E402
 from SHBOXSEARCH.sysdb import SystemDB  # noqa: E402
 
 fails = 0
@@ -150,6 +150,11 @@ uithread._ui = lambda f, *a, **k: f()
 uithread._run_async = lambda fn, *a, **k: None
 for name in ("_request_route", "_maybe_extend", "_update_route_targets"):
     setattr(planning, name, lambda *a, **k: None)
+# M13 (5.0.1): the arrival started the EDD backfill on a worker, which asked
+# the developer's real EDDSystem.sqlite and wrote into ST.db while the test
+# closed it (1 run in 25 crashed, 5 logged "closed database") - not the
+# subject here, so no EDD file at all
+eddcheck._edd = lambda: None
 ST = state.ST
 ST.overlay = None
 journalgap.WATCH = journalgap.Watch()
@@ -235,8 +240,12 @@ try:
         check(ST.journal_gap == "" and not cockpitinfo.BOARD.has("journal"),
               "a new event from EDMC: warning gone from the panel and the overlay")
         check(any(r["kind"] == "embark" for r in ST.db.marks_of(A, "Gap 1")), "and EDMC's events are stored again")
-        ST.db.cx.close()
-        ST.db = None
+        for t in threading.enumerate():              # no worker may outlive the database
+            if t.name.startswith("SHBOX-") and t is not threading.current_thread():
+                t.join(10)
+        with ST.lock:
+            ST.db.cx.close()
+            ST.db = None
 except Exception:
     import traceback
     traceback.print_exc()

@@ -79,6 +79,13 @@ class TestQrEndpoint(_Base):
         return urllib.request.urlopen(self.base + "/api/settings/qr?token=qr-token" + q, timeout=5)
 
     def test_svg_is_the_address(self):
+        # M13 (audit 21.11.): this timed out in 1 of 4 full runs - every QR
+        # code asked the firewall (netsh) for the settings page; it must not
+        from unittest import mock
+        with mock.patch.object(setup, "firewall_rule_ok", side_effect=AssertionError("netsh for a QR")):
+            self._svg_is_the_address()
+
+    def _svg_is_the_address(self):
         with self._get() as r:
             self.assertTrue(r.headers["Content-Type"].startswith("image/svg+xml"))
             body = r.read().decode("utf-8")
