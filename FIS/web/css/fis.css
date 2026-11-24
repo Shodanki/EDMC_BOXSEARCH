@@ -1621,6 +1621,23 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 .jp-spansh summary { cursor: pointer; }
 .jp-paste { width: 100%; box-sizing: border-box; font: 12px var(--font-mono); }
 
+/* -- EQ1 (5.1.0) EQUIPMENT: the modules in storage, the ships they fit */
+.eq-grid { grid-template-columns: minmax(0, 2.2fr) minmax(260px, 1fr); }
+.eq-list { max-height: 62vh; }
+.eq-tab td { vertical-align: top; }
+.eq-tab tr.away td:first-child div:first-child { color: var(--dim); }
+.eq-tabs button { font-size: .85em; }
+.eq-q, .eq-pick { font-size: 12px; padding: 2px 4px; }
+.eq-q { min-width: 160px; flex: 0 1 240px; }
+.eq-ship { padding: 4px 0; border-bottom: 1px solid rgba(var(--dim-rgb), .18); }
+.eq-ship.sel { background: rgba(var(--green-rgb), .08); }
+.eq-sn, .eq-place { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.eq-place { display: block; padding: 2px 0; }
+.eq-place.sel, .eq-ship.sel .eq-sn { text-decoration: underline; }
+.eq-links { float: right; }
+.eq-links a { color: var(--cyan); }
+@media (max-width: 1100px) { .eq-grid { grid-template-columns: 1fr; } }
+
 /* TB1 (5.0.1, user 20.11.): every table, every page, every theme - a column
    of numbers (any cell td.num) is centred, its heading with it; a text
    column (names, dates, notes) keeps heading and cells left, so names stay

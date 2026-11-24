@@ -71,6 +71,9 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "Market", "DockingGranted", "DockingDenied",
           # a nav beacon handed over every body of the system (SYSTEM hint)
           "NavBeaconScan",
+          # EQ1 (5.1.0): what was stored, retrieved, sold or sent off since the
+          # last storage list (fis/equipment.py reads the list itself)
+          "ModuleStore", "MassModuleStore", "ModuleBuy", "ModuleRetrieve", "ModuleSellRemote", "FetchRemoteModule",
           # unsold exploration data: which bodies you scanned (kept slim)
           "Scan",
           # 5.0 EA2: bio rates and Brain Trees also from the EDDiscovery archive

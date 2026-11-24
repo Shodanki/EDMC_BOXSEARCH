@@ -35,6 +35,12 @@ EVENTS = [
 ]
 
 
+def _mining_js():
+    with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "js", "views",
+                           "mining.js"), encoding="utf-8") as fh:
+        return fh.read()
+
+
 class MiningTest(unittest.TestCase):
     def test_last_session(self):
         now = parse_ts("2026-05-30T07:20:00Z")
@@ -161,14 +167,12 @@ class MiningTest(unittest.TestCase):
         self.assertEqual(plans[0]["spread_of"], mining.SPREAD_WINDOW)
 
     def test_collector_wave_singular(self):
-        js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "js", "views",
-                               "mining.js"), encoding="utf-8").read()
+        js = _mining_js()
         self.assertIn("({n} wave)", js)                         # singular, not "1 waves"
 
     def test_tritium_only_under_live(self):
         """User's test 24.11.: TRITIUM -> CARRIER stood under LIVE and HISTORY."""
-        js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "js", "views",
-                               "mining.js"), encoding="utf-8").read()
+        js = _mining_js()
         i = js.index('if (tab === "history") {')
         j = js.index('} else if (tab === "places") {', i)
         self.assertNotIn("tritium()", js[i:j])
