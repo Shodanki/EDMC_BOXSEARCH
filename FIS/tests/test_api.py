@@ -619,6 +619,29 @@ class TestSettings(_Base):
         self.assertIn("language = de", ini)
         self.assertIn("open_browser = false", ini)
 
+    def test_post_odd_numbers_and_failures_answer(self):
+        """A2 (audit 21.11.): {"sell_mcr": 1e400} is inf after json.loads,
+        int(inf) raised OverflowError and do_POST had no guard - the
+        connection broke instead of an answer. Now 400 for the bad limit and
+        500 for any other failure of a writing call."""
+        from unittest import mock
+        from fis import server
+        hdr = {"X-FIS-Settings": "1", "Origin": self.base}
+        before = dict(self.cfg.unsold)
+        for bad in (1e400, -1e400, "nan", [1], {"a": 1}):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                self._post({"unsold": {"sell_mcr": bad}}, hdr)
+            self.assertEqual(e.exception.code, 400, bad)
+            e.exception.close()
+        self.assertEqual(self.cfg.unsold, before)
+        boom = mock.Mock(side_effect=RuntimeError("boom"))
+        with mock.patch.dict(server._POST_ROUTES, {"/api/settings": boom}),                 mock.patch("traceback.print_exc"):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                self._post({"language": "en"}, hdr)
+        self.assertEqual(e.exception.code, 500)
+        self.assertNotIn(b"boom", e.exception.read())
+        e.exception.close()
+
     def test_controls_only_when_switched_on(self):
         """FG1: off by default - then the Bindings folder is not even read;
         on (saved in fis.ini), the bindings and the active fire group."""

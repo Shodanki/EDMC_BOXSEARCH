@@ -810,7 +810,18 @@ class Handler(BaseHTTPRequestHandler):
         fn = _POST_ROUTES.get(url.path)
         if fn is None:
             return self._error(404, "not found")
-        return fn(self, raw)
+        try:
+            return fn(self, raw)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            return None
+        except Exception:
+            # A2 (5.0.1): like do_GET - a writing call that fails answers 500
+            # instead of dropping the connection; the details stay in the console
+            traceback.print_exc()
+            try:
+                return self._error(500, "internal error - see the FIS console")
+            except OSError:
+                return None
 
     def _post_settings(self, raw: bytes) -> None:
         """POST /api/settings: only from the game PC, only from the FIS page.

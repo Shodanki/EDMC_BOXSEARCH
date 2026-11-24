@@ -199,7 +199,7 @@ class Config:
                 continue
             try:
                 n = int(float(str(v).strip()))
-            except ValueError:
+            except (ValueError, OverflowError):     # A2: 1e400 is inf, int(inf) overflows
                 ok = False
                 continue
             self.unsold[k] = min(hi, max(lo, n))
