@@ -197,6 +197,16 @@ class StatsLayoutTest(unittest.TestCase):
             for m in re.finditer(r'el\("td", \{ (class: "([^"]*)", )?text: (fmt|CR|cr)\(', js):
                 self.assertIn("num", m.group(2) or "", "%s: a number cell without num" % os.path.basename(path))
 
+    def test_briefing_values_stay_on_one_line(self):
+        """BF1 (5.0.1): at 1600 px "112.0 ly" in NAVPOINTS and "5/6 · 83.3 %"
+        in SPHERE broke over two lines; the bars keep one length."""
+        css = self._read("css", "fis.css")
+        self.assertIn(".hbar { display: grid; grid-template-columns: 11ch 1fr minmax(13ch, max-content);", css)
+        self.assertIn("white-space: nowrap; }   /* BF1: \"5/6", css)
+        self.assertIn(".navlist .nl-ly { text-align: right; color: var(--green); white-space: nowrap; }", css)
+        self.assertEqual(css.count("3ch minmax(7ch, max-content) auto"), 2)          # base and station
+        self.assertNotIn("3ch 7ch auto", css)
+
     def test_bio_rates_and_learning_rows(self):
         js, css = self._read("js", "views", "statistics.js"), self._read("css", "fis.css")
         # BIO RATES: not the month row's fixed 64 px name column
