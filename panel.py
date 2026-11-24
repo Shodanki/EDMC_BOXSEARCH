@@ -98,7 +98,7 @@ def plugin_app(parent: tk.Frame) -> tk.Frame:
     uithread._ui_target = _frame.winfo_toplevel()  # updates sent by worker threads
     uithread._ui_target.bind(uithread._UI_EVENT, uithread._ui_drain, add="+")
 
-    _v_status = tk.StringVar(value="ready")
+    _v_status = tk.StringVar(value=ST.status or "ready")   # a note from the start (LM1)
     _v_target = tk.StringVar(value="-")
     _v_kind = tk.StringVar(value="survey inactive")
     _v_sys = tk.StringVar(value="-")

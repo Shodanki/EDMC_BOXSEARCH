@@ -53,6 +53,11 @@ def _journal_dir() -> Optional[str]:
     return None
 
 
+def lost_back_text(n: int) -> str:
+    """LM1: the panel's short note on loss marks no real death carries."""
+    return "%d false loss mark%s taken back" % (n, "" if n == 1 else "s")
+
+
 def _import_journals(max_files: int = 0) -> None:
     d = _journal_dir()
     if not d:
@@ -66,8 +71,10 @@ def _import_journals(max_files: int = 0) -> None:
     # the lock is taken per chunk inside, never for the whole replay
     res = ST.db.import_journals(d, max_files=max_files, progress=prog, lock=ST.lock)
     logger.info("journals replayed: %s", res)
-    panel._set_status("journals: %d files, %d lines, %d events"
-                      % (res["files"], res["lines"], res["events"]))
+    txt = "journals: %d files, %d lines, %d events" % (res["files"], res["lines"], res["events"])
+    if res.get("false_losses"):
+        txt += " - %s" % lost_back_text(res["false_losses"])
+    panel._set_status(txt)
     if ST.active:
         planning._rebuild_plan()
 

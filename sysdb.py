@@ -645,6 +645,7 @@ class SystemDB:
         self.cx = sqlite3.connect(path, check_same_thread=False, timeout=15.0)
         self.cx.row_factory = sqlite3.Row
         self.cx.executescript(SCHEMA)
+        self.lost_taken_back = 0                # LM1: false loss marks taken back at this start
         self._migrate()
         self.cx.execute("INSERT OR REPLACE INTO meta(k,v) VALUES ('schema',?)",
                         (str(SCHEMA_VERSION),))
@@ -761,6 +762,10 @@ class SystemDB:
         self._repair_once("fix_boxel_end410", self.repair_boxel_ends,
                           "database repair (boxel ends below a known system): %s",
                           "database repair (boxel ends) failed")
+        try:                                    # LM1: on every start, not once
+            self.lost_taken_back = self.repair_false_losses()
+        except Exception:
+            logger.exception("database repair (false loss marks) failed")
 
     def _repair_once(self, key: str, repair: Callable[[], Any], done: str, failed: str) -> None:
         """Run one repair unless meta key says it ran; the repair sets the key."""
@@ -1510,8 +1515,12 @@ class SystemDB:
             self.cx.execute("UPDATE cmdr_systems SET fss_complete=1 WHERE fid=? AND sys_id64=?",
                             (self.fid, a))
         else:
-            self.cx.execute("UPDATE cmdr_systems SET visited_ts=COALESCE(visited_ts,?) "
-                            "WHERE fid=? AND sys_id64=?", (ts or _now(), self.fid, a))
+            # the FIRST arrival, also when a replay brings an older one after
+            # a live one (LM1 judges loss marks by it)
+            t = ts or _now()
+            self.cx.execute("UPDATE cmdr_systems SET visited_ts=CASE WHEN visited_ts IS NULL "
+                            "OR visited_ts > ? THEN ? ELSE visited_ts END "
+                            "WHERE fid=? AND sys_id64=?", (t, t, self.fid, a))
 
     def _cmdr_body(self, a: Optional[int], bid: Optional[int], **cols) -> None:
         """This commander's exploration of a body. was_* keep the lowest value
@@ -1746,6 +1755,90 @@ class SystemDB:
             "AND c.body_id=bodies.body_id AND c.lost_what IS NOT NULL%s)" % where,
             (before, before) + tuple(args))
         return cur.rowcount or 0
+
+    def repair_false_losses(self, deaths: Optional[Set[Tuple[Any, str]]] = None,
+                            minutes: Optional[Set[str]] = None) -> int:
+        """
+        LM1 (5.0.1): take back the loss marks no real death carries.
+
+        A mark is valid only if a real Died made it and the lost work was
+        open before that death. A mark is false when
+          * the commander first arrived in its system after lost_ts - the
+            work there only came after the death. 22.11.2026: "Replay
+            journals" met the real death of 11.07. again, and up to 5.0.0 it
+            took what was open that day, also what the game had cut from its
+            rewritten journal (26 bodies stayed "lost" after the sale);
+          * after a replay (deaths and minutes given): the replay read journal
+            events of the minute of lost_ts but no Died of this commander at
+            that time.
+        The work counts as done again: sold when the system's data (scan,
+        map) or organic data (bio) was sold since, otherwise carried open.
+        Runs on every start and after every replay; returns how many bodies.
+        """
+        rows = self.cx.execute(
+            "SELECT b.rowid, b.*, c.visited_ts AS first_ts FROM cmdr_bodies b "
+            "LEFT JOIN cmdr_systems c ON c.fid=b.fid AND c.sys_id64=b.sys_id64 "
+            "WHERE b.lost_what IS NOT NULL AND b.lost_ts IS NOT NULL").fetchall()
+        touched = set()
+        n = 0
+        for r in rows:
+            lts = r["lost_ts"]
+            after = bool(r["first_ts"]) and r["first_ts"] > lts
+            no_death = deaths is not None and minutes is not None and lts[:16] in minutes \
+                and (r["fid"], lts) not in deaths
+            if after or no_death:
+                self._take_back_loss(r)
+                touched.add((r["fid"], r["sys_id64"], lts))
+                n += 1
+        for fid, a, lts in touched:
+            self._loss_system_back(fid, a, lts)
+        if n:
+            self.cx.commit()
+            logger.info("false loss marks taken back: %d bodies in %d systems (no death carries them)",
+                        n, len({(f, a) for f, a, _ in touched}))
+        return n
+
+    def _take_back_loss(self, r: sqlite3.Row) -> None:
+        """LM1: a false loss mark goes; its scan / map / species count as done
+        again - sold if a sale came since, else carried open."""
+        what = self._lost_list(r["lost_what"])
+        ref = max(r["first_ts"] or "", r["lost_ts"] or "")
+        sys_sold = self.cx.execute(
+            "SELECT 1 FROM cmdr_bodies WHERE fid=? AND sys_id64=? AND rowid<>? AND "
+            "(scan_sold=1 OR map_sold=1) LIMIT 1", (r["fid"], r["sys_id64"], r["rowid"])).fetchone() is not None
+        sets: Dict[str, Any] = {"lost_what": None, "lost_ts": None}
+        for w, done in (("scan", "scanned"), ("map", "mapped")):
+            if w in what:
+                sets[done] = 1
+                sets[w + ("_sold" if sys_sold else "_open")] = 1
+        bios = [w[4:] for w in what if w.startswith("bio:")]
+        if bios:
+            species = [x for x in self._lost_list(r["bio_species"]) if isinstance(x, dict)]
+            have = {x.get("species") for x in species}
+            species += [{"species": sp, "genus": None, "variant": None, "ts": ref} for sp in bios if sp not in have]
+            sets["bio_species"], sets["organics"] = json.dumps(species), len(species)
+            bio_sold = self.cx.execute("SELECT 1 FROM earnings WHERE kind='organic' AND ts>? LIMIT 1",
+                                       (ref,)).fetchone() is not None
+            if not bio_sold:
+                open_ = self._lost_list(r["bio_open"])
+                sets["bio_open"] = json.dumps(open_ + [sp for sp in bios if sp not in open_])
+        if any(k.endswith("_open") for k in sets):
+            sets["open_ts"] = max(r["open_ts"] or "", ref)
+        self.cx.execute("UPDATE cmdr_bodies SET %s WHERE rowid=?" % ",".join("%s=?" % k for k in sets),
+                        list(sets.values()) + [r["rowid"]])
+
+    def _loss_system_back(self, fid: str, a: int, lts: str) -> None:
+        """LM1: the system's own loss mark goes with its last false body mark;
+        its FSS counts as complete again when every body is scanned."""
+        if self.cx.execute("SELECT 1 FROM cmdr_bodies WHERE fid=? AND sys_id64=? AND lost_what IS NOT NULL "
+                           "LIMIT 1", (fid, a)).fetchone() is not None:
+            return
+        cnt = self.cx.execute("SELECT body_count FROM systems WHERE id64=?", (a,)).fetchone()
+        done = self.cx.execute("SELECT COUNT(*) FROM cmdr_bodies WHERE fid=? AND sys_id64=? AND scanned=1",
+                               (fid, a)).fetchone()[0]
+        fss = 1 if cnt is not None and cnt[0] and done >= cnt[0] else 0
+        self.cx.execute("UPDATE cmdr_systems SET lost_ts=NULL, fss_complete=MAX(fss_complete,?) "
+                        "WHERE fid=? AND sys_id64=? AND lost_ts=?", (fss, fid, a, lts))
 
     def repair_lost_ticks(self) -> int:
         """One-time: ticks older than the loss of their body (4.8 installs
@@ -3435,6 +3528,8 @@ class SystemDB:
             files = files[-max_files:]
         res = {"files": len(files), "events": 0, "lines": 0, "errors": 0}
         ctx: Tuple[Optional[str], Optional[str]] = (None, None)   # replay's commander
+        # LM1: the deaths the replay met (commander, time) and the minutes it read
+        seen: Tuple[Set[Tuple[Any, str]], Set[str]] = (set(), set())
         for i, fn in enumerate(files, 1):
             if progress:
                 try:
@@ -3463,11 +3558,7 @@ class SystemDB:
                     stop = min(pos + self.REPLAY_CHUNK, len(lines))
                     while pos < stop:
                         res["lines"] += 1
-                        try:
-                            res["events"] += self.ingest_journal_event(
-                                json.loads(lines[pos]))
-                        except Exception:
-                            res["errors"] += 1
+                        self._replay_line(lines[pos], res, seen)
                         pos += 1
                         if time.perf_counter() > t_end:
                             break
@@ -3479,7 +3570,23 @@ class SystemDB:
                     # thread takes the lock straight back and a waiting
                     # thread can starve for seconds.
                     time.sleep(self.REPLAY_PAUSE)
+        with guard:
+            res["false_losses"] = self.repair_false_losses(*seen)
         return res
+
+    def _replay_line(self, line: str, res: Dict[str, int], seen: Tuple[Set[Tuple[Any, str]], Set[str]]) -> None:
+        """One journal line of a replay; notes its minute and a death (LM1)."""
+        try:
+            entry = json.loads(line)
+            res["events"] += self.ingest_journal_event(entry)
+        except Exception:
+            res["errors"] += 1
+            return
+        ts = entry.get("timestamp")
+        if isinstance(ts, str):
+            seen[1].add(ts[:16])
+            if entry.get("event") == "Died":
+                seen[0].add((self.fid, ts))
 
 
 # journal event -> its handler in SystemDB (4.12)
