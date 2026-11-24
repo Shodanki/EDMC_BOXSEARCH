@@ -1501,6 +1501,7 @@ def build_surface(db: Database, live: Optional[Dict[str, Any]],
     """The SURFACE view of a body: track, marks, samples; on foot with the life
     support."""
     out = _build_surface(db, live, id64, body)
+    _surface_bio_all(db, archive, out)
     life = life_support((live or {}).get("status") or {})
     if life:
         out = dict(out, life=life, suit=(live or {}).get("suit"))
@@ -1509,6 +1510,53 @@ def build_surface(db: Database, live: Optional[Dict[str, Any]],
     if rh:
         out = dict(out, rhino=rh)
     return out
+
+
+def _surface_bio_all(db: Database, archive: Any, out: Dict[str, Any]) -> None:
+    """
+    5.1.0 (bio display, variant 1): every collectable bio of the body, one
+    row each - finished, begun, not started (biosig.species_rows, the same
+    logic as the overlay) - with its value: what your own sales paid for the
+    species, or "~" the mean of your sales of its genus.
+    """
+    p = plugin()
+    if p.biosig is None or not out.get("body") or not out.get("id64"):
+        return
+    brow = db.body_by_name(out["id64"], out["body"])
+    if brow is None:
+        return
+    keys = set(brow.keys())
+
+    def col(k: str) -> Any:                          # an older plugin database lacks columns
+        return brow[k] if k in keys else None
+
+    analysed = [a for a in _json(col("bio_species"), []) if isinstance(a, dict)]
+    analysed += [{"species": b["species"], "genus": b["genus"]} for b in out.get("bio") or [] if b.get("done")]
+    progress = [{"species": b["species"], "genus": b["genus"],
+                 "samples": b["samples"] if b.get("samples") is not None else len(b.get("points") or [])}
+                for b in out.get("bio") or [] if not b.get("done")]
+    genera = [g.strip() for g in (col("genuses") or "").split(",") if g.strip()]
+    try:
+        seen = db.codex_species(out["id64"], brow["body_id"]).get(brow["body_id"], [])
+    except Exception:                                # no signals table yet
+        seen = []
+    rows = p.biosig.species_rows(analysed, progress, genera, seen)
+    try:
+        values = archive.organic_values() if archive is not None else {}
+    except Exception:  # pragma: no cover - journals are best effort
+        values = {}
+    by_genus: Dict[str, List[int]] = {}
+    for name, v in values.items():
+        if v.get("value"):
+            by_genus.setdefault(p.biosig.genus_of(name) or "", []).append(int(v["value"]))
+    for r in rows:
+        v = values.get(r["species"] or "")
+        if v and v.get("value"):
+            r["value"] = int(v["value"])
+        elif by_genus.get(r["genus"] or ""):
+            vals = by_genus[r["genus"]]
+            r["value"], r["est"] = int(round(sum(vals) / len(vals))), True
+    out["bio_all"] = {"signals": int(col("sig_bio") or 0), "rows": rows}
 
 
 def backpack(journal_dir: Optional[str]) -> Optional[Dict[str, Any]]:

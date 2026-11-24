@@ -33,6 +33,11 @@ import math
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+if __package__:     # inside the plugin package (EDMC)
+    from .biosig import DONE_MARK, species_rows
+else:               # on its own: tests, the FIS
+    from biosig import DONE_MARK, species_rows
+
 Line = Tuple[str, str]
 
 # kinds worth finding again (sites stay where they are; bio colonies too)
@@ -357,7 +362,7 @@ def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
                   sig_bio: Optional[int] = None, genera: Sequence[str] = (),
                   colours: Optional[Dict[str, str]] = None, limit: int = 6,
                   orbit: bool = False, lost: Sequence[str] = (),
-                  now: Optional[float] = None) -> List[Line]:
+                  now: Optional[float] = None, hide_done: bool = False) -> List[Line]:
     """
     The NAV block: one line per point, nearest first within its group -
     parked SRV, parked ship, unfinished species, species lost in a crash,
@@ -368,6 +373,9 @@ def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
           (cmdr_bodies.lost_what: "scan", "map", "bio:<species>"). A lost
           species is not "done" - it counts as "lost - redo" and points to
           where it was sampled, until a new analysis clears the mark.
+    5.1.0: a finished species gets a pale line "✓ <species> 3/3" (the own
+    overlay window strikes it through); hide_done leaves those lines and the
+    points of finished species out.
     """
     col = colours or {}
     c_head, c_data = col.get("head", "#3EF2E0"), col.get("data", "#7CFF6B")
@@ -416,13 +424,20 @@ def compass_lines(pos: Dict[str, Any], marks: Iterable[Any], radius: float,
             plat, plon = s["points"][-1]
             gone.append(entry("%s LOST" % s["species"][:14], plat, plon, c_warn))
     rows += [l for _d, l in sorted(gone, key=lambda t: t[0])]
+    # 5.1.0 (bio display, variant 1): finished species, paler - the state
+    # logic the FIS's PLANET uses (biosig.species_rows)
+    finished = [r for r in species_rows([x for x in st["species"] if x["analysed"] and x["species"] not in lost_sp],
+                                        summ["in_progress"]) if r["state"] == "done"]
+    if not hide_done:
+        rows += [(DONE_MARK + "%s 3/3" % r["species"][:LINE_MAX - 6], c_dim) for r in finished]
     # a codex entry of a species still being sampled is the same point as
     # its sample line; one of an analysed species stays (Brain Trees are
     # worth coming back to for their materials) but steps back in colour
     done = {s["species"] for s in st["species"] if s["analysed"]} - lost_sp
     sites = [entry(s["label"], s["lat"], s["lon"],
                    c_dim if s["kind"] == "screenshot" or s["label"] in done else c_data)
-             for s in _merge_sites(st["sites"], radius) if s["label"] not in busy]
+             for s in _merge_sites(st["sites"], radius)
+             if s["label"] not in busy and not (hide_done and s["label"] in done)]
     rows += [l for _d, l in sorted(sites, key=lambda t: t[0])]
 
     if not rows and not summ["open_genera"] and not lost_sp:

@@ -21,14 +21,19 @@ Pure Python, no EDMC: used by the plugin (sysdb) and the FIS.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 # genera whose one signal can stand for several species on a body
 MULTI_SPECIES_GENERA = ("Brain Trees",)
 # how their species names end ("Lividum Brain Tree") -> the genus
 _SPECIES_SUFFIX = {"Brain Tree": "Brain Trees"}
+# 5.1.0: an overlay line of a finished species starts with this; the own
+# overlay window draws it struck through instead, EDMCModernOverlay as it is
+DONE_MARK = "✓ "
+_ORDER = {"done": 0, "begun": 1, "todo": 2}
 
-__all__ = ["MULTI_SPECIES_GENERA", "species_name", "genus_of", "open_bio", "species_per_signal"]
+__all__ = ["MULTI_SPECIES_GENERA", "DONE_MARK", "species_name", "genus_of", "open_bio",
+           "species_per_signal", "species_rows"]
 
 
 def species_name(label: Optional[str]) -> str:
@@ -87,6 +92,51 @@ def open_bio(signals: int, genera: Iterable[str], analysed: Iterable[Dict[str, A
         seen_only = [g for g in seen_by if g not in done]
         n = max(0, int(signals or 0) - len(done) - len(seen_only)) + len(open_species)
     return {"open": n, "open_species": open_species, "multi": multi}
+
+
+def species_rows(analysed: Iterable[Dict[str, Any]], progress: Iterable[Dict[str, Any]] = (),
+                 genera: Iterable[str] = (), seen: Iterable[str] = ()) -> List[Dict[str, Any]]:
+    """
+    5.1.0 (bio display, variant 1): every collectable bio of one body, one
+    row each - the state logic the FIS's PLANET and the overlay share.
+
+    analysed: species analysed here, {"species", "genus"}
+    progress: species begun and not analysed, {"species", "genus", "samples"}
+    genera:   the genera the DSS named
+    seen:     species names from codex entries on this body
+
+    Rows {"species", "genus", "state", "samples"} in the order finished
+    ("done", 3/3), begun ("begun", 1-2/3), not started ("todo", 0/3). A
+    "todo" row is a species the codex saw (several species of one signal,
+    Brain Trees) or a genus none of whose species is done or begun - then
+    "species" is None.
+    """
+    rows: List[Dict[str, Any]] = []
+    have: Set[str] = set()
+    covered: Set[str] = set()
+    for state, src in (("done", analysed), ("begun", progress)):
+        for a in src:
+            sp = species_name(a.get("species"))
+            if not sp or sp in have:
+                continue
+            g = a.get("genus") or genus_of(sp)
+            have.add(sp)
+            covered.add(g or "")
+            rows.append({"species": sp, "genus": g, "state": state,
+                         "samples": 3 if state == "done" else int(a.get("samples") or 0)})
+    for label in seen:
+        sp = species_name(label)
+        g = genus_of(sp)
+        if sp and sp not in have and g in MULTI_SPECIES_GENERA:
+            have.add(sp)
+            covered.add(g or "")
+            rows.append({"species": sp, "genus": g, "state": "todo", "samples": 0})
+    for g in genera:
+        if g and g not in covered:
+            covered.add(g)
+            rows.append({"species": None, "genus": g, "state": "todo", "samples": 0})
+    rows.sort(key=lambda r: _ORDER[r["state"]])
+    return rows
 
 
 def species_per_signal(finds: Iterable[Iterable[str]]) -> Dict[str, Any]:

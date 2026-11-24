@@ -91,6 +91,7 @@ CFG = {
     "overlay_pos": "%s_overlay_pos" % PLUGIN_NAME,
     "overlay_brief": "%s_overlay_brief" % PLUGIN_NAME,
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
+    "overlay_bio_hide_done": "%s_overlay_bio_hide_done" % PLUGIN_NAME,   # 5.1.0: finished species out
     "overlay_mining": "%s_overlay_mining" % PLUGIN_NAME,
     "overlay_state": "%s_overlay_state" % PLUGIN_NAME,       # 5.0 (own-3): gear, lights, hardpoints
     "overlay_suit": "%s_overlay_suit" % PLUGIN_NAME,         # 5.0 (own-2): suit heat / cold, time left

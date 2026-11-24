@@ -857,6 +857,13 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .sr-line.c-red::before { color: var(--red); } .sr-line.c-amber::before { color: var(--amber); } .sr-line.c-green::before { color: var(--green); }
 .sf-active { font-weight: bold; }
 .sf-dim { opacity: .55; }
+/* 5.1.0 bio display (variant 1): every bio of the body with its value -
+   finished paler, begun as before, not started in the theme's violet */
+.sf-bio-h { font: 600 12px var(--font-display); letter-spacing: .1em; color: var(--cyan); margin-top: 6px; }
+.sf-bio { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.sf-bio > div { min-width: 0; }
+.sf-bio.sf-done { opacity: .45; }
+.sf-val { color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .bio-body.bio-done { opacity: .5; }
 
 /* ---------------------------------------------------------------- display profiles (E6/P7)

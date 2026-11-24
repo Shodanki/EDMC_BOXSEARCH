@@ -368,6 +368,52 @@ function compass(d) {
 }
 
 
+// a species being sampled: samples, distance to the last one, the colony range
+function begunRow(b, d) {
+  const n = b.samples !== undefined ? b.samples : b.points.length;
+  const txt = b.nearest_m !== undefined
+    ? b.species + " " + n + "/3 · " + fmt(b.nearest_m, 0) + " m / " + (b.range_m || "?") + " m"
+    : b.species + " · " + n + "/3";
+  return el("div", { class: (b.ok ? "c-green" : "c-amber") + (b.active ? " sf-active" : d.active ? " sf-dim" : ""),
+    title: b.active ? t("species being worked on - bright on the map") : "",
+    text: (b.active ? "▶ " : "") + (b.ok ? "OK  " : "▲  ") + txt });
+}
+
+function bioValue(r) {
+  if (!r.value) return el("span", { class: "sf-val" });
+  return el("span", { class: "sf-val", text: (r.est ? "~" : "") + fmt(r.value / 1e6, 1) + " M",
+    title: r.est ? t("estimated from your sales of this genus") : t("paid in your own sales") });
+}
+
+// 5.1.0 (bio display, variant 1): every collectable bio of the body, with
+// its value - finished paler, begun as before, not started violet
+function bioRows(d) {
+  const all = d.bio_all;
+  if (!all || !all.rows.length) {
+    return (d.bio || []).map(b => b.done
+      ? el("div", { class: "c-green small", text: "✔ " + t("{s} analysed", { s: b.species }) }) : begunRow(b, d));
+  }
+  const live = new Map((d.bio || []).map(b => [b.species, b]));
+  const out = [el("div", { class: "sf-bio-h", text: t("BIO · {n} SIGNALS", { n: Math.max(all.signals, all.rows.length) }) })];
+  for (const r of all.rows) {
+    const name = r.species || r.genus;
+    if (r.state === "begun" && live.has(r.species)) {
+      out.push(el("div", { class: "sf-bio" }, begunRow(live.get(r.species), d), bioValue(r)));
+    } else if (r.state === "begun") {
+      out.push(el("div", { class: "sf-bio c-amber" }, el("span", { text: "▲  " + name + " " + r.samples + "/3" }), bioValue(r)));
+    } else if (r.state === "done") {
+      out.push(el("div", { class: "sf-bio sf-done" }, el("span", { text: "✔ " + name + " 3/3" }), bioValue(r)));
+    } else {
+      out.push(el("div", { class: "sf-bio c-violet" }, el("span", { text: "○ " + name + " 0/3" }), bioValue(r)));
+    }
+  }
+  if (all.signals > all.rows.length) {
+    out.push(el("div", { class: "small c-dim", text: t("{n} more signals - map the body (DSS) for the genera",
+      { n: all.signals - all.rows.length }) }));
+  }
+  return out;
+}
+
 function render() {
   if (!root) return;
   info.replaceChildren(); list.replaceChildren();
@@ -397,16 +443,7 @@ function render() {
   }
   // 4.12: dropped from a hover or sent away - the ship has flown off
   if (data.here && data.ship_away && !(data.me && data.me.mode === "ship")) info.append(shipAway(data.ship_away));
-  for (const b of data.bio) {
-    if (b.done) { info.append(el("div", { class: "c-green small", text: "✔ " + t("{s} analysed", { s: b.species }) })); continue; }
-    const n = b.samples !== undefined ? b.samples : b.points.length;
-    const txt = b.nearest_m !== undefined
-      ? b.species + " " + n + "/3 · " + fmt(b.nearest_m, 0) + " m / " + (b.range_m || "?") + " m"
-      : b.species + " · " + n + "/3";
-    info.append(el("div", { class: (b.ok ? "c-green" : "c-amber") + (b.active ? " sf-active" : data.active ? " sf-dim" : ""),
-      title: b.active ? t("species being worked on - bright on the map") : "",
-      text: (b.active ? "▶ " : "") + (b.ok ? "OK  " : "▲  ") + txt }));
-  }
+  info.append(...bioRows(data));
   const ms = [...data.marks].reverse().slice(0, 60);
   for (const m of ms) {
     list.append(el("div", { class: "sf-row" },

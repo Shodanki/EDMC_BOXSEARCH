@@ -526,7 +526,8 @@ def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> N
         logger.info("surface | the hovering ship has flown off (SRV over %.0f m away) - recall it",
                     surfacenav.SHIP_LEAVE_M)
     lines = surfacenav.compass_lines(pos, c[1], radius, sig_bio=c[2], genera=c[3],
-                                     colours=overlay.COL, orbit=not low, lost=c[4], now=now)
+                                     colours=overlay.COL, orbit=not low, lost=c[4], now=now,
+                                     hide_done=cfg_bool(CFG["overlay_bio_hide_done"], False))
     if lines:
         ov.show_nav(lines, seconds=4)
 
