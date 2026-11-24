@@ -115,6 +115,29 @@ function fromPick(p) {
   if (p.kind === "favcarrier") return { kind: "system", name: p.c.system, id: p.c.id, x: p.c.x, y: p.c.y, z: p.c.z };
   return null;
 }
+// 5.1.0: a label beside a point on the side (right, left, above, below) that
+// keeps the most angle to the lines leaving it, amber with a dark rim
+const SIDES = [[0, "start", 1, 4], [Math.PI, "end", -1, 4], [-Math.PI / 2, "center", 0, -12], [Math.PI / 2, "center", 0, 18]];
+function labelAway(g, text, x, y, lines, gap) {
+  const angs = lines.map(([dx, dy]) => Math.atan2(dy, dx));
+  const room = (a) => angs.length ? Math.min(...angs.map(b => { const d = Math.abs(a - b) % (2 * Math.PI); return Math.min(d, 2 * Math.PI - d); })) : Math.PI;
+  const [, align, sx, dy] = SIDES.reduce((best, s) => room(s[0]) > room(best[0]) + 0.01 ? s : best, SIDES[0]);
+  g.font = "11px monospace"; g.textAlign = align;
+  g.lineWidth = 3; g.lineJoin = "round"; g.strokeStyle = alpha("panel", .85); g.strokeText(text, x + sx * gap, y + dy);
+  g.fillStyle = C.amber; g.fillText(text, x + sx * gap, y + dy);
+  g.textAlign = "start";
+}
+// where the dashed carrier path leaves the point: to the stops before and
+// after each stop at that spot (screen points, as vectors from it)
+function pathNeighbours(pts, x, y) {
+  const out = [];
+  const at = (p) => Math.hypot(p[0] - x, p[1] - y) <= 2;
+  pts.forEach((p, i) => {
+    if (!at(p)) return;
+    for (const q of [pts[i - 1], pts[i + 1]]) if (q && !at(q)) out.push([q[0] - x, q[1] - y]);
+  });
+  return out;
+}
 function carrierFocus() {
   const c = data && data.carrier_now;
   return c ? { kind: "carrier", name: c.system, id: c.id, x: c.x, y: c.y, z: c.z, carrier: c } : null;
@@ -415,17 +438,22 @@ function draw() {
   if (on.carrier && data.carrier_now) {
     const cn = data.carrier_now, [main, jump] = carrierTexts(cn);
     const [sx, sy] = toScreen(cn.x, cn.z);
+    // 5.1.0: the labels go where no dashed line leaves the point (they lay on
+    // the carrier path or the jump line), with a dark rim
+    const away = pathNeighbours(data.carrier.map(c => toScreen(c.x, c.z)), sx, sy);
+    let jumpV = null;
     if (jump && cn.jump.x !== undefined) {
       const [jx, jy] = toScreen(cn.jump.x, cn.jump.z);
       g.strokeStyle = C.amber; g.lineWidth = 1.5; g.setLineDash([6, 4]);
       g.beginPath(); g.moveTo(sx, sy); g.lineTo(jx, jy); g.stroke(); g.setLineDash([]);
       g.beginPath(); g.arc(jx, jy, 6, 0, Math.PI * 2); g.stroke();
-      g.fillStyle = C.amber; g.font = "11px monospace"; g.fillText(jump, jx + 9, jy + 14);
+      jumpV = [jx - sx, jy - sy];
+      labelAway(g, jump, jx, jy, [[sx - jx, sy - jy]], 10);
     }
     g.fillStyle = alpha("panel", .9); g.strokeStyle = C.amber; g.lineWidth = 1.5;
     g.fillRect(sx - 9, sy - 3, 18, 7); g.strokeRect(sx - 9, sy - 3, 18, 7);
     g.fillStyle = C.amber; g.fillRect(sx + 2, sy - 8, 4, 5);
-    g.font = "11px monospace"; g.fillText(main, sx + 13, sy + 4);
+    labelAway(g, main, sx, sy, away.concat(jumpV ? [jumpV] : []), 13);
     picks.push({ sx, sy, kind: "carriernow", c: cn, id: cn.id });
   }
   // K4: favourite carriers at their last known position - a star

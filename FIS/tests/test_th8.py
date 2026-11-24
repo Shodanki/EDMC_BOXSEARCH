@@ -136,6 +136,16 @@ class TH8Test(unittest.TestCase):
         self.assertIn('if (k === "nexthop") renderSide();', js)
         self.assertIn("for (const [k] of LAYERS) if (on[k] === undefined) on[k] = true;", js)
 
+    def test_galaxy_carrier_label_off_the_dashed_line(self):
+        """5.1.0: the carrier's label lay on its dashed path / jump line - it
+        now takes the side no line leaves on, with a dark rim."""
+        js = _read("js", "views", "galaxy.js")
+        self.assertIn("function labelAway(g, text, x, y, lines, gap)", js)
+        self.assertIn("function pathNeighbours(pts, x, y)", js)
+        self.assertIn("labelAway(g, main, sx, sy, away.concat(jumpV ? [jumpV] : []), 13);", js)
+        self.assertIn("labelAway(g, jump, jx, jy, [[sx - jx, sy - jy]], 10);", js)
+        self.assertNotIn("g.fillText(main, sx + 13, sy + 4)", js)
+
 
 if __name__ == "__main__":
     unittest.main()

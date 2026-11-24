@@ -69,7 +69,7 @@ feb077a1ed14e0da0f449ba461e785894c5d35c3258886c3b943602f821d5e06  FIS/web/js/vie
 b2052d284867ae47563b50b2c72f47aeb1ad53efbd04c5a5599cd5957a4f3295  FIS/web/js/views/carrier.js
 3a7fe418868682b784471a4b3fadc5b2c1bfbdd207ac7dc963a4105ccaa016d9  FIS/web/js/views/cockpit.js
 aaf8a9ebc3086c8754cdf56eca3bc136931381786a88b6d104efe9c4482ad5c4  FIS/web/js/views/equipment.js
-14ceb154c78729eea9dcf9f28829f9b0bfa59bfb3400c9ddf3021b30e847525d  FIS/web/js/views/galaxy.js
+e342fc76925da1a2fcbbfee92a4fbfc186874c42a64552bc292d02d10f707afa  FIS/web/js/views/galaxy.js
 4bc763d1b6f298fb0c1d8d807eec1b5185d38afdf4ad4b10e5af9eabbeb92e75  FIS/web/js/views/galaxy3d.js
 ef15d29587048b4680f928cd0e15e4bef0b8160625776326b85aae75930a3b69  FIS/web/js/views/inventory.js
 567221a9b0ba3606c2e2c0fec98f6d8fe842c9ac99304bb51819820d30a182c4  FIS/web/js/views/jumpplan.js
