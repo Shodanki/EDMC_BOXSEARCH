@@ -78,6 +78,25 @@ class TestData(_Base):
         self.assertEqual(h["systems"], 2)
 
 
+class TestDbPath(unittest.TestCase):
+    def test_hash_in_the_folder_name(self):
+        """M7 (audit 21.11.): the read-only URI took '#' in a folder name for
+        the start of a fragment and opened a different, missing file."""
+        d = os.path.join(tempfile.mkdtemp(), "Elite #1 & co")
+        os.makedirs(d)
+        path = os.path.join(d, "shboxsearch.sqlite")
+        cx = sqlite3.connect(path)
+        cx.execute("CREATE TABLE t (x)")
+        cx.execute("INSERT INTO t VALUES (42)")
+        cx.commit()
+        cx.close()
+        ro = Database(path).connect()
+        try:
+            self.assertEqual(ro.execute("SELECT x FROM t").fetchone()[0], 42)
+        finally:
+            ro.close()
+
+
 class TestModel(_Base):
     def test_system_positions_and_route(self):
         live = fed_tracker().snapshot()
@@ -619,6 +638,29 @@ class TestSettings(_Base):
         self.assertIn("language = de", ini)
         self.assertIn("open_browser = false", ini)
 
+    def test_post_odd_numbers_and_failures_answer(self):
+        """A2 (audit 21.11.): {"sell_mcr": 1e400} is inf after json.loads,
+        int(inf) raised OverflowError and do_POST had no guard - the
+        connection broke instead of an answer. Now 400 for the bad limit and
+        500 for any other failure of a writing call."""
+        from unittest import mock
+        from fis import server
+        hdr = {"X-FIS-Settings": "1", "Origin": self.base}
+        before = dict(self.cfg.unsold)
+        for bad in (1e400, -1e400, "nan", [1], {"a": 1}):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                self._post({"unsold": {"sell_mcr": bad}}, hdr)
+            self.assertEqual(e.exception.code, 400, bad)
+            e.exception.close()
+        self.assertEqual(self.cfg.unsold, before)
+        boom = mock.Mock(side_effect=RuntimeError("boom"))
+        with mock.patch.dict(server._POST_ROUTES, {"/api/settings": boom}),                 mock.patch("traceback.print_exc"):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                self._post({"language": "en"}, hdr)
+        self.assertEqual(e.exception.code, 500)
+        self.assertNotIn(b"boom", e.exception.read())
+        e.exception.close()
+
     def test_controls_only_when_switched_on(self):
         """FG1: off by default - then the Bindings folder is not even read;
         on (saved in fis.ini), the bindings and the active fire group."""
@@ -747,33 +789,82 @@ class TestLanToken(_Base):
         cls.srv.server_close()
         cls.cfg.lan = False
 
+    def _lan(self, path, **headers):
+        """A request as from the tablet: addressed to this PC's LAN address."""
+        headers.setdefault("Host", "192.168.0.10:%d" % self.srv.server_address[1])
+        return urllib.request.Request(self.base + path, headers=headers)
+
     def test_token(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:
-            urllib.request.urlopen(self.base + "/api/health", timeout=5)
+            urllib.request.urlopen(self._lan("/api/health"), timeout=5)
         self.assertEqual(cm.exception.code, 401)
         cm.exception.close()
         with self.assertRaises(urllib.error.HTTPError) as cm:
-            urllib.request.urlopen(self.base + "/api/health?token=wrong", timeout=5)
+            urllib.request.urlopen(self._lan("/api/health?token=wrong"), timeout=5)
         cm.exception.close()
-        with urllib.request.urlopen(self.base + "/api/health?token=secret-token", timeout=5) as r:
+        with urllib.request.urlopen(self._lan("/api/health?token=secret-token"), timeout=5) as r:
             self.assertEqual(r.status, 200)
-        req = urllib.request.Request(self.base + "/api/ship",
-                                     headers={"X-FIS-Token": "secret-token"})
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(self._lan("/api/ship", **{"X-FIS-Token": "secret-token"}), timeout=5) as r:
             self.assertEqual(r.status, 200)
+
+    def test_non_ascii_token_is_a_plain_401(self):
+        """A1 (audit 21.11.): a token with non-ASCII characters got no answer
+        at all (TypeError in compare_digest) and was never counted as a try."""
+        from unittest import mock
+        from fis.server import Handler
+        counted = []
+        with mock.patch.object(Handler, "_note_fail", lambda h: counted.append(1)):
+            for q in ("token=%C3%BC", "token=secret-t%C3%B6ken", "token=%FF"):
+                with self.assertRaises(urllib.error.HTTPError) as cm:
+                    urllib.request.urlopen(self._lan("/api/health?" + q), timeout=5)
+                self.assertEqual(cm.exception.code, 401, q)
+                cm.exception.close()
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(self._lan("/api/health", **{"X-FIS-Token": "ü"}), timeout=5)
+            self.assertEqual(cm.exception.code, 401)
+            cm.exception.close()
+        self.assertEqual(len(counted), 4, "every wrong token counts for the brake")
+
+    def test_this_pc_needs_no_token(self):
+        """5.0.1 (user 20.11.): with LAN on, the app and Chrome on the game PC
+        got 'token required' or a bare page - the PC itself passes now."""
+        for path in ("/", "/api/health", "/css/fis.css"):
+            with urllib.request.urlopen(self.base + path, timeout=5) as r:
+                self.assertEqual(r.status, 200, path)
+                self.assertIsNone(r.headers.get("Set-Cookie"), path)   # no token given, none set
+        req = urllib.request.Request(self.base + "/api/health", headers={"Host": "evil.example:80"})
+        with self.assertRaises(urllib.error.HTTPError) as cm:      # another site's name: not this PC
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, 401)
+        cm.exception.close()
 
     def test_page_cookie_is_the_stored_token(self):
         # the cookie carries the stored token - nothing a request sends ends
         # up in a header (S1: CodeQL http-response-splitting)
-        with urllib.request.urlopen(self.base + "/?token=secret-token", timeout=5) as r:
-            self.assertIn("fis_token=secret-token;", r.headers.get("Set-Cookie", ""))
+        with urllib.request.urlopen(self._lan("/?token=secret-token"), timeout=5) as r:
+            cookie = r.headers.get("Set-Cookie", "")
+            etag = r.headers.get("ETag")
+        self.assertIn("fis_token=secret-token;", cookie)
+        self.assertIn("Max-Age=%d" % (30 * 86400), cookie)       # kept across browser restarts
+        # 5.0.1: the page from the browser's cache (304) sets it too
         import http.client
         c = http.client.HTTPConnection("127.0.0.1", self.srv.server_address[1], timeout=5)
-        c.request("GET", "/?token=secret-token%0d%0aX-Evil:%201")
+        c.request("GET", "/?token=secret-token", headers={"If-None-Match": etag,
+                                                          "Host": "192.168.0.10"})
+        r = c.getresponse()
+        r.read()
+        self.assertEqual(r.status, 304)
+        self.assertIn("fis_token=secret-token;", r.getheader("Set-Cookie") or "")
+        c.request("GET", "/?token=secret-token%0d%0aX-Evil:%201", headers={"Host": "192.168.0.10"})
         r = c.getresponse()
         r.read()
         self.assertEqual(r.status, 401)               # not the stored token
         self.assertIsNone(r.getheader("X-Evil"))
+        c.request("GET", "/?token=wrong")             # this PC too: a wrong token given is wrong
+        r = c.getresponse()
+        r.read()
+        self.assertEqual(r.status, 401)
+        self.assertIsNone(r.getheader("Set-Cookie"))
         c.close()
 
 

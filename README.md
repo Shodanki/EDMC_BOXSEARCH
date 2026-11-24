@@ -1,4 +1,4 @@
-# SHBOXSEARCH v5.0.0
+# SHBOXSEARCH v5.0.1
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -8,6 +8,9 @@
 > machine-readable: [ai-disclosure.json](ai-disclosure.json)
 
 Systematic, exhaustive sphere survey for Elite Dangerous. EDMC plugin.
+
+![SHBOX FIS - the SYSTEM view: every orbit, the in-system route and the system report (demo data)](FIS/docs/screenshots/demo_system.png)
+*SHBOX FIS, SYSTEM view: the bodies on their real orbits, the in-system route leg by leg, and the system report (demo data).*
 
 **SHBOX FIS** (since 4.4), a flight information system for a second screen,
 tablet or phone - planet surface, system in 3D, galaxy in 2D and 3D, planet
@@ -55,6 +58,7 @@ failure that actually hurts.
 
 **Contents**
 
+0. [What you get](#what-you-get) - the plugin and the FIS in short
 1. [Operation](#operation) - what you need, install, update, files, first
    start and maintenance, preferences, known limits
 2. [Third-party parts](#third-party-parts) - what is shipped with it, what
@@ -63,6 +67,31 @@ failure that actually hurts.
    names, gap logic, existence checks, sources, routing, fuel, learning
 4. [Version history](#version-history) - every release, oldest first
 5. [For maintainers](#for-maintainers) - releasing
+
+## What you get
+
+**SHBOXSEARCH – EDMC plugin for exploration**
+
+- **Finds systems no database knows:** it plans a survey sphere boxel by boxel and computes the game's own system names. Each candidate gets a chance of a find, and galaxy-map probes come in the order that pays. Where the galaxy map cannot plot a route, NEXT HOP lists the systems within one jump.
+- **In-system route:** it puts the bodies worth scanning, mapping and sampling in the best order, with a time estimate. Stops are ticked off by themselves as you go.
+- **Cockpit overlay:**
+  - next targets, the star ahead, unsold data at risk, fuel and the carrier countdown;
+  - a surface compass to your samples, SRV and ship;
+  - warnings for gear or hardpoints still out, life support off, suit temperature, and a ship that has flown off.
+- **Biology and mining:** bio predictions and the signals still open; tonnes per rock and limpet use.
+- **Learns from your own journals:** fuel use, exploration values and times, each with a range and "learned from n". Optionally it also reads your older EDDiscovery history, read only.
+- **Fair and safe:** it only reads and displays, and never sends input to the game. Online it uses public APIs only, capped per day and with an offline switch.
+
+**SHBOX FIS – flight information system in your browser** (local, also on a tablet or second screen)
+
+- **BRIEFING:** the next target and the sphere ahead, with time, value and the chance of finds.
+- **SYSTEM and GALAXY:** the system in 3D with real orbits; the survey sphere in 3D.
+- **PLANET, PLANET INFO and ATLAS:** surface, datasheets, biology, rings and signals.
+- **SHIP and VEHICLE:** annunciator, damage and modules; SRV, Nomad and Scarab.
+- **CARRIER:** tritium and range, a jump plan with the time per jump, carrier trade, carriers near you.
+- **STATISTICS:** trends, rates, forecasts, and a reality check of every learnt model.
+- **LEDGER and TRADE:** gain and loss like a company's books; your prices against the galactic mean.
+- Six themes, English and German, an OBS source, and it installs as an app.
 
 ---
 
@@ -658,7 +687,7 @@ promising boxels: 139  (top: Synuefe UF-I b2 4.6, Synuefe TF-I b2 4.6, ...)
 Three databases that agree closely means the region is well reported and the
 remaining unknowns are mostly in genuinely unprobed boxels. A disagreement rate
 above 15% flags the opposite — the plugin says so explicitly:
-`thin reporting here - good odds for undiscovered systems`. That is the cue to
+`thin reporting here - good odds for systems no database knows`. That is the cue to
 probe hard here before moving the carrier.
 
 ## 6. Automatic harvesting
@@ -1317,7 +1346,7 @@ Progress in this sphere
   Still to fly            109
   Still to check          811
 
-Undiscovered systems
+Systems in no database
   Certain (boxel gaps)    27
   Estimated further       412
   Estimated total here    ~585
@@ -1485,6 +1514,7 @@ what changed in each release from 4.1 on.
 | 4.12.0 | overlay situation column (star ahead, data at stake, landing card, system value, ring, boxel, route fuel, carrier countdown, session tally); ground mining: Rhino and ship hold; ship flown off - recall it; the hovering ship waits, SHIP AWAY from 2.3 km; surface compass stays on the ground, not on foot aboard the carrier; FIS PLANET follows you; settings on tabs; a finished system can get no route; mining overlay: limpets, full in, spare limpets; cockpit overlay in a window of its own (beta); file check at every start; probe names EDSM knows become flight targets; FIS: carriers near you (Spansh, on a click), your key bindings in SHIP; fixes: surface compass, mining block, bio distance and the self test button work again (broken since 4.11), Brain Trees - one signal, several species, belt clusters no longer fill up the FSS count; every function within EDMC's complexity limit, documented, self tests out of the download |
 | 4.12.1 | fix: when EDMC passes on no journal events (the game wrote its journal anew), the plugin warns, stores the missed landings, samples and finds itself and places them by the stored track; a replay fills in positions marks were stored without |
 | 5.0.0 | finding unknown systems first: chance of a find per candidate, probes in the order that pays, proofs of absence, NEXT HOP; orbits in their parent's frame (94 % within 1 %), far companions and brown dwarfs drawn right; a reality check of every learnt model; faster pages; STATISTICS in sub-tabs, forecasts, GAIN / LOSS as a company's books, TRADE, CARRIER TRADE and JUMP PLAN; themes on every page; LIFE SUPPORT lamp; fixes |
+| 5.0.1 | fixes: in-system route reaches the best order; EDDiscovery's archive read in short pieces; false "lost in a crash" marks taken back; ships stored after the hangar list keep their place; FIS header, tables and BRIEFING readable at 1600 px; FIS hardening (token, writing calls, fis.ini) |
 
 ## Fixed since v3.0.8
 
@@ -2888,6 +2918,44 @@ they change only when needed: fixes, and what new game updates require.
   found by the DSS stays on the route, and is ticked off right after its
   last species is analysed; a sale the game did not log can be marked as
   sold; versions compare after SemVer.
+
+### 5.0.1 - fixes
+
+* **In-system route: the best order.** The route got stuck in a good but
+  not the best order and could fly out far and back again; in one system
+  of 30 bodies 22 % of the distance was wasted. It now also moves the
+  first stop and whole groups of stops, from several starts. In five real
+  systems it finds the best order; the FIS's SYSTEM route uses the same
+  code.
+* **EDDiscovery keeps writing.** EDDiscovery's database has no write-ahead
+  log, so a long read blocks its writes. The plugin and the FIS read its
+  archive in short pieces now - milliseconds instead of up to 3 s.
+* **No false "lost in a crash".** After a lost connection the game can
+  write its journal anew; *Replay journals* then met an old, real death
+  again and marked data gathered long after it as lost - even after it
+  was sold. A replayed death now takes only what was open before it, and
+  on every start and replay the plugin takes back every mark no real
+  death carries (*n false loss marks taken back* in the panel and the
+  log). The work counts as done again: sold if the system was sold since.
+* **Ships stored after the hangar list.** A ship swapped, bought or
+  transferred after the game's last hangar list showed "?" as its place;
+  it now shows the station - also your carrier.
+* **FIS readable at 1600 px.** The ship bar (SYS, FUEL, TARGET, FOCUS) gets
+  a row of its own below 2560 px; tables centre their numbers; BRIEFING
+  keeps distances and sphere counts on one line.
+* **FIS hardening.** A token with non-ASCII characters gets a plain
+  "wrong token"; writing calls answer with an error instead of dropping
+  the connection; `fis.ini` is written in one step and a damaged one still
+  loads; a `#` in a folder name no longer breaks reading the database; the
+  plugin starts the FIS without a shell; the game PC opens the FIS without
+  the token when LAN is on.
+* **Texts.** The survey statistics say *in no database* where a system is
+  only unknown to the databases, not undiscovered; two German spellings.
+
+**Updating to 5.0.1:** close EDMC and the FIS and unpack the ZIP over the
+old folder (it carries none of your files). No database change you have to
+make: the new column for open work is added on the first start, and false
+loss marks are taken back by themselves.
 
 ## Releasing (for whoever maintains this)
 

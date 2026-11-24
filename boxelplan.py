@@ -825,7 +825,9 @@ class Planner:
         est = ("%.0f" % st["estimated_unknown"]) if st["estimate_valid"] else "?"
         total = ("~%.0f" % st["total_estimate"] if st["estimate_valid"]
                  else ">=%.0f" % st["total_estimate"])
-        out.append(("Undiscovered systems", [
+        # 5.0.1 (feedback 2): a gap is a system no database knows - whether
+        # anyone was ever there is not known, so it is not called undiscovered
+        out.append(("Systems in no database", [
             ("Certain (boxel gaps)", "%d" % st["certain_unknown"]),
             ("Estimated further", est),
             ("Estimated total here", total),
@@ -899,7 +901,7 @@ class Planner:
                      + " | only one knows it: %d (%.0f%%)"
                      % (cov["by_count"].get(1, 0), cov["disagreement_pct"]))
             if cov["disagreement_pct"] >= 15:
-                L.append("thin reporting here - good odds for undiscovered systems")
+                L.append("thin reporting here - good odds for systems no database knows")
         if st.get("systems_measured"):
             L.append("systems: %.1f bodies each on average (%d measured)"
                      % (st["avg_bodies"], st["systems_measured"]))

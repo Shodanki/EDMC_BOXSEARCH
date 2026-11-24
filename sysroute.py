@@ -1054,7 +1054,7 @@ def plan_route(system: str, bodies: Dict[int, Body],
                 sum(b.pos[2] for b in g) / n)
 
     pts = [gpos(g) for g in groups]
-    order = _two_opt(_nearest_neighbour(pts, start), pts, start, model)
+    order = _best_tour(pts, start, model)
     return SystemRoute(system, _route_stops(order, groups, start, model), skipped, model)
 
 
@@ -1073,11 +1073,52 @@ def _route_targets(bodies: Dict[int, Body], only_work: bool, filters: Optional[S
     return targets
 
 
-def _nearest_neighbour(pts: List[Tuple[float, float, float]], start: Sequence[float]) -> List[int]:
-    """--- nearest neighbour: a first tour from start."""
+def _best_tour(pts: List[Tuple[float, float, float]], start: Sequence[float],
+               model: CostModel) -> List[int]:
+    """
+    RT2 (5.0.1): the cheapest of several improved tours - nearest neighbour
+    from the start, and nearest neighbour begun at each group in turn (up to
+    MULTI_START of them, nearest the start first). One local search alone
+    lands up to 4 % above the optimum on random systems; the best of the
+    starts stays within 0.3 % (tests/route_order.py), in about 10 ms for a
+    system of 15 planets.
+    """
+    if len(pts) < 3:
+        return _two_opt(_nearest_neighbour(pts, start), pts, start, model)
+    firsts = sorted(range(len(pts)), key=lambda i: _dist(start, pts[i]))[:MULTI_START]
+    best: Optional[Tuple[float, List[int]]] = None
+    for first in [None] + firsts:
+        order = _two_opt(_nearest_neighbour(pts, start, first), pts, start, model)
+        c = _tour_cost(order, pts, start, model)
+        if best is None or c < best[0] - 1e-6:
+            best = (c, order)
+    return best[1]
+
+
+def _tour_cost(order: List[int], pts: List[Tuple[float, float, float]], start: Sequence[float],
+               model: CostModel) -> float:
+    """Seconds of travel along an open tour from start."""
+    c, prev = 0.0, tuple(start)
+    for i in order:
+        c += model.hop(_dist(prev, pts[i]))
+        prev = pts[i]
+    return c
+
+
+MULTI_START = 16        # RT2: tours begun at the 16 groups nearest the start
+
+
+def _nearest_neighbour(pts: List[Tuple[float, float, float]], start: Sequence[float],
+                       first: Optional[int] = None) -> List[int]:
+    """--- nearest neighbour: a first tour from start (RT2: optionally
+    beginning with group `first`)."""
     order: List[int] = []
     left = set(range(len(pts)))
     cur = tuple(start)
+    if first is not None:
+        order.append(first)
+        left.discard(first)
+        cur = pts[first]
     while left:
         j = min(left, key=lambda i: _dist(cur, pts[i]))
         order.append(j)
@@ -1088,33 +1129,83 @@ def _nearest_neighbour(pts: List[Tuple[float, float, float]], start: Sequence[fl
 
 def _two_opt(order: List[int], pts: List[Tuple[float, float, float]], start: Sequence[float],
              model: CostModel) -> List[int]:
-    """--- 2-opt: reverse stretches of the tour while that makes it cheaper
-    (at most 40 rounds)."""
-    def tour_cost(o: List[int]) -> float:
-        c = 0.0
-        prev = tuple(start)
-        for i in o:
-            c += model.hop(_dist(prev, pts[i]))
-            prev = pts[i]
-        return c
+    """
+    --- improve the tour: 2-opt and Or-opt until no move pays (RT2, 5.0.1).
 
-    if len(order) > 3:
-        best = tour_cost(order)
-        improved = True
-        rounds = 0
-        while improved and rounds < 40:
-            improved = False
-            rounds += 1
-            for i in range(len(order) - 1):
-                for j in range(i + 2, len(order)):
-                    cand = order[:i + 1] + order[i + 1:j + 1][::-1] + order[j + 1:]
-                    c = tour_cost(cand)
-                    if c < best - 1e-6:
-                        order, best, improved = cand, c, True
-                        break
-                if improved:
-                    break
+    Up to 5.0.0 this was 2-opt alone, with the first stop fixed. It got
+    stuck: in a real system (23.11.) the route went out to the far planet at
+    15 800 LS and back to one at 5 700 LS, 22 % longer than the best order,
+    because moving one planet to another place in the tour takes two
+    reversals at once. Now the first stop may change too, and Or-opt moves a
+    run of one to three groups to any other place, either way round. Every
+    move is costed in O(1) from a table of hop costs.
+    """
+    n = len(order)
+    if n < 2:
+        return order
+    allp = list(pts) + [tuple(start)]
+    s = len(pts)                        # index of the start in the table
+    cost = [[model.hop(_dist(a, b)) for b in allp] for a in allp]
+    for _ in range(50 * n):
+        better = _reverse_move(order, cost, s) or _shift_move(order, cost, s)
+        if better is None:
+            break
+        order = better
     return order
+
+
+def _edge(cost: List[List[float]], a: int, b: Optional[int]) -> float:
+    """The hop a -> b; nothing after the last stop (the route is open)."""
+    return cost[a][b] if b is not None else 0.0
+
+
+def _reverse_move(order: List[int], cost: List[List[float]], s: int) -> Optional[List[int]]:
+    """2-opt: the first reversal of a stretch order[i..j] that saves time
+    (the first stop may move as well), or None."""
+    n = len(order)
+    for i in range(n - 1):
+        prev = order[i - 1] if i else s
+        for j in range(i + 1, n):
+            nxt = order[j + 1] if j + 1 < n else None
+            old = cost[prev][order[i]] + _edge(cost, order[j], nxt)
+            new = cost[prev][order[j]] + _edge(cost, order[i], nxt)
+            if new < old - 1e-6:
+                return order[:i] + order[i:j + 1][::-1] + order[j + 1:]
+    return None
+
+
+def _shift_move(order: List[int], cost: List[List[float]], s: int) -> Optional[List[int]]:
+    """Or-opt: the first move of a run of 1-3 groups to another place,
+    either way round, that saves time, or None."""
+    n = len(order)
+    for size in (1, 2, 3):
+        for i in range(n - size + 1):
+            seg = order[i:i + size]
+            prev = order[i - 1] if i else s
+            nxt = order[i + size] if i + size < n else None
+            gain = cost[prev][seg[0]] + _edge(cost, seg[-1], nxt) - _edge(cost, prev, nxt)
+            rest = order[:i] + order[i + size:]
+            hit = _best_slot(rest, seg, cost, s, i, gain)
+            if hit is not None:
+                return rest[:hit[0]] + hit[1] + rest[hit[0]:]
+    return None
+
+
+def _best_slot(rest: List[int], seg: List[int], cost: List[List[float]], s: int,
+               home: int, gain: float) -> Optional[Tuple[int, List[int]]]:
+    """The first place in `rest` where the run `seg` costs less than its
+    removal saved: (slot, run in the direction to insert), or None. Slot
+    `home` is where it came from."""
+    for k in range(len(rest) + 1):
+        if k == home:
+            continue
+        a = rest[k - 1] if k else s
+        b = rest[k] if k < len(rest) else None
+        for run in (seg, seg[::-1]):
+            add = cost[a][run[0]] + _edge(cost, run[-1], b) - _edge(cost, a, b)
+            if add < gain - 1e-6:
+                return k, list(run)
+    return None
 
 
 def _route_stops(order: List[int], groups: List[List[Body]], start: Sequence[float],

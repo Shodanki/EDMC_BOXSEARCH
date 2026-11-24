@@ -90,6 +90,16 @@ jobs:
         run: python tests/findodds.py
       - name: never looked-up systems asked in EDD's file by id64 (FX4, local)
         run: python tests/eddcheck.py
+      - name: in-system route order at the exact optimum (RT2, five real systems)
+        run: python tests/route_order.py
+      - name: ai-disclosure.json names AI_TRANSPARENCY.md by its current hash (M14)
+        run: python tests/ai_disclosure.py
+      - name: a replayed old death takes no data gathered after it (LD1, 22.11.)
+        run: python tests/lost_on_replay.py
+      - name: false loss marks are taken back on start and replay (LM1, 22.11.)
+        run: python tests/false_losses.py
+      - name: the FIS starts from an argument list, no shell (M11)
+        run: python tests/fis_launch.py
       - name: package import (relative imports, both of EDMC's ways to load a plugin)
         run: python tests/package_import.py
       - name: code style (flake8 with EDMC's line length, see .flake8)

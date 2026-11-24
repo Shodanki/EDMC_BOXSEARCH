@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 FILE = "EDDUser.sqlite"
@@ -105,27 +106,54 @@ def read(path: str, events: Iterable[str],
         # Id and Name only: the same table holds the EDSM API key
         cmdrs = {cid: name for cid, name in con.execute("SELECT Id, Name FROM Commanders")}
         fid_of = _first_fids(con, cmdrs)
-        q = ("SELECT CommanderId, EventData FROM JournalEntries WHERE EventType IN (%s) "
-             "ORDER BY CommanderId, Id" % ",".join("?" * len(names)))
+        where = "+CommanderId = ? AND +EventType IN (%s)" % ",".join("?" * len(names))
         out: List[Dict[str, Any]] = []
-        rows, cur_cid, fid = 0, None, None
-        for cid, data in con.execute(q, names):
-            if cid != cur_cid:
-                cur_cid, fid = cid, fid_of.get(cid)
-            if fid is None:
-                continue                       # never logged in: whose would it be?
-            try:
-                e = json.loads(data)
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(e, dict) or not e.get("timestamp"):
-                continue
-            rows += 1
-            fid = take(e, fid, out) or fid
+        rows = 0
+        for cid, fid in sorted(fid_of.items()):        # never logged in: whose would it be?
+            for (data,) in by_id(con, "EventData", where, [cid] + names):
+                fid, ok = _take_line(data, fid, take, out)
+                rows += ok
     finally:
         con.close()
     return {"events": out, "rows": rows,
             "commanders": {cmdrs[c]: f for c, f in fid_of.items() if c in cmdrs}}
+
+
+def _take_line(data: Any, fid: str, take: Callable[[Dict[str, Any], Optional[str], List[Dict[str, Any]]],
+                                                   Optional[str]], out: List[Dict[str, Any]]) -> Tuple[str, int]:
+    """One archive line through ``take``: (the FID from then on, 1 if it was
+    a journal line)."""
+    try:
+        e = json.loads(data)
+    except (TypeError, ValueError):
+        return fid, 0
+    if not isinstance(e, dict) or not e.get("timestamp"):
+        return fid, 0
+    return take(e, fid, out) or fid, 1
+
+
+# 0g (5.0.1): EDDiscovery's files run without WAL, so a reader blocks its
+# writes for as long as one statement is open - up to 5.0.0 the whole archive
+# was one statement (1.2 s warm, several seconds cold), and EDDiscovery died
+# on "database is locked" (22.11.2026). Now WINDOW ids per statement (under
+# 10 ms on the developer's 322 000 rows), each finished before a line is
+# parsed, with PAUSE_S between them for EDDiscovery's writes.
+WINDOW = 4000
+PAUSE_S = 0.005
+
+
+def by_id(con: sqlite3.Connection, cols: str, where: str, params: List[Any]) -> Iterable[Tuple[Any, ...]]:
+    """Rows of JournalEntries in Id order, WINDOW ids per statement. The
+    terms in ``where`` must carry "+" (no index), so each statement is a
+    short range of the primary key."""
+    top = con.execute("SELECT max(Id) FROM JournalEntries").fetchone()[0] or 0
+    q = "SELECT %s FROM JournalEntries WHERE Id > ? AND Id <= ? AND %s ORDER BY Id" % (cols, where)
+    lo = 0
+    while lo < top:
+        rows = con.execute(q, [lo, lo + WINDOW] + list(params)).fetchall()
+        lo += WINDOW
+        yield from rows
+        time.sleep(PAUSE_S)
 
 
 def market_means(path: str) -> Dict[str, Dict[str, Any]]:
@@ -134,7 +162,7 @@ def market_means(path: str) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
     con = _connect(path)
     try:
-        for (data,) in con.execute("SELECT EventData FROM JournalEntries WHERE EventType='Market' ORDER BY Id"):
+        for (data,) in by_id(con, "EventData", "+EventType = 'Market'", []):
             try:
                 e = json.loads(data)
             except (TypeError, ValueError):
@@ -158,8 +186,10 @@ def _first_fids(con: sqlite3.Connection, cmdrs: Dict[int, str]) -> Dict[int, str
     lines before its first login in the archive)."""
     out: Dict[int, str] = {}
     for cid in cmdrs:
+        # LIMIT and fetchall: the statement ends before anything else happens
         for (data,) in con.execute("SELECT EventData FROM JournalEntries WHERE CommanderId = ? "
-                                   "AND EventType IN ('LoadGame', 'Commander') ORDER BY Id", (cid,)):
+                                   "AND EventType IN ('LoadGame', 'Commander') ORDER BY Id LIMIT 50",
+                                   (cid,)).fetchall():
             try:
                 fid = json.loads(data).get("FID")
             except (TypeError, ValueError, AttributeError):

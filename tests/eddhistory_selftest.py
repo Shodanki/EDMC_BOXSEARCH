@@ -103,6 +103,31 @@ def main() -> int:
         finally:
             eddhistory.connect = real
         everything = list(eddhistory.lines(db, ("FSDJump",)))
+        # 0g (22.11.2026): EDDiscovery died on "database is locked" - no WAL,
+        # so a statement held open while the caller parses blocks its commits.
+        # A writer that never waits commits between every two lines now.
+        commits = 0
+        busy = os.path.join(tmp, "busy", "EDDUser.sqlite")      # a copy: the checks below want the file unchanged
+        os.makedirs(os.path.dirname(busy))
+        with open(db, "rb") as f, open(busy, "wb") as g:
+            g.write(f.read())
+        win, pause = eddhistory.WINDOW, eddhistory.PAUSE_S
+        eddhistory.WINDOW, eddhistory.PAUSE_S = 2, 0
+        try:
+            again = []
+            for e in eddhistory.lines(busy, ("FSDJump",)):
+                w = sqlite3.connect(busy, timeout=0)
+                w.execute("INSERT INTO Commanders (Name, EdsmApiKey) VALUES ('W', '')")
+                w.commit()
+                w.close()
+                commits += 1
+                again.append(e)
+        except sqlite3.OperationalError as exc:
+            check(False, "EDDiscovery can write while we read (%s)" % exc)
+        finally:
+            eddhistory.WINDOW, eddhistory.PAUSE_S = win, pause
+        check(commits == len(everything) and again == everything,
+              "EDDiscovery can write while we read: %d commits, the same lines" % commits)
         check(len([e for e in everything if e["event"] == "FSDJump"]) == 7,
               "without a time limit every line from the login on (%d jumps)" % len(everything))
         check(cut == 1794297540.0, "first_time: the first line of the oldest journal (%s)" % cut)

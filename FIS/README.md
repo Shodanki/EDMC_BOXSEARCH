@@ -63,8 +63,9 @@ Updating: replace the plugin folder's files with the new release as usual
 
 Choose "this PC and devices in the home network" in the first-start questions.
 
-* A random **access token** is created and kept in `fis.ini`. Each device needs
-  it once (the address with `?token=...`); afterwards a cookie remembers it.
+* A random **access token** is created and kept in `fis.ini`. Each other device
+  needs it once (the address with `?token=...`); afterwards a cookie remembers
+  it for 30 days. This PC itself opens the FIS without the token, as before.
 * At every start the console prints the addresses of this PC, e.g.
   `http://192.168.1.20:8770/?token=...`. The footer in the browser shows the
   address (never the token).

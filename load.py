@@ -104,6 +104,8 @@ def plugin_start3(plugin_dir: str) -> str:
         ST.db = SystemDB(DB_FILE)
         ST.db.sold_marks = survey.sold_marks          # SM1: sales marked in the FIS
         ST.planner = Planner(ST.db)
+        if ST.db.lost_taken_back:                     # LM1: shown once the panel is there
+            ST.status = maintenance.lost_back_text(ST.db.lost_taken_back)
     except Exception:
         logger.exception("could not open database")
         return "SHBOXSEARCH"

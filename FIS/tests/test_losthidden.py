@@ -181,6 +181,9 @@ class TestApiLan(_Api):
 
     def test_tablet_needs_the_token(self):
         hide = {"hide": [{"id64": 2, "what": None}]}
+        from fis.server import Handler
+        old, Handler.LOCAL = Handler.LOCAL, ()      # every caller a LAN device (the tablet)
+        self.addCleanup(setattr, Handler, "LOCAL", old)
         self.assertEqual(self._code(hide, {"X-FIS-Settings": "1"})[0], 403)
         self.assertEqual(self._code(hide, {"X-FIS-Settings": "1", "X-FIS-Token": "wrong"})[0], 403)
         self.assertEqual(self._code(hide, {"X-FIS-Settings": "1", "X-FIS-Token": "secret-token"})[0], 200)

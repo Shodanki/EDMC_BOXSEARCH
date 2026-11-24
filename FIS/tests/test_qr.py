@@ -79,6 +79,13 @@ class TestQrEndpoint(_Base):
         return urllib.request.urlopen(self.base + "/api/settings/qr?token=qr-token" + q, timeout=5)
 
     def test_svg_is_the_address(self):
+        # M13 (audit 21.11.): this timed out in 1 of 4 full runs - every QR
+        # code asked the firewall (netsh) for the settings page; it must not
+        from unittest import mock
+        with mock.patch.object(setup, "firewall_rule_ok", side_effect=AssertionError("netsh for a QR")):
+            self._svg_is_the_address()
+
+    def _svg_is_the_address(self):
         with self._get() as r:
             self.assertTrue(r.headers["Content-Type"].startswith("image/svg+xml"))
             body = r.read().decode("utf-8")
@@ -93,8 +100,11 @@ class TestQrEndpoint(_Base):
             self.assertEqual(r.read().decode("utf-8"), qr.svg(urls[0]))
 
     def test_needs_token(self):
+        # 5.0.1: the game PC itself passes without a token - a wrong one is refused
+        with urllib.request.urlopen(self.base + "/api/settings/qr", timeout=5) as r:
+            self.assertEqual(r.status, 200)
         with self.assertRaises(urllib.error.HTTPError) as cm:
-            urllib.request.urlopen(self.base + "/api/settings/qr", timeout=5)
+            urllib.request.urlopen(self.base + "/api/settings/qr?token=wrong", timeout=5)
         self.assertEqual(cm.exception.code, 401)
         cm.exception.close()
 

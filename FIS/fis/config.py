@@ -14,6 +14,7 @@ import configparser
 import os
 import secrets
 import sys
+import threading
 from typing import Any, Dict, List, Optional
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -57,6 +58,30 @@ def _path(raw: str) -> str:
     """Expand %VARS% and ~; relative paths count from the FIS folder."""
     p = os.path.expanduser(os.path.expandvars(raw.strip()))
     return p if os.path.isabs(p) else os.path.normpath(os.path.join(ROOT, p))
+
+
+_SAVE_LOCK = threading.Lock()     # A3: one writer of fis.ini at a time
+
+
+def _read_ini(path: str) -> configparser.ConfigParser:
+    """fis.ini as a parser; a file that cannot be read or parsed counts as
+    empty (A3: every value keeps its default instead of the FIS not starting)."""
+    cp = configparser.ConfigParser(interpolation=None)
+    if os.path.exists(path):
+        try:
+            cp.read(path, encoding="utf-8")
+        except (configparser.Error, UnicodeDecodeError, OSError):
+            cp = configparser.ConfigParser(interpolation=None)
+    return cp
+
+
+def _port(raw: Any, default: int) -> int:
+    """The port from fis.ini; the default when it is missing or no port."""
+    try:
+        n = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return n if 0 < n < 65536 else default
 
 
 class Config:
@@ -161,11 +186,9 @@ class Config:
         """Read fis.ini (missing values keep their defaults); returns self."""
         path = path or self.ini_path
         self.ini_path = path
-        cp = configparser.ConfigParser(interpolation=None)
-        if os.path.exists(path):
-            cp.read(path, encoding="utf-8")
+        cp = _read_ini(path)
         s = cp["fis"] if cp.has_section("fis") else {}
-        self.port = int(s.get("port", self.port))
+        self.port = _port(s.get("port"), self.port)
         self.lan = _bool(s.get("lan", "false"))
         self.token = (s.get("token", "") or "").strip()
         self.db_path = _path(s.get("db_path", "") or self.db_path)
@@ -199,7 +222,7 @@ class Config:
                 continue
             try:
                 n = int(float(str(v).strip()))
-            except ValueError:
+            except (ValueError, OverflowError):     # A2: 1e400 is inf, int(inf) overflows
                 ok = False
                 continue
             self.unsold[k] = min(hi, max(lo, n))
@@ -228,9 +251,15 @@ class Config:
     def save(self) -> None:
         """Write fis.ini: the dialogue's answers plus whatever else was set.
         Keys the FIS does not know are kept."""
-        cp = configparser.ConfigParser(interpolation=None)
-        if os.path.exists(self.ini_path):
-            cp.read(self.ini_path, encoding="utf-8")
+        with _SAVE_LOCK:
+            self._save()
+
+    def _save(self) -> None:
+        """save() under the lock: written to a temporary file and moved over
+        fis.ini (A3, 5.0.1), like every other file the FIS writes - a crash
+        while writing used to leave a cut file without the token, and load()
+        then died on the port."""
+        cp = _read_ini(self.ini_path)
         if not cp.has_section("fis"):
             cp.add_section("fis")
         vals = {
@@ -251,11 +280,19 @@ class Config:
                         ("plugin_dir", self.plugin_dir, DEFAULT_PLUGIN)):
             if os.path.normcase(os.path.normpath(v)) != os.path.normcase(os.path.normpath(d)):
                 cp.set("fis", k, v)
-        with open(self.ini_path, "w", encoding="utf-8") as fh:
-            fh.write("; SHBOX FIS settings - written by the first-start dialogue.\n"
-                     "; Change them on the settings page (gear at the bottom of the FIS, on this PC),\n"
-                     "; with fis_settings.bat, or by hand.\n\n")
-            cp.write(fh)
+        tmp = "%s.%d.tmp" % (self.ini_path, os.getpid())
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write("; SHBOX FIS settings - written by the first-start dialogue.\n"
+                         "; Change them on the settings page (gear at the bottom of the FIS, on this PC),\n"
+                         "; with fis_settings.bat, or by hand.\n\n")
+                cp.write(fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, self.ini_path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
 
     def use_plugin_path(self) -> None:
         """Make the plugin's pure modules importable (sysroute, biopredict ...)."""

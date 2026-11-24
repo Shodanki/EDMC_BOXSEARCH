@@ -96,7 +96,9 @@ def _fis_start(minimized: bool = False, open_if_running: bool = True) -> None:
     try:
         if minimized and _fis_setup_done():
             import subprocess
-            subprocess.Popen('start "SHBOX FIS" /min "%s"' % FIS_BAT, shell=True, cwd=FIS_DIR)
+            # M11 (5.0.1): an argument list, no shell=True - a folder name
+            # with & or ^ in it can no longer break or extend the command
+            subprocess.Popen(["cmd.exe", "/c", "start", "SHBOX FIS", "/min", FIS_BAT], cwd=FIS_DIR)
         else:
             os.startfile(FIS_BAT)
         logger.info("FIS | started %s%s", FIS_BAT, " (minimised)" if minimized else "")

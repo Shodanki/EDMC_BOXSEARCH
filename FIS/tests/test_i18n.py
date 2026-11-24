@@ -86,6 +86,15 @@ class I18nTest(unittest.TestCase):
             hits = re.findall(r"\b(?:const|let|var)\s+t\s*=|\(\s*t\s*[,)]\s*=>|\bfunction\s*\w*\s*\(\s*t\s*[,)]", s)
             self.assertEqual(hits, [], os.path.basename(f))
 
+    def test_spelling_fixed(self):
+        """5.0.1: "Massecode" (elsewhere "Massencode") and the genitive
+        "Spanshs" were typos in the German texts."""
+        de = german()
+        self.assertEqual(de["Mass code"], "Massencode")
+        text = " ".join(de.values())
+        self.assertNotIn("Massecode", text)
+        self.assertNotIn("Spanshs", text)
+
     def test_no_german_left_in_views(self):
         """Umlauts outside i18n.js / ui.js (planet class table) point at missed texts."""
         for f in glob.glob(os.path.join(WEB, "js", "**", "*.js"), recursive=True):

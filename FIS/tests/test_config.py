@@ -117,6 +117,34 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(c2.token, tok)
         self.assertFalse(c2.ensure_token())
 
+    def test_save_is_atomic_and_load_survives_a_cut_file(self):
+        """A3 (audit 21.11.): fis.ini was written in place - a crash while
+        writing left a cut file, and load() then died on int(port)."""
+        import configparser
+        from unittest import mock
+        d = tempfile.mkdtemp()
+        ini = os.path.join(d, "fis.ini")
+        c = Config().load(ini)
+        c.ensure_token()
+        tok, port = c.token, c.port
+
+        def cut(self, fh, *a, **k):
+            fh.write("[fis]\nport = 80")
+            raise OSError("disk full")
+        c.language = "de"
+        with mock.patch.object(configparser.ConfigParser, "write", cut):
+            with self.assertRaises(OSError):
+                c.save()
+        self.assertEqual(Config().load(ini).token, tok, "the old fis.ini is still whole")
+        self.assertEqual(os.listdir(d), ["fis.ini"], "no temporary file left")
+        for bad in ("[fis]\nport = 80x\ntoken = t\n", "[fis]\nport\n", "\x00\xff[[[", "[fis]\nport = 99999\n"):
+            with open(ini, "w", encoding="latin-1") as fh:
+                fh.write(bad)
+            self.assertEqual(Config().load(ini).port, port, repr(bad))
+        with open(ini, "wb") as fh:
+            fh.write(b"[fis]\nport = 1\xff\xfe\n")
+        self.assertEqual(Config().load(ini).port, port)
+
 
 if __name__ == "__main__":
     unittest.main()

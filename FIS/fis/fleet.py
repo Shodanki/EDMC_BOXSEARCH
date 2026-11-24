@@ -541,6 +541,48 @@ def _hangar(stored: Optional[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
     return ships
 
 
+def _stored_since(evs: List[Dict[str, Any]], ships: Dict[int, Dict[str, Any]],
+                  stored: Optional[Dict[str, Any]], now: Optional[float] = None) -> None:
+    """
+    SL1 (5.0.1): ships put away AFTER the last hangar list. The game writes
+    StoredShips only when the shipyard opens; a ShipyardSwap / ShipyardBuy
+    a moment later stores the old ship (StoreShipID) and a ShipyardTransfer
+    brings one in - up to 5.0.0 such a ship had no place ("· ?", 23.11.: a
+    Type-11 swapped onto the carrier 10 s after the list). The place is the
+    station of the event's MarketID: the hangar list's own ("here") or the
+    last one docked at.
+    """
+    stored_ts = (stored or {}).get("timestamp") or ""
+    dock: Dict[str, Any] = {}
+    for e in evs:
+        ev = e["event"]
+        if ev == "Docked" or (ev == "Location" and e.get("Docked")):
+            dock = {"MarketID": e.get("MarketID"), "StationName": e.get("StationName"),
+                    "StarSystem": e.get("StarSystem")}
+        if (e.get("timestamp") or "") <= stored_ts:
+            continue
+        if e.get("SellShipID") is not None:              # sold since (also in a swap)
+            ships.pop(int(e["SellShipID"]), None)
+        if ev in ("ShipyardSwap", "ShipyardBuy") and e.get("StoreShipID") is not None:
+            sid, typ, transit = int(e["StoreShipID"]), e.get("StoreOldShip"), False
+        elif ev == "ShipyardTransfer" and e.get("ShipID") is not None:
+            sid, typ = int(e["ShipID"]), e.get("ShipType")
+            done = (parse_ts(e.get("timestamp")) or 0) + float(e.get("TransferTime") or 0)
+            transit = done > (time.time() if now is None else now)
+        else:
+            continue
+        it = ships.setdefault(sid, {"id": sid})
+        if typ:
+            it["type"] = typ.lower()
+        mid = e.get("MarketID")
+        if stored and mid is not None and mid == stored.get("MarketID"):
+            it.update(location=stored.get("StationName"), system=stored.get("StarSystem"), stored_at="here")
+        else:
+            at = dock if mid is None or dock.get("MarketID") == mid else {}
+            it.update(location=at.get("StationName"), system=at.get("StarSystem"), stored_at="remote")
+        it["in_transit"] = transit
+
+
 def _fittings(evs: List[Dict[str, Any]], ships: Dict[int, Dict[str, Any]],
               loadouts: Dict[int, Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
     """Ship ids come back after selling: a fitting belongs to a hangar entry
@@ -974,6 +1016,7 @@ class Archive:
         names = self.ship_names(evs)
         loadouts, sold, stored, current = _fleet_history(evs)
         ships = _hangar(stored)
+        _stored_since(evs, ships, stored)
         stored_ts = stored.get("timestamp") if stored else ""
         # StoredShips never lists the ship you sit in: the one active when the
         # list was written belongs to the fleet even when its Loadout is older

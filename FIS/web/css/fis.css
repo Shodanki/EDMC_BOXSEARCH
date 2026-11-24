@@ -243,8 +243,16 @@ body.motion .frame.appear > .frame-in { animation: frame-fill var(--t-draw) ease
 .sb-cell { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; }
 .sb-cell .k { font: 600 10px var(--font-display); letter-spacing: .14em; color: var(--dim); }
 .sb-cell .v { overflow: hidden; text-overflow: ellipsis; }
-.sb-target .v { max-width: 24ch; color: var(--amber); }
-.sb-system .v { max-width: 24ch; color: var(--cyan); }
+.sb-target .v { max-width: 32ch; color: var(--amber); }
+.sb-system .v { max-width: 32ch; color: var(--cyan); }
+/* KL1 (5.0.1): below 2560 px the tabs leave the ship bar no room (1600 px:
+   "SYS W…", "FUEL 1…", "TARGET D…") - it gets a row of its own, as on a
+   tablet; the narrower widths further down keep their own rules */
+@media (max-width: 2559px) {
+  #top { grid-template-columns: auto 1fr; row-gap: 6px; }
+  .shipbar { grid-column: 1 / -1; justify-content: space-between; }
+  .sb-target .v, .sb-system .v { max-width: 40ch; }
+}
 /* back to the live system from a pinned one */
 .sys-back { width: 100%; margin: 0 0 6px; padding: 4px 8px; font: 600 12px var(--font-display); letter-spacing: .08em;
   color: var(--amber); background: rgba(var(--amber-rgb), .08); border: 1px solid rgba(var(--amber-rgb), .55); cursor: pointer; }
@@ -301,13 +309,13 @@ body.combat-mode .shipbar { box-shadow: inset 0 -2px 0 rgba(var(--red-rgb), .6);
 .chip.warn { color: var(--amber); } .chip.alert { color: var(--red); }
 .empty { color: var(--dim); padding: 20px; text-align: center; font-family: var(--font-display); letter-spacing: .12em; }
 
-.hbar { display: grid; grid-template-columns: 11ch 1fr 7ch; align-items: center; gap: 8px; margin: 2px 0; font-size: 12px; }
+.hbar { display: grid; grid-template-columns: 11ch 1fr minmax(13ch, max-content); align-items: center; gap: 8px; margin: 2px 0; font-size: 12px; }
 .hbar .track { height: 7px; background: #071010; border: 1px solid var(--faint); position: relative; }
 .hbar .track > i { position: absolute; inset: 0 auto 0 0; background: var(--cyan); opacity: .85; }
 .hbar.green .track > i { background: var(--green); }
 .hbar.amber .track > i { background: var(--amber); }
 .hbar.violet .track > i { background: var(--violet); }
-.hbar .val { text-align: right; color: var(--green); font-variant-numeric: tabular-nums; }
+.hbar .val { text-align: right; color: var(--green); font-variant-numeric: tabular-nums; white-space: nowrap; }   /* BF1: "5/6 · 83.3 %" on one line */
 
 .grid { display: grid; gap: var(--gap); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
@@ -371,10 +379,10 @@ body.motion .br-status.disc.blinking { animation: pulse 2.4s ease-in-out 2; }
 @keyframes pulse { 50% { opacity: .55; } }
 body.motion .blink { animation: pulse 0.9s steps(2) 4; }
 .navlist { list-style: none; margin: 0; padding: 0; font-size: 12px; }
-.navlist li { display: grid; grid-template-columns: 3ch 1fr 3ch 7ch auto; gap: 8px; padding: 3px 2px; align-items: center; border-bottom: 1px dotted var(--faint); }
+.navlist li { display: grid; grid-template-columns: 3ch 1fr 3ch minmax(7ch, max-content) auto; gap: 8px; padding: 3px 2px; align-items: center; border-bottom: 1px dotted var(--faint); }
 .navlist li.cur { color: var(--amber); background: rgba(var(--amber-rgb), .07); }
 .navlist .nl-n { color: var(--dim); }
-.navlist .nl-ly { text-align: right; color: var(--green); }
+.navlist .nl-ly { text-align: right; color: var(--green); white-space: nowrap; }   /* BF1: "112.0 ly" broke in two */
 .navlist .nl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .br-nav .scroll { max-height: 70vh; }
 .br-survey { grid-column: 2; }
@@ -1366,7 +1374,7 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 :root[data-theme="station"] .briefing-view .hbar .track { border: 0; background: repeating-linear-gradient(90deg, rgba(var(--cyan-rgb), .18) 0 3px, transparent 3px 6px); }
 :root[data-theme="station"] .briefing-view .hbar .track > i { opacity: 1;
   background: repeating-linear-gradient(90deg, var(--green) 0 3px, transparent 3px 6px); filter: drop-shadow(0 0 3px rgba(var(--green-rgb), .8)); }
-:root[data-theme="station"] .briefing-view .navlist li { grid-template-columns: 5ch 1fr 3ch 7ch auto; }   /* room for the prompt */
+:root[data-theme="station"] .briefing-view .navlist li { grid-template-columns: 5ch 1fr 3ch minmax(7ch, max-content) auto; }   /* room for the prompt */
 :root[data-theme="station"] .briefing-view .navlist .nl-n::before { content: "  "; white-space: pre; }
 :root[data-theme="station"] .briefing-view .navlist li.cur { background: none; color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), .7); }
 :root[data-theme="station"] .briefing-view .navlist li.cur .nl-n::before { content: "> "; }
@@ -1502,3 +1510,26 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 .ns-tab.jp-tab td:last-child { text-align: left; white-space: nowrap; }
 .jp-spansh summary { cursor: pointer; }
 .jp-paste { width: 100%; box-sizing: border-box; font: 12px var(--font-mono); }
+
+/* TB1 (5.0.1, user 20.11.): every table, every page, every theme - a column
+   of numbers (any cell td.num) is centred, its heading with it; a text
+   column (names, dates, notes) keeps heading and cells left, so names stay
+   readable. Up to 5.0.0 the headings stood left and the numbers right, so
+   neither lined up. One rule for all tables (16 columns are enough); it
+   comes last, so no table or theme block overrides it. */
+table:has(td.num:nth-child(1)) :is(th, td):nth-child(1),
+table:has(td.num:nth-child(2)) :is(th, td):nth-child(2),
+table:has(td.num:nth-child(3)) :is(th, td):nth-child(3),
+table:has(td.num:nth-child(4)) :is(th, td):nth-child(4),
+table:has(td.num:nth-child(5)) :is(th, td):nth-child(5),
+table:has(td.num:nth-child(6)) :is(th, td):nth-child(6),
+table:has(td.num:nth-child(7)) :is(th, td):nth-child(7),
+table:has(td.num:nth-child(8)) :is(th, td):nth-child(8),
+table:has(td.num:nth-child(9)) :is(th, td):nth-child(9),
+table:has(td.num:nth-child(10)) :is(th, td):nth-child(10),
+table:has(td.num:nth-child(11)) :is(th, td):nth-child(11),
+table:has(td.num:nth-child(12)) :is(th, td):nth-child(12),
+table:has(td.num:nth-child(13)) :is(th, td):nth-child(13),
+table:has(td.num:nth-child(14)) :is(th, td):nth-child(14),
+table:has(td.num:nth-child(15)) :is(th, td):nth-child(15),
+table:has(td.num:nth-child(16)) :is(th, td):nth-child(16) { text-align: center; }

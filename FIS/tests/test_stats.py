@@ -174,6 +174,55 @@ class StatsLayoutTest(unittest.TestCase):
         with open(os.path.join(self.WEB, *parts), encoding="utf-8") as fh:
             return fh.read()
 
+    def test_tables_centre_numbers_and_their_headings(self):
+        """TB1 (5.0.1, user 20.11.): in every table a column of numbers is
+        centred with its heading, text columns stay left - one shared rule,
+        last in the file so no table or theme block can undo it, and every
+        table cell with a number carries the class num it keys on."""
+        import glob
+        import re
+        css = self._read("css", "fis.css")
+        rule = css[css.index("/* TB1 (5.0.1"):]
+        for n in range(1, 17):
+            self.assertIn("table:has(td.num:nth-child(%d)) :is(th, td):nth-child(%d)" % (n, n), rule)
+        self.assertTrue(rule.rstrip().endswith("{ text-align: center; }"), "TB1 is the last rule")
+        self.assertEqual(rule.count("{"), 1)
+        # every view that builds a table marks its number cells
+        for path in glob.glob(os.path.join(self.WEB, "js", "**", "*.js"), recursive=True):
+            with open(path, encoding="utf-8") as fh:
+                js = fh.read()
+            if 'el("table"' not in js:
+                continue
+            self.assertRegex(js, r'el\("td", \{ class: "num', os.path.basename(path))
+            for m in re.finditer(r'el\("td", \{ (class: "([^"]*)", )?text: (fmt|CR|cr)\(', js):
+                self.assertIn("num", m.group(2) or "", "%s: a number cell without num" % os.path.basename(path))
+
+    def test_briefing_values_stay_on_one_line(self):
+        """BF1 (5.0.1): at 1600 px "112.0 ly" in NAVPOINTS and "5/6 · 83.3 %"
+        in SPHERE broke over two lines; the bars keep one length."""
+        css = self._read("css", "fis.css")
+        self.assertIn(".hbar { display: grid; grid-template-columns: 11ch 1fr minmax(13ch, max-content);", css)
+        self.assertIn("white-space: nowrap; }   /* BF1: \"5/6", css)
+        self.assertIn(".navlist .nl-ly { text-align: right; color: var(--green); white-space: nowrap; }", css)
+        self.assertEqual(css.count("3ch minmax(7ch, max-content) auto"), 2)          # base and station
+        self.assertNotIn("3ch 7ch auto", css)
+
+    def test_ship_bar_has_room(self):
+        """KL1 (5.0.1): at 1600 px the tabs left the ship bar ~375 px and cut
+        "SYS W…", "FUEL 1…", "TARGET D…"; below 2560 px it takes a row of its
+        own in every theme, the tablet and phone rules come later and win."""
+        import re
+        css = self._read("css", "fis.css")
+        kl1 = css[css.index("@media (max-width: 2559px) {"):]
+        kl1 = kl1[:kl1.index("\n}\n")]
+        self.assertIn("#top { grid-template-columns: auto 1fr; row-gap: 6px; }", kl1)
+        self.assertIn(".shipbar { grid-column: 1 / -1; justify-content: space-between; }", kl1)
+        self.assertIn(".sb-target .v, .sb-system .v { max-width: 40ch; }", kl1)
+        self.assertLess(css.index("@media (max-width: 2559px)"), css.index("@media (max-width: 1100px) {\n  .tac-view"))
+        # no theme sets its own header grid, so the row holds in all six
+        for m in re.finditer(r':root\[data-theme="\w+"\] #top \{([^}]*)\}', css):
+            self.assertNotIn("grid-template-columns", m.group(1))
+
     def test_bio_rates_and_learning_rows(self):
         js, css = self._read("js", "views", "statistics.js"), self._read("css", "fis.css")
         # BIO RATES: not the month row's fixed 64 px name column

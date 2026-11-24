@@ -228,6 +228,50 @@ class FleetTest(unittest.TestCase):
             ids = sorted(s["id"] for s in fl.Archive(d).fleet()["ships"])
             self.assertEqual(ids, [34, 44])
 
+    def test_ship_stored_after_hangar_list(self):
+        """SL1 (5.0.1): a ship put away after the last StoredShips had no place
+        ("· ?"): 23.11. a Type-11 swapped onto the carrier 10 s after the list.
+        Swap, buy and transfer now place it at the station of their MarketID."""
+        with tempfile.TemporaryDirectory() as d:
+            recent = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60))
+            with open(os.path.join(d, "Journal.2026-03-01T090000.01.log"), "w", encoding="utf-8") as fh:
+                for e in (_ev("2026-03-01T09:00:00Z", "Commander", FID="F1", Name="X"),
+                          _ev("2026-03-01T09:00:01Z", "Loadout", Ship="lakonminer", ShipID=37, ShipName="DIGGER",
+                              CargoCapacity=322, Modules=[]),
+                          _ev("2026-03-01T09:00:02Z", "Docked", StationName="ABC-123", StarSystem="S", MarketID=1,
+                              StationType="FleetCarrier"),
+                          _ev("2026-03-01T09:00:05Z", "StoredShips", StationName="ABC-123", StarSystem="S",
+                              MarketID=1, ShipsHere=[{"ShipID": 44, "ShipType": "explorer_nx", "Name": "SCOUT", "Value": 1}],
+                              ShipsRemote=[{"ShipID": 12, "ShipType": "eagle", "StarSystem": "Far", "Value": 1}]),
+                          _ev("2026-03-01T09:00:15Z", "ShipyardSwap", ShipType="explorer_nx", ShipID=44,
+                              StoreOldShip="LakonMiner", StoreShipID=37, MarketID=1),
+                          _ev("2026-03-01T09:00:16Z", "Loadout", Ship="explorer_nx", ShipID=44, ShipName="SCOUT", Modules=[]),
+                          _ev("2026-03-01T10:00:00Z", "Docked", StationName="Port Q", StarSystem="Q", MarketID=2,
+                              StationType="Coriolis"),
+                          _ev("2026-03-01T10:01:00Z", "ShipyardBuy", ShipType="type9", StoreOldShip="Explorer_NX",
+                              StoreShipID=44, MarketID=2),
+                          _ev("2026-03-01T10:01:05Z", "ShipyardNew", ShipType="type9", NewShipID=60),
+                          # asked for a minute ago, an hour on the way
+                          _ev(recent, "ShipyardTransfer", ShipType="Eagle", ShipID=12,
+                              System="Far", ShipMarketID=9, MarketID=2, TransferTime=3600)):
+                    fh.write(e + "\n")
+            ar = fl.Archive(d)
+            ships = {s["id"]: s for s in ar.fleet()["ships"]}
+            self.assertEqual((ships[37]["stored_at"], ships[37]["location"], ships[37]["system"]),
+                             ("here", "ABC-123", "S"), "swapped onto the carrier of the hangar list")
+            self.assertEqual(ships[37]["cargo"], 322, "its fitting still belongs to it")
+            self.assertEqual((ships[44]["stored_at"], ships[44]["location"], ships[44]["system"]),
+                             ("remote", "Port Q", "Q"), "stored when buying elsewhere")
+            self.assertEqual((ships[12]["location"], ships[12]["in_transit"]), ("Port Q", True),
+                             "on its way to the station that asked for it")
+            # sold since: gone again
+            with open(os.path.join(d, "Journal.2026-03-02T090000.01.log"), "w", encoding="utf-8") as fh:
+                fh.write(_ev("2026-03-02T09:00:00Z", "Commander", FID="F1", Name="X") + "\n")
+                fh.write(_ev("2026-03-02T09:01:00Z", "ShipyardSell", ShipType="lakonminer", SellShipID=37,
+                             MarketID=1) + "\n")
+            ar.refresh(force=True)
+            self.assertNotIn(37, {s["id"] for s in ar.fleet()["ships"]})
+
     def test_sar_role(self):
         t7 = {"Ship": "type7", "CargoCapacity": 64, "MaxJumpRange": 48.5, "FuelCapacity": {"Main": 112.0},
               "Modules": [{"Slot": "Slot01_Size5", "Item": "int_dronecontrol_fueltransfer_size5_class5"},

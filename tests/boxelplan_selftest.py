@@ -8,6 +8,7 @@ Self test of boxelplan.py (moved from the module in 4.12, N7 - verbatim).
 
     python tests/boxelplan_selftest.py      (from the plugin folder)
 """
+import json
 import os
 import sys
 import tempfile
@@ -16,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import plugin_pkg  # noqa: E402
 plugin_pkg.package()
 from SHBOXSEARCH.boxelplan import (  # noqa: E402
-    K_PROBE, ProspectCalibration, Target, _queues, _wilson, bundled_probe_prefix, probe_factors)
+    K_PROBE, Planner, ProspectCalibration, Target, _queues, _wilson, bundled_probe_prefix, probe_factors)
 from SHBOXSEARCH.sysdb import Q_CONFIRMED, SystemDB  # noqa: E402
 
 
@@ -110,6 +111,19 @@ def _probe_selftest() -> int:
     db.cx.commit()
     out = db.probe_outcomes()
     check(out == {0: [1, 3], 1: [1, 2]}, "outcomes per mass code; named and database-known left out: %s" % out)
+    # 5.0.1 (feedback 2): a gap is "in no database", never "undiscovered"
+
+    class Zero(dict):
+        def __missing__(self, key):
+            return 0
+    st = Zero(estimate_valid=True, certain_unknown=1, total_estimate=4.0,
+              source_coverage={"total": 3, "per_source": {"EDSM": 1}, "by_count": {1: 1}, "disagreement_pct": 40.0})
+    try:
+        words = json.dumps(Planner.stats_table(st)) + json.dumps(Planner.stats_lines(st))
+    except (KeyError, TypeError) as exc:
+        words = "stats failed: %r" % exc
+    check("ndiscovered" not in words and "Systems in no database" in words and "no database knows" in words,
+          "the stats call a gap 'in no database', never 'undiscovered'")
     print("failures: %d" % fails)
     return fails
 
