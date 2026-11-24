@@ -165,6 +165,16 @@ class MiningTracker:
         self.ended = False
 
     # -- input ---------------------------------------------------------------
+    def loadout(self, e: Dict[str, Any]) -> None:
+        """The ship's hold capacity and whether it is a mining ship, from a
+        Loadout (also the one read from the journal at start, 5.1.0)."""
+        self.capacity = int(e.get("CargoCapacity") or 0)
+        # a mining ship carries mining tools; a collector limpet out of an
+        # explorer (picking up cargo) is no mining
+        mods = e.get("Modules")
+        self.miner = (any(str(m.get("Item") or "").lower().startswith(MINING_TOOLS) for m in mods)
+                      if mods else None)
+
     def feed(self, e: Dict[str, Any], cargo: Optional[Dict[str, int]] = None) -> bool:
         """A journal event; True when the overlay block should be redrawn."""
         ev = e.get("event")
@@ -172,12 +182,7 @@ class MiningTracker:
         if cargo is not None:
             self.cargo = {str(k).lower(): int(v or 0) for k, v in cargo.items()}
         if ev == "Loadout":
-            self.capacity = int(e.get("CargoCapacity") or 0)
-            # a mining ship carries mining tools; a collector limpet out of an
-            # explorer (picking up cargo) is no mining
-            mods = e.get("Modules")
-            self.miner = (any(str(m.get("Item") or "").lower().startswith(MINING_TOOLS) for m in mods)
-                          if mods else None)
+            self.loadout(e)
             return False
         if ev in PLACE:
             self.ring = (e.get("Body") if ev == "SupercruiseExit" and e.get("BodyType") == "PlanetaryRing"

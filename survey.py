@@ -181,7 +181,7 @@ def _bootstrap_mining() -> None:
         cargo = None
     with ST.lock:
         if lo is not None and not ST.mine.capacity:
-            ST.mine.feed(lo)
+            ST.mine.loadout(lo)                 # not feed(): that would close the rock being counted
         if cargo is not None and not ST.mine.cargo:
             ST.mine.cargo = cargo
     logger.info("mining | hold from the journal: capacity %s t, %s t aboard, mining ship %s",

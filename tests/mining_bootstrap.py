@@ -61,6 +61,21 @@ def main():
             ok = (ST.mine.capacity, ST.mine.cargo) == (500, {"drones": 1})
             print("  [%s] a fresher Loadout / cargo is kept" % ("OK" if ok else "FAIL"))
             fails += 0 if ok else 1
+    # the self-heal: mining or flying out with no capacity - read it in a worker, at most once a minute
+    from SHBOXSEARCH import journal, uithread
+    ST.mine = miningstat.MiningTracker()
+    ST.mine.status({"Flags": 1 << 24})
+    ST._mine_cap_asked = 0.0
+    calls = []
+    with mock.patch.object(uithread, "_run_async", lambda fn, *a, **k: calls.append(fn.__name__)):
+        journal._hold_capacity_check(1000.0)
+        journal._hold_capacity_check(1030.0)             # within the minute: not again
+        journal._hold_capacity_check(1070.0)
+        ST.mine.capacity = 322
+        journal._hold_capacity_check(2000.0)             # known: nothing
+    ok = calls == ["_bootstrap_mining", "_bootstrap_mining"]
+    print("  [%s] no capacity while flying: read from the journal, at most once a minute (%r)" % ("OK" if ok else "FAIL", calls))
+    fails += 0 if ok else 1
     print("mining bootstrap: %s" % ("all OK" if not fails else "%d FAILED" % fails))
     sys.exit(1 if fails else 0)
 

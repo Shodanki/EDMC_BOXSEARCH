@@ -136,6 +136,9 @@ def _mining_event(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> None
         try:
             cargo = state.get("Cargo") if isinstance(state, dict) else None
             changed = ST.mine.feed(entry, cargo=cargo)
+            if ev == "Loadout":             # 5.1.0: what the HOLD line knows - for the log
+                logger.info("mining | %s: hold %d t, mining ship %s", entry.get("ShipName") or entry.get("Ship"),
+                            ST.mine.capacity, ST.mine.miner)
             if changed or (ev == "Cargo" and (ST.mine.active() or ST.mine.flying)):
                 _mining_overlay(force=True)
         except Exception:
@@ -547,6 +550,7 @@ def _mining_overlay(force: bool = False) -> None:
     if ST.ground.in_rhino:
         _ground_overlay(ov, now, force)
         return
+    _hold_capacity_check(now)
     if not ST.mine.active(now):
         ov.mute_route(False)                 # the route targets come back
         _flight_hold(ov, now, force)
@@ -557,6 +561,21 @@ def _mining_overlay(force: bool = False) -> None:
     ST._mine_shown = now
     if ov.show_mining(ST.mine.lines(now, overlay.COL), seconds=30):
         ST._mine_drawn = True
+
+
+HOLD_RETRY_S = 60.0
+
+
+def _hold_capacity_check(now: float) -> None:
+    """5.1.0 (user 24.11.): mining or flying out with no hold capacity known
+    (HOLD showed limpets and ore, no free room) - read the newest journal's
+    Loadout in a worker, at most once a minute."""
+    m = ST.mine
+    if m.capacity or not (m.flying or m.active(now)) or now - ST._mine_cap_asked < HOLD_RETRY_S:
+        return
+    ST._mine_cap_asked = now
+    logger.info("mining | hold capacity unknown - reading it from the journal")
+    uithread._run_async(survey._bootstrap_mining, label="mining hold")
 
 
 def _flight_hold(ov: Any, now: float, force: bool) -> None:

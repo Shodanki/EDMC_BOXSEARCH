@@ -193,6 +193,7 @@ class State:
         self.ground = groundmine.GroundMine()           # 4.12: Rhino trip - rigs, Rhino and ship hold
         self._mine_shown = 0.0
         self._mine_drawn = False
+        self._mine_cap_asked = 0.0                       # 5.1.0: last read of the hold from the journal
         self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera, lost)
         self._route_checked: Optional[Tuple[str, ...]] = None  # I1: the route checked last
         self.last_dest_id64: Optional[int] = None
