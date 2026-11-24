@@ -305,7 +305,8 @@ function render(ctx) {
       rr.push(el("div", { class: "c-dim small", text: t("Share of prospected rocks that held the material - from your own prospector reports.") }));
     if (b.rings.some(r => (r.rates && r.rates.length) || (r.expected || []).some(e => e.rate)))
       rr.push(el("div", { class: "c-dim small", text: t("t/h: the main refined material of your mining runs (all commanders), average with the slowest and fastest run.") }));
-    right.push(frame(t("RINGS"), b.reserve ? t("reserves: {r}", { r: b.reserve }) : "", rr));
+    // TH8 (5.1.0): the short frames (STAR, RINGS, SIGNALS, COLLECTED HERE) stack in one column
+    left.push(frame(t("RINGS"), b.reserve ? t("reserves: {r}", { r: b.reserve }) : "", rr));
   }
 
   // ground mining with the Rhino: what rigs yielded here, and on bodies of this class
@@ -333,7 +334,7 @@ function render(ctx) {
     const mf = b.materials_found.map(m => el("div", { class: "pl-line" },
       el("span", { class: "c-green", text: m.label + " ×" + m.count }),
       el("span", { class: "c-dim", text: " · " + (m.category || "") + " · " + (m.last || "") })));
-    right.push(frame(t("COLLECTED HERE"), b.materials_found.length + "", mf));
+    left.push(frame(t("COLLECTED HERE"), b.materials_found.length + "", mf));
   }
 
   root.append(el("div", { class: "pl-grid" }, el("div", { class: "pl-col" }, ...left), el("div", { class: "pl-col" }, ...right)));

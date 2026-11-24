@@ -144,6 +144,37 @@
   --white-rgb: 255, 255, 255;
   --text-rgb: 211, 228, 255;
 }
+/* TH8 (5.1.0): "next" gets its own quiet colours - neutral greys instead of the
+   standard teal, so the canvas views (PLANET map, SYSTEM, GALAXY) and every
+   page follow it through ui.C. --cyan stays the browser's accent (theme-boot.js). */
+:root[data-theme="next"] {
+  --bg: #0E1014;
+  --bg-1: #15181D;
+  --bg-2: #1C2026;
+  --green: #4ADE80;
+  --amber: #F5B942;
+  --red: #F05252;
+  --violet: #B57CFF;
+  --text: #E6E8EB;
+  --dim: #8A9099;
+  --faint: #2A2F36;
+  --blue: #60A5FA;
+  --gold: #F5C542;
+  --ink: #0E1014;
+  --bg-glow: #14171C;
+  --panel: #0B0D10;
+  --white: #FFFFFF;
+  --green-rgb: 74, 222, 128;
+  --amber-rgb: 245, 185, 66;
+  --red-rgb: 240, 82, 82;
+  --violet-rgb: 181, 124, 255;
+  --dim-rgb: 138, 144, 153;
+  --bg-rgb: 14, 16, 20;
+  --bg-1-rgb: 21, 24, 29;
+  --bg-2-rgb: 28, 32, 38;
+  --white-rgb: 255, 255, 255;
+  --text-rgb: 230, 232, 235;
+}
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -1533,6 +1564,14 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
   border: 2px solid rgba(95, 211, 196, .45); color: rgb(95, 211, 196); }
 :root[data-theme="industrial"] .vehicle-view .vh-switches .chip::before { content: ""; position: absolute; left: 5px; top: 50%; width: 6px; height: 10px;
   margin-top: -5px; background: var(--amber); box-shadow: 0 0 0 1px #111; }
+
+/* -- TH8 (5.1.0) PLANET INFO: station draws the datasheet as a printed table -
+   two columns, key left, value right, dotted rules between the rows */
+:root[data-theme="station"] .planet-view .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+:root[data-theme="station"] .planet-view .tile { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  border-left: 0; border-bottom: 1px dotted rgba(var(--cyan-rgb), .25); padding: 3px 0; }
+:root[data-theme="station"] .planet-view .tile .k::before { content: "> "; }
+:root[data-theme="station"] .planet-view .tile .v { font: 14px var(--font-mono); text-align: right; text-shadow: 0 0 6px rgba(var(--green-rgb), .5); }
 
 /* 5.0 CARRIER > JUMP PLAN */
 .jp .jp-q { flex: 1 1 14em; min-width: 10em; }

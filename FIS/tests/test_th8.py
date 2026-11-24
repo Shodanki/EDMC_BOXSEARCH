@@ -68,6 +68,28 @@ class TH8Test(unittest.TestCase):
         self.assertIn(':root[data-theme="console"] .vehicle-view .vh-switches .chip', block)       # capsules
         self.assertIn(':root[data-theme="industrial"] .vehicle-view .vh-switches .chip::before', block)  # plaques
 
+    def test_next_has_its_own_colours(self):
+        """PLANET map (and every canvas) takes its colours through ui.C; "next"
+        had none of its own but the accent - now a full token set, the accent
+        (--cyan) still the browser's."""
+        i = self.css.index(':root[data-theme="next"] {')
+        block = self.css[i:self.css.index("}", i)]
+        for tok in ("--bg:", "--text:", "--dim:", "--green:", "--amber:", "--red:", "--violet:", "--panel:", "--ink:",
+                    "--green-rgb:", "--dim-rgb:", "--white-rgb:"):
+            self.assertIn(tok, block)
+        self.assertNotIn("--cyan:", block)
+        self.assertIn('root.style.setProperty("--cyan", accent', _read("js", "theme-boot.js"))
+        self.assertIn("const COL = { ship: C.cyan", _read("js", "views", "surface.js"))
+
+    def test_planet_info_short_frames_and_station_sheet(self):
+        js = _read("js", "views", "planet.js")
+        for name in ("RINGS", "COLLECTED HERE", "SIGNALS", "STAR"):
+            self.assertIn('left.push(frame(t("%s")' % name, js)
+        block = _block(self.css, "/* -- TH8 (5.1.0) PLANET INFO")
+        self._scoped_and_still(block)
+        self.assertIn(':root[data-theme="station"] .planet-view .tile { display: flex;', block)
+        self.assertIn("dotted", block)
+
 
 if __name__ == "__main__":
     unittest.main()
