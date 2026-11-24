@@ -14,6 +14,7 @@ with a local Host) passes without it (5.0.1).
 from __future__ import annotations
 
 import argparse
+import gzip
 import hmac
 import json
 import os
@@ -756,8 +757,16 @@ class Handler(BaseHTTPRequestHandler):
         return bool(cfg.token) and hmac.compare_digest(tok.encode("utf-8", "replace"),
                                                        cfg.token.encode("utf-8", "replace"))
 
+    GZIP_MIN = 2048                   # smaller answers are sent as they are
+
     def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None,
               cache: str = "no-store") -> None:
+        if (len(body) >= self.GZIP_MIN and ctype.startswith("application/json")
+                and "gzip" in (self.headers.get("Accept-Encoding") or "").lower()):
+            # R1 (5.1.0): JSON compressed when the browser takes it - GALAXY
+            # 614 KB -> 120 KB (~10 ms), for the tablet in the home network
+            body = gzip.compress(body, 5)
+            extra = dict(extra or {}, **{"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))

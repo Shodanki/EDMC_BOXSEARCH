@@ -425,6 +425,23 @@ class TestServer(_Base):
         st, js = self.getj("/api/health")
         self.assertFalse(js["ai_at_runtime"])
 
+    def test_json_gzip_when_asked(self):
+        """R1: a JSON answer of 2 KB or more goes out gzip-compressed when the
+        browser says it takes gzip; without that header it is plain."""
+        import gzip as gz
+        st, h, body = self.get("/api/statistics", {"Accept-Encoding": "gzip, deflate"})
+        self.assertEqual(st, 200)
+        self.assertEqual(h.get("Content-Encoding"), "gzip")
+        self.assertEqual(h.get("Vary"), "Accept-Encoding")
+        self.assertEqual(int(h.get("Content-Length")), len(body))
+        data = json.loads(gz.decompress(body))
+        self.assertIn("systime", data)
+        st, h, plain = self.get("/api/statistics")
+        self.assertIsNone(h.get("Content-Encoding"))
+        self.assertEqual(json.loads(plain).keys(), data.keys())
+        st, h, small = self.get("/api/health", {"Accept-Encoding": "gzip"})
+        self.assertIsNone(h.get("Content-Encoding"), "small answers stay plain")
+
     def test_calls_today_with_own_requests(self):
         """A4: the cap counts the plugin's call log plus fis_calls.json."""
         import callcount
