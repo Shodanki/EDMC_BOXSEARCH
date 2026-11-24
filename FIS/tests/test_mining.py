@@ -165,6 +165,15 @@ class MiningTest(unittest.TestCase):
                                "mining.js"), encoding="utf-8").read()
         self.assertIn("({n} wave)", js)                         # singular, not "1 waves"
 
+    def test_tritium_only_under_live(self):
+        """User's test 24.11.: TRITIUM -> CARRIER stood under LIVE and HISTORY."""
+        js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "js", "views",
+                               "mining.js"), encoding="utf-8").read()
+        i = js.index('if (tab === "history") {')
+        j = js.index('} else if (tab === "places") {', i)
+        self.assertNotIn("tritium()", js[i:j])
+        self.assertIn("limpets(), tritium()", js)
+
     def test_type_key(self):
         self.assertEqual(mining.type_key("$tritium_name;"), "tritium")
         self.assertEqual(mining.type_key("LowTemperatureDiamond"), "lowtemperaturediamond")

@@ -70,7 +70,7 @@ feb077a1ed14e0da0f449ba461e785894c5d35c3258886c3b943602f821d5e06  FIS/web/js/vie
 4bc763d1b6f298fb0c1d8d807eec1b5185d38afdf4ad4b10e5af9eabbeb92e75  FIS/web/js/views/galaxy3d.js
 567221a9b0ba3606c2e2c0fec98f6d8fe842c9ac99304bb51819820d30a182c4  FIS/web/js/views/jumpplan.js
 c3d94359e215d9b93f67ac6f0f0933894fdd7545dfd1ac6205ec692f07a65c5c  FIS/web/js/views/ledger.js
-31cdeae2244920abd818a61392182f189dfd91629bcd6947bfea3239c63f53af  FIS/web/js/views/mining.js
+f6af28eb1f24ee8e737b1d1e094719a0bc1b8463b02df06fd3c177a4da405650  FIS/web/js/views/mining.js
 4455f1531e00022988b103a39bb9085c313ad97c209cd5f5d17a770c5772cae2  FIS/web/js/views/planet.js
 1c7da8d5204adb0395e5c50c31cb040778eb0756650b23df207ee56dde1b3952  FIS/web/js/views/render2d.js
 890f3f18c4ffb8fc7f19452b874e9758811f9c32121598aa4c347957ecb3e602  FIS/web/js/views/render3d.js

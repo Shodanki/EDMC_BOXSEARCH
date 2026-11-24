@@ -71,7 +71,7 @@ function render() {
   liveBox = null;
   if (tab === "history") {
     root.append(el("div", { class: "mine-grid" }, el("div", { class: "mine-col" }, history()),
-      el("div", { class: "mine-col" }, goods(), tritium())));
+      el("div", { class: "mine-col" }, goods())));          // TRITIUM only under LIVE (user 24.11.)
   } else if (tab === "places") {
     root.append(el("div", { class: "mine-grid" }, el("div", { class: "mine-col" }, hotspots(), ships()),
       el("div", { class: "mine-col" }, hotspotRank())));
