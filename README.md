@@ -687,7 +687,7 @@ promising boxels: 139  (top: Synuefe UF-I b2 4.6, Synuefe TF-I b2 4.6, ...)
 Three databases that agree closely means the region is well reported and the
 remaining unknowns are mostly in genuinely unprobed boxels. A disagreement rate
 above 15% flags the opposite — the plugin says so explicitly:
-`thin reporting here - good odds for undiscovered systems`. That is the cue to
+`thin reporting here - good odds for systems no database knows`. That is the cue to
 probe hard here before moving the carrier.
 
 ## 6. Automatic harvesting
@@ -1346,7 +1346,7 @@ Progress in this sphere
   Still to fly            109
   Still to check          811
 
-Undiscovered systems
+Systems in no database
   Certain (boxel gaps)    27
   Estimated further       412
   Estimated total here    ~585
