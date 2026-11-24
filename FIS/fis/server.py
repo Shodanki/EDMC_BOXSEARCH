@@ -1504,6 +1504,11 @@ class Handler(BaseHTTPRequestHandler):
                                                  journal_dir=app.cfg.journal_dir,
                                                  capi_path=capi.path_for(app.cfg.plugin_dir)))
 
+    def _get_inventory(self, qs: Dict[str, Any]) -> None:
+        """SHIP > MATERIALS: every material collected, with the count."""
+        from . import inventory
+        return self._json(inventory.build_inventory(self.app.archive, self.app.cfg.journal_dir, time.time()))
+
     def _get_equipment(self, qs: Dict[str, Any]) -> None:
         """CARRIER > EQUIPMENT (EQ1): the modules in storage, where, what they fit."""
         from . import equipment
@@ -1836,6 +1841,7 @@ _GET_ROUTES = {
     "/api/carriers/known": Handler._get_carriers_known,
     "/api/jumpplan": Handler._get_jumpplan,
     "/api/equipment": Handler._get_equipment,
+    "/api/inventory": Handler._get_inventory,
     "/api/mining/live": Handler._get_mining_live,
     "/api/mining": Handler._get_mining,
     "/api/statistics": Handler._get_statistics,

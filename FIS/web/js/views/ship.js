@@ -15,6 +15,7 @@
 import { getJSON, postJSON } from "../api.js";
 import { blinkFor, el, frame, fmt, meter, withPopout, copyText } from "../ui.js";
 import { t, N_ } from "../i18n.js";
+import { inventoryView } from "./inventory.js";
 
 const LAMP = {
   hull_crit: N_("HULL CRITICAL"), life_support: N_("LIFE SUPPORT"), overheat: N_("OVERHEAT"), fuel_crit: N_("FUEL CRITICAL"),
@@ -55,7 +56,7 @@ let controls = null;          // FG1: key bindings, asked when the view is shown
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
 // more lost systems than this: a summary line in UNSOLD DATA, the list in its own tab
 const LOST_INLINE = 10;
-let tab = ["lost", "synth"].includes(store("fis.ship.tab")) ? store("fis.ship.tab") : "ship";
+let tab = ["lost", "synth", "mats"].includes(store("fis.ship.tab")) ? store("fis.ship.tab") : "ship";
 const lostMany = () => !!(data && data.unsold && (data.unsold.lost_systems || []).length > LOST_INLINE);
 
 export function mount(r) {
@@ -155,10 +156,11 @@ function render() {
   const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
     onclick: () => { tab = k; store("fis.ship.tab", k); render(); } });
   if (tab === "lost" && !lostMany()) tab = "ship";
-  root.append(el("div", { class: "kc-tabs" }, tb("ship", t("SHIP")), tb("synth", t("SYNTHESIS")),
+  root.append(el("div", { class: "kc-tabs" }, tb("ship", t("SHIP")), tb("synth", t("SYNTHESIS")), tb("mats", t("MATERIALS")),
     lostMany() ? tb("lost", t("LOST DATA") + " · " + data.unsold.lost_systems.length) : null));
   if (tab === "lost") { root.append(lostData()); return; }
   if (tab === "synth") { root.append(shipSynthesis()); return; }
+  if (tab === "mats") { root.append(inventoryView()); return; }       // user 24.11.: everything collected
   // left: the picture, the hold and - when switched on - the key bindings (there is room
   // under the hold, user 18.11.); right (the wide side): report and the engineer's module
   // list, which needs the room (user, 05.11.2026)

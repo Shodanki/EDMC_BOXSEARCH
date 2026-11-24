@@ -1638,6 +1638,14 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 .eq-links a { color: var(--cyan); }
 @media (max-width: 1100px) { .eq-grid { grid-template-columns: 1fr; } }
 
+/* -- MATERIALS (5.1.0): everything collected, four columns */
+.inv-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.inv-tab td { padding: 1px 4px; }
+.inv-tab td.num { white-space: nowrap; }
+.inv-tab td:first-child { width: 100%; }
+@media (max-width: 1400px) { .inv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 800px) { .inv-grid { grid-template-columns: 1fr; } }
+
 /* TB1 (5.0.1, user 20.11.): every table, every page, every theme - a column
    of numbers (any cell td.num) is centred, its heading with it; a text
    column (names, dates, notes) keeps heading and cells left, so names stay
