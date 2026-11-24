@@ -5,6 +5,7 @@
 # Copyright (c) 2025-2026 Shodanki
 """MINING: sessions from the journal; tritium in carrier jumps."""
 
+import os
 import unittest
 
 from fis import fleet as fl, mining
@@ -121,7 +122,8 @@ class MiningTest(unittest.TestCase):
         self.assertTrue(r["learnt"])
         self.assertEqual(r["need"], 0)
         self.assertTrue(mining.RESERVE_MIN <= r["reserve"] <= mining.LIMPET_RESERVE)
-        self.assertAlmostEqual(r["reserve"], r["spread"], places=3)
+        self.assertAlmostEqual(r["reserve"], min(mining.LIMPET_RESERVE, max(mining.RESERVE_MIN, r["spread"])), places=3)
+        self.assertEqual(r["spread_of"], 7)
         three = mining.limpet_ratio(seven[:3])["by_type"]["lakonminer"]
         self.assertFalse(three["learnt"])
         self.assertEqual((three["need"], three["reserve"]), (2, mining.LIMPET_RESERVE))
@@ -137,6 +139,31 @@ class MiningTest(unittest.TestCase):
         self.assertEqual(plans[0]["limpets"], 147)          # 149 with the plain mean and 10 %
         self.assertFalse(plans[1]["learnt"] or plans[1]["own"])
         self.assertEqual(plans[1]["reserve"], mining.LIMPET_RESERVE)
+
+    def test_limpet_spread_robust(self):
+        """MO2b (user's test 24.11.): 38 sessions from the EDD history gave
+        "spread ±59 %" - one 23 t session with 55 limpets and old technique.
+        The spread is the median deviation of the last ten sessions."""
+        def run(i, lim, t):
+            return {"start": 1000.0 * i, "total": t, "kind": "space", "asteroids": 30, "ship_type": "lakonminer",
+                    "drones": {"prospector": lim // 3, "collection": lim - lim // 3}}
+        old = [run(i, 180, 260) for i in range(20)]                  # r 0.69, a year ago
+        odd = [run(20, 55, 23)]                                      # r 2.4
+        new = [run(21 + i, lim, t) for i, (lim, t) in enumerate(
+            [(89, 241), (97, 208), (89, 197), (105, 244), (126, 272), (112, 279), (103, 275), (118, 244)])]
+        r = mining.limpet_ratio(old + odd + new)["by_type"]["lakonminer"]
+        self.assertEqual(r["spread_of"], mining.SPREAD_WINDOW)
+        self.assertLess(r["spread"], 0.2, "one odd session and old technique do not blow it up")
+        self.assertLessEqual(r["reserve"], mining.LIMPET_RESERVE)
+        plans = mining._limpet_plans(mining.limpet_ratio(old + odd + new),
+                                     [{"name": "MINER", "type": "Type-11", "type_key": "lakonminer",
+                                       "cargo": 322, "current": False}], 0)
+        self.assertEqual(plans[0]["spread_of"], mining.SPREAD_WINDOW)
+
+    def test_collector_wave_singular(self):
+        js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "js", "views",
+                               "mining.js"), encoding="utf-8").read()
+        self.assertIn("({n} wave)", js)                         # singular, not "1 waves"
 
     def test_type_key(self):
         self.assertEqual(mining.type_key("$tritium_name;"), "tritium")

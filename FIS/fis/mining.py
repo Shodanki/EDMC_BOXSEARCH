@@ -272,6 +272,12 @@ MIN_TONNES = 20              # sessions shorter than this tell nothing
 LEARN_SESSIONS = 5
 RECENT_HALF = 3.0
 RESERVE_MIN = 0.05
+# MO2b (5.1.0, user's test 24.11.: "spread ±59 %" on 38 Type-11 sessions):
+# the plain SD took the whole EDD history and one 23 t / 55 limpet session
+# (r 2.4). The spread is now the median deviation (x 1.4826, an SD for normal
+# data) of the last SPREAD_WINDOW sessions: one odd session moves it little,
+# old technique not at all.
+SPREAD_WINDOW = 10
 
 
 def controller_of(loadout: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -387,16 +393,22 @@ def _ratio_learning(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
     lim = sum(wi * (r["drones"]["prospector"] + r["drones"]["collection"]) for wi, r in zip(w, lst))
     ton = sum(wi * r["total"] for wi, r in zip(w, lst))
     rs = [(r["drones"]["prospector"] + r["drones"]["collection"]) / r["total"] for r in lst if r["total"]]
+    rs = rs[-SPREAD_WINDOW:]
     spread = None
     if len(rs) >= 3:
-        mean = sum(rs) / len(rs)
-        sd = math.sqrt(sum((x - mean) ** 2 for x in rs) / (len(rs) - 1))
-        spread = round(sd / mean, 3) if mean else None
+        med = _median(rs)
+        spread = round(1.4826 * _median([abs(x - med) for x in rs]) / med, 3) if med else None
     learnt = n >= LEARN_SESSIONS
     reserve = (min(LIMPET_RESERVE, max(RESERVE_MIN, spread)) if learnt and spread is not None
                else LIMPET_RESERVE)
-    return {"recent": round(lim / ton, 3) if ton else None, "spread": spread, "reserve": round(reserve, 3),
-            "learnt": learnt, "need": max(0, LEARN_SESSIONS - n)}
+    return {"recent": round(lim / ton, 3) if ton else None, "spread": spread, "spread_of": len(rs),
+            "reserve": round(reserve, 3), "learnt": learnt, "need": max(0, LEARN_SESSIONS - n)}
+
+
+def _median(xs: List[float]) -> float:
+    xs = sorted(xs)
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
 
 
 def limpet_ratio(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -748,7 +760,8 @@ def _limpet_plans(rat: Dict[str, Any], ships: List[Dict[str, Any]], limpets: int
         p = dict(limpet_load(int(s["cargo"] or 0), r, reserve), name=s["name"] or s["type"], cargo=s["cargo"],
                  ratio=r, own=own, current=s["current"], reserve=reserve,
                  learnt=bool(own and basis["learnt"]), sessions=basis["sessions"] if own else 0,
-                 need=basis["need"] if own else LEARN_SESSIONS, spread=basis["spread"] if own else None)
+                 need=basis["need"] if own else LEARN_SESSIONS, spread=basis["spread"] if own else None,
+                 spread_of=basis.get("spread_of") if own else None)
         if s["current"]:
             p["on_board"] = limpets
             p["diff"] = p["limpets"] - limpets

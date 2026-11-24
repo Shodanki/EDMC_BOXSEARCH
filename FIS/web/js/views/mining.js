@@ -130,7 +130,8 @@ function liveStatus() {
   if (CL && CL.life && CL.last_wave_ago !== null && CL.last_wave_ago !== undefined) {
     const old = CL.last_wave_ago > CL.life.max_s;
     rows.push(el("div", { class: "small " + (old ? "c-amber" : "c-dim"),
-      text: t("collectors out for {a} - waves seen working up to {m} (median {d}, {n} waves)",
+      text: t(CL.life.n === 1 ? "collectors out for {a} - waves seen working up to {m} (median {d}, {n} wave)"
+        : "collectors out for {a} - waves seen working up to {m} (median {d}, {n} waves)",
         { a: mmss(CL.last_wave_ago), m: mmss(CL.life.max_s), d: mmss(CL.life.median_s), n: CL.life.n })
         + (old ? " · " + t("longer than ever seen - they may be gone") : "") }));
   }
@@ -187,7 +188,8 @@ const CTRL = { collector: N_("collector limpet controller"), mining: N_("mining 
 function collectorLife(P) {
   return (P.collector_life || []).map(c => el("div", { class: "c-dim small",
     title: t("From a launch wave to the last tonne refined before the next wave or the end of the session. The journal writes no expiry, so this is only what was seen."),
-    text: t("Collectors ({c} {g}): seen working up to {m}, median {d}, 90 % {p} ({n} waves)",
+    text: t(c.n === 1 ? "Collectors ({c} {g}): seen working up to {m}, median {d}, 90 % {p} ({n} wave)"
+      : "Collectors ({c} {g}): seen working up to {m}, median {d}, 90 % {p} ({n} waves)",
       { c: c.label ? t(CTRL[c.label.kind]) : "?", g: c.label ? c.label.grade : "", m: mmss(c.max_s), d: mmss(c.median_s), p: mmss(c.p90_s), n: c.n }) }));
 }
 
@@ -222,8 +224,8 @@ function limpets() {
 // MO2 (5.1.0): from when the limpet count is learnt, per hull with own sessions
 function learning(P) {
   return P.ships.filter(s => s.own && s.sessions).map(s => s.learnt
-    ? el("div", { class: "small c-green", text: s.name + ": " + t("limpet count learnt from {n} sessions, spread ±{s} % - reserve {p} %",
-        { n: s.sessions, s: Math.round((s.spread || 0) * 100), p: Math.round(s.reserve * 100) }) })
+    ? el("div", { class: "small c-green", text: s.name + ": " + t("limpet count learnt from {n} sessions, spread of the last {w} ±{s} % - reserve {p} %",
+        { n: s.sessions, w: s.spread_of || s.sessions, s: Math.round((s.spread || 0) * 100), p: Math.round(s.reserve * 100) }) })
     : el("div", { class: "small c-amber", text: s.name + ": " + t("limpet count still learning - {n} of {m} sessions, until then {p} % reserve",
         { n: s.sessions, m: P.learn_sessions || 5, p: Math.round(s.reserve * 100) }) }));
 }
