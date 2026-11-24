@@ -1892,5 +1892,19 @@ const DE = /*DE*/{
   "black hole": "Schwarzes Loch",
   "carbon star": "Kohlenstoffstern",
   "exotic": "exotisch",
-  "{c} giant": "{c}-Riese"
+  "{c} giant": "{c}-Riese",
+  "days": "Tage",
+  "weeks": "Wochen",
+  "months": "Monate",
+  "TRAVEL": "REISE",
+  "new systems": "neue Systeme",
+  "Since docking {d}: {j} jumps, {ly} ly, {n} new systems, {s} bodies scanned": "Seit dem Andocken {d}: {j} Sprünge, {ly} ly, {n} neue Systeme, {s} Körper gescannt",
+  "SHIPS COMPARED": "SCHIFFE IM VERGLEICH",
+  "Per ship from its Loadout on: h = time with the ship as your active one (pauses over 30 min left out), lost = deaths in it. What each ship earned and cost is in GAIN / LOSS.": "Je Schiff ab seinem Loadout: h = Zeit mit dem Schiff als aktivem (Pausen über 30 min nicht gezählt), verloren = Tode darin. Was jedes Schiff verdient und gekostet hat, steht in GUV.",
+  "BIO CATALOGUE": "BIO-KATALOG",
+  "{g} genera · {s} species": "{g} Gattungen · {s} Arten",
+  "{s} species · analysed {n}×": "{s} Arten · {n}× analysiert",
+  "variants: {v}": "Varianten: {v}",
+  "first analysed {d}": "zuerst analysiert {d}",
+  "Species you analysed (all three samples); value = your own sale price, where you sold it. Hover a species for its colour variants and the day you first analysed it.": "Arten, die du analysiert hast (alle drei Proben); Wert = dein eigener Verkaufspreis, wo du verkauft hast. Eine Art zeigt beim Überfahren ihre Farbvarianten und den Tag der ersten Analyse."
 }/*END*/;

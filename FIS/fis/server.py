@@ -1723,6 +1723,11 @@ class Handler(BaseHTTPRequestHandler):
                                          rm.region_names() if rm else ())
         except Exception:
             out["atlas"] = None
+        try:                          # ST3/ST4/ST5 (5.1.0): travel grid, ships, bio catalogue
+            from . import careerstats
+            out["career"] = careerstats.build(app.archive.events(), app.archive.organic_values())
+        except Exception:
+            out["career"] = None
         return out
 
     def _get_galaxy(self, qs: Dict[str, Any]) -> None:

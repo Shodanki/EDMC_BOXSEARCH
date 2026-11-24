@@ -408,7 +408,7 @@ class StatsLayoutTest(unittest.TestCase):
         cards = re.findall(r'^  \["([A-Z]+)", N_\(', js, re.M)
         expected = ["ranks", "overTime", "firstFinds", "surfaceMaps", "bioRates", "perSession", "timePerSystem", "learning",
                     "carrierMoney"] + cards          # CT2: the carrier's money in OVERVIEW
-        expected += ["records", "regions", "starsWorlds", "journey"]      # 5.1.0 ST2/ST6/ST8/ST9
+        expected += ["records", "regions", "starsWorlds", "journey", "travel", "ships", "bioCatalogue"]   # 5.1.0 ST2-ST9
         self.assertEqual(sorted(frames), sorted(expected))          # each once, none missing
         for k in expected[:9]:
             self.assertIn(k + ": () => " + k + "()", js)

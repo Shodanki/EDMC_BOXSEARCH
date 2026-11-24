@@ -95,7 +95,11 @@ class RecordsTest(unittest.TestCase):
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "js", "views",
                                "statistics.js"), encoding="utf-8") as fh:
             js = fh.read()
-        self.assertIn('["atlas", N_("RECORDS & ATLAS"), [[["records"], ["regions"]], [["starsWorlds"], ["journey"]]]]', js)
+        self.assertIn('["atlas", N_("RECORDS & ATLAS"), [[["records"], ["regions"], ["starsWorlds"]], [["journey", "ships"], '
+                      '["bioCatalogue"]]]]', js)
+        self.assertIn("R.visited.slice(0, 8)", js, "no long lists (user 24.11.)")
+        self.assertIn('[["EXPLORATION", "OTHER"], ["EXOBIOLOGY", "WEALTH", "MINING"], ["ranks", "CARRIER", "carrierMoney"]]', js,
+                      "user 24.11.: OTHER under EXPLORATION, MINING under WEALTH, columns of about equal length")
 
 
 if __name__ == "__main__":
