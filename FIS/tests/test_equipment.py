@@ -180,6 +180,8 @@ class EquipmentTest(unittest.TestCase):
         self.assertEqual((pp["fits"], pp["better"]), (["MINER"], ["MINER"]))
         ls = next(r for r in d["rows"] if r["item"] == "int_lifesupport_size4_class2")
         self.assertEqual((ls["where"], ls["eng"]), ("Jameson Memorial", "G2 Misc · Light Weight"))
+        self.assertEqual(ls["bp"], "Misc · Light Weight", "the engineering choice without the grade")
+        self.assertIsNone(pp["bp"])
         self.assertEqual(ls["better"], ["MINER"], "engineered, the fitted one is not")
         arm = next(r for r in d["rows"] if r["group"] == "armour")
         self.assertEqual(arm["fits"], ["MINER"])
@@ -195,6 +197,17 @@ class EquipmentTest(unittest.TestCase):
         js = _read("equipment.js")
         self.assertIn('getJSON("/api/equipment")', js)
         self.assertEqual(js.count('rel: "noopener noreferrer"'), 2)
+
+    def test_choices_not_search(self):
+        """User 24.11.: module, class, engineering and place as choices, no search."""
+        js = _read("equipment.js")
+        for k in ('["name", N_("every module")', '["cls", N_("every class")', '["eng", N_("any engineering")',
+                  '["where", N_("every place")'):
+            self.assertIn(k, js)
+        self.assertNotIn('type: "search"', js)
+        self.assertIn('t("engineered")', js)
+        self.assertIn('t("not engineered")', js)
+        self.assertIn("for (const r of filtered(k))", js, "each list offers what the other choices leave")
 
 
 if __name__ == "__main__":

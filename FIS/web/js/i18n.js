@@ -1788,7 +1788,6 @@ const DE = /*DE*/{
   "armour": "Panzerung",
   "better than fitted": "besser als eingebaut",
   "every place": "jeder Ort",
-  "filter modules": "Module filtern",
   "fits": "passt",
   "fixed": "fest",
   "gimballed": "kardanisch",
@@ -1804,5 +1803,10 @@ const DE = /*DE*/{
   "{n} modules · on board {c}": "{n} Module · an Bord {c}",
   "{n} modules": "{n} Module",
   "{n} of {m} modules": "{n} von {m} Modulen",
-  "{n} ships": "{n} Schiffe"
+  "{n} ships": "{n} Schiffe",
+  "every module": "jedes Modul",
+  "every class": "jede Klasse",
+  "any engineering": "jedes Engineering",
+  "engineered": "engineered",
+  "not engineered": "nicht engineered"
 }/*END*/;

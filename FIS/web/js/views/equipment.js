@@ -19,7 +19,38 @@ const MOUNT = { fixed: N_("fixed"), gimbal: N_("gimballed"), turret: N_("turrete
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; };
 
 let box = null, data = null, busy = false;
-let group = store("fis.eq.group") || "", place = store("fis.eq.place") || "", ship = store("fis.eq.ship") || "", query = "";
+let group = store("fis.eq.group") || "", ship = store("fis.eq.ship") || "";
+// user 24.11.: module, class, engineering and place as choices, no search;
+// each list offers only what the other choices leave, with the count
+const clsOf = (r) => r.group === "utility" ? "0" + (r.cls || "") : r.size !== null ? r.size + (r.cls || "") : "–";
+const PICKS = [["name", N_("every module"), r => r.name], ["cls", N_("every class"), clsOf],
+  ["eng", N_("any engineering"), r => r.bp || ""], ["where", N_("every place"), r => r.where]];
+let sel = (() => { try { return JSON.parse(store("fis.eq.sel")) || {}; } catch (e) { return {}; } })();
+function pick(k, v) { sel = Object.assign({}, sel, { [k]: v }); store("fis.eq.sel", JSON.stringify(sel)); draw(); }
+function engOk(r, v) { return v === "+" ? !!r.bp : v === "-" ? !r.bp : r.bp === v; }
+function filtered(skip) {
+  let rows = data.rows;
+  if (group) rows = rows.filter(r => r.group === group);
+  if (ship) rows = rows.filter(r => r.fits.includes(ship));
+  for (const [k, , f] of PICKS) {
+    const v = sel[k];
+    if (!v || k === skip) continue;
+    rows = rows.filter(r => k === "eng" ? engOk(r, v) : f(r) === v);
+  }
+  return rows;
+}
+function pickSel([k, all, f]) {
+  const counts = new Map();
+  for (const r of filtered(k)) { const v = f(r); if (v) counts.set(v, (counts.get(v) || 0) + r.count); }
+  const v = sel[k] || "";
+  if (v && !counts.has(v) && !(k === "eng" && (v === "+" || v === "-"))) counts.set(v, 0);
+  const opts = [...counts.entries()].sort((a, b) => k === "cls" ? b[0].localeCompare(a[0], undefined, { numeric: true }) : a[0].localeCompare(b[0]));
+  const extra = k === "eng" ? [el("option", { value: "+", selected: v === "+" ? true : null, text: t("engineered") }),
+    el("option", { value: "-", selected: v === "-" ? true : null, text: t("not engineered") })] : [];
+  return el("select", { class: "lay-pick eq-pick eq-" + k, onchange: (e) => pick(k, e.target.value) },
+    el("option", { value: "", text: t(all) }), ...extra,
+    ...opts.map(([o, c]) => el("option", { value: o, selected: o === v ? true : null, text: o + " · " + c })));
+}
 
 export function equipmentView() {
   const fresh = !box;
@@ -50,33 +81,17 @@ function draw() {
     el("div", { class: "ns-col" }, list()), el("div", { class: "ns-col" }, ships(), places())));
 }
 
-function rerender(focusSel) {
-  const n0 = focusSel ? box.querySelector(focusSel) : null;
-  const pos = n0 ? n0.selectionStart : null;
-  draw();
-  if (focusSel) { const n = box.querySelector(focusSel); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) { /* type=search */ } } }
-}
-
 function list() {
-  let rows = data.rows;
-  if (group) rows = rows.filter(r => r.group === group);
-  if (place) rows = rows.filter(r => r.where === place);
-  if (ship) rows = rows.filter(r => r.fits.includes(ship)).sort((a, b) => b.better.includes(ship) - a.better.includes(ship));
-  const q = query.trim().toLowerCase();
-  if (q) rows = rows.filter(r => [r.name, r.code, r.eng, r.where].some(v => v && String(v).toLowerCase().includes(q)));
+  const rows = [...filtered()];
+  if (ship) rows.sort((a, b) => b.better.includes(ship) - a.better.includes(ship));
   const n = rows.reduce((s, r) => s + r.count, 0);
   const tb = (k, label) => el("button", { class: group === k ? "on" : "", "aria-pressed": group === k ? "true" : "false",
     text: t(label), onclick: () => { group = k; store("fis.eq.group", k); draw(); } });
-  const placeSel = el("select", { class: "lay-pick eq-pick", onchange: (e) => { place = e.target.value; store("fis.eq.place", place); draw(); } },
-    el("option", { value: "", text: t("every place") }),
-    ...data.places.map(([w, c]) => el("option", { value: w, selected: w === place ? true : null, text: w + " · " + c })));
-  const search = el("input", { type: "search", class: "lay-pick eq-q", placeholder: t("filter modules"), value: query,
-    oninput: (e) => { query = e.target.value; rerender(".eq-q"); } });
   const head = el("tr", {}, ...[t("Module"), t("Class"), t("Engineering"), "×", t("Where"), t("Paid"), ship ? t("For {s}", { s: ship }) : t("Fits")]
     .map(h => el("th", { text: h })));
   const body = rows.map(r => el("tr", { class: (ship && r.better.includes(ship) ? "c-green " : "") + (r.place === "carrier" ? "" : "away") },
     el("td", {}, el("span", { text: r.name }), r.mount ? el("span", { class: "c-dim small", text: " · " + t(MOUNT[r.mount]) }) : null),
-    el("td", { class: "num", text: r.group === "utility" ? "0" + (r.cls || "") : r.size !== null ? r.size + (r.cls || "") : "–" }),
+    el("td", { class: "num", text: clsOf(r) }),
     el("td", { class: "small" + (r.eng ? " c-violet" : " c-dim"), text: r.eng || "–" }),
     el("td", { class: "num", text: r.count > 1 ? "×" + r.count : "1" }),
     el("td", { class: "small" }, el("span", { text: r.where }),
@@ -85,7 +100,9 @@ function list() {
     el("td", { class: "num c-dim", title: r.priced < r.count ? t("price known for {n} of {m}", { n: r.priced, m: r.count }) : "", text: cr(r.value) }),
     fitsCell(r)));
   const tools = el("div", { class: "cag-tools" }, el("div", { class: "kc-tabs eq-tabs" }, ...GROUPS.map(([k, l]) => tb(k, l))));
-  const tools2 = el("div", { class: "cag-tools" }, placeSel, search,
+  const any = PICKS.some(([k]) => sel[k]);
+  const tools2 = el("div", { class: "cag-tools" }, ...PICKS.map(pickSel),
+    any ? el("button", { text: t("reset") + " ✕", onclick: () => { sel = {}; store("fis.eq.sel", "{}"); draw(); } }) : null,
     ship ? el("button", { text: t("all ships") + " ✕", onclick: () => { ship = ""; store("fis.eq.ship", ""); draw(); } }) : null,
     el("span", { class: "c-dim small", text: t("{n} of {m} modules", { n, m: data.count }) }));
   const note = el("div", { class: "c-dim small", text: t("From the storage list of {d} ({s}) and what you stored, retrieved, sold or sent off since. Open Outfitting > Storage to refresh it. Fits by slot and size from each ship's last fitting - the game may still refuse a module in some hulls. ▲ better than fitted: the same kind, larger, a better class or engineered.",
@@ -120,7 +137,7 @@ function ships() {
 }
 
 function places() {
-  return frame(t("WHERE IT LIES"), String(data.places.length), data.places.map(([w, c]) => el("button", { class: "eq-place" + (w === place ? " sel" : ""),
-    onclick: () => { place = place === w ? "" : w; store("fis.eq.place", place); draw(); } },
+  return frame(t("WHERE IT LIES"), String(data.places.length), data.places.map(([w, c]) => el("button", { class: "eq-place" + (w === sel.where ? " sel" : ""),
+    onclick: () => pick("where", sel.where === w ? "" : w) },
   el("span", { class: w === data.carrier ? "c-cyan" : "", text: w }), el("span", { class: "c-dim", text: " · " + c }))), { appear: false });
 }

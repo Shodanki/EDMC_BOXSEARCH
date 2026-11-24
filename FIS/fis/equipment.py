@@ -307,11 +307,16 @@ def _where(x: Dict[str, Any], carrier_id: Any, stations: Dict[Any, str]) -> Tupl
     return "station", stations.get(x["market"]) or x["system"] or "?"
 
 
-def _grade(x: Dict[str, Any]) -> Optional[str]:
+def _blueprint(x: Dict[str, Any]) -> Optional[str]:
+    """"FSD_LongRange" -> "FSD · Long Range" (None: not engineered)."""
     if not x["eng"]:
         return None
-    bp = re.sub(r"([a-z])([A-Z])", r"\1 \2", x["eng"]).replace("_", " · ")
-    return ("G%s " % x["level"] if x.get("level") else "") + bp
+    return re.sub(r"([a-z])([A-Z])", r"\1 \2", x["eng"]).replace("_", " · ")
+
+
+def _grade(x: Dict[str, Any]) -> Optional[str]:
+    bp = _blueprint(x)
+    return ("G%s " % x["level"] if x.get("level") else "") + bp if bp else None
 
 
 def _rows(items: List[Dict[str, Any]], ships: List[Dict[str, Any]], carrier_id: Any,
@@ -327,7 +332,7 @@ def _rows(items: List[Dict[str, Any]], ships: List[Dict[str, Any]], carrier_id: 
             g = groups[k] = {"item": x["item"], "name": x["name"], "code": mod, "group": c["group"],
                              "mount": next((m for m in ("fixed", "gimbal", "turret") if "_%s_" % m in x["item"]), None),
                              "size": c["size"], "cls": fl._CLASS.get(str(c["cls"])) if c["cls"] else None,
-                             "eng": _grade(x), "hot": x["hot"], "count": 0, "value": 0, "priced": 0,
+                             "eng": _grade(x), "bp": _blueprint(x), "hot": x["hot"], "count": 0, "value": 0, "priced": 0,
                              "place": place, "where": where, "system": x["system"], "transit_s": 0,
                              "fits": [], "better": []}
             for s in ships:
