@@ -723,6 +723,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
+        if self.close_connection and "Connection" not in (extra or {}):
+            self.send_header("Connection", "close")    # M10: the client knows not to reuse it
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -789,6 +791,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._too_many(wait)
         url = urlparse(self.path)
         limit = _POST_LIMITS.get(url.path, 4096)
+        if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
+            # M10: a chunked body has no Content-Length - it would stay unread
+            # in the connection and be taken for the next request
+            self.close_connection = True
+            return self._error(411, "length required")
         # read the (small) body first: answering before it was read makes
         # Windows reset the connection instead of delivering the answer
         try:
