@@ -375,6 +375,7 @@ CREATE TABLE IF NOT EXISTS cmdr_bodies (
     bio_open       TEXT,               -- JSON list of species analysed, not sold
     lost_ts        TEXT,               -- when data of this body was lost
     lost_what      TEXT,               -- JSON: "scan", "map", "bio:<species>" still to redo
+    open_ts        TEXT,               -- journal time of the newest open scan / map / species
     PRIMARY KEY (fid, sys_id64, body_id)
 );
 CREATE INDEX IF NOT EXISTS ix_cmdr_bod ON cmdr_bodies(sys_id64);
@@ -390,6 +391,11 @@ _SOLD_SQL = {
 # C1: the full journal replay that fills the per-commander tables; until it
 # has run, readers fall back to the shared columns (any commander).
 CMDR_READY = "upgrade_48_cmdr"
+# LD1 (5.0.1): open_ts keeps the newest journal time of a body's open work
+_OPEN_TS = "open_ts=CASE WHEN open_ts IS NULL OR open_ts < ? THEN ? ELSE open_ts END"
+# a death this close to the clock is played live (or just after): it also
+# takes the rows from before 5.0.1 that carry no open_ts
+LIVE_DIED_S = 24 * 3600
 # events that change what a commander carries unsold (and loses with the ship)
 LOSS_EVENTS = frozenset(("Scan", "SAAScanComplete", "ScanOrganic", "SellExplorationData",
                          "MultiSellExplorationData", "SellOrganicData", "Died"))
@@ -729,7 +735,8 @@ class SystemDB:
                          ("map_open", "INTEGER NOT NULL DEFAULT 0"),
                          ("scan_sold", "INTEGER NOT NULL DEFAULT 0"),
                          ("map_sold", "INTEGER NOT NULL DEFAULT 0"),
-                         ("bio_open", "TEXT"), ("lost_ts", "TEXT"), ("lost_what", "TEXT")):
+                         ("bio_open", "TEXT"), ("lost_ts", "TEXT"), ("lost_what", "TEXT"),
+                         ("open_ts", "TEXT")):
             if col not in bchave:
                 self.cx.execute("ALTER TABLE cmdr_bodies ADD COLUMN %s %s" % (col, typ))
         self.cx.commit()
@@ -1623,16 +1630,16 @@ class SystemDB:
         """A scan is open (unsold) until the system's data is sold."""
         bid = entry["BodyID"]
         self._cmdr_body(a, bid)
-        self.cx.execute("UPDATE cmdr_bodies SET scan_open=1 WHERE fid=? AND sys_id64=? AND "
-                        "body_id=? AND scan_sold=0", (self.fid, a, bid))
+        self.cx.execute("UPDATE cmdr_bodies SET scan_open=1, " + _OPEN_TS + " WHERE fid=? AND sys_id64=? AND "
+                        "body_id=? AND scan_sold=0", (ts, ts, self.fid, a, bid))
         self._done_again(a, bid, "scan")
 
     def _carry_map(self, ev: str, entry: dict, a: Any, ts: Any) -> None:
         """A map is open (unsold) until the system's data is sold."""
         bid = entry["BodyID"]
         self._cmdr_body(a, bid)
-        self.cx.execute("UPDATE cmdr_bodies SET map_open=1 WHERE fid=? AND sys_id64=? AND "
-                        "body_id=? AND map_sold=0", (self.fid, a, bid))
+        self.cx.execute("UPDATE cmdr_bodies SET map_open=1, " + _OPEN_TS + " WHERE fid=? AND sys_id64=? AND "
+                        "body_id=? AND map_sold=0", (ts, ts, self.fid, a, bid))
         self._done_again(a, bid, "map")
 
     def _carry_bio(self, ev: str, entry: dict, a: Any, ts: Any) -> bool:
@@ -1647,8 +1654,8 @@ class SystemDB:
         open_ = self._lost_list(r["bio_open"] if r else None)
         if sp not in open_:
             open_.append(sp)
-        self.cx.execute("UPDATE cmdr_bodies SET bio_open=? WHERE fid=? AND sys_id64=? AND "
-                        "body_id=?", (json.dumps(open_), self.fid, a, bid))
+        self.cx.execute("UPDATE cmdr_bodies SET bio_open=?, " + _OPEN_TS + " WHERE fid=? AND sys_id64=? AND "
+                        "body_id=?", (json.dumps(open_), ts, ts, self.fid, a, bid))
         self._done_again(a, bid, "bio:" + sp)
         return True
 
@@ -1679,10 +1686,23 @@ class SystemDB:
                                 (json.dumps(left) if left else None, r["rowid"]))
 
     def _carry_died(self, ev: str, entry: dict, a: Any, ts: Any) -> None:
-        """Died: every open scan, map and species of this commander is undone and marked lost."""
+        """
+        Died: every open scan, map and species of this commander is undone
+        and marked lost - only what was open BEFORE the death (LD1, 5.0.1).
+
+        "Replay journals" (the advice after a journal gap) replays the one
+        real death of 11.07. again; up to 5.0.0 it reset everything open
+        today, and the later events opened it again - except what the game
+        had cut from its rewritten journal (22.11.: 74 bodies, 26 of them
+        stayed "lost" after the sale). open_ts (the journal time of the
+        newest open work) decides; a row from before 5.0.1 without it
+        counts only for a death of the last LIVE_DIED_S.
+        """
+        live = ts is None or abs(time.time() - (_epoch(ts) or 0.0)) <= LIVE_DIED_S
         rows = self.cx.execute(
             "SELECT rowid, * FROM cmdr_bodies WHERE fid=? AND (scan_open=1 OR map_open=1 "
-            "OR bio_open IS NOT NULL)", (self.fid,)).fetchall()
+            "OR bio_open IS NOT NULL) AND (open_ts <= ? OR (open_ts IS NULL AND ?))",
+            (self.fid, ts or "", 1 if live else 0)).fetchall()
         systems = set()
         for r in rows:
             lost = self._lost_list(r["lost_what"])
