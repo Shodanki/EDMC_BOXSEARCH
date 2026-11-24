@@ -149,6 +149,7 @@ class MiningTracker:
         self.target_name: Optional[str] = None
         self.ring: Optional[str] = None           # the ring you dropped into
         self.miner: Optional[bool] = None         # ship has mining tools (None: no Loadout yet)
+        self.flying = False                       # MO1: in the ship, not docked or landed (Status.json)
         self.yields = RockYield()                 # MP1: tonnes per rock, learnt across sessions
 
     def reset(self) -> None:
@@ -238,6 +239,9 @@ class MiningTracker:
         """Status.json: the target hotspot ('Tritium Hotspot') sets the material."""
         if "Flags" not in entry:
             return
+        flags = int(entry.get("Flags") or 0)
+        # MO1 (5.1.0): in the main ship (bit 24), neither docked (0) nor landed (1)
+        self.flying = bool(flags & (1 << 24)) and not flags & 0b11
         dest = entry.get("Destination") or {}
         name = dest.get("Name_Localised") or dest.get("Name") or ""
         if "hotspot" in (dest.get("Name") or name).lower():
@@ -289,11 +293,7 @@ class MiningTracker:
         if self.rock:
             out.append(self._rock_line(c))
         h = self.hold()
-        hold = "HOLD  %d limpets | %d t ore" % (h["limpets"], h["ore"])
-        if h["free"] is not None:
-            hold += " | %d t free" % h["free"]
-        tight = h["free"] is not None and self.capacity and h["free"] < 0.05 * self.capacity
-        out.append((hold, c["warn"] if tight else c["data"]))
+        out.append(self._hold_line(h, c))
         rate = self.rate_h(now)
         full = None
         if rate:
@@ -331,6 +331,24 @@ class MiningTracker:
             txt += " | MOTHERLODE " + str(r["motherlode"])
             colour = c["new"]
         return txt, colour
+
+    def _hold_line(self, h: Dict[str, Any], c: Dict[str, str]) -> Line:
+        """HOLD  limpets | ore | free - amber once less than 5 % is free."""
+        hold = "HOLD  %d limpets | %d t ore" % (h["limpets"], h["ore"])
+        if h["free"] is not None:
+            hold += " | %d t free" % h["free"]
+        tight = h["free"] is not None and self.capacity and h["free"] < 0.05 * self.capacity
+        return (hold, c["warn"] if tight else c["data"])
+
+    def flight_lines(self, col: Optional[Dict[str, str]] = None) -> List[Line]:
+        """
+        MO1 (5.1.0, user 24.11.): outside a mining session, flying a mining
+        ship (not docked, not landed), the hold alone - how much room is
+        still free on the way to the ring and back. [] otherwise.
+        """
+        if not self.flying or self.miner is not True or not self.capacity:
+            return []
+        return [self._hold_line(self.hold(), dict(COLOURS, **(col or {})))]
 
     def hold(self) -> Dict[str, Any]:
         """The hold now: limpets, ore, free (None without the capacity), the

@@ -134,7 +134,7 @@ def _mining_event(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> None
         try:
             cargo = state.get("Cargo") if isinstance(state, dict) else None
             changed = ST.mine.feed(entry, cargo=cargo)
-            if changed or (ev == "Cargo" and ST.mine.active()):
+            if changed or (ev == "Cargo" and (ST.mine.active() or ST.mine.flying)):
                 _mining_overlay(force=True)
         except Exception:
             logger.debug("mining overlay failed", exc_info=True)
@@ -546,16 +546,30 @@ def _mining_overlay(force: bool = False) -> None:
         _ground_overlay(ov, now, force)
         return
     if not ST.mine.active(now):
-        if ST._mine_drawn:
-            ov.clear("mine")
-            ST._mine_drawn = False
         ov.mute_route(False)                 # the route targets come back
+        _flight_hold(ov, now, force)
         return
     ov.mute_route(True)                      # while mining they are no help
     if not force and now - ST._mine_shown < MINE_EVERY_S:
         return
     ST._mine_shown = now
     if ov.show_mining(ST.mine.lines(now, overlay.COL), seconds=30):
+        ST._mine_drawn = True
+
+
+def _flight_hold(ov: Any, now: float, force: bool) -> None:
+    """MO1 (5.1.0): no mining session - in a mining ship in flight only the
+    HOLD line (free room), else the block goes."""
+    lines = ST.mine.flight_lines(overlay.COL)
+    if not lines:
+        if ST._mine_drawn:
+            ov.clear("mine")
+            ST._mine_drawn = False
+        return
+    if not force and now - ST._mine_shown < MINE_EVERY_S:
+        return
+    ST._mine_shown = now
+    if ov.show_mining(lines, seconds=30):
         ST._mine_drawn = True
 
 
