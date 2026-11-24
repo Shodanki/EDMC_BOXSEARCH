@@ -20,7 +20,7 @@ import { t, N_ } from "../i18n.js";
 
 const LAYERS = [["path", N_("flight path")], ["carrier", N_("carrier")], ["systems", N_("systems")],
   ["boxels", N_("boxels")], ["spheres", N_("spheres")], ["finds", N_("finds")], ["navroute", N_("route")],
-  ["corridor", N_("corridor")]];
+  ["corridor", N_("corridor")], ["nexthop", N_("next hop")]];   // 5.1.0: NEXT HOP can be switched off (user 24.11.)
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
 const MC = "abcdefgh";
 // interface colours: C / alpha() from ui.js (theme tokens)
@@ -518,7 +518,7 @@ function renderSide() {
   if (!data) { side.append(frame(t("GALAXY"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
   const st = data.stats;
   if (focus) side.append(focusFrame());
-  if (hop) side.append(hopFrame());
+  if (hop && on.nexthop) side.append(hopFrame());
   const period = st.first ? new Date(st.first * 1000).toLocaleDateString() + " – " + new Date(st.last * 1000).toLocaleDateString() : "";
   const daySel = el("select", { class: "lay-pick", onchange: (e) => { days = Number(e.target.value); localStorage.setItem("fis.gal.days", String(days)); view.scale = null; update(null, "data"); } },
     ...SPANS.map(([v, l]) => el("option", { value: String(v), text: t(l) })));
@@ -533,6 +533,7 @@ function renderSide() {
     el("input", { type: "checkbox", checked: on[k] ? true : null, onchange: (e) => {
       on[k] = e.target.checked; localStorage.setItem("fis.gal.layers", JSON.stringify(on));
       if (g3) g3.setLayers(on);
+      if (k === "nexthop") renderSide();             // a side frame, not a map layer
       draw();
     } }),
     " " + t(l)))), { appear: false }));

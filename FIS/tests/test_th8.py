@@ -116,6 +116,15 @@ class TH8Test(unittest.TestCase):
         self._scoped_and_still(block)
         self.assertIn(':root[data-theme="station"] .atlas-view .at-side { order: -1; }', block)
 
+    def test_galaxy_next_hop_can_be_switched_off(self):
+        """User 24.11.: NEXT HOP in GALAXY on and off - one more entry under
+        LAYERS (on by default, kept per browser), re-drawing the side column."""
+        js = _read("js", "views", "galaxy.js")
+        self.assertIn('["nexthop", N_("next hop")]', js)
+        self.assertIn("if (hop && on.nexthop) side.append(hopFrame());", js)
+        self.assertIn('if (k === "nexthop") renderSide();', js)
+        self.assertIn("for (const [k] of LAYERS) if (on[k] === undefined) on[k] = true;", js)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -561,6 +561,7 @@ const DE = /*DE*/{
   "paid in your own sales": "aus deinen eigenen Verkäufen",
   "LIVE": "LIVE",
   "PLACES": "ORTE",
+  "next hop": "nächster Sprung",
   "{s} analysed": "{s} analysiert",
   "no position": "ohne Position",
   "Distance scale": "Entfernungsskala",
