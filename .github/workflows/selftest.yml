@@ -96,6 +96,8 @@ jobs:
         run: python tests/ai_disclosure.py
       - name: a replayed old death takes no data gathered after it (LD1, 22.11.)
         run: python tests/lost_on_replay.py
+      - name: the FIS starts from an argument list, no shell (M11)
+        run: python tests/fis_launch.py
       - name: package import (relative imports, both of EDMC's ways to load a plugin)
         run: python tests/package_import.py
       - name: code style (flake8 with EDMC's line length, see .flake8)
