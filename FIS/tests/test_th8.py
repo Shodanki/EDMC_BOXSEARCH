@@ -99,6 +99,14 @@ class TH8Test(unittest.TestCase):
         self.assertIn('alpha("green", (.08 + .32 * gF)', js)
         self.assertIn('mixRGBA("violet", "cyan", k', js)
 
+    def test_settings_switches_and_fields(self):
+        block = _block(self.css, "/* -- TH8 (5.1.0) SETTINGS")
+        self._scoped_and_still(block)
+        self.assertNotIn("transition", block)                 # the knob jumps, nothing slides
+        for theme in ("console", "bridge", "station", "next"):
+            self.assertIn(':root[data-theme="%s"] .settings-view .st-set input[type="checkbox"]:checked' % theme, block)
+        self.assertIn("border-bottom: 2px solid var(--cyan)", block)       # next: underlined fields
+
 
 if __name__ == "__main__":
     unittest.main()
