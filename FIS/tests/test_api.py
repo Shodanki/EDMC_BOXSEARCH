@@ -765,6 +765,24 @@ class TestLanToken(_Base):
         with urllib.request.urlopen(self._lan("/api/ship", **{"X-FIS-Token": "secret-token"}), timeout=5) as r:
             self.assertEqual(r.status, 200)
 
+    def test_non_ascii_token_is_a_plain_401(self):
+        """A1 (audit 21.11.): a token with non-ASCII characters got no answer
+        at all (TypeError in compare_digest) and was never counted as a try."""
+        from unittest import mock
+        from fis.server import Handler
+        counted = []
+        with mock.patch.object(Handler, "_note_fail", lambda h: counted.append(1)):
+            for q in ("token=%C3%BC", "token=secret-t%C3%B6ken", "token=%FF"):
+                with self.assertRaises(urllib.error.HTTPError) as cm:
+                    urllib.request.urlopen(self._lan("/api/health?" + q), timeout=5)
+                self.assertEqual(cm.exception.code, 401, q)
+                cm.exception.close()
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(self._lan("/api/health", **{"X-FIS-Token": "ü"}), timeout=5)
+            self.assertEqual(cm.exception.code, 401)
+            cm.exception.close()
+        self.assertEqual(len(counted), 4, "every wrong token counts for the brake")
+
     def test_this_pc_needs_no_token(self):
         """5.0.1 (user 20.11.): with LAN on, the app and Chrome on the game PC
         got 'token required' or a bare page - the PC itself passes now."""

@@ -708,7 +708,11 @@ class Handler(BaseHTTPRequestHandler):
         m = re.search(r"fis_token=([A-Za-z0-9_\-]+)", cookie)
         if not tok and m:
             tok = m.group(1)
-        return bool(cfg.token) and hmac.compare_digest(tok, cfg.token)
+        # A1 (5.0.1): compared as bytes - compare_digest raises TypeError on a
+        # str with non-ASCII characters (?token=%C3%BC), which tore the
+        # connection down without an answer and without counting the try
+        return bool(cfg.token) and hmac.compare_digest(tok.encode("utf-8", "replace"),
+                                                       cfg.token.encode("utf-8", "replace"))
 
     def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None,
               cache: str = "no-store") -> None:
