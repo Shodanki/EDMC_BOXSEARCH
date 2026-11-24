@@ -15,6 +15,7 @@ sorted and pruned. Also the measured work model (DSS, sampling times).
 from __future__ import annotations
 
 import itertools
+import json
 import math
 import sqlite3
 import time
@@ -145,36 +146,46 @@ def _bootstrap_work_model() -> None:
 
 
 def _bootstrap_session() -> None:
-    """Establish fuel, work timings and last position from the journals."""
-    try:
-        _bootstrap_fuel()
-    except Exception:
-        logger.exception("fuel bootstrap failed")
-    try:
-        _bootstrap_work_model()
-    except Exception:
-        logger.exception("work model bootstrap failed")
-    try:
-        _bootstrap_last_body()
-    except Exception:
-        logger.exception("last position bootstrap failed")
-    try:
-        _bootstrap_ground()
-    except Exception:
-        logger.exception("ground mining bootstrap failed")
-    try:
-        _bootstrap_rock_yield()
-    except Exception:
-        logger.exception("rock yield bootstrap failed")
-    try:
-        _bootstrap_body_physics()
-    except Exception:
-        logger.exception("body physics bootstrap failed")
-    try:
-        updater._check_for_update()
-    except Exception:
-        logger.exception("update check failed")
+    """Establish fuel, work timings and last position from the journals -
+    each step on its own, a failing one is logged and the next runs."""
+    steps = ((_bootstrap_fuel, "fuel bootstrap"), (_bootstrap_work_model, "work model bootstrap"),
+             (_bootstrap_last_body, "last position bootstrap"), (_bootstrap_ground, "ground mining bootstrap"),
+             (_bootstrap_mining, "mining hold bootstrap"), (_bootstrap_rock_yield, "rock yield bootstrap"),
+             (_bootstrap_body_physics, "body physics bootstrap"), (updater._check_for_update, "update check"))
+    for step, what in steps:
+        try:
+            step()
+        except Exception:
+            logger.exception("%s failed", what)
     uithread._ui(panel._refresh)
+
+
+def _bootstrap_mining() -> None:
+    """5.1.0 (user 24.11., MO1): EDMC started while the game was running -
+    the ship's Loadout came before EDMC and was never passed on, so the
+    mining overlay knew no capacity and showed no free room in HOLD. The
+    newest journal's last Loadout (capacity, mining tools) and the ship's
+    Cargo.json are fed in here - only what has not arrived meanwhile."""
+    d = maintenance._journal_dir()
+    files = journalscan.journal_files(d, last=1) if d else []
+    lo = None
+    for e in journalscan.read_events_matching(files, ('"Loadout"',)):
+        lo = e
+    cargo = None
+    try:
+        with open(os.path.join(d, "Cargo.json"), encoding="utf-8") as fh:
+            c = json.load(fh)
+        if c.get("Vessel", "Ship") == "Ship" and isinstance(c.get("Inventory"), list):
+            cargo = {str(i.get("Name") or "").lower(): int(i.get("Count") or 0) for i in c["Inventory"]}
+    except (OSError, ValueError, TypeError, AttributeError):
+        cargo = None
+    with ST.lock:
+        if lo is not None and not ST.mine.capacity:
+            ST.mine.feed(lo)
+        if cargo is not None and not ST.mine.cargo:
+            ST.mine.cargo = cargo
+    logger.info("mining | hold from the journal: capacity %s t, %s t aboard, mining ship %s",
+                ST.mine.capacity, sum(ST.mine.cargo.values()) if ST.mine.cargo else 0, ST.mine.miner)
 
 
 def _bootstrap_ground() -> None:
