@@ -48,6 +48,13 @@ let g3 = null, g3load = null, ov = null, stage = null, replay = 1, playTimer = n
 let ui = {};                     // toolbar elements
 let focus = null, focusMe = true;  // what the map turns around; focusMe: follows you
 
+// TH8 (5.1.0): a colour between two theme tokens (0..1), with alpha
+function mixRGBA(a, b, k, al) {
+  const rgb = (tok) => { const n = parseInt(String(C[tok]).slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+  const x = rgb(a), y = rgb(b);
+  return "rgba(" + x.map((v, i) => Math.round(v + (y[i] - v) * k)).join(",") + "," + al + ")";
+}
+
 export function mount(r) {
   root = r;
   root.classList.add("galaxy-view");
@@ -303,8 +310,9 @@ function draw() {
       if (!vis(c.x, c.z, s)) continue;
       const [sx, sy] = toScreen(c.x, c.z), n = c.list.length;
       const gF = c.closed / n, aF = c.open / n;
-      if (gF) { g.fillStyle = `rgba(124,255,107,${(.08 + .32 * gF).toFixed(3)})`; g.fillRect(sx - s / 2, sy - s / 2, s, s); }
-      if (aF) { g.fillStyle = `rgba(255,178,62,${(.06 + .22 * aF).toFixed(3)})`; g.fillRect(sx - s / 2, sy - s / 2, s, s); }
+      // TH8 (5.1.0): the theme's green and amber, not standard's fixed values
+      if (gF) { g.fillStyle = alpha("green", (.08 + .32 * gF).toFixed(3)); g.fillRect(sx - s / 2, sy - s / 2, s, s); }
+      if (aF) { g.fillStyle = alpha("amber", (.06 + .22 * aF).toFixed(3)); g.fillRect(sx - s / 2, sy - s / 2, s, s); }
       g.strokeStyle = c.open ? alpha("amber", .45) : c.closed === n ? alpha("green", .5) : alpha("dim", .22);
       g.lineWidth = 1; g.strokeRect(sx - s / 2 + .5, sy - s / 2 + .5, s - 1, s - 1);
       if (s > 34) { g.fillStyle = c.closed === n ? C.green : c.open ? C.amber : C.dim; g.font = "10px monospace"; g.fillText(c.closed + "/" + n, sx - s / 2 + 4, sy + s / 2 - 4); }
@@ -353,7 +361,7 @@ function draw() {
       const a = data.path[i - 1], b = data.path[i];
       if (b.kind === "login" && Math.hypot(b.x - a.x, b.z - a.z) > 100) continue;   // other session, no flight
       const k = ((b.t || t0) - t0) / span;
-      g.strokeStyle = `rgba(${Math.round(181 - 119 * k)},${Math.round(124 + 118 * k)},${Math.round(255 - 31 * k)},${.35 + .6 * k})`;
+      g.strokeStyle = mixRGBA("violet", "cyan", k, .35 + .6 * k);   // old flights violet, new ones the accent
       const [ax, ay] = toScreen(a.x, a.z), [bx, by] = toScreen(b.x, b.z);
       g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
     }

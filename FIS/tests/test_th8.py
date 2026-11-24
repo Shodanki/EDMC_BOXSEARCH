@@ -90,6 +90,15 @@ class TH8Test(unittest.TestCase):
         self.assertIn(':root[data-theme="station"] .planet-view .tile { display: flex;', block)
         self.assertIn("dotted", block)
 
+    def test_galaxy_canvas_in_theme_colours(self):
+        """GALAXY drew closed / open boxels and the flight path in standard's
+        fixed green, amber and violet-to-teal; now from the theme tokens."""
+        js = _read("js", "views", "galaxy.js")
+        self.assertIsNone(re.search(r"rgba\(\d{2,3},\d{2,3},\d{2,3}", js), "a fixed colour left in the canvas")
+        self.assertIsNone(re.search(r"rgba\(\$\{Math\.round\(", js))
+        self.assertIn('alpha("green", (.08 + .32 * gF)', js)
+        self.assertIn('mixRGBA("violet", "cyan", k', js)
+
 
 if __name__ == "__main__":
     unittest.main()
