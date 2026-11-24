@@ -64,6 +64,11 @@ class LearnReset(unittest.TestCase):
         self.assertEqual((lr.since(got, "route"), lr.since(got, "work"), lr.since(got, "value")), (100.0, None, 150.0))
         self.assertEqual(lr.fuel_since(got), {("Cmdr", 9, 37): 200.0, ("Cmdr", 3, 33): 300.0})
         self.assertFalse(os.path.exists(self.path + ".tmp"))
+        # M1: the temporary file carries the process, and none is left over
+        self.assertEqual([f for f in os.listdir(self.tmp.name) if f.endswith(".tmp")], [])
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "learnreset.py"),
+                  encoding="utf-8") as fh:
+            self.assertIn('tmp = "%s.%d.tmp" % (path, os.getpid())', fh.read())
         with self.assertRaises(ValueError):
             lr.mark(self.path, "everything", 1.0)
         with self.assertRaises(ValueError):
