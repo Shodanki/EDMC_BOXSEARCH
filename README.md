@@ -791,7 +791,7 @@ update check.
 * EDSM's rate-limit headers are followed - when few requests are left before
   its reset, the pauses grow; at zero, EDSM is left alone until the reset;
 * HTTP 429/503: the wait from `Retry-After` (or 5 s, 10 s), at most three
-  tries; then the service is left alone until EDMC restarts. A wait longer
+  tries; then the service is left alone until EDMC (or the FIS) restarts. A wait longer
   than two minutes is not slept through - the service rests until then;
 * the User-Agent names the plugin version and this repository;
 * every request is logged with time, status and duration in the database

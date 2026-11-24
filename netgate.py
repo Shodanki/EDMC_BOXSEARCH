@@ -148,7 +148,8 @@ class Gateway:
             return None
         why = self._rest_why.get(service, "resting")
         if until == SESSION_REST:
-            return "%s - resting until EDMC restarts" % why
+            # M4: the same gateway runs in EDMC and in the FIS - say neither
+            return "%s - resting until the program restarts" % why
         return "%s - resting until %s UTC" % (
             why, time.strftime("%H:%M", time.gmtime(until)))
 

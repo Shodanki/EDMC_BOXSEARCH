@@ -105,7 +105,7 @@ def _selftest() -> int:
           and abs(sess.sent[2][0] - sess.sent[1][0] - 2 * BACKOFF_BASE) < 0.01,
           "backoff without Retry-After: 5 s, then 10 s")
     r = gw.request("spansh", "POST", "u", "search")
-    check(r is None and len(sess.sent) == 3 and "EDMC restarts" in (gw.resting("spansh") or ""),
+    check(r is None and len(sess.sent) == 3 and "until the program restarts" in (gw.resting("spansh") or ""),
           "then the service rests for the session - nothing more is sent")
     check(gw.request("edsm", "GET", "u", "sphere") is not None,
           "another service is not affected")
