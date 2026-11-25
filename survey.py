@@ -151,7 +151,8 @@ def _bootstrap_session() -> None:
     steps = ((_bootstrap_fuel, "fuel bootstrap"), (_bootstrap_work_model, "work model bootstrap"),
              (_bootstrap_last_body, "last position bootstrap"), (_bootstrap_ground, "ground mining bootstrap"),
              (_bootstrap_mining, "mining hold bootstrap"), (_bootstrap_rock_yield, "rock yield bootstrap"),
-             (_bootstrap_body_physics, "body physics bootstrap"), (updater._check_for_update, "update check"))
+             (_bootstrap_body_physics, "body physics bootstrap"), (_bootstrap_fields, "mining fields bootstrap"),
+             (updater._check_for_update, "update check"))
     for step, what in steps:
         try:
             step()
@@ -246,6 +247,20 @@ def _bootstrap_body_physics() -> None:
     with ST.lock:
         n = ST.db.fill_missing_physics(found)
     logger.info("body physics | %d of %d bodies without radius and tilt filled from the archive", n, len(todo))
+
+
+def _bootstrap_fields() -> None:
+    """5.1.0 SP2 (worker): the mining events of all journals (and of
+    EDDiscovery's archive when switched on) for the overlay's SPOT item -
+    the fields rated and their chance; live events follow from the hook."""
+    from . import cockpitinfo, miningfields
+    d = maintenance._journal_dir()
+    files = journalscan.journal_files(d) if d else []
+    needles = tuple('"event":"%s"' % n for n in miningfields.NEEDED)
+    evs = _archive_lines(miningfields.NEEDED, files, "mining fields")
+    evs += list(journalscan.read_events_matching(files, needles))
+    cockpitinfo.FIELDS.load(evs)
+    logger.info("mining fields | %d events, %d fields rated", len(evs), len(cockpitinfo.FIELDS.rated()))
 
 
 def _bootstrap_rock_yield() -> None:

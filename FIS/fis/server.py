@@ -330,7 +330,7 @@ class App:
                 out["collectors"] = None
             try:
                 from . import fieldodds                     # MP4: field odds, each field left out in turn
-                out["fields"] = fieldodds.reality(fieldodds.model(evs, self.db)[2])
+                out["fields"] = fieldodds.reality(fieldodds.model(mining._shared_events(self.archive), self.db)[2])
             except Exception:
                 out["fields"] = None
             return out

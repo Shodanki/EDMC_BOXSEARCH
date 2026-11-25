@@ -22,8 +22,10 @@ What it shows - each only when it helps (situation.py has the texts):
   places    the landing card on approach (gravity, temperature,
             atmosphere, open genera by what you were paid, finds); the
             system's value after the honk and while scanning; a ring's
-            hotspots; the boxel on arrival; fuel along a plotted route;
-            your carrier's jump countdown
+            hotspots; a ring hotspot set as target: the chance of a good
+            field and what you got there before (SP2); the boxel on
+            arrival; fuel along a plotted route; your carrier's jump
+            countdown
   session   what this session brought, after a sale or on docking
 """
 
@@ -38,6 +40,7 @@ from typing import Any, Dict, List, Optional
 from . import bodyvalue
 from . import journalscan
 from . import maintenance
+from . import miningfields
 from . import situation
 from .deepspace import scoop_line
 from .procgen import parse_name
@@ -58,6 +61,7 @@ SESSION = situation.Session()
 PRICES = situation.Prices()
 SCANS = situation.Scans()
 CARRIER = situation.CarrierWatch()
+FIELDS = miningfields.FieldBook()        # SP2: filled by survey._bootstrap_fields, fed live
 _lock = threading.RLock()
 _timer = False
 _drawn = False
@@ -65,9 +69,10 @@ _danger: Optional[str] = None
 _unsold: Optional[Dict[str, Any]] = None
 _unsold_t = 0.0
 _carrier_dist: Optional[float] = None    # ly from the carrier to its destination
+_spot_dest: Optional[tuple] = None       # SP2: the ring hotspot last set as target
 
 GROUPS = {"warn": ("journal", "hazard", "risk"),
-          "place": ("landing", "system", "ring", "boxel", "route", "carrier"),
+          "place": ("landing", "system", "spot", "ring", "boxel", "route", "carrier"),
           "session": ("session",)}
 
 
@@ -103,6 +108,7 @@ def journal(ev: str, entry: Dict[str, Any]) -> None:
 def _learn(ev: str, entry: Dict[str, Any]) -> None:
     """The plain models: session, prices, scans, the carrier."""
     global _carrier_dist
+    FIELDS.add(entry)
     with _lock:
         got = SESSION.feed(entry)
         PRICES.feed(entry)
@@ -358,8 +364,10 @@ def _carrier_ly(dest: Optional[str]) -> Optional[float]:
 # ---------------------------------------------------------------------------
 
 def dashboard(entry: Dict[str, Any]) -> None:
-    """Status.json (main thread): in danger, interdicted, overheating."""
+    """Status.json (main thread): in danger, interdicted, overheating; a
+    ring hotspot set as target."""
     global _danger
+    _spot_check(entry)
     if "Flags" not in entry:
         return
     try:
@@ -374,6 +382,46 @@ def dashboard(entry: Dict[str, Any]) -> None:
             if it is not None:
                 BOARD.put("risk", it[1], RISK_KEEP_S, time.time())
     _danger = why
+
+
+def _spot_check(entry: Dict[str, Any]) -> None:
+    """SP2: a ring hotspot newly set as target starts the SPOT item (a
+    worker counts); another target or none drops it."""
+    global _spot_dest
+    dest = entry.get("Destination") if isinstance(entry.get("Destination"), dict) else None
+    mat = miningfields.hotspot_material(dest.get("Name")) if dest else None
+    key = (dest.get("System"), dest.get("Body"), mat) if dest and mat else None
+    if key == _spot_dest:
+        return
+    _spot_dest = key
+    if key is None:
+        with _lock:
+            BOARD.drop("spot")
+        return
+    name = (dest.get("Name_Localised") or mat).replace(" Hotspot", "").replace(" hotspot", "")
+    uithread._run_async(_spot_worker, key, name, label="spot")
+
+
+def _spot_worker(key: tuple, material: str) -> None:
+    """Worker: the ring of the target hotspot, its chance and its record."""
+    sys_id64, body_id, mat = key
+    if not ST.db:
+        return
+    with ST.lock:
+        row = ST.db.cx.execute("SELECT body_name FROM hotspots WHERE sys_id64=? AND body_id=? LIMIT 1",
+                               (sys_id64, body_id)).fetchone()
+        rf = miningfields.ring_features(lambda sql: ST.db.cx.execute(sql).fetchall())
+    ring = row[0] if row else None
+    if not ring:
+        return
+    rated = FIELDS.rated() if FIELDS.loaded else []
+    m = miningfields.Odds.learn(miningfields.samples(rated, rf))
+    odds = miningfields.odds_for(m, rf, ring, mat)
+    lines = situation.spot_lines(_short(ring, ST.cur_system), material, odds,
+                                 miningfields.field_of(rated, ring, mat), FIELDS.loaded)
+    if _spot_dest == key:
+        _put("spot", lines, 90)
+    logger.info("spot | %s %s: chance %s from %d fields", ring, mat, odds and odds.get("p"), m.fields)
 
 
 def _risk(why: str) -> None:

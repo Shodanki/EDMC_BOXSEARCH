@@ -9,10 +9,11 @@ import json
 import os
 import unittest
 
+from tests.test_fieldrating import field  # puts the plugin folder on sys.path
 from fis import fieldodds as fo
 from fis import mining, realitycheck
 
-from tests.test_fieldrating import field
+import miningfields as mf  # noqa: E402
 
 
 class FakeDB:
@@ -28,6 +29,10 @@ class FakeDB:
             return [{"body_name": h["body_name"]} for h in self.hotspots
                     if (h.get("sys"), h.get("body")) == tuple(args)][:1]
         return [dict(h) for h in self.hotspots]
+
+    def hotspots_of(self, id64, body_id=None):
+        return [{"label": None, "material": h["material"]} for h in self.hotspots
+                if (h.get("sys"), h.get("body")) == (id64, body_id)]
 
 
 def spot(ring, mat, n=1, sys=None, body=None):
@@ -81,7 +86,7 @@ class FieldOddsTest(unittest.TestCase):
         self.assertTrue(fo.odds_for(m, rf, "New 1 A Ring", "platinum")["thin"], "a material never mined: dim")
 
     def test_no_number_below_the_minimum(self):
-        m = fo.Odds.learn([({"mat": "tritium"}, 1), ({"mat": "tritium"}, 0)])
+        m = mf.Odds.learn([({"mat": "tritium"}, 1), ({"mat": "tritium"}, 0)])
         self.assertIsNone(m.chance({"mat": "tritium"}))
         self.assertIsNone(fo.verdict(None))
 
@@ -91,7 +96,7 @@ class FieldOddsTest(unittest.TestCase):
         hot = {"mat": "tritium", "spot": "yes", "overlap": "no", "cls": "Icy"}
         smp = [(hot, 1)] * 3 + [({"mat": "silver"}, 1)] * 8 + [({"mat": "tritium", "cls": "Icy"}, 0),
                                                               ({"mat": "monazite"}, 0)]
-        m = fo.Odds.learn(smp)
+        m = mf.Odds.learn(smp)
         x = dict(hot, overlap="yes")
         self.assertGreater(m.chance(x), 0.65)
         self.assertEqual(m.uses(x), ["cls", "spot", "mat"], "overlap never seen yet: left out")
@@ -124,12 +129,40 @@ class FieldOddsTest(unittest.TestCase):
         self.assertEqual(mining._live_odds(evs, DB, at, "tritium")["verdict"], "poor", "in the ring")
         self.assertIsNone(mining._live_odds(evs, DB, {"status": {"body_name": "New 2 A"}}, "tritium"))
 
+    def test_planet_info_rings(self):
+        # SP1: under each ring of PLANET INFO, per hotspot material and per
+        # material mined there - the chance and the record, all commanders
+        from fis import model
+
+        class Archive:
+            def events(self, fid=None):
+                return journal()
+        rings = [{"name": "New 1 A Ring", "hotspots": [{"material": "Tritium", "key": "Tritium", "count": 2}]},
+                 {"name": "Bare 1 A Ring", "hotspots": [{"material": "Bromellite", "key": "Bromellite", "count": 1}]}]
+        model._ring_spots(DB, rings, Archive())
+        new = {s["mat"]: s for s in rings[0]["spots"]}
+        self.assertEqual(set(new), {"tritium"})
+        self.assertEqual((new["tritium"]["odds"]["verdict"], new["tritium"]["field"]), ("good", None),
+                         "a hotspot ring never mined: its chance, no record")
+        bare = {s["mat"]: s for s in rings[1]["spots"]}
+        self.assertEqual(set(bare), {"bromellite", "tritium"}, "the hotspot and the material mined there")
+        self.assertEqual(bare["tritium"]["field"]["rating"], "poor")
+        me = model._self_ring_spots(DB, {"name": "New 1 A Ring", "rings": [], "id64": 7, "body_id": 12}, Archive())
+        self.assertEqual([(x["mat"], x["odds"]["verdict"]) for x in me], [("tritium", "good")],
+                         "the ring opened itself: its own spots")
+        self.assertIsNone(model._self_ring_spots(DB, {"name": "New 1 A", "rings": [], "id64": 7, "body_id": 1},
+                                                 Archive()), "a planet: none")
+
     def test_shown_in_places_live_and_learning(self):
         base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "js", "views")
         with open(os.path.join(base, "mining.js"), encoding="utf-8") as fh:
             js = fh.read()
         self.assertEqual(js.count("oddsSpan(h.odds)"), 2, "RING HOTSPOTS and BEST HOTSPOTS")
         self.assertIn("const O = L.odds;", js)
+        with open(os.path.join(base, "planet.js"), encoding="utf-8") as fh:
+            pj = fh.read()
+        self.assertIn("for (const s of r.spots || []) rr.push(spotLine(s));", pj)
+        self.assertIn("rr.push(spotNote(b.rings))", pj)
         with open(os.path.join(base, "statistics.js"), encoding="utf-8") as fh:
             self.assertIn('fields: N_("Field odds before mining (good / poor)")', fh.read())
 

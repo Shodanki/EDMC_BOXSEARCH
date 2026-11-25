@@ -308,7 +308,7 @@ function oddsNote() {
   if (!F) return null;
   return el("div", { class: "c-dim small", text: F.fields < F.min
     ? t("Chance of a good field: learning - {n} of {m} rated fields (MINING › HISTORY › FIELDS).", { n: F.fields, m: F.min })
-    : t("% = chance of a good field before mining, learnt from your {n} rated fields ({g} good or fair); it learns from every field you mine. Dim: fewer than {t} fields or the material not mined yet.",
+    : t("% = chance of a good field before mining, learnt from your {n} rated fields (all commanders, {g} good or fair); it learns from every field you mine. Dim: fewer than {t} fields or the material not mined yet.",
       { n: F.fields, g: F.good, t: F.thin }) });
 }
 

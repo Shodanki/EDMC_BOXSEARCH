@@ -6,9 +6,15 @@
 """MP3 (5.1.0): mining fields rated - purity, prospectors per good rock, by-catch."""
 
 import os
+import sys
 import unittest
 
-from fis import fieldrating as fr
+from tests.fixtures import PLUGIN_DIR
+
+if PLUGIN_DIR not in sys.path:          # as Config.use_plugin_path does: the counting is the plugin's
+    sys.path.append(PLUGIN_DIR)
+
+from fis import fieldrating as fr  # noqa: E402
 
 
 def field(ring, day, shares, prospectors, refined):

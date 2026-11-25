@@ -1216,6 +1216,41 @@ def _ring_mining(db: Database, rings: List[Dict[str, Any]], archive: Any) -> Non
         g["expected"] = exp
 
 
+def _ring_spots(db: Database, rings: List[Dict[str, Any]], archive: Any) -> None:
+    """SP1 (5.1.0, user 25.11.): under each ring, per hotspot material and per
+    material mined there - the chance of a good field before mining (MP4) and
+    your record there (MP3), from every commander's journals as the overlay."""
+    if archive is None:
+        return
+    from . import fieldodds, mining
+    mf = fieldodds.mf()
+    if mf is None:
+        return
+    evs = mining._shared_events(archive)
+    m, rf, _smp = fieldodds.model(evs, db)
+    rated = fieldodds.rated(evs, db)
+    for g in rings:
+        name = g.get("name") or ""
+        mats = {mf.mat_key(h.get("key") or h.get("material")): h.get("material") for h in g.get("hotspots") or []}
+        for f in rated:
+            if f["ring"] == name:
+                mats.setdefault(f["mat"], f["mat_name"])
+        g["spots"] = [{"mat": k, "name": label, "odds": mf.odds_for(m, rf, name, k),
+                       "field": mf.field_of(rated, name, k)} for k, label in mats.items() if k]
+
+
+def _self_ring_spots(db: Database, out: Dict[str, Any], archive: Any) -> Optional[List[Dict[str, Any]]]:
+    """SP1: a ring opened itself (the body you are at while mining) - its
+    own spots, as under its planet's RINGS."""
+    name = out.get("name") or ""
+    if out.get("rings") or not name.endswith(("Ring", "Belt")):
+        return None
+    me = [{"name": name, "hotspots": [{"material": h["label"] or h["material"], "key": h["material"]}
+                                      for h in db.hotspots_of(out["id64"], out["body_id"])]}]
+    _ring_spots(db, me, archive)
+    return me[0].get("spots") or None
+
+
 def _ground_mining(db: Database, body_name: str, planet_class: Optional[str]) -> Optional[Dict[str, Any]]:
     """
     Ground mining (Rhino rigs) on this body - tonnes per material and the
@@ -1373,6 +1408,11 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
     from . import science
     try:
         _ring_mining(db, out["rings"], archive)    # rocks per ring, what to expect at a hotspot
+    except Exception:
+        pass
+    try:
+        _ring_spots(db, out["rings"], archive)     # SP1: chance of a good field, your record there
+        out["ring_spots"] = _self_ring_spots(db, out, archive)
     except Exception:
         pass
     try:

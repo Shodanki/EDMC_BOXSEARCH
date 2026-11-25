@@ -498,7 +498,7 @@ def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
     if rh:
         out["rhino"] = rh
     if db is not None:
-        out["odds"] = _live_odds(evs, db, live, out["target"] or (s and s["main"]))
+        out["odds"] = _live_odds(_shared_events(archive), db, live, out["target"] or (s and s["main"]))
     if s:
         recent = [t for t in s["ticks"] if now - t <= RATE_WINDOW_S]
         out["active"] = s["active"]
@@ -545,6 +545,16 @@ def _collectors_now(evs: List[Dict[str, Any]], runs: List[List[Dict[str, Any]]],
     last = _waves(runs[-1])[1] if runs and s and s.get("active") else None
     return {"life": life, "label": controller_label(c),
             "last_wave_ago": round(now - last) if last is not None else None}
+
+
+def _shared_events(archive: Any) -> List[Dict[str, Any]]:
+    """SP2: every commander's events - what a ring yields is shared knowledge
+    (as BEST HOTSPOTS), and the plugin's overlay counts the same fields."""
+    from .fleet import ALL_COMMANDERS
+    try:
+        return archive.events(ALL_COMMANDERS)
+    except TypeError:                                   # an archive without commanders
+        return archive.events()
 
 
 def _field_odds(evs: List[Dict[str, Any]], db: Any, hotspots: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -657,7 +667,7 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     pos = (live.get("system") or {}).get("pos")
     out["hotspots"] = hotspots_near(db, pos)
     out["from"] = (live.get("system") or {}).get("name")
-    out["field_odds"] = _field_odds(evs, db, out["hotspots"])        # MP4: good field before mining?
+    out["field_odds"] = _field_odds(_shared_events(archive), db, out["hotspots"])   # MP4: good field before mining?
     # L3: the nearby hotspots ranked by what YOU mined there per hour - in
     # that ring, else in rings of its class, else in any ring
     try:

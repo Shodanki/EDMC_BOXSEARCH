@@ -124,6 +124,30 @@ const REPORT = {
 };
 const LEVEL_CLS = { good: "c-green", warn: "c-amber", danger: "c-red", info: "" };
 
+// SP1 (5.1.0): per ring and material - the chance of a good field before
+// mining (MP4) and your record there (MP3), with where the numbers come from
+const SPOT_CLS = { good: "c-green", fair: "", open: "", poor: "c-amber" };
+function spotLine(s) {
+  const o = s.odds || {}, f = s.field;
+  const bits = [];
+  if (o.p !== null && o.p !== undefined) bits.push(el("span", { class: o.thin ? "c-dim" : SPOT_CLS[o.verdict] || "",
+    text: t("{p} % chance of a good field", { p: fmt(100 * o.p, 0) }) }));
+  else bits.push(el("span", { class: "c-dim", text: t("chance: still learning") }));
+  if (f && f.rating) bits.push(el("span", { class: SPOT_CLS[f.rating] || "",
+    text: " · " + t("you: {r}", { r: t(f.rating === "good" ? "good field" : f.rating === "poor" ? "poor field" : "fair field") })
+      + " · " + t("{s} sessions, {p} % pure, {g} prosp./good", { s: f.sessions, p: f.purity === null ? "–" : f.purity,
+        g: f.per_good === null ? "–" : fmt(f.per_good, 1) }) }));
+  else bits.push(el("span", { class: "c-dim", text: " · " + t("not mined here yet") }));
+  return el("div", { class: "pl-line pl-sub small", title: o.known ? t("rests on: {k}", { k: o.known.map(k => t(SPOT_FEAT[k])).join(", ") }) : "" },
+    el("span", { class: "c-cyan", text: "◎ " + s.name + ": " }), ...bits);
+}
+const SPOT_FEAT = { cls: N_("ring class"), reserve: N_("reserve"), spot: N_("hotspot"), overlap: N_("overlapping hotspots"), mat: N_("material") };
+function spotNote(rings) {
+  const o = rings.flatMap(r => r.spots || []).map(s => s.odds).find(x => x && x.n !== undefined);
+  return el("div", { class: "c-dim small", text: t("◎ chance: learnt from {n} rated mining fields (all commanders) by what a ring is known by before mining - ring class, reserve, hotspot of the material, overlapping hotspots, the material; counting, no AI. Good = not poor. Dim: fewer than 10 fields or the material never mined. You: your sessions in this ring - pure = rocks that held the material, prosp./good = prospectors per rock with at least your typical share; rated against your average for that material.",
+    { n: o ? o.n : 0 }) });
+}
+
 function reportFrame(b) {
   if (!b.report || !b.report.length) return null;
   const rows = [];
@@ -278,6 +302,7 @@ function render(ctx) {
         el("span", { class: "c-dim", text: " · " + (r.cls || "") + " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" })));
       if (r.hotspots && r.hotspots.length) rr.push(el("div", { class: "pl-line pl-sub c-amber", text: "◆ " + hsText(r.hotspots) }));
       else if (!r.belt) rr.push(el("div", { class: "pl-line pl-sub c-dim", text: t("no hotspots known - map the ring with the DSS") }));
+      for (const s of r.spots || []) rr.push(spotLine(s));         // SP1: chance of a good field, your record
       // your prospecting in this ring, and what rings like it held at such hotspots
       // L1: the share with its 95 % range; L2: thin groups lean on broader ones
       const mats = (p) => p.mats.map(m => m.name + " " + m.share + " %"
@@ -301,6 +326,7 @@ function render(ctx) {
     }
     const loose = b.hotspots.filter(h => !ringNames.has(h.ring));
     if (loose.length) rr.push(el("div", { class: "pl-line c-amber", text: "◆ " + hsText(loose) }));
+    if (b.rings.some(r => (r.spots || []).length)) rr.push(spotNote(b.rings));
     if (b.rings.some(r => r.prospect || (r.expected && r.expected.length)))
       rr.push(el("div", { class: "c-dim small", text: t("Share of prospected rocks that held the material - from your own prospector reports.") }));
     if (b.rings.some(r => (r.rates && r.rates.length) || (r.expected || []).some(e => e.rate)))
@@ -308,6 +334,10 @@ function render(ctx) {
     // TH8 (5.1.0): the short frames (STAR, RINGS, SIGNALS, COLLECTED HERE) stack in one column
     left.push(frame(t("RINGS"), b.reserve ? t("reserves: {r}", { r: b.reserve }) : "", rr));
   }
+
+  // SP1: a ring opened itself - its mining fields
+  if (b.ring_spots && b.ring_spots.length)
+    left.push(frame(t("MINING FIELD"), "", [...b.ring_spots.map(spotLine), spotNote([{ spots: b.ring_spots }])]));
 
   // ground mining with the Rhino: what rigs yielded here, and on bodies of this class
   if (b.ground) {
