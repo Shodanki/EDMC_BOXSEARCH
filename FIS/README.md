@@ -250,8 +250,45 @@ names too (`/#system`, `/#planetinfo`, `/#stats`).
 
 Demo data: a copy of a real plugin database with the commander's current
 area, carrier, earnings and surface tracks removed; commander and ship are
-called DEMO, the position is Wregoe GI-A c14-6. 1600 × 900, English, theme
-standard. Every page, in the order of the tabs.
+called DEMO, with a short demo expedition (Byoomae sector) for the trip
+report and a demo stock of modules, materials and engineering. 1600 × 900,
+English, theme standard.
+
+#### New in 5.1
+
+**MINING > HISTORY** - every mining field rated (purity, prospectors per good rock, by-catch); PLACES shows the chance of a good field before you mine there.
+
+![MINING HISTORY with the fields rated](docs/screenshots/demo51_mining_history.png)
+
+**CARRIER > EQUIPMENT** - every module in storage, where it is, what it fits; module, class, engineering and place as choices.
+
+![CARRIER EQUIPMENT](docs/screenshots/demo51_equipment.png)
+
+**SHIP > MATERIALS** - everything collected, with the count.
+
+![SHIP MATERIALS](docs/screenshots/demo51_materials.png)
+
+**STATISTICS > RECORDS & ATLAS** - records, the codex regions, stars and worlds, the way through the galaxy, ships compared, the bio catalogue.
+
+![STATISTICS RECORDS & ATLAS](docs/screenshots/demo51_records_atlas.png)
+
+**STATISTICS > HISTORY** - travel per day, week and month, and PLAY PATTERNS: when you play, weekday by hour.
+
+![STATISTICS HISTORY with play patterns](docs/screenshots/demo51_play_patterns.png)
+
+**STATISTICS > ENGINEERING** - the engineers' crafts and grades, and the materials flow.
+
+![STATISTICS ENGINEERING](docs/screenshots/demo51_engineering.png)
+
+**STATISTICS > TRIP REPORT** - pick a span: the way, the finds, the money, the route as a map; printable.
+
+![STATISTICS TRIP REPORT](docs/screenshots/demo51_trip_report.png)
+
+LEDGER (in reading order, balanced columns), PLANET INFO (a report in reading
+order), GALAXY (codex region outlines, legend entries that switch their layer)
+and MINING > PLACES are shown below with the other pages.
+
+#### Every page, in the order of the tabs
 
 **BRIEFING** - the next target and the sphere ahead: what is left, the chance of a find, the time and value still to come.
 
