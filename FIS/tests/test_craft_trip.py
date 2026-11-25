@@ -40,6 +40,24 @@ class PlayPatternsTest(unittest.TestCase):
         self.assertIn('["trip", N_("TRIP REPORT"), [[["trip"]]]]', js)
 
 
+class LedgerLayoutTest(unittest.TestCase):
+    def test_overview_in_reading_order_and_balanced_columns(self):
+        """user 25.11.: LEDGER no longer a full right column beside a half-empty
+        grid - the result, the money's ways, the ships, what is open, in
+        columns the browser balances: four from 1500 px, then 3, 2, 1."""
+        with open(os.path.join(VIEWS, "ledger.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        self.assertIn('...[head, balance(), weeks(), block("income", t("INCOME")), block("costs", t("RUNNING COSTS")),',
+                      js)
+        self.assertIn('      block("invest", t("INVESTMENT")), ships(), commander(), losses(), open(), jumps(), carrier()]', js)
+        self.assertNotIn("stat-side", js)
+        self.assertIn('el("table", { class: "mine-table" }', js[js.index("function ships()"):], "PER SHIP one line a ship")
+        with open(os.path.join(os.path.dirname(VIEWS), "..", "css", "fis.css"), encoding="utf-8") as fh:
+            css = fh.read()
+        self.assertIn(".ledger-cols { column-count: 4;", css)
+        self.assertIn("@media (max-width: 1499px) { .ledger-cols { column-count: 3; } }", css)
+
+
 class CraftTest(unittest.TestCase):
     EVS = [ev("01T10:00:00", "MaterialCollected", Category="Raw", Name="nickel", Count=3),
            ev("01T10:01:00", "LaunchSRV"),

@@ -1917,6 +1917,7 @@ const DE = /*DE*/{
   "good rock: at least {p} % (your typical rock of it); your average {a} prospectors": "guter Brocken: mindestens {p} % (dein typischer Brocken davon); dein Schnitt {a} Prospektoren",
   "Per ring and the material you mostly refined there: purity = rocks that held it; prosp./good = prospectors per rock with at least your typical share of it; by-catch = the other tonnes. Rated against your own average for that material.": "Je Ring und dem Material, das du dort am meisten raffiniert hast: Reinheit = Brocken, die es enthielten; Prosp./guter = Prospektoren je Brocken mit mindestens deinem typischen Anteil davon; Beifang = die übrigen Tonnen. Bewertet gegen deinen eigenen Schnitt für dieses Material.",
   "good field": "gutes Feld",
+  "◂ the ship you fly. Hover a ship for what was invested in it.": "◂ das Schiff, das du fliegst. Maus über ein Schiff zeigt, was in es investiert wurde.",
   "ENGINEERING": "ENGINEERING",
   "Expedition {a} – {b}": "Expedition {a} – {b}",
   "Farthest: {f} · longest jump to {j}": "Am weitesten: {f} · längster Sprung nach {j}",

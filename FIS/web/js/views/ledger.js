@@ -97,10 +97,12 @@ function render() {
       frame(t("BALANCE"), "", el("div", { class: "empty" }, t("Nothing booked in this period."))))));
     return;
   }
-  root.append(el("div", { class: "stat-wrap" },
-    el("div", { class: "stat-grid scroll" }, head, balance(), block("income", t("INCOME")), block("costs", t("RUNNING COSTS")),
-      block("invest", t("INVESTMENT")), weeks()),
-    el("div", { class: "stat-side scroll" }, open(), jumps(), ships(), commander(), losses(), carrier())));
+  // user 25.11.: in the order a reader asks - the result, where the money came
+  // from and went, per ship, what is still open - in columns the browser
+  // balances itself (four at 1920 px, fewer on smaller screens, one on a phone)
+  root.append(el("div", { class: "ledger-scroll scroll" }, el("div", { class: "ledger-cols" },
+    ...[head, balance(), weeks(), block("income", t("INCOME")), block("costs", t("RUNNING COSTS")),
+      block("invest", t("INVESTMENT")), ships(), commander(), losses(), open(), jumps(), carrier()].filter(Boolean))));
 }
 
 function row(label, value, cls) {
@@ -142,15 +144,21 @@ function weeks() {
   return frame(t("PER WEEK"), t("net"), rows, { cls: "st-card", appear: false });
 }
 
+const noCr = (s) => s.replace(/ Cr$/, "");          // the table says "Cr" once, in its head
+
 function ships() {
-  const rows = (data.ships || []).map(s => el("div", { class: "st-ship" },
-    el("div", { class: s.current ? "c-cyan" : "" }, (s.name || s.type_name || s.type || "?") + (s.name && (s.type_name || s.type) ? " · " : ""),
-      el("span", { class: "c-dim small", text: s.name ? (s.type_name || s.type || "") : "" }), s.current ? el("span", { class: "c-cyan small", text: " ◂ " + t("now") }) : null),
-    row(t("Income"), cr(s.income), "c-green"), row(t("Running costs"), cr(s.costs), "c-amber"),
-    s.invest ? row(t("Investment"), cr(s.invest), "c-dim") : null,
-    row(t("Net"), cr(s.net, true), s.net >= 0 ? "c-green" : "c-red")));
-  if (!rows.length) rows.push(el("div", { class: "c-dim", text: t("none") }));
-  return frame(t("PER SHIP"), "", rows, { cls: "st-card", appear: false });
+  // user 25.11.: one line per ship (income, costs, net), not four - the page fits again
+  const S = data.ships || [];
+  if (!S.length) return frame(t("PER SHIP"), "", el("div", { class: "c-dim", text: t("none") }), { cls: "st-card", appear: false });
+  const rows = S.map(s => el("tr", { title: t("Investment") + ": " + cr(s.invest) },
+    el("td", { class: "ledger-ship" }, el("span", { class: s.current ? "c-cyan" : "", text: (s.name || s.type_name || s.type || "?") + (s.current ? " ◂" : "") }),
+      s.name && (s.type_name || s.type) ? el("span", { class: "c-dim small", text: " · " + (s.type_name || s.type) }) : null),
+    el("td", { class: "num c-green", text: noCr(cr(s.income)) }),
+    el("td", { class: "num c-amber", text: noCr(cr(s.costs)) }),
+    el("td", { class: "num " + (s.net >= 0 ? "c-green" : "c-red"), text: noCr(cr(s.net, true)) })));
+  return frame(t("PER SHIP"), t("{n} ships", { n: S.length }) + " · Cr", [
+    el("table", { class: "mine-table" }, el("tr", {}, ...[t("Ship"), t("Income"), t("Running costs"), t("Net")].map(h => el("th", { text: h }))), ...rows),
+    el("div", { class: "c-dim small", text: t("◂ the ship you fly. Hover a ship for what was invested in it.") })], { cls: "st-card", appear: false });
 }
 
 function commander() {
