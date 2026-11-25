@@ -445,6 +445,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
 
     hs_by_ring = _hotspots_by_ring(db, id64)
     bodies, by_row = _system_bodies(p, db, rows, name, now)
+    out["scanned_ts"] = max((r["scan_ts"] or 0 for r in rows), default=0) or None   # SC1
     rt = _system_route(sr, db, bodies, name, filters, cost_model, order_model, skip_arrival, fid, id64)
     if not any(b.pos for b in bodies.values()):
         sr.resolve_positions(bodies)
@@ -499,6 +500,8 @@ def _system_head(db: Database, id64: int, srow: Any, rows: Any, fid: Optional[st
         "fss_complete": bool(srow["fss_complete"]) if srow is not None else False,
         "visited": bool(srow["visited"]) if srow is not None else False,
         "known_sources": Database.known_sources(srow),
+        # SC1 (5.1.0): how old what we know is - the system row, your newest scan
+        "known_updated": srow["updated"] if srow is not None else None,
         "info_level": info_level(srow, db.shell_regions())[0],
         "bodies": [], "route": None, "fix": None, "generated": now,
         # C1: other commanders on this PC who have been here
@@ -1339,6 +1342,10 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
     out: Dict[str, Any] = {
         "id64": id64, "body_id": body_id, "system": sysname,
         "name": r["name"], "short": p.sysroute.shorten(r["name"] or "", sysname),
+        # SC1 (5.1.0): where the sheet's data comes from and how old it is
+        "provenance": {"scan_ts": r["scan_ts"], "updated": r["updated"],
+                       "system_sources": Database.known_sources(srow) if srow is not None else [],
+                       "system_updated": srow["updated"] if srow is not None else None},
         "kind": r["kind"], "cls": body_class(r), "colour": colour_key(r),
         "terraform": r["terraform"] or "", "landable": bool(r["landable"]),
         "arrival_ls": _r(r["arrival_ls"], 1),

@@ -20,7 +20,8 @@ import { t, N_ } from "../i18n.js";
 
 const LAYERS = [["path", N_("flight path")], ["carrier", N_("carrier")], ["systems", N_("systems")],
   ["boxels", N_("boxels")], ["spheres", N_("spheres")], ["finds", N_("finds")], ["navroute", N_("route")],
-  ["corridor", N_("corridor")], ["nexthop", N_("next hop")]];   // 5.1.0: NEXT HOP can be switched off (user 24.11.)
+  ["corridor", N_("corridor")], ["nexthop", N_("next hop")],    // 5.1.0: NEXT HOP can be switched off (user 24.11.)
+  ["regions", N_("regions")]];                                  // SC3 (5.1.0): the codex regions' outlines
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
 const MC = "abcdefgh";
 // interface colours: C / alpha() from ui.js (theme tokens)
@@ -316,6 +317,7 @@ function draw() {
   for (let x = Math.floor(x0 / step) * step; x <= x1; x += step) { const [sx] = toScreen(x, 0); g.moveTo(sx, 0); g.lineTo(sx, H); }
   for (let z = Math.floor(z0 / step) * step; z <= z1; z += step) { const [, sy] = toScreen(0, z); g.moveTo(0, sy); g.lineTo(W, sy); }
   g.stroke();
+  if (on.regions) drawRegions(W, H);
   // boxels of the active sphere
   if (on.boxels && data.boxels.length && data.boxel_size) {
     // seen from above, the boxels of one column (different heights) lie on
@@ -558,12 +560,7 @@ function renderSide() {
   ], { appear: false }));
   // layers
   side.append(frame(t("LAYERS"), "", el("div", { class: "gal-layers" }, ...LAYERS.map(([k, l]) => el("label", { class: "gal-lay" },
-    el("input", { type: "checkbox", checked: on[k] ? true : null, onchange: (e) => {
-      on[k] = e.target.checked; localStorage.setItem("fis.gal.layers", JSON.stringify(on));
-      if (g3) g3.setLayers(on);
-      if (k === "nexthop") renderSide();             // a side frame, not a map layer
-      draw();
-    } }),
+    el("input", { type: "checkbox", checked: on[k] ? true : null, onchange: (e) => setLayer(k, e.target.checked) }),
     " " + t(l)))), { appear: false }));
   // survey sphere
   if (data.active) {
@@ -588,14 +585,68 @@ function renderSide() {
         el("button", { text: t("all"), onclick: () => refit() })),
     ], { appear: false }));
   }
+  // SC2 (5.1.0, StellarCartography idea): a legend entry switches its layer
   side.append(el("div", { class: "legend" },
-    el("span", { class: "c-violet", text: "■ " + t("only known to us") }), el("span", { class: "c-green", text: "■ " + t("visited") }),
-    el("span", { class: "c-amber", text: "┄ " + t("carrier") }),
-    ...Object.entries(FIND_COL).map(([k, c]) => el("span", { style: { color: c }, text: "◆ " + t(FIND_NAME[k]) })),
+    legendChip("systems", "c-violet", "■ " + t("only known to us")), legendChip("systems", "c-green", "■ " + t("visited")),
+    legendChip("carrier", "c-amber", "┄ " + t("carrier")),
+    ...Object.entries(FIND_COL).map(([k, c]) => legendChip("finds", "", "◆ " + t(FIND_NAME[k]), { color: c })),
+    legendChip("path", "c-cyan", "━ " + t("flight path")),
     el("span", { class: "c-dim", text: view3d()
       ? t("path: violet = old, cyan = recent · drag turns · right drag or two fingers pan · wheel zooms")
       : t("path: violet = old, cyan = recent · wheel zoom · drag · double click fits") }),
     el("span", { class: "c-dim", text: t("click: focus there · double click: details in their own window") })));
+}
+
+// SC3 (5.1.0, StellarCartography idea): the 42 codex regions as outlines on
+// the galactic plane - fetched once, the borders found once, drawn per frame
+let regions = null, regionSegs = null, regionsAsked = false;
+async function loadRegions() {
+  if (regionsAsked) return;
+  regionsAsked = true;
+  try { regions = await getJSON("/api/regions"); } catch (e) { regions = null; return; }
+  const { step, x0, z0, w, h, rows } = regions, grid = new Uint8Array(w * h);
+  rows.forEach((row, j) => { let i = 0; for (let k = 0; k < row.length; k += 2) { grid.fill(row[k], j * w + i, j * w + i + row[k + 1]); i += row[k + 1]; } });
+  const segs = [];
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const a = grid[j * w + i], x = x0 + (i + 0.5) * step, z = z0 + (j + 0.5) * step;
+    if (i + 1 < w && grid[j * w + i + 1] !== a && (a || grid[j * w + i + 1])) segs.push(x, z - step, x, z);
+    if (j + 1 < h && grid[(j + 1) * w + i] !== a && (a || grid[(j + 1) * w + i])) segs.push(x - step, z, x, z);
+  }
+  regionSegs = new Float32Array(segs);
+  draw();
+}
+function drawRegions(W, H) {
+  if (!regionSegs) { loadRegions(); return; }
+  g.strokeStyle = alpha("violet", .28); g.lineWidth = 1; g.beginPath();
+  for (let k = 0; k < regionSegs.length; k += 4) {
+    const [ax, ay] = toScreen(regionSegs[k], regionSegs[k + 1]), [bx, by] = toScreen(regionSegs[k + 2], regionSegs[k + 3]);
+    if ((ax < 0 && bx < 0) || (ay < 0 && by < 0) || (ax > W && bx > W) || (ay > H && by > H)) continue;
+    g.moveTo(ax, ay); g.lineTo(bx, by);
+  }
+  g.stroke();
+  g.fillStyle = alpha("violet", .55); g.font = "11px " + getComputedStyle(document.body).fontFamily; g.textAlign = "center";
+  for (const [id, x, z] of regions.labels) {
+    const [sx, sy] = toScreen(x, z);
+    if (sx > 0 && sx < W && sy > 0 && sy < H) g.fillText(regions.names[String(id)] || "", sx, sy);
+  }
+  g.textAlign = "start";
+}
+
+/** SC2: switch a layer from the LAYERS list or a legend entry - remembered,
+ *  the 2D and 3D map and the side updated. */
+function setLayer(k, v) {
+  on[k] = v;
+  try { localStorage.setItem("fis.gal.layers", JSON.stringify(on)); } catch (e) { /* private window */ }
+  if (g3) g3.setLayers(on);
+  renderSide();
+  draw();
+}
+
+/** SC2: a legend entry as a button for its layer; dim while the layer is off. */
+function legendChip(k, cls, text, style) {
+  return el("button", { type: "button", class: "lg-chip " + cls + (on[k] ? "" : " off"), style: style || {},
+    "aria-pressed": on[k] ? "true" : "false", title: t(on[k] ? "click: hide this layer" : "click: show this layer"),
+    text, onclick: () => setLayer(k, !on[k]) });
 }
 
 function focusFrame() {

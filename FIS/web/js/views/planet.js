@@ -6,7 +6,7 @@
 // PLANET – datasheet of one body.
 
 import { getJSON } from "../api.js";
-import { el, frame, fmt, num, chip, hbar, tile, countUp, classDe, meter } from "../ui.js";
+import { el, frame, fmt, num, chip, hbar, tile, countUp, classDe, meter, ageText } from "../ui.js";
 import { t, N_, lang } from "../i18n.js";
 
 let root = null;
@@ -240,6 +240,12 @@ function render(ctx) {
   // left out leaves no gap
   const sec = {};
   const put = (k, f) => { if (f) sec[k] = f; };
+  // SC1 (5.1.0): where the sheet comes from and how old it is
+  const pv = b.provenance || {};
+  const src = pv.scan_ts ? t("your scan (journal), {a}", { a: ageText(t, pv.scan_ts) })
+    : pv.updated ? t("from the plugin database, {a}", { a: ageText(t, pv.updated) }) : "";
+  if (src) extra.push(el("div", { class: "pl-line small c-dim" }, el("span", { text: t("Data") + " " }), src
+    + (pv.system_sources && pv.system_sources.length ? " · " + t("system known: {s}", { s: pv.system_sources.join(", ") }) : "")));
   put("datasheet", frame(t("DATASHEET"), b.kind === "Star" ? t("Star") : t("Body {n}", { n: b.body_id }), [head, tiles, ...extra], { kind: "hot" }));
 
   if (b.star) {

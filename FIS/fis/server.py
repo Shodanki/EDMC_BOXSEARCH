@@ -1682,6 +1682,14 @@ class Handler(BaseHTTPRequestHandler):
         out["carrier"]["money"] = carriermoney.build(capi.path_for(app.cfg.plugin_dir), car, evs, out.get("since"))
         return self._json(out)
 
+    def _get_regions(self, qs: Dict[str, Any]) -> None:
+        """SC3 (5.1.0): the codex regions' outlines for GALAXY (built once)."""
+        from . import regions
+        out = regions.cached(self.app.model.plugin().regionmap)
+        if out is None:
+            return self._error(404, "no region map")
+        return self._json(out)
+
     def _get_trip(self, qs: Dict[str, Any]) -> None:
         """ST14 (5.1.0): the trip report for ?from=YYYY-MM-DD&to=YYYY-MM-DD
         (both days included; default: the last 14 days)."""
@@ -1993,6 +2001,7 @@ _GET_ROUTES = {
     "/api/statistics": Handler._get_statistics,
     "/api/ledger": Handler._get_ledger,
     "/api/trip": Handler._get_trip,
+    "/api/regions": Handler._get_regions,
     "/api/ledger/statement": Handler._get_statement,
     "/api/trade": Handler._get_trade,
     "/api/galaxy": Handler._get_galaxy,

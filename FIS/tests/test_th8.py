@@ -138,7 +138,8 @@ class TH8Test(unittest.TestCase):
         js = _read("js", "views", "galaxy.js")
         self.assertIn('["nexthop", N_("next hop")]', js)
         self.assertIn("if (hop && on.nexthop) side.append(hopFrame());", js)
-        self.assertIn('if (k === "nexthop") renderSide();', js)
+        self.assertIn("function setLayer(k, v) {", js)          # SC2: the side (NEXT HOP, legend) redrawn for every layer
+        self.assertIn("  if (g3) g3.setLayers(on);\n  renderSide();\n  draw();", js)
         self.assertIn("for (const [k] of LAYERS) if (on[k] === undefined) on[k] = true;", js)
 
     def test_galaxy_carrier_label_off_the_dashed_line(self):
