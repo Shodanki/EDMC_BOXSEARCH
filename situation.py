@@ -194,6 +194,14 @@ def route_lines(jumps: int, fuel_line: Optional[Tuple[str, str]]) -> List[Line]:
     return [("ROUTE  %d jumps plotted" % jumps, COL["head"]), (text[:LINE_MAX], col)]
 
 
+def route_find_line(unknown: int, hops: int) -> List[Line]:
+    """F5 (5.1.0): hops of the plotted route no database knows - a first
+    discovery possible in passing, at no extra flight."""
+    if hops < 1 or unknown < 1:
+        return []
+    return [(("      %d of %d in no database: first finds" % (unknown, hops))[:LINE_MAX], COL["new"])]
+
+
 def _bio_lines(open_genera: Sequence[Tuple[str, Optional[float]]]) -> List[Line]:
     """Open genera by the best price paid for them so far, two a line."""
     if not open_genera:

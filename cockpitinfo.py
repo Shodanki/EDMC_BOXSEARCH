@@ -44,6 +44,7 @@ from . import maintenance
 from . import miningfields
 from . import netstatus
 from . import vouchers
+from . import shells
 from . import situation
 from .deepspace import scoop_line
 from .procgen import parse_name
@@ -192,6 +193,29 @@ def _on_navroute(e: Dict[str, Any]) -> None:
     """A route plotted: the fuel along it."""
     hops = len(ST.navroute or []) - 1
     _put("route", situation.route_lines(hops, scoop_line(cockpit._scoop_plan())), 25)
+
+
+def route_finds(hops: List[Any]) -> None:
+    """F5 (5.1.0, worker after the route check): how many hops of the
+    plotted route no database knows - a first discovery possible in passing.
+    Their find chance is logged on arrival as for every first visit (find_log)."""
+    if not ST.db or len(hops) < 2:
+        return
+    with ST.lock:
+        regions = {k: ST.db.valid_shells(k) for k in ("edd", "spansh", "edsm")}
+        unknown = 0
+        for name, _cls, pos in hops[1:]:
+            row = ST.db.system(name) if name else None
+            srcs = set((row["sources"] or "").split(",")) if row is not None else set()
+            if pos is not None and shells.info_level(srcs, pos, regions)[0] == "checked":
+                unknown += 1
+    extra = situation.route_find_line(unknown, len(hops) - 1)
+    if extra:
+        base = situation.route_lines(len(hops) - 1, scoop_line(cockpit._scoop_plan()))
+        if not base:
+            base = [("ROUTE  %d jumps plotted" % (len(hops) - 1), situation.COL["head"])]
+        _put("route", base + extra, 60)
+    logger.info("route | %d of %d hops in no database", unknown, len(hops) - 1)
 
 
 def _on_navroute_clear(e: Dict[str, Any]) -> None:
