@@ -10,7 +10,7 @@ NavRoute.json and the other state files the game writes. No input to the game,
 no AI at runtime, Python standard library only.
 """
 
-__version__ = "5.0.1"      # released together with the plugin
+__version__ = "5.1.0"      # released together with the plugin
 
 # The FIS reads EDMC's config.toml with tomllib: Python 3.11 or newer
 MIN_PYTHON = (3, 11)

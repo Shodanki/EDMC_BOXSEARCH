@@ -1,4 +1,4 @@
-# SHBOXSEARCH v5.0.1
+# SHBOXSEARCH v5.1.0
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -1515,7 +1515,7 @@ what changed in each release from 4.1 on.
 | 4.12.1 | fix: when EDMC passes on no journal events (the game wrote its journal anew), the plugin warns, stores the missed landings, samples and finds itself and places them by the stored track; a replay fills in positions marks were stored without |
 | 5.0.0 | finding unknown systems first: chance of a find per candidate, probes in the order that pays, proofs of absence, NEXT HOP; orbits in their parent's frame (94 % within 1 %), far companions and brown dwarfs drawn right; a reality check of every learnt model; faster pages; STATISTICS in sub-tabs, forecasts, GAIN / LOSS as a company's books, TRADE, CARRIER TRADE and JUMP PLAN; themes on every page; LIFE SUPPORT lamp; fixes |
 | 5.0.1 | fixes: in-system route reaches the best order; EDDiscovery's archive read in short pieces; false "lost in a crash" marks taken back; ships stored after the hangar list keep their place; FIS header, tables and BRIEFING readable at 1600 px; FIS hardening (token, writing calls, fis.ini) |
-| 5.1.0 | mining fields rated and their chance before mining, self-learning; SPOT in the overlay on a hotspot target; vouchers at stake in the RISK line and LEDGER; unexplained credits; statistics: records & atlas, play patterns, engineering, materials flow, trip report; carrier equipment storage; themes per page; FIS answers 2-3x faster |
+| 5.1.0 | mining fields rated and their chance before mining, self-learning; SPOT in the overlay on a hotspot target; vouchers at stake; unexplained credits; statistics: records & atlas, play patterns, engineering, materials flow, trip report; carrier equipment; LEDGER and PLANET INFO as reports; source and age, codex region outlines, legend switches; 'not in the galaxy map' expires, phantoms; probe order from misses; first finds on a route; FIS answers 2-3x faster |
 
 ## Fixed since v3.0.8
 
@@ -3031,6 +3031,39 @@ of the whole career, and every page faster.
 * **One daily cap** of 50 requests per service for the plugin and the FIS
   together; the pause before a request is waited without holding others up.
 
+### Exploration: fewer wasted probes
+* **"Not in the galaxy map" no longer lasts for ever.** Each entry keeps its
+  date and the game's version; after a patch or 90 days the name is asked
+  again, and a boxel it closed opens. A name a database knows but the map
+  cannot find is a map bug in that region (as where NEXT HOP helps), not a
+  missing system - it closes nothing.
+* **Probes in the order that pays, also without hits.** Mass codes probed
+  often without a find (in the developer's sphere: 317 probes in mass code a,
+  none found) go behind the others - the first 20 probes were a 4 / b 13 /
+  c 3, now b 16 / c 3 / d 1.
+* **In passing:** after the route check of a plotted route the overlay's
+  ROUTE item says how many hops no database knows - first finds at no extra
+  flight.
+
+### Pages that read like a report
+* **LEDGER** in reading order - the result, the money's ways, the ships, what
+  is open - in balanced columns: all time fits one 1920 x 1080 screen; PER
+  SHIP one line a ship.
+* **PLANET INFO** as one report - what the body is, the science and life,
+  what it holds, its rings - in columns that fill, whatever is shown.
+* **Source and age** in SYSTEM and PLANET INFO ("known: Spansh · updated 3
+  days ago · your scans: journal, 12 min ago").
+* **GALAXY:** the 42 codex regions as outlines with their names (from the
+  bundled region map), and legend entries that switch their layer. Ideas
+  seen in StellarCartography (MIT) - ideas only, no code.
+
+### Game server
+* The FIS ship bar shows **GAME SERVER: journal rewritten hh:mm** for half
+  an hour after the game wrote its journal anew - what a lost connection
+  to its servers leaves; the plugin's overlay already warns when EDMC gets
+  no journal events. The game's network log was looked at and left out: in
+  every session it reads the same, the outage day included.
+
 ### Also fixed
 * "LIFE SUPPORT OFF?" no longer lights when the modules panel is opened
   while mining (only an AFMU repair counts).
@@ -3041,9 +3074,10 @@ of the whole career, and every page faster.
 
 **Updating to 5.1.0:** close EDMC and the FIS and unpack the ZIP over the
 old folder (it carries none of your files). Nothing to replay: the new
-index is added on the first start, and the mining fields and vouchers are
-read from your journals in the background after every start (a few
-seconds).
+index and columns are added on the first start, and the mining fields and
+vouchers are read from your journals in the background after every start
+(a few seconds). "Not in the galaxy map" entries older than 90 days are
+asked again once - the probe list grows by those.
 
 ## Releasing (for whoever maintains this)
 
