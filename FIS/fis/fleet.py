@@ -24,6 +24,7 @@ Also here, because the views need them:
 
 from __future__ import annotations
 
+import copy
 import glob
 import json
 import math
@@ -811,7 +812,10 @@ class Archive:
         self._refresh_lock = threading.Lock()   # one refresh at a time; readers are not held up
         self._scanned = 0.0
         self.rev = 0
-        self._evcache: Tuple[Any, List[Dict[str, Any]]] = (None, [])
+        # OP2 (5.1.0): one list per commander view - the own commander's and
+        # every commander's (MINING asks for both) no longer push each other out
+        self._evcache: Dict[Any, List[Dict[str, Any]]] = {}
+        self._memos: Dict[str, Tuple[Any, Any]] = {}     # OP1: fleet() / carrier() per journal state
         # the EDDiscovery archive: off until use_edd(path)
         self._edd_path: Optional[str] = None
         self._edd_raw: List[Dict[str, Any]] = []     # every event read from it
@@ -1070,13 +1074,15 @@ class Archive:
         every = fid == ALL_COMMANDERS
         with self._lock:
             key = (self.rev, fid)
-            if self._evcache[0] == key:
-                return list(self._evcache[1])
+            hit = self._evcache.get(key)
+            if hit is not None:
+                return list(hit)
             evs = [e for lst in self._lists() for e in lst
                    if e["event"] != "Commander"
                    and (every or fid is None or e.get("_fid") in (fid, None))]
             evs.sort(key=lambda e: e.get("timestamp") or "")
-            self._evcache = (key, evs)
+            self._evcache = {k: v for k, v in self._evcache.items() if k[0] == self.rev}
+            self._evcache[key] = evs
         return list(evs)
 
     def _lists(self) -> List[List[Dict[str, Any]]]:
@@ -1100,8 +1106,26 @@ class Archive:
                         names[str(e[k]).lower()] = loc
         return names
 
+    def _memo(self, name: str, build: Any) -> Any:
+        """OP1 (5.1.0): ``build()`` once per journal state (revision, commander,
+        EDDiscovery archive) - MINING, CARRIER and STATISTICS each asked for
+        fleet() and carrier() anew, 0.3-0.4 s apiece with the archive on.
+        Every caller gets its own copy, so none can change another's."""
+        key = (self.rev, self.commander()[0], (self.edd_state or {}).get("state"))
+        with self._lock:
+            hit = self._memos.get(name)
+        if hit is None or hit[0] != key:
+            hit = (key, build())
+            with self._lock:
+                self._memos[name] = hit
+        return copy.deepcopy(hit[1])
+
     def fleet(self) -> Dict[str, Any]:
-        """Every ship you own: where it is, its last known fitting and roles."""
+        """Every ship you own: where it is, its last known fitting and roles
+        (cached per journal state)."""
+        return self._memo("fleet", self._fleet)
+
+    def _fleet(self) -> Dict[str, Any]:
         evs = self.events()
         names = self.ship_names(evs)
         loadouts, sold, stored, current = _fleet_history(evs)
@@ -1188,7 +1212,10 @@ class Archive:
     def carrier(self) -> Optional[Dict[str, Any]]:
         """The own carrier from the journals: stats, location, fuel, load, jump
         history, a pending jump with its tritium, upkeep and changed
-        services."""
+        services (cached per journal state)."""
+        return self._memo("carrier", self._carrier)
+
+    def _carrier(self) -> Optional[Dict[str, Any]]:
         c = _CarrierLog()
         for e in self.own_carrier_events():
             c.feed(e)

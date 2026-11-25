@@ -808,9 +808,20 @@ class LiveTracker:
         return False
 
     def journals(self) -> List[str]:
-        """The journal files, oldest first."""
+        """The journal files, oldest first. OP2 (5.1.0): listed and sorted
+        again only when the folder changed (a file added, renamed or
+        removed) - every poll stat-ed all 100+ journals before."""
+        try:
+            stamp = os.stat(self.journal_dir).st_mtime_ns
+        except (OSError, TypeError):
+            stamp = None
+        cached = getattr(self, "_journal_list", None)
+        if stamp is not None and cached is not None and cached[0] == stamp:
+            return list(cached[1])
         files = glob.glob(os.path.join(self.journal_dir, "Journal.*.log"))
-        return sorted(files, key=lambda p: (os.path.getmtime(p), p))
+        files = sorted(files, key=lambda p: (os.path.getmtime(p), p))
+        self._journal_list = (stamp, files)
+        return list(files)
 
     def _read_lines(self, path: str, start: int) -> int:
         try:

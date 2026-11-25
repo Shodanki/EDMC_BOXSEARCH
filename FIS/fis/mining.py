@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -143,7 +144,34 @@ def _vehicle_name(e: Dict[str, Any]) -> str:
             or e.get("SRVType") or e.get("VesselType") or "SRV")
 
 
+_MEMO: Dict[str, Tuple[Any, Any]] = {}
+_MEMO_LOCK = threading.Lock()
+
+
+def _memo(name: str, events: List[Dict[str, Any]], build: Any) -> Any:
+    """OP1 (5.1.0): one pass over the journal per name and journal state -
+    MINING cut the sessions three times per answer, MINING LIVE (asked every
+    few seconds) twice, each 0.05-0.1 s with the EDDiscovery archive on. The
+    state is the very list (one answer passes the same list everywhere), its
+    length and its first and last event; callers only read what comes back."""
+    sig = (id(events), len(events), events[0].get("timestamp") if events else None,
+           events[-1].get("timestamp") if events else None)
+    with _MEMO_LOCK:
+        hit = _MEMO.get(name)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+    val = build(events)
+    with _MEMO_LOCK:
+        _MEMO[name] = (sig, val)
+    return val
+
+
 def _runs(events: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    """Mining runs (cached per journal state, see _cut_runs)."""
+    return _memo("runs", events, _cut_runs)
+
+
+def _cut_runs(events: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
     """Mining events in runs without a break longer than GAP_S; only runs
     that refined or prospected something (repair, fuel or research limpets
     are no mining). Refining while out in a surface vehicle (the Rhino's
@@ -350,6 +378,11 @@ def collector_life(events: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def collector_waves(events: List[Dict[str, Any]]) -> Dict[str, List[float]]:
+    """ML1: the collector waves per controller (cached per journal state)."""
+    return _memo("waves", events, _collector_waves)
+
+
+def _collector_waves(events: List[Dict[str, Any]]) -> Dict[str, List[float]]:
     """ML1: the seconds each collector wave was seen working, per limpet
     controller, in the order they flew (also for the reality check)."""
     ctrl: Optional[str] = None

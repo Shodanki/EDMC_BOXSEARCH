@@ -1741,24 +1741,40 @@ class Handler(BaseHTTPRequestHandler):
             out["learning"]["reality"] = app.reality(out)                # V0: every model against reality
         except Exception:
             out["learning"] = None
-        try:                          # ST2/ST6/ST8/ST9 (5.1.0): RECORDS & ATLAS, all time
-            from . import records
-            rm = app.model.plugin().regionmap
-            out["atlas"] = records.build(app.archive.events(), rm.find_region if rm else None,
-                                         rm.region_names() if rm else ())
-        except Exception:
-            out["atlas"] = None
-        try:                          # ST3/ST4/ST5 (5.1.0): travel grid, ships, bio catalogue
-            from . import careerstats
-            out["career"] = careerstats.build(app.archive.events(), app.archive.organic_values())
-        except Exception:
-            out["career"] = None
-        try:                          # ST10/ST11 (5.1.0): materials flow, engineering history
-            from . import craftstats
-            out["craft"] = craftstats.build(app.archive.events(), time.time())
-        except Exception:
-            out["craft"] = None
+        out.update(self._statistics_journal_parts())
         return out
+
+    def _statistics_journal_parts(self) -> Dict[str, Any]:
+        """OP3 (5.1.0): the parts of STATISTICS that read only the journals -
+        RECORDS & ATLAS (ST2/6/8/9), the career (ST3/4/5/7) and ENGINEERING
+        (ST10/11) - rebuilt when the journals change (and once an hour for
+        the "last 30 days" and the travel grid), not with every minute's
+        statistics: 0.5 s of the rebuild with the EDDiscovery archive on."""
+        app = self.app
+        sig = (app.archive.rev, (app.archive.edd_state or {}).get("state"), app.archive.commander()[0],
+               int(time.time() // 3600))
+
+        def build() -> Dict[str, Any]:
+            out: Dict[str, Any] = {}
+            evs = app.archive.events()
+            try:                          # ST2/ST6/ST8/ST9 (5.1.0): RECORDS & ATLAS, all time
+                from . import records
+                rm = app.model.plugin().regionmap
+                out["atlas"] = records.build(evs, rm.find_region if rm else None, rm.region_names() if rm else ())
+            except Exception:
+                out["atlas"] = None
+            try:                          # ST3/ST4/ST5/ST7 (5.1.0): travel grid, ships, bio catalogue, play
+                from . import careerstats
+                out["career"] = careerstats.build(evs, app.archive.organic_values())
+            except Exception:
+                out["career"] = None
+            try:                          # ST10/ST11 (5.1.0): materials flow, engineering history
+                from . import craftstats
+                out["craft"] = craftstats.build(evs, time.time())
+            except Exception:
+                out["craft"] = None
+            return out
+        return app.cached("statistics:journal", sig, build)
 
     def _get_galaxy(self, qs: Dict[str, Any]) -> None:
         """GALAXY layers for a mass code and period (cached while nothing changes)."""

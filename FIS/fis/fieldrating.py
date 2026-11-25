@@ -20,5 +20,5 @@ def rate_fields(events: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     mf = _optional("miningfields")
     if mf is None:
         return []
-    from .mining import _runs
-    return mf.rate_fields(events, split=_runs)
+    from .mining import _cut_runs                  # the tagged list is a new one: not the runs cache
+    return mf.rate_fields(events, split=_cut_runs)
