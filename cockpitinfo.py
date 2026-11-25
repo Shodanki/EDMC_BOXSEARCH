@@ -16,7 +16,8 @@ you were paid) runs in worker threads, which only touch the board - under
 its lock, never Tk.
 
 What it shows - each only when it helps (situation.py has the texts):
-  warnings  the arrival star (neutron, white dwarf, black hole); unsold
+  warnings  the game server's connection troubled or lost (SV1, from the
+            game's netLog); the arrival star (neutron, white dwarf, black hole); unsold
             data and unredeemed vouchers (ST13) at stake when in danger, interdicted, overheating,
             under attack or the hull is low
   places    the landing card on approach (gravity, temperature,
@@ -41,11 +42,12 @@ from . import bodyvalue
 from . import journalscan
 from . import maintenance
 from . import miningfields
+from . import netstatus
 from . import vouchers
 from . import situation
 from .deepspace import scoop_line
 from .procgen import parse_name
-from .state import CFG, ST, cfg_bool, logger
+from .state import CFG, ST, cfg_bool, cfg_str, logger
 from .sysdb import CURRENT
 from . import cockpit
 from . import panel
@@ -72,8 +74,12 @@ _unsold: Optional[Dict[str, Any]] = None
 _unsold_t = 0.0
 _carrier_dist: Optional[float] = None    # ly from the carrier to its destination
 _spot_dest: Optional[tuple] = None       # SP2: the ring hotspot last set as target
+NET = netstatus.NetWatch()               # SV1: what the game's netLog says about the connection
+NET_EVERY_S = 15.0
+_net_t = 0.0
+_net_busy = False
 
-GROUPS = {"warn": ("journal", "hazard", "risk"),
+GROUPS = {"warn": ("journal", "server", "hazard", "risk"),
           "place": ("landing", "system", "spot", "ring", "boxel", "route", "carrier"),
           "session": ("session",)}
 
@@ -491,10 +497,50 @@ def _tick() -> None:
     global _timer
     _timer = False
     try:
+        _net_check(time.time())
         draw()
     except Exception:
         logger.debug("situation | draw failed", exc_info=True)
     tick_start()
+
+
+def _net_check(now: float) -> None:
+    """SV1 (main thread, every tick): every NET_EVERY_S a short worker reads
+    the end of the game's netLog - never the main thread, never two at once."""
+    global _net_t, _net_busy
+    if _net_busy or now - _net_t < NET_EVERY_S or config_off("overlay_info_warn"):
+        return
+    _net_t, _net_busy = now, True
+    threading.Thread(target=_net_worker, name="SHBOX-netlog", daemon=True).start()
+
+
+def config_off(key: str) -> bool:
+    """A preferences switch (overlay info groups) that is off."""
+    return not cfg_bool(CFG[key], True)
+
+
+def _net_worker() -> None:
+    """Worker: the newest netLog's new lines; the SERVER item while the
+    connection is troubled or lost, gone when it is fine or the game is not
+    running. Touches only the board, under its lock."""
+    global _net_busy
+    try:
+        folder, running = netstatus.find_logs_dir(cfg_str(CFG["netlog_dir"]) or None)
+        if not running or not folder:
+            with _lock:
+                BOARD.drop("server")
+            return
+        NET.read(netstatus.newest_netlog(folder))
+        v = NET.state()                       # from the last line: a log that stops keeps its problem
+        if v:
+            _put("server", [(t, situation.COL[c]) for t, c in netstatus.lines(v, situation.LINE_MAX)], 60)
+        else:
+            with _lock:
+                BOARD.drop("server")
+    except Exception:
+        logger.debug("situation | netLog failed", exc_info=True)
+    finally:
+        _net_busy = False
 
 
 def draw(now: Optional[float] = None) -> bool:

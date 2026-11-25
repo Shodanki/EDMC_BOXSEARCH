@@ -1707,6 +1707,10 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 @media (max-width: 899px) { .pl-report { column-count: 1; } }
 .lay-phone .pl-report { column-count: 1; }
 
+/* -- SV1 (5.1.0): the game server's connection in the ship bar -- */
+.sb-server.trouble .v { color: var(--amber); }
+.sb-server.lost .v { color: var(--red); }
+
 /* TB1 (5.0.1, user 20.11.): every table, every page, every theme - a column
    of numbers (any cell td.num) is centred, its heading with it; a text
    column (names, dates, notes) keeps heading and cells left, so names stay

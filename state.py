@@ -60,6 +60,7 @@ CFG = {
     "src_edsm": "%s_src_edsm" % PLUGIN_NAME,
     "offline": "%s_offline" % PLUGIN_NAME,
     "edd_path": "%s_edd_path" % PLUGIN_NAME,
+    "netlog_dir": "%s_netlog_dir" % PLUGIN_NAME,      # SV1: the game's Logs folder when not found by itself
     # 5.0: the fuel model and the tonnes per rock also learn from EDDUser.sqlite
     "edd_archive": "%s_edd_archive" % PLUGIN_NAME,
     "jump_range": "%s_jump_range" % PLUGIN_NAME,

@@ -291,6 +291,22 @@ function renderShipBar() {
   if (flags.includes("scooping")) focus += " · SCOOP";
   document.getElementById("sb-focus").textContent = focus;
   renderCombat(s.combat);
+  renderServer(s.server);
+}
+
+// SV1 (5.1.0): the game server's connection, from the game's own netLog -
+// amber while troubled, red when lost; gone when fine. No blinking.
+function renderServer(v) {
+  const cell = document.getElementById("sb-server");
+  if (!cell) return;
+  cell.hidden = !v;
+  if (!v) return;
+  const hhmm = new Date(v.since * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+  cell.className = "sb-cell sb-server " + (v.state === "lost" ? "lost" : "trouble");
+  document.getElementById("sb-server-v").textContent = v.state === "lost"
+    ? t("GAME SERVER: connection lost {t}", { t: hhmm }) : t("GAME SERVER: connection problems since {t}", { t: hhmm });
+  cell.title = t("From the game's network log: {n} server silences of 20 s or more in 10 min, longest {l} s{r}.",
+    { n: v.count, l: v.longest, r: v.rtt ? ", " + t("round trip {r} ms", { r: v.rtt }) : "" });
 }
 
 // M8: combat mode - ALERT (shot at, interdicted), COMBAT MODE (hardpoints out,

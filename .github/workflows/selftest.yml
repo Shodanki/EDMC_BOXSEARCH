@@ -112,6 +112,8 @@ jobs:
         run: python tests/spot_overlay.py
       - name: unredeemed bounties, bonds and codex vouchers at stake (ST13, 5.1.0)
         run: python tests/vouchers.py
+      - name: connection problems from the game's netLog in the overlay (SV1, 5.1.0)
+        run: python tests/net_status.py
       - name: the FIS starts from an argument list, no shell (M11)
         run: python tests/fis_launch.py
       - name: package import (relative imports, both of EDMC's ways to load a plugin)
