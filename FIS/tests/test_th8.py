@@ -85,8 +85,13 @@ class TH8Test(unittest.TestCase):
 
     def test_planet_info_short_frames_and_station_sheet(self):
         js = _read("js", "views", "planet.js")
-        for name in ("RINGS", "COLLECTED HERE", "SIGNALS", "STAR"):
-            self.assertIn('left.push(frame(t("%s")' % name, js)
+        for key, name in (("rings", "RINGS"), ("collected", "COLLECTED HERE"), ("signals", "SIGNALS"), ("star", "STAR")):
+            self.assertIn('put("%s", frame(t("%s")' % (key, name), js)     # 25.11.: one report, not two columns
+        # user 25.11.: the report in reading order, balanced columns, none left empty
+        self.assertIn('const REPORT_ORDER = ["datasheet", "atmo", "star", "report", "bio", "materials", "ground", "collected",',
+                      js)
+        self.assertIn('"--cols": String(Math.min(3, frames.length))', js)
+        self.assertIn(".pl-report { --cols: 3; column-count: var(--cols);", self.css)
         block = _block(self.css, "/* -- TH8 (5.1.0) PLANET INFO")
         self._scoped_and_still(block)
         self.assertIn(':root[data-theme="station"] .planet-view .tile { display: flex;', block)

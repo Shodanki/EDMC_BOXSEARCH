@@ -1700,6 +1700,13 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 .ledger-cols .mine-table td.num { white-space: nowrap; font-size: 11.5px; }
 .ledger-ship { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* -- PLANET INFO (5.1.0, user 25.11.): one report in reading order, balanced columns -- */
+.pl-report { --cols: 3; column-count: var(--cols); column-gap: var(--gap); column-fill: balance; max-width: 1880px; margin: 0 auto; }
+.pl-report > * { break-inside: avoid; margin: 0 0 var(--gap); width: 100%; box-sizing: border-box; }
+@media (max-width: 1499px) { .pl-report { column-count: min(var(--cols), 2); } }
+@media (max-width: 899px) { .pl-report { column-count: 1; } }
+.lay-phone .pl-report { column-count: 1; }
+
 /* TB1 (5.0.1, user 20.11.): every table, every page, every theme - a column
    of numbers (any cell td.num) is centred, its heading with it; a text
    column (names, dates, notes) keeps heading and cells left, so names stay
