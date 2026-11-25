@@ -17,7 +17,7 @@ its lock, never Tk.
 
 What it shows - each only when it helps (situation.py has the texts):
   warnings  the arrival star (neutron, white dwarf, black hole); unsold
-            data at stake when in danger, interdicted, overheating,
+            data and unredeemed vouchers (ST13) at stake when in danger, interdicted, overheating,
             under attack or the hull is low
   places    the landing card on approach (gravity, temperature,
             atmosphere, open genera by what you were paid, finds); the
@@ -41,6 +41,7 @@ from . import bodyvalue
 from . import journalscan
 from . import maintenance
 from . import miningfields
+from . import vouchers
 from . import situation
 from .deepspace import scoop_line
 from .procgen import parse_name
@@ -62,6 +63,7 @@ PRICES = situation.Prices()
 SCANS = situation.Scans()
 CARRIER = situation.CarrierWatch()
 FIELDS = miningfields.FieldBook()        # SP2: filled by survey._bootstrap_fields, fed live
+VOUCHERS = vouchers.VoucherBook()       # ST13: unredeemed bounties, bonds, codex - the same way
 _lock = threading.RLock()
 _timer = False
 _drawn = False
@@ -109,6 +111,7 @@ def _learn(ev: str, entry: Dict[str, Any]) -> None:
     """The plain models: session, prices, scans, the carrier."""
     global _carrier_dist
     FIELDS.add(entry)
+    VOUCHERS.feed_live(entry)
     with _lock:
         got = SESSION.feed(entry)
         PRICES.feed(entry)
@@ -427,7 +430,7 @@ def _spot_worker(key: tuple, material: str) -> None:
 def _risk(why: str) -> None:
     """Show what is at stake; the sum comes from a worker (cached a minute)."""
     if _unsold is not None and time.time() - _unsold_t < UNSOLD_CACHE_S:
-        _put("risk", situation.risk_lines(_unsold, why), RISK_KEEP_S)
+        _put("risk", situation.risk_lines(_unsold, why, VOUCHERS.totals()), RISK_KEEP_S)
         return
     uithread._run_async(_unsold_worker, why, label="unsold data")
 
@@ -465,7 +468,7 @@ def _unsold_worker(why: str) -> None:
     with _lock:
         sv = dict(PRICES.species)
     _unsold, _unsold_t = unsold_summary(rows, sv), time.time()
-    _put("risk", situation.risk_lines(_unsold, why), RISK_KEEP_S)
+    _put("risk", situation.risk_lines(_unsold, why, VOUCHERS.totals()), RISK_KEEP_S)
 
 
 # ---------------------------------------------------------------------------

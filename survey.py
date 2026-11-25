@@ -250,17 +250,20 @@ def _bootstrap_body_physics() -> None:
 
 
 def _bootstrap_fields() -> None:
-    """5.1.0 SP2 (worker): the mining events of all journals (and of
-    EDDiscovery's archive when switched on) for the overlay's SPOT item -
-    the fields rated and their chance; live events follow from the hook."""
-    from . import cockpitinfo, miningfields
+    """5.1.0 SP2 + ST13 (worker): one pass over all journals (and
+    EDDiscovery's archive when switched on) for the overlay - the mining
+    events for the SPOT item (fields rated, their chance) and the vouchers
+    for the RISK line; live events follow from the hook."""
+    from . import cockpitinfo, miningfields, vouchers
     d = maintenance._journal_dir()
     files = journalscan.journal_files(d) if d else []
-    needles = tuple('"event":"%s"' % n for n in miningfields.NEEDED)
-    evs = _archive_lines(miningfields.NEEDED, files, "mining fields")
-    evs += list(journalscan.read_events_matching(files, needles))
+    names = tuple(dict.fromkeys(miningfields.NEEDED + vouchers.EVENTS))
+    evs = _archive_lines(names, files, "mining fields and vouchers")
+    evs += list(journalscan.read_events_matching(files, tuple('"event":"%s"' % n for n in names)))
     cockpitinfo.FIELDS.load(evs)
-    logger.info("mining fields | %d events, %d fields rated", len(evs), len(cockpitinfo.FIELDS.rated()))
+    cockpitinfo.VOUCHERS.load(evs)
+    logger.info("mining fields | %d events, %d fields rated; vouchers held %s Cr", len(evs),
+                len(cockpitinfo.FIELDS.rated()), cockpitinfo.VOUCHERS.totals()["total"])
 
 
 def _bootstrap_rock_yield() -> None:

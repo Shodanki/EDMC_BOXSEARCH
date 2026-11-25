@@ -89,6 +89,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "PayBounties", "PayLegacyFines", "NpcCrewPaidWage", "CrewHire", "BuyExplorationData",
           "BuyTradeData", "RedeemVoucher", "MarketBuy", "SearchAndRescue", "CommunityGoalReward",
           "PowerplaySalary",
+          # ST13 (5.1.0): vouchers earned, not redeemed yet (the plugin's vouchers.py)
+          "Bounty", "FactionKillBond", "CapShipBond",
           # first footfall (unsold data: the x5 bonus is paid only there)
           "Disembark")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
@@ -475,11 +477,13 @@ def _slim_signals(e: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _slim_codex(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """CodexEntry (5.0 EA2): biological entries only - which species where."""
+    """CodexEntry (5.0 EA2): biological entries - which species where; ST13:
+    any other entry that paid a codex voucher stays as a slim CodexVoucher."""
+    pay = {k: e[k] for k in ("VoucherAmount", "Region_Localised") if e.get(k)}
     if "Biology" not in str(e.get("Category") or ""):
-        return None
-    return {"event": "CodexEntry", "timestamp": e.get("timestamp"), "SystemAddress": e.get("SystemAddress"),
-            "BodyID": e.get("BodyID"), "Name_Localised": e.get("Name_Localised") or e.get("Name")}
+        return dict(pay, event="CodexVoucher", timestamp=e.get("timestamp")) if pay.get("VoucherAmount") else None
+    return dict(pay, event="CodexEntry", timestamp=e.get("timestamp"), SystemAddress=e.get("SystemAddress"),
+                BodyID=e.get("BodyID"), Name_Localised=e.get("Name_Localised") or e.get("Name"))
 
 
 def _slim_ship_targeted(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:

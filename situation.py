@@ -138,18 +138,27 @@ def hazard_lines(star_type: Optional[str]) -> List[Line]:
     return []
 
 
-def risk_lines(unsold: Dict[str, Any], why: str) -> List[Line]:
-    """Unsold data at stake: shown while in danger (why: what happened)."""
-    if not unsold or not (unsold.get("bodies") or unsold.get("species")):
+def risk_lines(unsold: Dict[str, Any], why: str, vouchers: Optional[Dict[str, Any]] = None) -> List[Line]:
+    """Unsold data and unredeemed vouchers (ST13) at stake: shown while in
+    danger (why: what happened)."""
+    data = bool(unsold and (unsold.get("bodies") or unsold.get("species")))
+    held = (vouchers or {}).get("total") or 0
+    if not data and not held:
         return []
-    out = [(("RISK  %s - unsold ~%s Cr" % (why, cr(unsold.get("value"))))[:LINE_MAX], COL["alert"])]
-    n = unsold.get("systems", 0)
-    bits = ["%d system%s" % (n, "" if n == 1 else "s"), "%d bodies" % unsold.get("bodies", 0)]
-    if unsold.get("first"):
-        bits.append("%d first" % unsold["first"])
-    if unsold.get("species"):
-        bits.append("%d species" % unsold["species"])
-    out.append((("      " + " · ".join(bits))[:LINE_MAX], COL["warn"]))
+    out = [(("RISK  %s - at stake ~%s Cr" % (why, cr((unsold or {}).get("value", 0) * data + held)))[:LINE_MAX],
+            COL["alert"])]
+    if data:
+        n = unsold.get("systems", 0)
+        bits = ["%d system%s" % (n, "" if n == 1 else "s"), "%d bodies" % unsold.get("bodies", 0)]
+        if unsold.get("first"):
+            bits.append("%d first" % unsold["first"])
+        if unsold.get("species"):
+            bits.append("%d species" % unsold["species"])
+        out.append((("      " + " · ".join(bits))[:LINE_MAX], COL["warn"]))
+    if held:
+        kinds = [("bounty", "bounties"), ("bonds", "bonds"), ("codex", "codex")]
+        bits = ["%s %s" % (label, cr(vouchers[k])) for k, label in kinds if vouchers.get(k)]
+        out.append((("      vouchers: " + " · ".join(bits))[:LINE_MAX], COL["warn"]))
     return out
 
 

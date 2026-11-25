@@ -1635,6 +1635,9 @@ class Handler(BaseHTTPRequestHandler):
         out["open"] = ({"bio": un["bio"]["value"], "bio_count": un["bio"]["count"],
                         "systems": un["exploration"]["systems"], "explo": un["exploration"].get("value")}
                        if un else None)
+        from .model import _optional
+        vb = _optional("vouchers")                    # ST13: unredeemed bounties, bonds, codex
+        out["vouchers"] = vb.VoucherBook().feed_all(evs).totals() if vb else None
         names = app.archive.ship_names(evs)
         from .fleet import type_label, upkeep_between
         for s in out["ships"]:

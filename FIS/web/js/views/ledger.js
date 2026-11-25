@@ -100,7 +100,7 @@ function render() {
   root.append(el("div", { class: "stat-wrap" },
     el("div", { class: "stat-grid scroll" }, head, balance(), block("income", t("INCOME")), block("costs", t("RUNNING COSTS")),
       block("invest", t("INVESTMENT")), weeks()),
-    el("div", { class: "stat-side scroll" }, open(), ships(), commander(), losses(), carrier())));
+    el("div", { class: "stat-side scroll" }, open(), jumps(), ships(), commander(), losses(), carrier())));
 }
 
 function row(label, value, cls) {
@@ -164,15 +164,38 @@ function commander() {
 
 // B6: what is earned but not booked yet - unsold data, valued like UNSOLD DATA
 function open() {
-  const O = data.open;
-  if (!O || (!O.bio_count && !O.systems)) return null;
+  const O = data.open || {}, VO = data.vouchers;
+  if (!O.bio_count && !O.systems && !(VO && (VO.total || VO.lost))) return null;
   const rows = [];
   if (O.bio_count) rows.push(row(t("Exobiology (own prices)"), O.bio ? "~ " + cr(O.bio) : "–", "c-amber"));
   const V = O.explo;
   if (O.systems) rows.push(row(t("Exploration data"), V && V.est ? "~ " + cr(V.mid) + (V.calibrated ? " (" + cr(V.lo) + " – " + cr(V.hi) + ")" : "") : "–", "c-amber"));
   if (V && V.est) rows.push(el("div", { class: "c-dim small", text: V.calibrated ? t("from {n} sales", { n: V.n }) : t("(formula, not calibrated yet)") }));
   rows.push(el("div", { class: "c-dim small", text: t("Unsold, not booked yet: what the data would bring - and what a crash would cost.") }));
+  rows.push(...voucherRows(VO));
   return frame(t("OPEN"), "", rows, { cls: "st-card", appear: false });
+}
+
+// ST13 (5.1.0): vouchers earned, not redeemed - lost with the ship like unsold data
+const VKIND = { bounty: N_("Bounty vouchers"), bonds: N_("Combat bonds"), codex: N_("Codex vouchers") };
+function voucherRows(V) {
+  if (!V) return [];
+  const rows = [];
+  for (const k of ["bounty", "bonds", "codex"]) if (V[k]) rows.push(row(t(VKIND[k]), cr(V[k]), "c-amber"));
+  if (V.total) rows.push(el("div", { class: "c-dim small", text: t("Not redeemed since {d}: lost if the ship is destroyed. Bounties and bonds at the faction's station (or Interstellar Factors), codex vouchers at Universal Cartographics.",
+    { d: V.since ? new Date(V.since).toLocaleDateString() : "–" }) }));
+  else rows.push(row(t("Vouchers"), t("all redeemed"), "c-dim"));
+  if (V.lost) rows.push(el("div", { class: "c-dim small", text: t("Last lost at a death on {d}: {c}.", { d: new Date(V.lost.ts).toLocaleDateString(), c: cr(V.lost.total) }) }));
+  return rows;
+}
+
+// ST12 (5.1.0): each larger balance move no journal event explains
+function jumps() {
+  const J = data.jumps || [];
+  if (!J.length) return null;
+  const rows = J.map(j => row(new Date(j.ts * 1000).toLocaleString(), cr(j.cr, true), j.cr >= 0 ? "c-green" : "c-amber"));
+  rows.push(el("div", { class: "c-dim small", text: t("Balance moves the journal does not explain, between two balances the game stated (login, carrier transfer): missions, community goals, gifts, or journals missing for a stretch. Compare with the transactions in the game.") }));
+  return frame(t("UNEXPLAINED CREDITS"), t("{n} largest", { n: J.length }), rows, { cls: "st-card", appear: false });
 }
 
 function losses() {
