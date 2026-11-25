@@ -152,6 +152,7 @@ def _bootstrap_session() -> None:
              (_bootstrap_last_body, "last position bootstrap"), (_bootstrap_ground, "ground mining bootstrap"),
              (_bootstrap_mining, "mining hold bootstrap"), (_bootstrap_rock_yield, "rock yield bootstrap"),
              (_bootstrap_body_physics, "body physics bootstrap"), (_bootstrap_fields, "mining fields bootstrap"),
+             (_expire_absent, "negative cache expiry"),
              (updater._check_for_update, "update check"))
     for step, what in steps:
         try:
@@ -247,6 +248,17 @@ def _bootstrap_body_physics() -> None:
     with ST.lock:
         n = ST.db.fill_missing_physics(found)
     logger.info("body physics | %d of %d bodies without radius and tilt filled from the archive", n, len(todo))
+
+
+def _expire_absent() -> None:
+    """F2 (worker): "not in the galaxy map" entries older than ABSENT_DAYS
+    are asked again; a boxel one closed opens."""
+    if not ST.db:
+        return
+    with ST.lock:
+        n = ST.db.expire_absent()
+    if n:
+        logger.info("negative cache | %d 'not in the galaxy map' entries are old - checked again", n)
 
 
 def _bootstrap_fields() -> None:
@@ -554,6 +566,21 @@ def _probe_absent() -> None:
     """
     t = current_probe()
     if not t:
+        return
+    with ST.lock:
+        known = ST.db.known_elsewhere(t.name)
+        if known:
+            ST.db.mark_phantom(t.name, known)
+    if known:
+        # F2 (5.1.0): a database knows the name - the map is wrong there (as in
+        # the permit-bugged regions), the system is not missing
+        ST.probe = [q for q in ST.probe if q.name != t.name]
+        logger.info("%s not found in the galaxy map, but %s knows it - a map bug in this region, "
+                    "boxel %s stays open", t.name, known, t.boxel_key)
+        panel._set_status("%s: the galaxy map misses it, %s knows it - a map bug here, "
+                          "not a missing system (see NEXT HOP)" % (t.name, known))
+        panel._refresh()
+        _copy_probe()
         return
     with ST.lock:
         closes = ST.db.mark_absent(t.name)

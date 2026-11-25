@@ -126,7 +126,9 @@ CREATE TABLE IF NOT EXISTS absent (
     name  TEXT PRIMARY KEY,
     boxel TEXT,
     n2    INTEGER,
-    ts    TEXT
+    ts    TEXT,
+    game_version TEXT,       -- F2 (5.1.0): the game's version when the map said so
+    reason TEXT              -- F2: NULL / 'map' not there; 'phantom' - a database knows it
 );
 CREATE INDEX IF NOT EXISTS ix_absent_boxel ON absent(boxel);
 
@@ -428,6 +430,9 @@ def _in_body_count(r: Any) -> bool:
     return r["kind"] != "BaryCentre" and "Belt Cluster" not in (r["name"] or "")
 
 
+ABSENT_DAYS = 90          # F2 (5.1.0): a 'not in the galaxy map' is asked again after this long
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -690,6 +695,11 @@ class SystemDB:
 
     def _migrate_columns(self) -> None:
         """Columns added after the first release, in place."""
+        ahave = {r[1] for r in self.cx.execute("PRAGMA table_info(absent)")}
+        for col in ("game_version", "reason"):            # F2 (5.1.0)
+            if col not in ahave:
+                self.cx.execute("ALTER TABLE absent ADD COLUMN %s TEXT" % col)
+        self.cx.commit()
         have = {r[1] for r in self.cx.execute("PRAGMA table_info(systems)")}
         if "sources" not in have:
             self.cx.execute("ALTER TABLE systems ADD COLUMN sources TEXT")
@@ -834,7 +844,8 @@ class SystemDB:
                 n1zero_names.add(nm)
         absent_by_key: Dict[str, List[Tuple[str, int]]] = {}
         bad_absent = []
-        for nm, key in self.cx.execute("SELECT name, boxel FROM absent").fetchall():
+        for nm, key in self.cx.execute("SELECT name, boxel FROM absent "
+                                       "WHERE reason IS NULL OR reason='map'").fetchall():   # F2: not the phantoms
             p = parse_name(nm)
             if p is None:
                 bad_absent.append(nm)       # e.g. old "XV-C d-3" form
@@ -884,6 +895,15 @@ class SystemDB:
             self.cx.close()
         except Exception:
             pass
+
+    def _note_game_version(self, version: str) -> None:
+        """F2: the game's version - a new one (a patch) lets the "not there"
+        of the old one be asked again."""
+        if self.get_meta("game_version") != version:
+            self.set_meta("game_version", version)
+            n = self.expire_absent()
+            if n:
+                logger.info("game version %s: %d 'not in the galaxy map' entries will be checked again", version, n)
 
     def get_meta(self, k: str, default: Optional[str] = None) -> Optional[str]:
         """One value from the key/value table meta, or default."""
@@ -1142,6 +1162,58 @@ class SystemDB:
         return out
 
     # ------------------------------------------------------------ negative cache
+    def known_elsewhere(self, name: str) -> Optional[str]:
+        """F2: the sources that report this name (EDSM, Spansh, EDDiscovery,
+        the journal), or None - a name the galaxy map then cannot find is a
+        map bug in that region, not a missing system."""
+        r = self.cx.execute("SELECT sources, source FROM systems WHERE name=? COLLATE NOCASE",
+                            (name.strip(),)).fetchone()
+        if r is None:
+            return None
+        src = (r["sources"] or r["source"] or "").strip(", ")
+        return src or None
+
+    def mark_phantom(self, name: str, sources: str) -> None:
+        """F2: the galaxy map did not find a name a database knows - kept as a
+        phantom (the map's fault, as in the permit-bugged regions where NEXT
+        HOP helps): it closes nothing and the name is not ruled out."""
+        name = name.strip()
+        p = parse_name(name)
+        self.cx.execute("INSERT OR REPLACE INTO absent(name,boxel,n2,ts,game_version,reason) VALUES (?,?,?,?,?,?)",
+                        (name, p.boxel_key if p else None, p.n2 if p else None, _now(),
+                         self.get_meta("game_version"), "phantom"))
+        self.cx.commit()
+
+    def phantoms(self) -> List[Dict[str, Any]]:
+        """F2: names the galaxy map missed although a database knows them."""
+        return [dict(r) for r in self.cx.execute(
+            "SELECT name, ts, game_version FROM absent WHERE reason='phantom' ORDER BY ts DESC")]
+
+    def expire_absent(self, now: Optional[float] = None) -> int:
+        """F2: a "not there" holds for one game version and ABSENT_DAYS - after
+        a patch or that long the name is asked again: the entry goes, and a
+        boxel it closed opens again. Returns the entries that went."""
+        now = time.time() if now is None else now
+        version = self.get_meta("game_version")
+        gone = 0
+        for r in self.cx.execute("SELECT name, boxel, n2, ts, game_version FROM absent "
+                                 "WHERE reason IS NULL OR reason='map'").fetchall():
+            try:
+                age = now - calendar.timegm(time.strptime(r["ts"], "%Y-%m-%dT%H:%M:%SZ"))
+            except (TypeError, ValueError):
+                age = 0.0
+            patched = bool(version and r["game_version"] and r["game_version"] != version)
+            if not (patched or age > ABSENT_DAYS * 86400):
+                continue
+            self.cx.execute("DELETE FROM absent WHERE name=?", (r["name"],))
+            if r["boxel"] is not None and r["n2"] is not None:
+                self.cx.execute("UPDATE boxels SET n2_end=NULL, complete=0, updated=? WHERE key=? AND n2_end=?",
+                                (_now(), r["boxel"], r["n2"]))
+            gone += 1
+        if gone:
+            self.cx.commit()
+        return gone
+
     def mark_absent(self, name: str) -> bool:
         """The galaxy map does not know this name. True when that closes
         the boxel there (n2 runs on from 0, so nothing above it exists).
@@ -1152,8 +1224,8 @@ class SystemDB:
         name = name.strip()
         p = parse_name(name)
         self.cx.execute(
-            "INSERT OR REPLACE INTO absent(name,boxel,n2,ts) VALUES (?,?,?,?)",
-            (name, p.boxel_key if p else None, p.n2 if p else None, _now()))
+            "INSERT OR REPLACE INTO absent(name,boxel,n2,ts,game_version,reason) VALUES (?,?,?,?,?,?)",
+            (name, p.boxel_key if p else None, p.n2 if p else None, _now(), self.get_meta("game_version"), "map"))
         closes = False
         if p:
             top = self.boxel_known_max(p.boxel_key)
@@ -1169,8 +1241,9 @@ class SystemDB:
         self.cx.commit()
 
     def absent_set(self) -> Set[str]:
-        """Every name the galaxy map said does not exist."""
-        return {r[0] for r in self.cx.execute("SELECT name FROM absent")}
+        """Every name the galaxy map said does not exist (F2: phantoms - names
+        a database knows - are not ruled out)."""
+        return {r[0] for r in self.cx.execute("SELECT name FROM absent WHERE reason IS NULL OR reason='map'")}
 
     def probe_outcomes(self) -> Dict[int, List[int]]:
         """FX4: the galaxy map's own verdicts per mass code, [hits, n]:
@@ -2413,6 +2486,8 @@ class SystemDB:
         """Process one journal event. Returns the number of records touched."""
         ev = entry.get("event")
         n = 0
+        if ev in ("Fileheader", "LoadGame") and entry.get("gameversion"):
+            self._note_game_version(str(entry["gameversion"]))
         self._track_location(ev, entry)
         self._note_dock(ev, entry)
         try:
