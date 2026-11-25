@@ -115,9 +115,6 @@ class Config:
         # 5.0: learn from the older journals EDDiscovery keeps (EDDUser.sqlite,
         # read only, fis/eddarchive.py); off by default
         self.edd_archive = False
-        # SV1 (5.1.0): the game's Logs folder (netLog) when it is not found
-        # next to the running game by itself
-        self.netlog_dir = ""
 
     @property
     def filters(self) -> List[str]:
@@ -209,7 +206,6 @@ class Config:
         self.set_unsold_limits({k: s.get("unsold_" + k) for k in UNSOLD_LIMITS})
         self.show_controls = _bool(s.get("show_controls", "false"))
         self.edd_archive = _bool(s.get("edd_archive", "false"))
-        self.netlog_dir = (s.get("netlog_dir", "") or "").strip()
         if self.lan:
             self.host = "0.0.0.0"
         return self
@@ -277,8 +273,6 @@ class Config:
         vals.update({"unsold_" + k: str(v) for k, v in self.unsold.items()})
         vals["show_controls"] = "true" if self.show_controls else "false"
         vals["edd_archive"] = "true" if self.edd_archive else "false"
-        if self.netlog_dir:
-            vals["netlog_dir"] = self.netlog_dir
         for k, v in vals.items():
             cp.set("fis", k, v)
         for k, v, d in (("db_path", self.db_path, DEFAULT_DB),

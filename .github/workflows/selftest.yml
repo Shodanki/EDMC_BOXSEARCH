@@ -112,8 +112,6 @@ jobs:
         run: python tests/spot_overlay.py
       - name: unredeemed bounties, bonds and codex vouchers at stake (ST13, 5.1.0)
         run: python tests/vouchers.py
-      - name: connection problems from the game's netLog in the overlay (SV1, 5.1.0)
-        run: python tests/net_status.py
       - name: 'not in the galaxy map' kept with version and date, asked again, phantoms (F2, 5.1.0)
         run: python tests/negative_cache.py
       - name: a plotted route's hops in no database shown in passing (F5, 5.1.0)

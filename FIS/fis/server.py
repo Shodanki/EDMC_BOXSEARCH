@@ -627,33 +627,21 @@ class App:
                     self.snapshot_market()
                 except Exception:
                     pass
-                try:
-                    self.net_check()
-                except Exception:
-                    pass
         threading.Thread(target=run, name="fis-watchdog", daemon=True).start()
 
-    NET_EVERY_S = 15.0
+    SERVER_NOTICE_S = 30 * 60
 
-    def net_check(self, now: Optional[float] = None) -> None:
-        """SV1 (5.1.0, watchdog thread): every NET_EVERY_S the end of the
-        game's newest netLog (the plugin's netstatus.py: only while the game
-        runs, read only, only the new lines) - the ship bar's GAME SERVER."""
+    def server_notice(self, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """SV1b (5.1.0, user 25.11.): the game wrote its journal anew within
+        the last half hour - what a lost connection to the game's servers
+        leaves (06.11., 16.11., 22.11.); the game's netLog shows nothing
+        that tells a disturbed session from a normal one (checked in 13 of
+        the developer's sessions). None otherwise."""
         now = time.time() if now is None else now
-        if now - getattr(self, "_net_t", 0.0) < self.NET_EVERY_S:
-            return
-        self._net_t = now
-        ns = self.model._optional("netstatus")
-        if ns is None:
-            return
-        if not hasattr(self, "_net"):
-            self._net = ns.NetWatch()
-        folder, running = ns.find_logs_dir(getattr(self.cfg, "netlog_dir", "") or None)
-        if not running or not folder:
-            self.net_state = None
-            return
-        self._net.read(ns.newest_netlog(folder))
-        self.net_state = self._net.state()
+        ts = getattr(self.live, "rewrite_ts", None)
+        if ts is None or now - ts > self.SERVER_NOTICE_S:
+            return None
+        return {"state": "rewrite", "since": ts, "count": getattr(self.live, "rewrites", 1)}
 
     def health(self) -> Dict[str, Any]:
         """The FIS's state for /api/health: version, uptime, database, journal,
@@ -1502,7 +1490,7 @@ class Handler(BaseHTTPRequestHandler):
         app = self.app
         m = app.model
         out = m.build_ship(app.live_state())
-        out["server"] = getattr(app, "net_state", None)             # SV1: the game server's connection
+        out["server"] = app.server_notice()                 # SV1b: the game rewrote its journal
         return self._json(out)
 
     def _get_vehicle(self, qs: Dict[str, Any]) -> None:

@@ -885,6 +885,7 @@ class LiveTracker:
             if self._offset and self._rewritten(self._file):
                 # read the new content from its start, live
                 self.rewrites += 1
+                self.rewrite_ts = time.time()    # SV1b: when, for the ship bar
                 self._offset = 0
                 self._partial = b""
                 self._head = self._head_of(self._file)

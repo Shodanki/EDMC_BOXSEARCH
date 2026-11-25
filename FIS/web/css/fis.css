@@ -1707,15 +1707,15 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 @media (max-width: 899px) { .pl-report { column-count: 1; } }
 .lay-phone .pl-report { column-count: 1; }
 
-/* -- SV1 (5.1.0): the game server's connection in the ship bar -- */
-.sb-server.trouble .v { color: var(--amber); }
-.sb-server.lost .v { color: var(--red); }
 
 /* -- SC2 (5.1.0): legend entries that switch their layer -- */
 .legend .lg-chip { font: inherit; background: none; border: 0; padding: 0 2px; cursor: pointer; text-align: left; }
 .legend .lg-chip:hover { text-decoration: underline; }
 .legend .lg-chip.off { opacity: .35; text-decoration: line-through; }
 .legend .lg-chip:focus-visible { outline: 1px solid var(--cyan); }
+
+/* -- SV1b (5.1.0): the game rewrote its journal - in the ship bar -- */
+.sb-server .v { color: var(--amber); }
 
 /* TB1 (5.0.1, user 20.11.): every table, every page, every theme - a column
    of numbers (any cell td.num) is centred, its heading with it; a text
