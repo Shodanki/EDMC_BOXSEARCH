@@ -1654,6 +1654,22 @@ class Handler(BaseHTTPRequestHandler):
         out["carrier"]["money"] = carriermoney.build(capi.path_for(app.cfg.plugin_dir), car, evs, out.get("since"))
         return self._json(out)
 
+    def _get_trip(self, qs: Dict[str, Any]) -> None:
+        """ST14 (5.1.0): the trip report for ?from=YYYY-MM-DD&to=YYYY-MM-DD
+        (both days included; default: the last 14 days)."""
+        app = self.app
+        from . import trip
+        now = time.time()
+        end = trip.parse_day((qs.get("to") or [""])[0])
+        end = end + 86400 if end is not None else now
+        start = trip.parse_day((qs.get("from") or [""])[0])
+        start = start if start is not None else end - 14 * 86400
+        if end <= start or end - start > trip.MAX_DAYS * 86400:
+            return self._json({"error": "bad span"}, 400)
+        rm = app.model.plugin().regionmap
+        app.archive.refresh()
+        return self._json(trip.build(app.archive.events(), start, end, rm.find_region if rm else None))
+
     def _get_statement(self, qs: Dict[str, Any]) -> None:
         """5.0 GV1: GAIN / LOSS as an annual statement - income statement per
         week, month and year, balance sheet, segments, outlook."""
@@ -1737,6 +1753,11 @@ class Handler(BaseHTTPRequestHandler):
             out["career"] = careerstats.build(app.archive.events(), app.archive.organic_values())
         except Exception:
             out["career"] = None
+        try:                          # ST10/ST11 (5.1.0): materials flow, engineering history
+            from . import craftstats
+            out["craft"] = craftstats.build(app.archive.events(), time.time())
+        except Exception:
+            out["craft"] = None
         return out
 
     def _get_galaxy(self, qs: Dict[str, Any]) -> None:
@@ -1927,6 +1948,7 @@ _GET_ROUTES = {
     "/api/mining": Handler._get_mining,
     "/api/statistics": Handler._get_statistics,
     "/api/ledger": Handler._get_ledger,
+    "/api/trip": Handler._get_trip,
     "/api/ledger/statement": Handler._get_statement,
     "/api/trade": Handler._get_trade,
     "/api/galaxy": Handler._get_galaxy,

@@ -401,7 +401,7 @@ class StatsLayoutTest(unittest.TestCase):
         js, css, i18n = self._read("js", "views", "statistics.js"), self._read("css", "fis.css"), self._read("js", "i18n.js")
         block = js[js.index("const PANES = ["):js.index("];", js.index("const PANES = ["))]
         keys = re.findall(r'"([A-Za-z]+)"', re.sub(r'N_\("[^"]*"\)', "", block))
-        panes = ["overview", "trends", "rates", "learning", "atlas"]
+        panes = ["overview", "trends", "rates", "learning", "atlas", "craft", "trip"]
         frames = list(keys)
         for k in panes:                     # each pane id once; "learning" is a pane and its frame
             frames.remove(k)
@@ -409,6 +409,7 @@ class StatsLayoutTest(unittest.TestCase):
         expected = ["ranks", "overTime", "firstFinds", "surfaceMaps", "bioRates", "perSession", "timePerSystem", "learning",
                     "carrierMoney"] + cards          # CT2: the carrier's money in OVERVIEW
         expected += ["records", "regions", "starsWorlds", "journey", "travel", "ships", "bioCatalogue"]   # 5.1.0 ST2-ST9
+        expected += ["playPatterns", "engineering", "materialsFlow", "trip"]                             # ST7-ST14
         self.assertEqual(sorted(frames), sorted(expected))          # each once, none missing
         for k in expected[:9]:
             self.assertIn(k + ": () => " + k + "()", js)

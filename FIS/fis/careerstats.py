@@ -14,6 +14,8 @@ the journals (with the EDDiscovery archive when it is on), read only:
   years, jumps, systems, bodies scanned, hours in the ship and losses.
 - ST5 the bio catalogue: per genus the species and variants analysed, how
   often, when first, and the value of the species where it was sold.
+- ST7 play patterns: when you play - active minutes per weekday and hour
+  (local time of this computer), sessions and their length, the pauses.
 """
 import calendar
 import time
@@ -158,10 +160,58 @@ def bio_catalogue(evs: Iterable[Dict[str, Any]], values: Optional[Dict[str, Dict
     return sorted(out, key=lambda g: (-len(g["species"]), g["genus"]))
 
 
+SESSION_GAP_S = 30 * 60      # ST7: a longer silence ends a session
+
+
+def _median(xs: List[float]) -> Optional[float]:
+    xs = sorted(xs)
+    if not xs:
+        return None
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
+
+
+def patterns(evs: Iterable[Dict[str, Any]], local: Any = time.localtime) -> Dict[str, Any]:
+    """ST7: active minutes per weekday (0 = Monday) and hour in ``local``
+    time - the time between two events closer than SESSION_GAP_S, booked to
+    the hour the earlier one fell in - and the sessions those gaps cut."""
+    grid = [[0.0] * 24 for _d in range(7)]
+    lengths: List[float] = []
+    pauses: List[float] = []
+    prev: Optional[float] = None
+    start: Optional[float] = None
+    for e in evs:
+        ts = parse_ts(e.get("timestamp"))
+        if ts is None or (prev is not None and ts < prev):
+            continue
+        if prev is not None and ts - prev <= SESSION_GAP_S:
+            lt = local(prev)
+            grid[lt.tm_wday][lt.tm_hour] += (ts - prev) / 60.0
+        elif prev is not None:
+            lengths.append(prev - (start or prev))
+            pauses.append(ts - prev)
+            start = ts
+        else:
+            start = ts
+        prev = ts
+    if prev is not None:
+        lengths.append(prev - (start or prev))
+    lengths = [x for x in lengths if x >= 60]
+    cells = [[round(m) for m in row] for row in grid]
+    days = [sum(row) for row in cells]
+    hours = [sum(cells[d][h] for d in range(7)) for h in range(24)]
+    return {"grid": cells, "max": max(max(row) for row in cells), "hours": round(sum(days) / 60.0),
+            "busy_day": days.index(max(days)) if any(days) else None,
+            "busy_hour": hours.index(max(hours)) if any(hours) else None,
+            "sessions": len(lengths), "median_s": _median(lengths), "longest_s": max(lengths) if lengths else None,
+            "pause_s": _median([p for p in pauses if p <= 14 * 86400])}
+
+
 def build(evs: List[Dict[str, Any]], values: Optional[Dict[str, Dict[str, int]]] = None,
           now: Optional[float] = None) -> Dict[str, Any]:
-    """ST3 + ST4 + ST5 for the STATISTICS answer."""
-    return {"travel": travel(evs, now), "ships": ships(evs), "bio": bio_catalogue(evs, values)}
+    """ST3 + ST4 + ST5 + ST7 for the STATISTICS answer."""
+    return {"travel": travel(evs, now), "ships": ships(evs), "bio": bio_catalogue(evs, values),
+            "patterns": patterns(evs)}
 
 
-__all__: Tuple[str, ...] = ("travel", "ships", "bio_catalogue", "build")
+__all__: Tuple[str, ...] = ("travel", "ships", "bio_catalogue", "patterns", "build")
