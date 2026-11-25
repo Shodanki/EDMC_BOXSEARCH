@@ -52,6 +52,8 @@ from .live import parse_ts
 
 INCOME, COSTS, INVEST = "income", "costs", "invest"
 WEEKS = 12                       # the weekly bars: the last twelve weeks with entries
+JUMPS_TOP = 8                    # ST12: the largest unexplained balance moves shown ...
+JUMPS_MIN = 1000                 # ... from this size on (rounding and small fees are no story)
 CMDR = None                      # "no ship": the commander's own
 
 
@@ -71,6 +73,7 @@ class _Ledger:
         self.flow = 0                                        # booked cash since the last known balance
         self.rest = {"plus": 0, "minus": 0, "gaps": 0}
         self.rises: List[Tuple[float, float]] = []          # SM1: (time, Cr) the balance rose unexplained
+        self.jumps: List[Tuple[float, float]] = []          # ST12: (time, +/- Cr) each unexplained move in the period
         self.carrier = {"deposit": 0, "withdraw": 0}
         # GV1: every amount also per ISO week, month and year (all time, the
         # statement picks its period), and the balances the game stated
@@ -147,6 +150,7 @@ class _Ledger:
         if ts is not None and (self.since is None or ts >= self.since):
             self.rest[sign] += cr
             self.rest["gaps"] += 1
+            self.jumps.append((ts, cr if sign == "plus" else -cr))
 
     def _ship(self, sid: int) -> Dict[str, Any]:
         return self.ships.setdefault(sid, {"type": None, "name": None, "acc": _account()})
@@ -417,4 +421,11 @@ def _result(L: _Ledger, since: Optional[float], first: Optional[float], last: Op
     return {"periods": periods, "balances": _thin(L.balances), "ship_costs": [r for r in ship_costs if r["costs"]],
             "since": since, "first": first, "last": last, "empty": not (tot["income"] or tot["costs"] or tot["invest"]),
             "totals": tot, "cmdr": _summary(L.cmdr), "ships": ships, "deaths": L.deaths, "weeks": weeks,
-            "rest": {k: round(v) for k, v in L.rest.items()}, "carrier": {k: round(v) for k, v in L.carrier.items()}}
+            "rest": {k: round(v) for k, v in L.rest.items()}, "carrier": {k: round(v) for k, v in L.carrier.items()},
+            "jumps": _jumps(L.jumps)}
+
+
+def _jumps(jumps: List[Tuple[float, float]], top: int = JUMPS_TOP) -> List[Dict[str, Any]]:
+    """ST12: the largest unexplained balance moves of the period, newest first."""
+    big = sorted((j for j in jumps if abs(j[1]) >= JUMPS_MIN), key=lambda j: -abs(j[1]))[:top]
+    return [{"ts": ts, "cr": round(c)} for ts, c in sorted(big, key=lambda j: -j[0]) if round(c)]

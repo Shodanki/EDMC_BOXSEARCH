@@ -39,7 +39,7 @@ LINE_MAX = 44            # characters, as the other overlay blocks
 
 # what goes first: warnings, then tasks, then information
 PRIORITY = {"journal": 2, "hazard": 5, "risk": 8, "carrier": 20, "route": 25, "landing": 30, "system": 50,
-            "ring": 55, "boxel": 60, "session": 70}
+            "spot": 52, "ring": 55, "boxel": 60, "session": 70}
 COL = {"head": "#3EF2E0", "data": "#7CFF6B", "warn": "#FFB23E", "alert": "#FF4D4D",
        "new": "#B57CFF", "dim": "#8FA3A6"}
 HIGH_G, VERY_HIGH_G = 2.0, 3.0          # as the FIS's PLANET INFO
@@ -138,18 +138,27 @@ def hazard_lines(star_type: Optional[str]) -> List[Line]:
     return []
 
 
-def risk_lines(unsold: Dict[str, Any], why: str) -> List[Line]:
-    """Unsold data at stake: shown while in danger (why: what happened)."""
-    if not unsold or not (unsold.get("bodies") or unsold.get("species")):
+def risk_lines(unsold: Dict[str, Any], why: str, vouchers: Optional[Dict[str, Any]] = None) -> List[Line]:
+    """Unsold data and unredeemed vouchers (ST13) at stake: shown while in
+    danger (why: what happened)."""
+    data = bool(unsold and (unsold.get("bodies") or unsold.get("species")))
+    held = (vouchers or {}).get("total") or 0
+    if not data and not held:
         return []
-    out = [(("RISK  %s - unsold ~%s Cr" % (why, cr(unsold.get("value"))))[:LINE_MAX], COL["alert"])]
-    n = unsold.get("systems", 0)
-    bits = ["%d system%s" % (n, "" if n == 1 else "s"), "%d bodies" % unsold.get("bodies", 0)]
-    if unsold.get("first"):
-        bits.append("%d first" % unsold["first"])
-    if unsold.get("species"):
-        bits.append("%d species" % unsold["species"])
-    out.append((("      " + " · ".join(bits))[:LINE_MAX], COL["warn"]))
+    out = [(("RISK  %s - at stake ~%s Cr" % (why, cr((unsold or {}).get("value", 0) * data + held)))[:LINE_MAX],
+            COL["alert"])]
+    if data:
+        n = unsold.get("systems", 0)
+        bits = ["%d system%s" % (n, "" if n == 1 else "s"), "%d bodies" % unsold.get("bodies", 0)]
+        if unsold.get("first"):
+            bits.append("%d first" % unsold["first"])
+        if unsold.get("species"):
+            bits.append("%d species" % unsold["species"])
+        out.append((("      " + " · ".join(bits))[:LINE_MAX], COL["warn"]))
+    if held:
+        kinds = [("bounty", "bounties"), ("bonds", "bonds"), ("codex", "codex")]
+        bits = ["%s %s" % (label, cr(vouchers[k])) for k, label in kinds if vouchers.get(k)]
+        out.append((("      vouchers: " + " · ".join(bits))[:LINE_MAX], COL["warn"]))
     return out
 
 
@@ -183,6 +192,14 @@ def route_lines(jumps: int, fuel_line: Optional[Tuple[str, str]]) -> List[Line]:
     text, level = fuel_line
     col = {"alert": COL["alert"], "warn": COL["warn"]}.get(level, COL["data"])
     return [("ROUTE  %d jumps plotted" % jumps, COL["head"]), (text[:LINE_MAX], col)]
+
+
+def route_find_line(unknown: int, hops: int) -> List[Line]:
+    """F5 (5.1.0): hops of the plotted route no database knows - a first
+    discovery possible in passing, at no extra flight."""
+    if hops < 1 or unknown < 1:
+        return []
+    return [(("      %d of %d in no database: first finds" % (unknown, hops))[:LINE_MAX], COL["new"])]
 
 
 def _bio_lines(open_genera: Sequence[Tuple[str, Optional[float]]]) -> List[Line]:
@@ -258,6 +275,37 @@ def ring_lines(ring: str, hotspots: Sequence[Tuple[str, int]], prices: Dict[str,
         p = prices.get(m.lower())
         sold = " · sold %s/t" % cr(p) if p else ""
         out.append((("      %s x%d%s" % (m[:22], c, sold))[:LINE_MAX], COL["data"]))
+    return out
+
+
+SPOT_COL = {"good": "data", "poor": "warn", "fair": "dim", "open": "dim"}
+
+
+def spot_lines(ring: str, material: str, odds: Optional[Dict[str, Any]], field: Optional[Dict[str, Any]],
+               loaded: bool = True) -> List[Line]:
+    """SP2 (5.1.0): a ring hotspot set as target - the chance of a good
+    field (MP4) and what you got there before (MP3), at a glance."""
+    if not ring or not material:
+        return []
+    out = [(("SPOT  %s · %s" % (material[:18], ring[-20:]))[:LINE_MAX], COL["head"])]
+    if not loaded:
+        return out + [("      fields still counting ...", COL["dim"])]
+    p = (odds or {}).get("p")
+    if p is None:
+        out.append((("      chance: learning · %d of %d fields" % ((odds or {}).get("n", 0), 3))[:LINE_MAX],
+                    COL["dim"]))
+    else:
+        v = odds.get("verdict")
+        col = "dim" if odds.get("thin") else SPOT_COL.get(v or "", "dim")
+        out.append((("      %d %% good field · from %d fields" % (round(100 * p), odds["n"]))[:LINE_MAX], COL[col]))
+    if field and field.get("rating"):
+        pg = field.get("per_good")
+        bits = [field["rating"], ("%.1f prosp/good" % pg) if pg is not None else "no good rock",
+                ("%.0f %% avg" % field["mean_share"]) if field.get("mean_share") is not None else ""]
+        out.append((("      you: " + " · ".join(b for b in bits if b))[:LINE_MAX],
+                    COL[SPOT_COL.get(field["rating"], "dim")]))
+    else:
+        out.append(("      not mined here yet", COL["dim"]))
     return out
 
 

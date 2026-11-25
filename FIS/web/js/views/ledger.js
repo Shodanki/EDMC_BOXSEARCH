@@ -97,10 +97,12 @@ function render() {
       frame(t("BALANCE"), "", el("div", { class: "empty" }, t("Nothing booked in this period."))))));
     return;
   }
-  root.append(el("div", { class: "stat-wrap" },
-    el("div", { class: "stat-grid scroll" }, head, balance(), block("income", t("INCOME")), block("costs", t("RUNNING COSTS")),
-      block("invest", t("INVESTMENT")), weeks()),
-    el("div", { class: "stat-side scroll" }, open(), ships(), commander(), losses(), carrier())));
+  // user 25.11.: in the order a reader asks - the result, where the money came
+  // from and went, per ship, what is still open - in columns the browser
+  // balances itself (four at 1920 px, fewer on smaller screens, one on a phone)
+  root.append(el("div", { class: "ledger-scroll scroll" }, el("div", { class: "ledger-cols" },
+    ...[head, balance(), weeks(), block("income", t("INCOME")), block("costs", t("RUNNING COSTS")),
+      block("invest", t("INVESTMENT")), ships(), commander(), losses(), open(), jumps(), carrier()].filter(Boolean))));
 }
 
 function row(label, value, cls) {
@@ -142,15 +144,21 @@ function weeks() {
   return frame(t("PER WEEK"), t("net"), rows, { cls: "st-card", appear: false });
 }
 
+const noCr = (s) => s.replace(/ Cr$/, "");          // the table says "Cr" once, in its head
+
 function ships() {
-  const rows = (data.ships || []).map(s => el("div", { class: "st-ship" },
-    el("div", { class: s.current ? "c-cyan" : "" }, (s.name || s.type_name || s.type || "?") + (s.name && (s.type_name || s.type) ? " · " : ""),
-      el("span", { class: "c-dim small", text: s.name ? (s.type_name || s.type || "") : "" }), s.current ? el("span", { class: "c-cyan small", text: " ◂ " + t("now") }) : null),
-    row(t("Income"), cr(s.income), "c-green"), row(t("Running costs"), cr(s.costs), "c-amber"),
-    s.invest ? row(t("Investment"), cr(s.invest), "c-dim") : null,
-    row(t("Net"), cr(s.net, true), s.net >= 0 ? "c-green" : "c-red")));
-  if (!rows.length) rows.push(el("div", { class: "c-dim", text: t("none") }));
-  return frame(t("PER SHIP"), "", rows, { cls: "st-card", appear: false });
+  // user 25.11.: one line per ship (income, costs, net), not four - the page fits again
+  const S = data.ships || [];
+  if (!S.length) return frame(t("PER SHIP"), "", el("div", { class: "c-dim", text: t("none") }), { cls: "st-card", appear: false });
+  const rows = S.map(s => el("tr", { title: t("Investment") + ": " + cr(s.invest) },
+    el("td", { class: "ledger-ship" }, el("span", { class: s.current ? "c-cyan" : "", text: (s.name || s.type_name || s.type || "?") + (s.current ? " ◂" : "") }),
+      s.name && (s.type_name || s.type) ? el("span", { class: "c-dim small", text: " · " + (s.type_name || s.type) }) : null),
+    el("td", { class: "num c-green", text: noCr(cr(s.income)) }),
+    el("td", { class: "num c-amber", text: noCr(cr(s.costs)) }),
+    el("td", { class: "num " + (s.net >= 0 ? "c-green" : "c-red"), text: noCr(cr(s.net, true)) })));
+  return frame(t("PER SHIP"), t("{n} ships", { n: S.length }) + " · Cr", [
+    el("table", { class: "mine-table" }, el("tr", {}, ...[t("Ship"), t("Income"), t("Running costs"), t("Net")].map(h => el("th", { text: h }))), ...rows),
+    el("div", { class: "c-dim small", text: t("◂ the ship you fly. Hover a ship for what was invested in it.") })], { cls: "st-card", appear: false });
 }
 
 function commander() {
@@ -164,15 +172,38 @@ function commander() {
 
 // B6: what is earned but not booked yet - unsold data, valued like UNSOLD DATA
 function open() {
-  const O = data.open;
-  if (!O || (!O.bio_count && !O.systems)) return null;
+  const O = data.open || {}, VO = data.vouchers;
+  if (!O.bio_count && !O.systems && !(VO && (VO.total || VO.lost))) return null;
   const rows = [];
   if (O.bio_count) rows.push(row(t("Exobiology (own prices)"), O.bio ? "~ " + cr(O.bio) : "–", "c-amber"));
   const V = O.explo;
   if (O.systems) rows.push(row(t("Exploration data"), V && V.est ? "~ " + cr(V.mid) + (V.calibrated ? " (" + cr(V.lo) + " – " + cr(V.hi) + ")" : "") : "–", "c-amber"));
   if (V && V.est) rows.push(el("div", { class: "c-dim small", text: V.calibrated ? t("from {n} sales", { n: V.n }) : t("(formula, not calibrated yet)") }));
   rows.push(el("div", { class: "c-dim small", text: t("Unsold, not booked yet: what the data would bring - and what a crash would cost.") }));
+  rows.push(...voucherRows(VO));
   return frame(t("OPEN"), "", rows, { cls: "st-card", appear: false });
+}
+
+// ST13 (5.1.0): vouchers earned, not redeemed - lost with the ship like unsold data
+const VKIND = { bounty: N_("Bounty vouchers"), bonds: N_("Combat bonds"), codex: N_("Codex vouchers") };
+function voucherRows(V) {
+  if (!V) return [];
+  const rows = [];
+  for (const k of ["bounty", "bonds", "codex"]) if (V[k]) rows.push(row(t(VKIND[k]), cr(V[k]), "c-amber"));
+  if (V.total) rows.push(el("div", { class: "c-dim small", text: t("Not redeemed since {d}: lost if the ship is destroyed. Bounties and bonds at the faction's station (or Interstellar Factors), codex vouchers at Universal Cartographics.",
+    { d: V.since ? new Date(V.since).toLocaleDateString() : "–" }) }));
+  else rows.push(row(t("Vouchers"), t("all redeemed"), "c-dim"));
+  if (V.lost) rows.push(el("div", { class: "c-dim small", text: t("Last lost at a death on {d}: {c}.", { d: new Date(V.lost.ts).toLocaleDateString(), c: cr(V.lost.total) }) }));
+  return rows;
+}
+
+// ST12 (5.1.0): each larger balance move no journal event explains
+function jumps() {
+  const J = data.jumps || [];
+  if (!J.length) return null;
+  const rows = J.map(j => row(new Date(j.ts * 1000).toLocaleString(), cr(j.cr, true), j.cr >= 0 ? "c-green" : "c-amber"));
+  rows.push(el("div", { class: "c-dim small", text: t("Balance moves the journal does not explain, between two balances the game stated (login, carrier transfer): missions, community goals, gifts, or journals missing for a stretch. Compare with the transactions in the game.") }));
+  return frame(t("UNEXPLAINED CREDITS"), t("{n} largest", { n: J.length }), rows, { cls: "st-card", appear: false });
 }
 
 function losses() {

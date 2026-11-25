@@ -102,8 +102,24 @@ def _selftest() -> int:
     yt.feed({"timestamp": t0 % 1, "event": "ProspectedAsteroid", "Materials": [{"Name": "Tritium", "Proportion": 22.0}],
              "Content": "$AsteroidMaterialContent_Medium;", "Remaining": 100.0})
     y_line = yt.lines(now)[0][0]
+    # MO1 (5.1.0): no session, a mining ship in flight - the hold line alone
+    fl = MiningTracker()
+    fl.feed({"timestamp": t0 % 0, "event": "Loadout", "CargoCapacity": 320,
+             "Modules": [{"Item": "hpt_mining_abrblstr_fixed_small"}]}, cargo={"Drones": 40, "Platinum": 100})
+    fl.status({"Flags": 1 << 24 | 1})               # docked
+    fl_docked = fl.flight_lines()
+    fl.status({"Flags": 1 << 24 | 1 << 4})          # in supercruise
+    fl_flying = fl.flight_lines()
+    ex = MiningTracker()
+    ex.feed({"timestamp": t0 % 0, "event": "Loadout", "CargoCapacity": 16,
+             "Modules": [{"Item": "int_fuelscoop_size5_class5"}]})
+    ex.status({"Flags": 1 << 24})
     fails = 0
     checks = [
+        (fl_docked == [], "MO1: docked - no hold line"),
+        (fl_flying and fl_flying[0][0] == "HOLD  40 limpets | 100 t ore | 180 t free",
+         "MO1: flying a mining ship - the free room: %r" % (fl_flying,)),
+        (ex.flight_lines() == [], "MO1: not in a mining ship - nothing"),
         (exp20 == {"t": 11, "lo": 10, "hi": 12, "n": 5}, "rocks of 10-25 %%: median 11 t (10-12), n 5: %r" % (exp20,)),
         (exp30 is None, "no rock of 25 % and more mined in the ship: no expectation"),
         ("| ~11 t (10-12)" in y_line, "ROCK line with the expectation: " + y_line),

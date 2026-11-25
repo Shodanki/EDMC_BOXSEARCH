@@ -175,9 +175,11 @@ def _tab_overlay(r: _Rows) -> None:
     r.check("overlay", "overlay", True, "show the next route targets in the game")
     r.check("overlay_brief", "overlay_brief", True, "briefing on target selection and arrival")
     r.check("overlay_nav", "overlay_nav", True, "surface compass: parked SRV, open samples, known points")
+    r.check("overlay_bio_hide_done", "overlay_bio_hide_done", False, "hide finished bio signals in the compass")
     r.check("overlay_mining", "overlay_mining", True, "mining: last rock, hold, rate, session, limpets (5 lines)")
     r.check("overlay_state", "overlay_state", True, "still out: gear, lights, hardpoints - ship, SRV, Nomad (left)")
     r.check("overlay_suit", "overlay_suit", True, "on foot: too hot or cold - suit health and time left (left)")
+    r.check("overlay_rebuy", "overlay_rebuy", False, "credits short of the rebuy of the ship you fly (left)")
     # 4.12: the situation column in the opposite corner (cockpitinfo)
     r.head("Situation column (the opposite corner)")
     r.check("overlay_info_warn", "overlay_info_warn", True, "warnings: dangerous star ahead, unsold data at stake")
@@ -297,9 +299,11 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         cfg_set(CFG["overlay"], bool(_p["overlay"].get()))
         cfg_set(CFG["overlay_brief"], bool(_p["overlay_brief"].get()))
         cfg_set(CFG["overlay_nav"], bool(_p["overlay_nav"].get()))
+        cfg_set(CFG["overlay_bio_hide_done"], bool(_p["overlay_bio_hide_done"].get()))
         cfg_set(CFG["overlay_mining"], bool(_p["overlay_mining"].get()))
         cfg_set(CFG["overlay_state"], bool(_p["overlay_state"].get()))
         cfg_set(CFG["overlay_suit"], bool(_p["overlay_suit"].get()))
+        cfg_set(CFG["overlay_rebuy"], bool(_p["overlay_rebuy"].get()))
         for key in ("overlay_info_warn", "overlay_info_place", "overlay_info_session"):
             cfg_set(CFG[key], bool(_p[key].get()))
         if "fis_autostart" in _p:

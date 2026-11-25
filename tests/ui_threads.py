@@ -135,11 +135,42 @@ uithread._ui_drain()
 check(ran == [] and uithread._ui_queue.empty(), "shutting down: queued update dropped, nothing drawn")
 uithread.config.shutting_down = False
 
-# 6. no frame yet (before plugin_app): silently nothing
+# 6. no frame yet (before plugin_app): queued, no Tk call; runs once drained (M6)
 panel._frame = None
-uithread._ui(lambda: update("early"))
-check(ran == [] and uithread._ui_queue.empty(), "before plugin_app: nothing queued")
+frame.calls.clear()
+ran.clear()
+t = threading.Thread(target=lambda: uithread._ui(lambda: update("early")))
+t.start()
+t.join()
+check(ran == [] and uithread._ui_queue.qsize() == 1 and frame.calls == [],
+      "before plugin_app: queued, no Tk call - %s" % frame.calls)
 panel._frame = frame
+uithread._ui_drain()                    # what plugin_app's after(0, _ui_drain) does
+check(ran == [("early", True)], "before plugin_app: ran once the panel exists - %s" % ran)
+
+# 6b. M6: the same update waits once; the queue is bounded
+frame.calls.clear()
+ran.clear()
+
+
+def refresh():
+    ran.append("refresh")
+
+
+t = threading.Thread(target=lambda: [uithread._ui(refresh) for _ in range(5)])
+t.start()
+t.join()
+check(uithread._ui_queue.qsize() == 1 and len(frame.calls) == 1, "same update queued once, one event")
+uithread._ui_drain()
+check(ran == ["refresh"], "and it ran once")
+with mock.patch.object(state.logger, "warning") as warned:
+    t = threading.Thread(target=lambda: [uithread._ui(lambda: None) for _ in range(uithread.UI_QUEUE_MAX + 20)])
+    t.start()
+    t.join()
+check(uithread._ui_queue.qsize() == uithread.UI_QUEUE_MAX and warned.call_count == 1,
+      "queue stops at UI_QUEUE_MAX, logged once")
+uithread._ui_drain()
+check(uithread._ui_queue.empty() and not uithread._ui_pending, "drained, nothing pending")
 
 # 7. static check over every plugin module: worker entry points reach no Tk
 #    object except through _ui. A function is (module, name); a call is a
@@ -266,9 +297,11 @@ else:
             uithread._ui(lambda: hits.append(threading.current_thread() is threading.main_thread()))
 
     workers = [threading.Thread(target=burst) for _ in range(4)]
+    cap, uithread.UI_QUEUE_MAX = uithread.UI_QUEUE_MAX, 800   # every update counted here; 6b tests the cap
     root.after(50, lambda: [x.start() for x in workers])
     root.after(1500, root.quit)
     root.mainloop()
+    uithread.UI_QUEUE_MAX = cap
     check(len(hits) == 800 and all(hits),
           "real Tk: %d of 800 updates from 4 workers ran on the main thread" % len(hits))
     root.destroy()

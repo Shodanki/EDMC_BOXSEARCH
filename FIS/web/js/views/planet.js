@@ -6,7 +6,7 @@
 // PLANET – datasheet of one body.
 
 import { getJSON } from "../api.js";
-import { el, frame, fmt, num, chip, hbar, tile, countUp, classDe, meter } from "../ui.js";
+import { el, frame, fmt, num, chip, hbar, tile, countUp, classDe, meter, ageText } from "../ui.js";
 import { t, N_, lang } from "../i18n.js";
 
 let root = null;
@@ -17,6 +17,13 @@ let loading = null;
 let stale = false;      // something changed while PLANET INFO was hidden
 
 export function mount(r) { root = r; root.classList.add("planet-view"); }
+
+// user 25.11.: PLANET INFO reads like a report - what the body is (datasheet,
+// air and ground, the star), what the science says and what lives there,
+// what it holds, what you found and collected there, its rings and the
+// fields in them
+const REPORT_ORDER = ["datasheet", "atmo", "star", "report", "bio", "materials", "ground", "collected", "signals",
+  "rings", "field"];
 
 const keyOf = (sel) => sel ? sel.id64 + "/" + sel.body_id : null;
 
@@ -124,6 +131,30 @@ const REPORT = {
 };
 const LEVEL_CLS = { good: "c-green", warn: "c-amber", danger: "c-red", info: "" };
 
+// SP1 (5.1.0): per ring and material - the chance of a good field before
+// mining (MP4) and your record there (MP3), with where the numbers come from
+const SPOT_CLS = { good: "c-green", fair: "", open: "", poor: "c-amber" };
+function spotLine(s) {
+  const o = s.odds || {}, f = s.field;
+  const bits = [];
+  if (o.p !== null && o.p !== undefined) bits.push(el("span", { class: o.thin ? "c-dim" : SPOT_CLS[o.verdict] || "",
+    text: t("{p} % chance of a good field", { p: fmt(100 * o.p, 0) }) }));
+  else bits.push(el("span", { class: "c-dim", text: t("chance: still learning") }));
+  if (f && f.rating) bits.push(el("span", { class: SPOT_CLS[f.rating] || "",
+    text: " · " + t("you: {r}", { r: t(f.rating === "good" ? "good field" : f.rating === "poor" ? "poor field" : "fair field") })
+      + " · " + t("{s} sessions, {p} % pure, {g} prosp./good", { s: f.sessions, p: f.purity === null ? "–" : f.purity,
+        g: f.per_good === null ? "–" : fmt(f.per_good, 1) }) }));
+  else bits.push(el("span", { class: "c-dim", text: " · " + t("not mined here yet") }));
+  return el("div", { class: "pl-line pl-sub small", title: o.known ? t("rests on: {k}", { k: o.known.map(k => t(SPOT_FEAT[k])).join(", ") }) : "" },
+    el("span", { class: "c-cyan", text: "◎ " + s.name + ": " }), ...bits);
+}
+const SPOT_FEAT = { cls: N_("ring class"), reserve: N_("reserve"), spot: N_("hotspot"), overlap: N_("overlapping hotspots"), mat: N_("material") };
+function spotNote(rings) {
+  const o = rings.flatMap(r => r.spots || []).map(s => s.odds).find(x => x && x.n !== undefined);
+  return el("div", { class: "c-dim small", text: t("◎ chance: learnt from {n} rated mining fields (all commanders) by what a ring is known by before mining - ring class, reserve, hotspot of the material, overlapping hotspots, the material; counting, no AI. Good = not poor. Dim: fewer than 10 fields or the material never mined. You: your sessions in this ring - pure = rocks that held the material, prosp./good = prospectors per rock with at least your typical share; rated against your average for that material.",
+    { n: o ? o.n : 0 }) });
+}
+
 function reportFrame(b) {
   if (!b.report || !b.report.length) return null;
   const rows = [];
@@ -204,10 +235,21 @@ function render(ctx) {
       + (b.dss.efficient ? " · " + t("efficient") : "") + (b.dss.ts ? " · " + b.dss.ts.slice(0, 10) : "")));
   if (b.visits) extra.push(el("div", { class: "pl-line" }, el("span", { class: "c-dim", text: t("Your visits") + " " }),
     t("{l} landings · {m} marks · last {d}", { l: b.visits.landings, m: b.visits.marks, d: b.visits.last || "–" })));
-  const left = [frame(t("DATASHEET"), b.kind === "Star" ? t("Star") : t("Body {n}", { n: b.body_id }), [head, tiles, ...extra], { kind: "hot" })];
+  // user 25.11.: one report in reading order; the frames flow into balanced
+  // columns, as many as the screen and the frames shown allow - a section
+  // left out leaves no gap
+  const sec = {};
+  const put = (k, f) => { if (f) sec[k] = f; };
+  // SC1 (5.1.0): where the sheet comes from and how old it is
+  const pv = b.provenance || {};
+  const src = pv.scan_ts ? t("your scan (journal), {a}", { a: ageText(t, pv.scan_ts) })
+    : pv.updated ? t("from the plugin database, {a}", { a: ageText(t, pv.updated) }) : "";
+  if (src) extra.push(el("div", { class: "pl-line small c-dim" }, el("span", { text: t("Data") + " " }), src
+    + (pv.system_sources && pv.system_sources.length ? " · " + t("system known: {s}", { s: pv.system_sources.join(", ") }) : "")));
+  put("datasheet", frame(t("DATASHEET"), b.kind === "Star" ? t("Star") : t("Body {n}", { n: b.body_id }), [head, tiles, ...extra], { kind: "hot" }));
 
   if (b.star) {
-    left.push(frame(t("STAR"), "", el("div", { class: "kv" },
+    put("star", frame(t("STAR"), "", el("div", { class: "kv" },
       ...[[t("Type"), (b.star.type || "?") + (b.star.subclass ?? "") + " " + (b.star.luminosity || "")],
           [t("Scoopable"), b.star.scoopable ? t("yes") : t("no")],
           [t("Abs. magnitude"), fmt(b.star.abs_mag, 2)],
@@ -225,12 +267,9 @@ function render(ctx) {
     atmo.push(el("h3", { text: t("Composition"), style: { marginTop: "8px" } }));
     for (const [k, v] of b.composition) atmo.push(hbar(COMPOSITION[k] ? t(COMPOSITION[k]) : k, v, 100, fmt(v, 1) + " %", "green"));
   }
-  // E2: the science report sits under the datasheet, the signals below it;
-  // the right column (atmosphere, biology, materials, rings) moves up
-  const rep = reportFrame(b);
-  if (rep) left.push(rep);
-  const right = [];
-  if (b.kind !== "Star") right.push(frame(t("ATMOSPHERE · SURFACE"), "", atmo));
+  // E2: the science report right under the datasheet
+  put("report", reportFrame(b));
+  if (b.kind !== "Star") put("atmo", frame(t("ATMOSPHERE · SURFACE"), "", atmo));
 
   // biology
   const bio = [];
@@ -247,12 +286,12 @@ function render(ctx) {
       for (const p of b.bio.prediction) bio.push(hbar(p.genus, p.score, 1, Math.round(p.score * 100) + " %", "amber"));
       bio.push(el("div", { class: "c-dim small", text: (b.bio.model || "") + " – " + t("rule based on your own finds, no AI.") }));
     }
-    right.push(frame(t("BIOLOGY"), "", bio, { kind: b.bio.signals > b.bio.analysed ? "warn" : "" }));
+    put("bio", frame(t("BIOLOGY"), "", bio, { kind: b.bio.signals > b.bio.analysed ? "warn" : "" }));
   } else if (b.bio.chance) {
     // B-24: no signal known yet - how often a planet like this carried life
     const c = b.bio.chance;
     const by = { atmosphere: t("by atmosphere"), "planet class": t("by planet class"), all: t("over all landable planets") }[c.basis] || "";
-    right.push(frame(t("BIOLOGY"), t("forecast"), [
+    put("bio", frame(t("BIOLOGY"), t("forecast"), [
       el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("Chance of life") }), meter(c.pct, 100),
         el("span", { class: "num", text: "~" + fmt(c.pct, 0) + " % (" + fmt(c.lo, 0) + "–" + fmt(c.hi, 0) + ")" })),
       el("div", { class: "c-dim small", text: by + " · " + c.key + " · " + t("learned from {n} planets", { n: c.n }) })]));
@@ -260,7 +299,7 @@ function render(ctx) {
 
   if (b.materials.length) {
     const mats = b.materials.map(([k, v]) => hbar(k, v, b.materials[0][1] || 1, fmt(v, 1) + " %", "violet"));
-    right.push(frame(t("MATERIALS"), b.materials.length + "", mats));
+    put("materials", frame(t("MATERIALS"), b.materials.length + "", mats));
   }
   // L3: "12.3 t/h (8–15, 4 runs)"
   const RATE_LEVEL = { ring: N_("in this ring"), class: N_("from your {c} rings"), all: N_("from all your rings") };
@@ -278,6 +317,7 @@ function render(ctx) {
         el("span", { class: "c-dim", text: " · " + (r.cls || "") + " · " + fmt(r.inner_km, 0) + "–" + fmt(r.outer_km, 0) + " km" })));
       if (r.hotspots && r.hotspots.length) rr.push(el("div", { class: "pl-line pl-sub c-amber", text: "◆ " + hsText(r.hotspots) }));
       else if (!r.belt) rr.push(el("div", { class: "pl-line pl-sub c-dim", text: t("no hotspots known - map the ring with the DSS") }));
+      for (const s of r.spots || []) rr.push(spotLine(s));         // SP1: chance of a good field, your record
       // your prospecting in this ring, and what rings like it held at such hotspots
       // L1: the share with its 95 % range; L2: thin groups lean on broader ones
       const mats = (p) => p.mats.map(m => m.name + " " + m.share + " %"
@@ -301,12 +341,18 @@ function render(ctx) {
     }
     const loose = b.hotspots.filter(h => !ringNames.has(h.ring));
     if (loose.length) rr.push(el("div", { class: "pl-line c-amber", text: "◆ " + hsText(loose) }));
+    if (b.rings.some(r => (r.spots || []).length)) rr.push(spotNote(b.rings));
     if (b.rings.some(r => r.prospect || (r.expected && r.expected.length)))
       rr.push(el("div", { class: "c-dim small", text: t("Share of prospected rocks that held the material - from your own prospector reports.") }));
     if (b.rings.some(r => (r.rates && r.rates.length) || (r.expected || []).some(e => e.rate)))
       rr.push(el("div", { class: "c-dim small", text: t("t/h: the main refined material of your mining runs (all commanders), average with the slowest and fastest run.") }));
-    right.push(frame(t("RINGS"), b.reserve ? t("reserves: {r}", { r: b.reserve }) : "", rr));
+    // TH8 (5.1.0): the short frames (STAR, RINGS, SIGNALS, COLLECTED HERE) stack in one column
+    put("rings", frame(t("RINGS"), b.reserve ? t("reserves: {r}", { r: b.reserve }) : "", rr));
   }
+
+  // SP1: a ring opened itself - its mining fields
+  if (b.ring_spots && b.ring_spots.length)
+    put("field", frame(t("MINING FIELD"), "", [...b.ring_spots.map(spotLine), spotNote([{ spots: b.ring_spots }])]));
 
   // ground mining with the Rhino: what rigs yielded here, and on bodies of this class
   if (b.ground) {
@@ -320,22 +366,23 @@ function render(ctx) {
       el("span", { text: "↳ " + t("on other {c} ({n} bodies):", { c: g.expected.cls, n: g.expected.bodies }) + " " }),
       el("span", { text: g.expected.mats.map(m => m.name + " " + m.t + " t").join(" · ") })));
     gl.push(el("div", { class: "c-dim small", text: t("From the rigs you collected with the Rhino.") }));
-    right.push(frame(t("GROUND MINING"), "", gl));
+    put("ground", frame(t("GROUND MINING"), "", gl));
   }
 
   if (b.signals && b.signals.length) {
     const ss = b.signals.map(s => el("div", { class: "pl-line c-" + s.tone, text: "◆ " + s.label + (s.count > 1 ? " ×" + s.count : "") }));
     if (b.signals.some(s => s.kind && s.kind.startsWith("site:")))
       ss.push(el("div", { class: "c-dim small", text: t("“from pickup”: a surface site recognised by the material collected – the journal does not report it itself.") }));
-    left.push(frame(t("SIGNALS"), b.signals.length + "", ss, { kind: b.signals.some(s => s.tone === "violet") ? "disc" : "" }));
+    put("signals", frame(t("SIGNALS"), b.signals.length + "", ss, { kind: b.signals.some(s => s.tone === "violet") ? "disc" : "" }));
   }
   if (b.materials_found && b.materials_found.length) {
     const mf = b.materials_found.map(m => el("div", { class: "pl-line" },
       el("span", { class: "c-green", text: m.label + " ×" + m.count }),
       el("span", { class: "c-dim", text: " · " + (m.category || "") + " · " + (m.last || "") })));
-    right.push(frame(t("COLLECTED HERE"), b.materials_found.length + "", mf));
+    put("collected", frame(t("COLLECTED HERE"), b.materials_found.length + "", mf));
   }
 
-  root.append(el("div", { class: "pl-grid" }, el("div", { class: "pl-col" }, ...left), el("div", { class: "pl-col" }, ...right)));
+  const frames = REPORT_ORDER.map(k => sec[k]).filter(Boolean);
+  root.append(el("div", { class: "pl-report", style: { "--cols": String(Math.min(3, frames.length)) } }, ...frames));
   countUp(root);
 }

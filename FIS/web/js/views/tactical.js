@@ -6,7 +6,7 @@
 // SYSTEM – the current system in 3D (view id "tactical").
 // Three.js if the CDN is reachable, otherwise the 2D canvas fallback.
 
-import { el, frame, fmt, chip, ago, classDe, fixLabel } from "../ui.js";
+import { el, frame, fmt, chip, ago, classDe, fixLabel, ageText } from "../ui.js";
 import { t, N_ } from "../i18n.js";
 
 // SYSTEM REPORT: the server sends facts (fis/science.system_report), the words are here
@@ -321,8 +321,12 @@ function renderSide() {
   // I1: "in no database" only where a source was really asked
   const lvl = sys.info_level;
   const noDb = !sys.known_sources.length && (!lvl || lvl === "checked");
-  if (sys.known_sources.length) head.push(el("div", { class: "c-dim", text: t("known: {s}", { s: sys.known_sources.join(", ") }) }));
-  else if (lvl === "inhabited") head.push(el("div", { class: "c-dim", text: t("inhabited – known to the databases") }));
+  // SC1 (5.1.0): each source with its age - the databases' report, your own scans
+  const known = sys.known_sources.length ? t("known: {s}", { s: sys.known_sources.join(", ") })
+    + (sys.known_updated ? " · " + t("updated {a}", { a: ageText(t, sys.known_updated) }) : "") : "";
+  const own = sys.scanned_ts ? t("your scans: journal, {a}", { a: ageText(t, sys.scanned_ts) }) : "";
+  if (known || own) head.push(el("div", { class: "c-dim small", text: [known, own].filter(Boolean).join(" · ") }));
+  if (!sys.known_sources.length && lvl === "inhabited") head.push(el("div", { class: "c-dim", text: t("inhabited – known to the databases") }));
   else if (lvl === "unchecked") head.push(el("div", { class: "c-dim", text: t("not checked – outside our data frame") }));
   else head.push(el("div", {}, chip(t("in no database"), "first")));
   const back = backToCurrent();

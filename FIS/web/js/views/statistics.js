@@ -9,8 +9,8 @@
 // period (the Statistics event from back then against the latest one).
 
 import { getJSON, postJSON } from "../api.js";
-import { el, frame, fmt, meter, withPopout } from "../ui.js";
-import { t, N_ } from "../i18n.js";
+import { el, frame, fmt, hbar, meter, withPopout } from "../ui.js";
+import { t, N_, lang } from "../i18n.js";
 import { carrierMoneyRows } from "../carriermoney.js";
 
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
@@ -96,10 +96,18 @@ let days = Number(localStorage.getItem("fis.stat.days") || "30");
 // a list of columns, each column a list of frames: fixed columns that stack
 // their frames, so a short frame no longer stretches to its tall neighbour.
 const PANES = [
-  ["overview", N_("OVERVIEW"), [[["ranks", "EXPLORATION"], ["EXOBIOLOGY", "WEALTH"], ["CARRIER", "carrierMoney", "MINING", "OTHER"]]]],
-  ["trends", N_("HISTORY"), [[["overTime", "surfaceMaps"], ["firstFinds"], ["perSession"]]]],
+  // user 24.11.: OTHER CAREERS under EXPLORATION, MINING under WEALTH & TIME - columns of about equal length
+  ["overview", N_("OVERVIEW"), [[["EXPLORATION", "OTHER"], ["EXOBIOLOGY", "WEALTH", "MINING"], ["ranks", "CARRIER", "carrierMoney"]]]],
+  // ST7 (25.11.): play patterns beside the time over time - columns of about equal length (853/767/678 px)
+  ["trends", N_("HISTORY"), [[["overTime", "playPatterns", "surfaceMaps"], ["travel", "firstFinds"], ["perSession"]]]],
   ["rates", N_("RATES & TIMES"), [[["bioRates"]], [["timePerSystem"]]]],
   ["learning", N_("LEARNING STATUS"), [[["learning"]]]],
+  // ST2/ST6/ST8/ST9 (5.1.0, user 24.11.): records and the atlas of your travels, all time
+  ["atlas", N_("RECORDS & ATLAS"), [[["records"], ["regions"], ["starsWorlds"]], [["journey", "ships"], ["bioCatalogue"]]]],
+  // ST10/ST11 (5.1.0, user 25.11.): what you collected and what the engineers made of it
+  ["craft", N_("ENGINEERING"), [[["engineering"], ["materialsFlow"]]]],
+  // ST14 (5.1.0, user 25.11.): a span you pick, on one printable page
+  ["trip", N_("TRIP REPORT"), [[["trip"]]]],
 ];
 let sub = localStorage.getItem("fis.stat.sub") || "overview";
 
@@ -155,7 +163,10 @@ function render() {
 
 const BUILD = { ranks: () => ranks(), overTime: () => overTime(), firstFinds: () => firstFinds(), surfaceMaps: () => surfaceMaps(),
   bioRates: () => bioRates(), perSession: () => perSession(), timePerSystem: () => timePerSystem(), learning: () => learning(),
-  carrierMoney: () => carrierMoney() };
+  carrierMoney: () => carrierMoney(), records: () => records(), regions: () => regions(),
+  starsWorlds: () => starsWorlds(), journey: () => journey(), travel: () => travel(), ships: () => shipsFlown(),
+  bioCatalogue: () => bioCatalogue(), playPatterns: () => playPatterns(), engineering: () => engineering(),
+  materialsFlow: () => materialsFlow(), trip: () => tripReport() };
 for (const c of CARDS) BUILD[c[0]] = () => card(c);
 
 /** One sub-tab: its rows of columns; empty frames and columns drop out. */
@@ -248,7 +259,7 @@ function findRows(F, line, head) {
 const REALITY = { kepler: N_("Kepler positions"), kepler_moons: N_("Kepler: double moons"), fuel: N_("Fuel per jump"), route: N_("Time per system vs. route estimate"),
   work: N_("Surface scan / bio sample"), value: N_("Exploration value vs. sales"), finds: N_("Chance of a find vs. scans"),
   bio: N_("Bio prediction (genera in top 3)"), rocks: N_("Tonnes per rock (mining)"), collectors: N_("Collector lifetime"),
-  scoop: N_("Fuel scoop rate per star class") };
+  scoop: N_("Fuel scoop rate per star class"), fields: N_("Field odds before mining (good / poor)") };
 
 let realityWait = null;     // R1: one reload while the Kepler check is computed in the background
 
@@ -329,6 +340,156 @@ const SERIES = [["Exploration.Systems_Visited", N_("systems visited"), "n"], ["E
   ["Exploration.Planets_Scanned_To_Level_3", N_("bodies scanned"), "n"], ["Exobiology.Organic_Data_Profits", N_("exobiology earned"), "cr"],
   ["Mining.Quantity_Mined", N_("tonnes mined"), "t"], ["Bank_Account.Current_Wealth", N_("wealth"), "cr"]];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ------------------------------------------------------------ RECORDS & ATLAS (ST2/ST6/ST8/ST9)
+const RECORD = {
+  star_biggest: [N_("Biggest star"), "R☉", 2], star_heaviest: [N_("Heaviest star"), "M☉", 2], star_hottest: [N_("Hottest star"), "K", 0],
+  planet_biggest: [N_("Biggest planet (radius)"), "km", 0], planet_smallest: [N_("Smallest planet (radius)"), "km", 0],
+  planet_heaviest: [N_("Heaviest planet"), "M⊕", 1], gravity_scanned: [N_("Highest gravity scanned"), "g", 2],
+  gravity_landed: [N_("Highest gravity landed on"), "g", 2], planet_hottest: [N_("Hottest planet"), "K", 0],
+  planet_coldest: [N_("Coldest planet"), "K", 0], spin_fastest: [N_("Fastest spin"), "s", 2],
+  jump_longest: [N_("Longest jump"), "ly", 2], farthest_sol: [N_("Farthest from Sol"), "ly", 0], jumps_one_day: [N_("Most jumps in a day"), "", 0] };
+const day = (ts) => ts ? new Date(ts * 1000).toLocaleDateString() : "–";
+let showAllRegions = false;
+function openSystem(id) {
+  if (!id) return;
+  const w = window.open(location.pathname + "?solo=tactical&system=" + id, "fis-detail", "popup,width=1280,height=860");
+  if (w) w.focus();
+}
+
+function records() {
+  const A = data.atlas;
+  if (!A || !A.records.length) return null;
+  const rows = A.records.map(r => {
+    const [label, unit, dig] = RECORD[r.key] || [r.key, "", 0];
+    const where = r.body || r.system || "";
+    return el("tr", {},
+      el("td", { class: "c-dim", text: t(label) }),
+      el("td", { class: "num c-cyan", text: fmt(r.value, dig) + (unit ? " " + unit : "") }),
+      el("td", {}, where ? el("button", { class: "linkish", text: where, title: r.id64 ? t("open the system") : "",
+        onclick: () => openSystem(r.id64) }) : ""),
+      el("td", { class: "small c-dim", text: day(r.ts) }));
+  });
+  return frame(t("PERSONAL RECORDS"), t("all time"), [el("table", { class: "mine-table st-records" }, ...rows),
+    el("div", { class: "c-dim small", text: t("From your own scans, jumps and landings (with the EDDiscovery archive when it is on); each body counts once.") })],
+  { cls: "st-card", appear: false });
+}
+
+function regions() {
+  const R = data.atlas && data.atlas.regions;
+  if (!R || !R.visited.length) return null;
+  // user 24.11.: no long lists - the ten with most jumps, the rest on a click
+  const shown = showAllRegions ? R.visited : R.visited.slice(0, 8);
+  const rows = shown.map(r => el("tr", {},
+    el("td", { text: r.name }), el("td", { class: "num", text: fmt(r.jumps, 0) }), el("td", { class: "num", text: fmt(r.systems, 0) }),
+    el("td", { class: "num", text: r.bio ? fmt(r.bio, 0) : "–" }),
+    el("td", { class: "small c-dim", text: day(r.first) + (r.last - r.first > 86400 ? " – " + day(r.last) : "") })));
+  return frame(t("REGIONS"), t("{n} of {m} visited", { n: R.visited.length, m: R.total }), [
+    meter(R.visited.length, R.total, "st-regions"),
+    el("table", { class: "mine-table" }, el("tr", {}, ...[t("Region"), t("jumps"), t("systems"), t("bio codex"), t("visited")].map(h => el("th", { text: h }))), ...rows),
+    R.visited.length > 8 ? el("button", { class: "linkish small", text: showAllRegions ? t("fewer") : t("show {n} more", { n: R.visited.length - 8 }),
+      onclick: () => { showAllRegions = !showAllRegions; render(); } }) : null,
+    R.unvisited && R.unvisited.length ? el("div", { class: "c-dim small", text: t("Not yet: {r}", { r: R.unvisited.join(", ") }) }) : null,
+    el("div", { class: "c-dim small", text: t("Regions from the RegionMap; bio codex = biological codex entries there (the archive keeps no others).") }),
+  ], { cls: "st-card", appear: false });
+}
+
+const WORLD = { "Earthlike body": N_("Earth-like worlds"), "Water world": N_("Water worlds"), "Ammonia world": N_("Ammonia worlds"),
+  terraformable: N_("Terraformable planets") };
+const STARG = { "brown dwarf": N_("brown dwarf"), "white dwarf": N_("white dwarf"), "neutron star": N_("neutron star"),
+  "black hole": N_("black hole"), carbon: N_("carbon star"), exotic: N_("exotic") };
+function starGroup(g) {
+  if (g.endsWith(" giant")) return t("{c} giant", { c: g.slice(0, -6) });
+  return STARG[g] ? t(STARG[g]) : g;
+}
+function starsWorlds() {
+  const S = data.atlas && data.atlas.stars;
+  if (!S || (!S.stars.length && !S.worlds.some(w => w.found))) return null;
+  const max = Math.max(1, ...S.stars.map(s => s.n));
+  const total = S.stars.reduce((a, s) => a + s.n, 0);
+  return frame(t("STARS & WORLDS"), t("{n} arrival stars", { n: fmt(total, 0) }), [
+    ...S.stars.map(s => hbar(starGroup(s.group), s.n, max, fmt(s.n, 0) + " · " + fmt(100 * s.n / total, 0) + " %")),
+    el("table", { class: "mine-table" }, el("tr", {}, ...[t("World"), t("scanned"), t("first discovered")].map(h => el("th", { text: h }))),
+      ...S.worlds.map(w => el("tr", {}, el("td", { text: t(WORLD[w.kind] || w.kind) }), el("td", { class: "num", text: fmt(w.found, 0) }),
+        el("td", { class: "num" + (w.first ? " c-green" : " c-dim"), text: fmt(w.first, 0) })))),
+    el("div", { class: "c-dim small", text: t("Arrival stars by class (the star you arrive at); first discovered = nobody had scanned it before you.") }),
+  ], { cls: "st-card", appear: false });
+}
+
+function journey() {
+  const J = data.atlas && data.atlas.journey;
+  if (!J || !J.points.length) return null;
+  const big = spark(J.points, "ly");
+  big.classList.add("st-spark-wide");
+  return frame(t("THE WAY THROUGH THE GALAXY"), t("{d} days of travel", { d: fmt(J.days, 0) }), [
+    big,
+    el("div", { class: "small" }, el("span", { class: "c-cyan", text: t("now {n} ly from Sol", { n: fmt(J.now, 0) }) }),
+      el("span", { class: "c-dim", text: " · " + t("farthest {n} ly", { n: fmt(J.max, 0) }) + " · " + t("{n} ly jumped", { n: fmt(J.ly, 0) }) })),
+    el("div", { class: "c-dim small", text: t("Distance to Sol at the last jump of each day you travelled; hover a point for the day.") }),
+  ], { cls: "st-card", appear: false });
+}
+
+// ST3: travel per day / week / month, like EDDiscovery's grid
+const TSPAN = [["day", N_("days")], ["week", N_("weeks")], ["month", N_("months")]];
+let tspan = localStorage.getItem("fis.stat.tspan") || "week";
+function travel() {
+  const T = data.career && data.career.travel;
+  if (!T) return null;
+  const cells = T[tspan] || [];
+  const label = (s) => tspan === "month" ? new Date(s * 1000).toLocaleDateString(undefined, { month: "short", year: "2-digit", timeZone: "UTC" })
+    : new Date(s * 1000).toLocaleDateString(undefined, { day: "2-digit", month: "2-digit", timeZone: "UTC" });
+  const max = Math.max(1, ...cells.map(c => c.ly));
+  const D = T.since_dock;
+  return frame(t("TRAVEL"), "", [
+    el("div", { class: "kc-tabs st-tspan" }, ...TSPAN.map(([k, l]) => el("button", { class: tspan === k ? "on" : "", text: t(l),
+      onclick: () => { tspan = k; localStorage.setItem("fis.stat.tspan", k); render(); } }))),
+    el("table", { class: "mine-table st-travel" }, el("tr", {}, ...["", t("jumps"), "ly", t("new systems"), t("bodies scanned")].map(h => el("th", { text: h }))),
+      ...cells.slice().reverse().map(c => el("tr", { class: c.jumps || c.scans ? "" : "c-dim" },
+        el("td", { class: "small", text: label(c.start) }),
+        el("td", { class: "num", text: fmt(c.jumps, 0) }),
+        el("td", {}, el("div", { class: "st-tbar" }, el("i", { style: { width: (100 * c.ly / max).toFixed(1) + "%" } }), el("span", { text: fmt(c.ly, 0) }))),
+        el("td", { class: "num", text: fmt(c.new, 0) }), el("td", { class: "num", text: fmt(c.scans, 0) })))),
+    el("div", { class: "small c-dim", text: t("Since docking {d}: {j} jumps, {ly} ly, {n} new systems, {s} bodies scanned",
+      { d: D.since ? new Date(D.since * 1000).toLocaleString() : "–", j: fmt(D.jumps, 0), ly: fmt(D.ly, 0), n: fmt(D.new, 0), s: fmt(D.scans, 0) }) }),
+  ], { cls: "st-card", appear: false });
+}
+
+// ST4: ships compared - travel per ship (money per ship is in GAIN / LOSS)
+let showAllShips = false;
+function shipsFlown() {
+  const S = data.career && data.career.ships;
+  if (!S || !S.length) return null;
+  const list = showAllShips ? S : S.slice(0, 8);
+  return frame(t("SHIPS COMPARED"), t("{n} ships", { n: S.length }), [
+    el("table", { class: "mine-table" }, el("tr", {}, ...[t("Ship"), "ly", t("jumps"), t("systems"), t("bodies scanned"), "h", t("lost")].map(h => el("th", { text: h }))),
+      ...list.map(s => el("tr", {}, el("td", { title: s.type, text: s.name || s.type }), el("td", { class: "num", text: fmt(s.ly, 0) }),
+        el("td", { class: "num", text: fmt(s.jumps, 0) }), el("td", { class: "num", text: fmt(s.systems, 0) }),
+        el("td", { class: "num", text: fmt(s.scans, 0) }), el("td", { class: "num", text: fmt(s.hours, 1) }),
+        el("td", { class: "num" + (s.lost ? " c-amber" : " c-dim"), text: fmt(s.lost, 0) })))),
+    S.length > 8 ? el("button", { class: "linkish small", text: showAllShips ? t("fewer") : t("show {n} more", { n: S.length - 8 }),
+      onclick: () => { showAllShips = !showAllShips; render(); } }) : null,
+    el("div", { class: "c-dim small", text: t("Per ship from its Loadout on: h = time with the ship as your active one (pauses over 30 min left out), lost = deaths in it. What each ship earned and cost is in GAIN / LOSS.") }),
+  ], { cls: "st-card", appear: false });
+}
+
+// ST5: the bio catalogue - what you analysed, per genus
+let showAllGenera = false;
+function bioCatalogue() {
+  const B = data.career && data.career.bio;
+  if (!B || !B.length) return null;
+  const list = showAllGenera ? B : B.slice(0, 8);
+  const nSp = B.reduce((a, g) => a + g.species.length, 0);
+  return frame(t("BIO CATALOGUE"), t("{g} genera · {s} species", { g: B.length, s: nSp }), [
+    ...list.map(g => el("div", { class: "st-bio" },
+      el("div", {}, el("b", { class: "c-cyan", text: g.genus }), el("span", { class: "c-dim small", text: "  " + t("{s} species · analysed {n}×", { s: g.species.length, n: g.analysed }) })),
+      el("div", { class: "small" }, ...g.species.map((s, i) => el("span", { title: (s.variants.length ? t("variants: {v}", { v: s.variants.join(", ") }) + "\n" : "")
+        + t("first analysed {d}", { d: day(s.first) }), text: (i ? " · " : "") + s.species.replace(g.genus + " ", "")
+        + (s.value ? " " + fmt(s.value / 1e6, 1) + " M" : "") }))))),
+    B.length > 8 ? el("button", { class: "linkish small", text: showAllGenera ? t("fewer") : t("show {n} more", { n: B.length - 8 }),
+      onclick: () => { showAllGenera = !showAllGenera; render(); } }) : null,
+    el("div", { class: "c-dim small", text: t("Species you analysed (all three samples); value = your own sale price, where you sold it. Hover a species for its colour variants and the day you first analysed it.") }),
+  ], { cls: "st-card", appear: false });
+}
 
 function spark(pts, kind) {
   const W = 220, H = 44, P = 6;
@@ -429,6 +590,138 @@ function perSession() {
     el("span", { class: "num small", text: !P.valued ? "" : s.value_h === null ? "–" : "~" + value(s.value_h, "cr") + "/h" })));
   rows.push(el("div", { class: "c-dim small", text: t("Value gathered, not sold: the formula's estimate of every body you scanned or mapped, first discoveries or not, plus your own prices of the species analysed - hence ~. The value median takes only sessions with scans in the journals ({n} of them; the EDD archive keeps hardly any scans before 2023). A pause of 30 min or a login starts a new session.", { n: P.n_value === undefined ? P.n : P.n_value }) }));
   return frame(t("PER SESSION"), "", rows, { cls: "st-card", appear: false });
+}
+
+// ST7 (5.1.0): when you play - active minutes per weekday and hour, local time
+const dur = (s) => s === null || s === undefined ? "–" : s >= 3600 ? fmt(s / 3600, 1) + " h" : fmt(s / 60, 0) + " min";
+function weekday(d, form) { return new Date(2024, 0, 1 + d).toLocaleDateString(lang() === "de" ? "de-DE" : "en-GB", { weekday: form || "short" }); }
+function playPatterns() {
+  const P = data.career && data.career.patterns;
+  if (!P || !P.max) return null;
+  const cells = [el("span")];
+  for (let h = 0; h < 24; h++) cells.push(el("b", { text: h % 6 ? "" : String(h) }));
+  P.grid.forEach((row, d) => {
+    cells.push(el("span", { class: "c-dim", text: weekday(d) }));
+    row.forEach((m, h) => cells.push(el("i", { style: { opacity: m ? (0.15 + 0.85 * m / P.max).toFixed(2) : "0.04" },
+      title: weekday(d, "long") + " " + h + ":00 · " + t("{m} min played", { m: m }) })));
+  });
+  const rows = [el("div", { class: "st-heat" }, ...cells),
+    el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("most often") }),
+      el("span", { class: "num", text: (P.busy_day === null ? "–" : weekday(P.busy_day, "long")) + " · " + (P.busy_hour === null ? "–" : P.busy_hour + ":00") })),
+    el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("{n} sessions · median", { n: P.sessions }) }), el("span", { class: "num", text: dur(P.median_s) })),
+    el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("longest session") }), el("span", { class: "num", text: dur(P.longest_s) })),
+    el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("typical pause between sessions") }), el("span", { class: "num", text: dur(P.pause_s) })),
+    el("div", { class: "c-dim small", text: t("From the journals, all time, in this computer's local time: time between events less than 30 min apart counts as play; a longer silence ends a session.") })];
+  return frame(t("PLAY PATTERNS"), t("{h} h active", { h: fmt(P.hours, 0) }), rows, { cls: "st-card", appear: false });
+}
+
+// ST11 (5.1.0): the engineers - crafts, blueprints with the highest grade, materials used
+function engineering() {
+  const E = data.craft && data.craft.engineering;
+  if (!E || !E.crafts) return null;
+  const rows = [];
+  for (const g of E.engineers) {
+    rows.push(el("div", { class: "st-row" }, el("span", { class: "c-cyan", text: g.engineer }),
+      el("span", { class: "num", text: t("{n} crafts", { n: g.crafts }) }),
+      el("span", { class: "num small c-dim", text: g.last ? new Date(g.last).toLocaleDateString() : "" })));
+    rows.push(el("div", { class: "small c-dim st-sub", text: g.blueprints.map(b => b.name + " G" + b.grade).join(" · ") }));
+  }
+  if (E.top_used.length) rows.push(el("div", { class: "c-cyan small st-learn-h", text: t("Materials it took ({n})", { n: E.materials_used }) }),
+    el("div", { class: "small", text: E.top_used.map(u => u.name + " ×" + u.n).join(" · ") }));
+  if (E.last.length) {
+    rows.push(el("div", { class: "c-cyan small st-learn-h", text: t("Last crafts") }));
+    for (const c of E.last) rows.push(el("div", { class: "st-row small" }, el("span", { class: "c-dim", text: new Date(c.ts).toLocaleDateString() }),
+      el("span", { text: c.blueprint + " G" + c.level + (c.effect ? " + " + c.effect : "") }), el("span", { class: "c-dim", text: c.engineer })));
+  }
+  return frame(t("ENGINEERING"), t("{n} crafts", { n: E.crafts }), rows, { cls: "st-card", appear: false });
+}
+
+// ST10 (5.1.0): the materials - collected where and when, and what went out again
+const MSRC = { srv: N_("in the SRV"), mining: N_("mining"), raw: N_("raw"), manufactured: N_("manufactured"), encoded: N_("encoded") };
+const MOUT = { engineering: N_("engineering"), synthesis: N_("synthesis"), trade: N_("trade"), broker: N_("broker"), discarded: N_("discarded") };
+function materialsFlow() {
+  const M = data.craft && data.craft.materials;
+  if (!M || !M.collected) return null;
+  const rows = [el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("collected · used") }),
+    el("span", { class: "num", text: fmt(M.collected, 0) + " · " + fmt(M.used, 0) })),
+    el("div", { class: "st-row" }, el("span", { class: "c-dim", text: t("last 30 days per hour played") }),
+      el("span", { class: "num c-green", text: M.per_hour === null ? "–" : fmt(M.per_hour, 1) + " " + t("per h") + " (" + t("{n} in {h} h", { n: M.recent, h: fmt(M.recent_hours, 0) }) + ")" })),
+    el("div", { class: "st-row st-mats c-cyan small" }, el("span", { text: t("material") }), el("span", { class: "num", text: t("got") }),
+      el("span", { class: "num", text: t("used") }), el("span", { class: "num", text: t("last") }))];
+  for (const m of M.rows) rows.push(el("div", { class: "st-row st-mats", title: t("mostly {s}", { s: t(MSRC[m.from] || m.from || "?") })
+      + (Object.keys(m.out).length ? " · " + Object.entries(m.out).map(([k, n]) => t(MOUT[k] || k) + " " + n).join(", ") : "") },
+    el("span", { text: m.name }), el("span", { class: "num", text: fmt(m.got, 0) }),
+    el("span", { class: "num c-dim", text: m.used ? fmt(m.used, 0) : "" }),
+    el("span", { class: "num small c-dim", text: m.last ? new Date(m.last).toLocaleDateString() : "" })));
+  rows.push(el("div", { class: "c-dim small", text: t("From the journals: what you collected and what went out again (engineering, synthesis, trades, brokers, discarded). Hover a row for where it came from. The stock itself is under SHIP › MATERIALS.") }));
+  return frame(t("MATERIALS FLOW"), t("{n} kinds", { n: M.kinds }), rows, { cls: "st-card", appear: false });
+}
+
+// ST14 (5.1.0, user 25.11.): the trip report - a span you pick, on one printable page
+let tripFrom = null, tripTo = null, tripData = null, tripBusy = false;
+const isoDay = (d) => d.toISOString().slice(0, 10);
+
+async function loadTrip() {
+  if (tripBusy) return;
+  tripBusy = true;
+  try { tripData = await getJSON("/api/trip?from=" + tripFrom + "&to=" + tripTo); } catch (e) { tripData = { error: e.message }; }
+  tripBusy = false;
+  if (root && root.isConnected && sub === "trip") render();
+}
+
+function tripMap(route) {
+  if (!route || route.length < 2) return el("div", { class: "c-dim small", text: t("Too few jumps for a map.") });
+  const xs = route.map(p => p[0]), zs = route.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+  const W = 520, H = 240, pad = 12, k = Math.min((W - 2 * pad) / Math.max(x1 - x0, 1), (H - 2 * pad) / Math.max(z1 - z0, 1));
+  const px = (p) => [pad + (p[0] - x0) * k, H - pad - (p[1] - z0) * k];          // galactic north (+z) up
+  const pts = route.map(p => px(p).map(v => v.toFixed(1)).join(",")).join(" ");
+  const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  svg.setAttribute("class", "trip-map");
+  const line = document.createElementNS(ns, "polyline");
+  line.setAttribute("points", pts);
+  svg.append(line);
+  [[route[0], "start"], [route[route.length - 1], "end"]].forEach(([p, cls]) => {
+    const c = document.createElementNS(ns, "circle"), q = px(p);
+    c.setAttribute("cx", q[0].toFixed(1)); c.setAttribute("cy", q[1].toFixed(1)); c.setAttribute("r", "4"); c.setAttribute("class", cls);
+    svg.append(c);
+  });
+  return svg;
+}
+
+function tripReport() {
+  if (!tripFrom) { const now = new Date(); tripTo = isoDay(now); tripFrom = isoDay(new Date(now.getTime() - 14 * 86400000)); }
+  if (!tripData && !tripBusy) loadTrip();
+  const inp = (val, set) => el("input", { type: "date", class: "lay-pick", value: val, onchange: (e) => { set(e.target.value); tripData = null; loadTrip(); } });
+  const head = el("div", { class: "gal-row trip-head" }, el("span", { class: "c-dim", text: t("from") }), inp(tripFrom, v => { tripFrom = v; }),
+    el("span", { class: "c-dim", text: t("to") }), inp(tripTo, v => { tripTo = v; }),
+    el("button", { class: "linkish", text: "⎙ " + t("print"), onclick: () => window.print() }));
+  const D = tripData;
+  if (!D) return frame(t("TRIP REPORT"), "", [head, el("div", { class: "c-dim", text: t("counting ...") })], { cls: "st-card trip-report", appear: false });
+  if (D.error) return frame(t("TRIP REPORT"), "", [head, el("div", { class: "c-amber", text: t("Pick a span of up to ten years, the end after the start.") })], { cls: "st-card trip-report", appear: false });
+  const W = D.way, F = D.finds, M = D.money;
+  const r = (label, v, cls) => el("div", { class: "st-row" }, el("span", { class: "c-dim", text: label }), el("span", { class: "num " + (cls || ""), text: v }));
+  const col = (title, rows) => el("div", { class: "trip-col" }, el("div", { class: "c-cyan small st-learn-h", text: title }), ...rows);
+  const day = (ts) => ts ? new Date(ts * 1000).toLocaleDateString() : "–";
+  const body = !D.events ? [el("div", { class: "c-dim", text: t("Nothing in the journals for this span.") })] : [
+    el("div", { class: "trip-title", text: t("Expedition {a} – {b}", { a: day(D.start), b: day(D.end - 86400) }) }),
+    el("div", { class: "trip-cols" },
+      col(t("THE WAY"), [r(t("jumps"), fmt(W.jumps, 0)), r(t("light years"), fmt(W.ly, 0) + " ly"), r(t("systems"), fmt(W.systems, 0)),
+        r(t("new to you"), fmt(W.new_systems, 0), "c-green"),
+        r(t("farthest from Sol"), fmt(W.farthest.ly, 0) + " ly"), r(t("longest jump"), fmt(W.longest.ly, 1) + " ly"),
+        r(t("played"), fmt(D.hours, 0) + " h")]),
+      col(t("THE FINDS"), [r(t("bodies scanned"), fmt(F.bodies, 0)), r(t("first discovered"), fmt(F.first_discovered, 0), "c-green"),
+        r(t("mapped"), fmt(F.maps, 0)), r(t("first mapped"), fmt(F.first_maps, 0), "c-green"),
+        r(t("organisms analysed"), fmt(F.analysed, 0)), r(t("species"), fmt(F.species, 0))]),
+      col(t("THE MONEY"), [r(t("Income"), value(M.income, "cr"), "c-green"), r(t("Running costs"), value(M.costs, "cr"), "c-amber"),
+        r(t("Net"), value(M.net, "cr"), M.net >= 0 ? "c-green" : "c-red")])),
+    W.regions.length ? el("div", { class: "small", text: t("Regions: {r}", { r: W.regions.join(" · ") }) }) : null,
+    W.farthest.system ? el("div", { class: "small c-dim", text: t("Farthest: {f} · longest jump to {j}", { f: W.farthest.system, j: W.longest.system || "–" }) }) : null,
+    tripMap(W.route),
+    el("div", { class: "c-dim small", text: t("From the journals: the way from your jumps, the finds from your scans, the money as GAIN / LOSS books it (sales, not data still unsold). The map looks down on the galaxy, north (towards the core) up; green the start, amber the end.") }),
+  ];
+  return frame(t("TRIP REPORT"), day(D.first) + " – " + day(D.last), [head, ...body.filter(Boolean)], { cls: "st-card trip-report", appear: false });
 }
 
 // own-4 (17.11.): how long each system took and on what, against the route's

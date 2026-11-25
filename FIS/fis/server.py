@@ -14,6 +14,7 @@ with a local Host) passes without it (5.0.1).
 from __future__ import annotations
 
 import argparse
+import gzip
 import hmac
 import json
 import os
@@ -79,8 +80,10 @@ class App:
         self._edd_stars: Any = None
         # K5: the one online lookup of the FIS (on a click, through the plugin's gateway)
         from .online import CarrierLookup
+        # A4: the FIS's own requests per UTC day, kept in fis_calls.json
+        self.own_calls_path = os.path.join(os.path.dirname(cfg.ini_path), "fis_calls.json")
         self.lookup = CarrierLookup(__version__, calls_today=self._calls_today,
-                                    offline=self._plugin_offline)
+                                    offline=self._plugin_offline, note_calls=self._note_own_calls)
         # SK3: when a learnt model was reset (FIS-owned file next to fis.ini,
         # read by the plugin at start-up too)
         self.learn_reset_path = os.path.join(os.path.dirname(cfg.ini_path), "learn_reset.json")
@@ -325,6 +328,11 @@ class App:
                 out["collectors"] = realitycheck.collectors(mining.collector_waves(evs))
             except Exception:
                 out["collectors"] = None
+            try:
+                from . import fieldodds                     # MP4: field odds, each field left out in turn
+                out["fields"] = fieldodds.reality(fieldodds.model(mining._shared_events(self.archive), self.db)[2])
+            except Exception:
+                out["fields"] = None
             return out
         return self.cached("mining_reality", sig, build)
 
@@ -342,14 +350,26 @@ class App:
         return val
 
     def _calls_today(self) -> Dict[str, int]:
-        """Today's requests from the plugin's call log (read only) - one cap for both."""
+        """Today's requests: the plugin's call log (read only) plus the FIS's
+        own (fis_calls.json, A4) - one cap for both."""
+        out: Dict[str, int] = {}
         try:
             day0 = int(time.time() // 86400) * 86400
             rows = self.db.query("SELECT service, COUNT(*) n FROM external_calls WHERE ts >= ? "
                                  "GROUP BY service", (day0,))
-            return {r["service"]: int(r["n"]) for r in rows}
+            out = {r["service"]: int(r["n"]) for r in rows}
         except Exception:
-            return {}
+            pass
+        cc = self.model.plugin().callcount
+        for k, n in (cc.today(self.own_calls_path) if cc is not None else {}).items():
+            out[k] = out.get(k, 0) + n
+        return out
+
+    def _note_own_calls(self, counts: Dict[str, int]) -> None:
+        """A4: requests the FIS just sent, counted in fis_calls.json."""
+        cc = self.model.plugin().callcount
+        if cc is not None and counts:
+            cc.add(self.own_calls_path, counts)
 
     def _plugin_offline(self) -> bool:
         """The plugin's "offline" switch (EDMC config.toml) holds for the FIS too."""
@@ -609,6 +629,20 @@ class App:
                     pass
         threading.Thread(target=run, name="fis-watchdog", daemon=True).start()
 
+    SERVER_NOTICE_S = 30 * 60
+
+    def server_notice(self, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """SV1b (5.1.0, user 25.11.): the game wrote its journal anew within
+        the last half hour - what a lost connection to the game's servers
+        leaves (06.11., 16.11., 22.11.); the game's netLog shows nothing
+        that tells a disturbed session from a normal one (checked in 13 of
+        the developer's sessions). None otherwise."""
+        now = time.time() if now is None else now
+        ts = getattr(self.live, "rewrite_ts", None)
+        if ts is None or now - ts > self.SERVER_NOTICE_S:
+            return None
+        return {"state": "rewrite", "since": ts, "count": getattr(self.live, "rewrites", 1)}
+
     def health(self) -> Dict[str, Any]:
         """The FIS's state for /api/health: version, uptime, database, journal,
         live reader."""
@@ -624,6 +658,19 @@ class App:
             "cost_model": self.calib.info,
             "ai_at_runtime": False,
         }
+
+
+DAY_SPANS = (1, 7, 30, 90)        # the period buttons of STATISTICS, GAIN / LOSS, GALAXY
+
+
+def _days(qs: Dict[str, Any]) -> Optional[int]:
+    """M2: ?days= as one of DAY_SPANS, else None (all time) - any other value
+    would only fill the answer cache with copies."""
+    try:
+        d = int(float((qs.get("days") or ["0"])[0]))
+    except (ValueError, OverflowError):
+        return None
+    return d if d in DAY_SPANS else None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -650,6 +697,20 @@ class Handler(BaseHTTPRequestHandler):
     _hits: Dict[str, Any] = {}
     _fails: Dict[str, Any] = {}
     _blocked: Dict[str, float] = {}
+    TRACK_MAX = 256                   # M12: addresses kept before the old ones are dropped
+
+    @classmethod
+    def _prune(cls, now: float) -> None:
+        """M12 (under _brake_lock): forget addresses with nothing in their
+        window any more - the three dicts grew with every device ever seen."""
+        if len(cls._hits) + len(cls._fails) + len(cls._blocked) <= cls.TRACK_MAX:
+            return
+        for ip in [k for k, q in cls._hits.items() if not q or now - q[-1] > cls.RATE_WINDOW_S]:
+            del cls._hits[ip]
+        for ip in [k for k, q in cls._fails.items() if not q or now - q[-1] > cls.FAIL_WINDOW_S]:
+            del cls._fails[ip]
+        for ip in [k for k, until in cls._blocked.items() if now >= until]:
+            del cls._blocked[ip]
 
     def _braked(self) -> Optional[float]:
         """None = go on; else seconds to wait (answer 429)."""
@@ -659,6 +720,7 @@ class Handler(BaseHTTPRequestHandler):
         now = time.monotonic()
         cls = Handler
         with cls._brake_lock:
+            cls._prune(now)
             until = cls._blocked.get(ip)
             if until is not None:
                 if now < until:
@@ -714,8 +776,16 @@ class Handler(BaseHTTPRequestHandler):
         return bool(cfg.token) and hmac.compare_digest(tok.encode("utf-8", "replace"),
                                                        cfg.token.encode("utf-8", "replace"))
 
+    GZIP_MIN = 2048                   # smaller answers are sent as they are
+
     def _send(self, code: int, body: bytes, ctype: str, extra: Optional[Dict[str, str]] = None,
               cache: str = "no-store") -> None:
+        if (len(body) >= self.GZIP_MIN and ctype.startswith("application/json")
+                and "gzip" in (self.headers.get("Accept-Encoding") or "").lower()):
+            # R1 (5.1.0): JSON compressed when the browser takes it - GALAXY
+            # 614 KB -> 120 KB (~10 ms), for the tablet in the home network
+            body = gzip.compress(body, 5)
+            extra = dict(extra or {}, **{"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -723,6 +793,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
+        if self.close_connection and "Connection" not in (extra or {}):
+            self.send_header("Connection", "close")    # M10: the client knows not to reuse it
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -789,6 +861,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._too_many(wait)
         url = urlparse(self.path)
         limit = _POST_LIMITS.get(url.path, 4096)
+        if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
+            # M10: a chunked body has no Content-Length - it would stay unread
+            # in the connection and be taken for the next request
+            self.close_connection = True
+            return self._error(411, "length required")
         # read the (small) body first: answering before it was read makes
         # Windows reset the connection instead of delivering the answer
         try:
@@ -1068,12 +1145,14 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(hide, list) or not hide or len(hide) > 50:
             self._error(400, "bad request")
             return None
+        from .jsonsafe import as_id64
         for h in hide:
-            if not isinstance(h, dict) or not isinstance(h.get("id64"), int) \
-                    or isinstance(h.get("id64"), bool) or not losthidden.valid_what(h.get("what")):
+            # 5.1.0: a large id64 comes back as text (jsonsafe)
+            sid = as_id64(h.get("id64")) if isinstance(h, dict) else None
+            if sid is None or not losthidden.valid_what(h.get("what")):
                 self._error(400, "bad entry")
                 return None
-            items.append((h["id64"], h.get("what")))
+            items.append((sid, h.get("what")))
         return items
 
     def _post_lookup(self, raw: bytes) -> None:
@@ -1258,8 +1337,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(res)
 
     def _json(self, obj: Any, code: int = 200) -> None:
-        body = json.dumps(obj, ensure_ascii=False, separators=(",", ":"),
-                          default=str).encode("utf-8")
+        from . import jsonsafe                 # id64 beyond 2^53 as text (5.1.0)
+        body = jsonsafe.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
         self._send(code, body, "application/json; charset=utf-8")
 
     def _error(self, code: int, msg: str) -> None:
@@ -1410,7 +1489,9 @@ class Handler(BaseHTTPRequestHandler):
         """The ship's state for the cockpit view."""
         app = self.app
         m = app.model
-        return self._json(m.build_ship(app.live_state()))
+        out = m.build_ship(app.live_state())
+        out["server"] = app.server_notice()                 # SV1b: the game rewrote its journal
+        return self._json(out)
 
     def _get_vehicle(self, qs: Dict[str, Any]) -> None:
         """VEHICLE: the SRV's state, tank sizes learnt, synthesis recipes."""
@@ -1504,6 +1585,16 @@ class Handler(BaseHTTPRequestHandler):
                                                  journal_dir=app.cfg.journal_dir,
                                                  capi_path=capi.path_for(app.cfg.plugin_dir)))
 
+    def _get_inventory(self, qs: Dict[str, Any]) -> None:
+        """SHIP > MATERIALS: every material collected, with the count."""
+        from . import inventory
+        return self._json(inventory.build_inventory(self.app.archive, self.app.cfg.journal_dir, time.time()))
+
+    def _get_equipment(self, qs: Dict[str, Any]) -> None:
+        """CARRIER > EQUIPMENT (EQ1): the modules in storage, where, what they fit."""
+        from . import equipment
+        return self._json(equipment.build_equipment(self.app.archive, self.app.cfg.journal_dir, time.time()))
+
     def _get_jumpplan(self, qs: Dict[str, Any]) -> None:
         """CARRIER > JUMP PLAN: the plan with tritium, time and what is done."""
         app = self.app
@@ -1535,7 +1626,8 @@ class Handler(BaseHTTPRequestHandler):
         """The mining session now."""
         app = self.app
         from . import mining
-        return self._json(mining.build_live(app.archive, app.live_state(), app.cfg.journal_dir))
+        return self._json(mining.build_live(app.archive, app.live_state(), app.cfg.journal_dir,
+                                            db=app.db))
 
     def _get_mining(self, qs: Dict[str, Any]) -> None:
         """MINING: sessions, hold, limpets, rings."""
@@ -1549,10 +1641,7 @@ class Handler(BaseHTTPRequestHandler):
         """5.0 GAIN / LOSS of the active commander, per ship, over ?days= (0: all)."""
         app = self.app
         from . import ledger
-        try:
-            days = float((qs.get("days") or ["0"])[0]) or None
-        except ValueError:
-            days = None
+        days = _days(qs)              # M2: only the spans the pages offer
         app.archive.refresh()
         evs = app.archive.events()
         bal = ((app.live_state() or {}).get("status") or {}).get("balance")
@@ -1562,6 +1651,9 @@ class Handler(BaseHTTPRequestHandler):
         out["open"] = ({"bio": un["bio"]["value"], "bio_count": un["bio"]["count"],
                         "systems": un["exploration"]["systems"], "explo": un["exploration"].get("value")}
                        if un else None)
+        from .model import _optional
+        vb = _optional("vouchers")                    # ST13: unredeemed bounties, bonds, codex
+        out["vouchers"] = vb.VoucherBook().feed_all(evs).totals() if vb else None
         names = app.archive.ship_names(evs)
         from .fleet import type_label, upkeep_between
         for s in out["ships"]:
@@ -1577,6 +1669,30 @@ class Handler(BaseHTTPRequestHandler):
         from . import capi, carriermoney
         out["carrier"]["money"] = carriermoney.build(capi.path_for(app.cfg.plugin_dir), car, evs, out.get("since"))
         return self._json(out)
+
+    def _get_regions(self, qs: Dict[str, Any]) -> None:
+        """SC3 (5.1.0): the codex regions' outlines for GALAXY (built once)."""
+        from . import regions
+        out = regions.cached(self.app.model.plugin().regionmap)
+        if out is None:
+            return self._error(404, "no region map")
+        return self._json(out)
+
+    def _get_trip(self, qs: Dict[str, Any]) -> None:
+        """ST14 (5.1.0): the trip report for ?from=YYYY-MM-DD&to=YYYY-MM-DD
+        (both days included; default: the last 14 days)."""
+        app = self.app
+        from . import trip
+        now = time.time()
+        end = trip.parse_day((qs.get("to") or [""])[0])
+        end = end + 86400 if end is not None else now
+        start = trip.parse_day((qs.get("from") or [""])[0])
+        start = start if start is not None else end - 14 * 86400
+        if end <= start or end - start > trip.MAX_DAYS * 86400:
+            return self._json({"error": "bad span"}, 400)
+        rm = app.model.plugin().regionmap
+        app.archive.refresh()
+        return self._json(trip.build(app.archive.events(), start, end, rm.find_region if rm else None))
 
     def _get_statement(self, qs: Dict[str, Any]) -> None:
         """5.0 GV1: GAIN / LOSS as an annual statement - income statement per
@@ -1606,11 +1722,16 @@ class Handler(BaseHTTPRequestHandler):
     def _get_statistics(self, qs: Dict[str, Any]) -> None:
         """STATISTICS, with what the FIS has learnt so far."""
         app = self.app
+        days = _days(qs)              # M2: only the spans the pages offer
+        app.archive.refresh()
+        # M3: rebuilt only when the database or the journals moved, at most a minute old
+        sig = (app.db.mtime(), app.archive.rev, int(time.time() // 60))
+        return self._json(app.cached("statistics:%s" % days, sig, lambda: self._statistics(days)))
+
+    def _statistics(self, days: Optional[int]) -> Dict[str, Any]:
+        """The STATISTICS answer (cached by _get_statistics)."""
+        app = self.app
         from . import stats
-        try:
-            days = float((qs.get("days") or ["0"])[0]) or None
-        except ValueError:
-            days = None
         out = stats.build_statistics(app.archive, days)
         try:
             # CT2: the carrier's money over the period
@@ -1644,7 +1765,40 @@ class Handler(BaseHTTPRequestHandler):
             out["learning"]["reality"] = app.reality(out)                # V0: every model against reality
         except Exception:
             out["learning"] = None
-        return self._json(out)
+        out.update(self._statistics_journal_parts())
+        return out
+
+    def _statistics_journal_parts(self) -> Dict[str, Any]:
+        """OP3 (5.1.0): the parts of STATISTICS that read only the journals -
+        RECORDS & ATLAS (ST2/6/8/9), the career (ST3/4/5/7) and ENGINEERING
+        (ST10/11) - rebuilt when the journals change (and once an hour for
+        the "last 30 days" and the travel grid), not with every minute's
+        statistics: 0.5 s of the rebuild with the EDDiscovery archive on."""
+        app = self.app
+        sig = (app.archive.rev, (app.archive.edd_state or {}).get("state"), app.archive.commander()[0],
+               int(time.time() // 3600))
+
+        def build() -> Dict[str, Any]:
+            out: Dict[str, Any] = {}
+            evs = app.archive.events()
+            try:                          # ST2/ST6/ST8/ST9 (5.1.0): RECORDS & ATLAS, all time
+                from . import records
+                rm = app.model.plugin().regionmap
+                out["atlas"] = records.build(evs, rm.find_region if rm else None, rm.region_names() if rm else ())
+            except Exception:
+                out["atlas"] = None
+            try:                          # ST3/ST4/ST5/ST7 (5.1.0): travel grid, ships, bio catalogue, play
+                from . import careerstats
+                out["career"] = careerstats.build(evs, app.archive.organic_values())
+            except Exception:
+                out["career"] = None
+            try:                          # ST10/ST11 (5.1.0): materials flow, engineering history
+                from . import craftstats
+                out["craft"] = craftstats.build(evs, time.time())
+            except Exception:
+                out["craft"] = None
+            return out
+        return app.cached("statistics:journal", sig, build)
 
     def _get_galaxy(self, qs: Dict[str, Any]) -> None:
         """GALAXY layers for a mass code and period (cached while nothing changes)."""
@@ -1654,10 +1808,7 @@ class Handler(BaseHTTPRequestHandler):
             mc = int((qs.get("mc") or [""])[0])
         except ValueError:
             mc = None
-        try:
-            days = float((qs.get("days") or ["0"])[0]) or None
-        except ValueError:
-            days = None
+        days = _days(qs)              # M2: only the spans the pages offer
         live = app.live_state()
         pos = tuple((live.get("system") or {}).get("pos") or ())
         nav = len(live.get("navroute") or [])
@@ -1722,7 +1873,8 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def _sse_write(self, event: str, data: Any) -> None:
-        payload = json.dumps(data, ensure_ascii=False, default=str)
+        from . import jsonsafe
+        payload = jsonsafe.dumps(data, ensure_ascii=False, default=str)
         self.wfile.write(("event: %s\ndata: %s\n\n" % (event, payload)).encode("utf-8"))
         self.wfile.flush()
 
@@ -1830,10 +1982,14 @@ _GET_ROUTES = {
     "/api/carrier": Handler._get_carrier,
     "/api/carriers/known": Handler._get_carriers_known,
     "/api/jumpplan": Handler._get_jumpplan,
+    "/api/equipment": Handler._get_equipment,
+    "/api/inventory": Handler._get_inventory,
     "/api/mining/live": Handler._get_mining_live,
     "/api/mining": Handler._get_mining,
     "/api/statistics": Handler._get_statistics,
     "/api/ledger": Handler._get_ledger,
+    "/api/trip": Handler._get_trip,
+    "/api/regions": Handler._get_regions,
     "/api/ledger/statement": Handler._get_statement,
     "/api/trade": Handler._get_trade,
     "/api/galaxy": Handler._get_galaxy,
@@ -1909,7 +2065,10 @@ def main(argv: Optional[list] = None) -> int:
     threading.Thread(target=lambda: app.archive.refresh(force=True), name="fis-archive",
                      daemon=True).start()
     local = "http://127.0.0.1:%d/" % cfg.port
-    print("SHBOX FIS %s - reads only, writes nothing, no AI at runtime." % __version__)
+    # M15: the FIS writes its own files (fis.ini, favourites, hidden losses, tanks,
+    # jump plan ...) - never the game's, the journals or the plugin's database
+    print("SHBOX FIS %s - reads the game's files, sends nothing to the game, writes only its own"
+          " files, no AI at runtime." % __version__)
     print("Database  : %s (%s)" % (cfg.db_path, "ok" if app.db.exists else "MISSING"))
     print("Journal   : %s" % cfg.journal_dir)
     if cfg.lan:

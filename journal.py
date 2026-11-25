@@ -23,6 +23,7 @@ from . import groundmine
 from . import journalgap
 from . import journalscan
 from . import lifesupport
+from . import rebuywarn
 from . import miningstat
 from . import overlay
 from . import shipstate
@@ -107,6 +108,7 @@ def _before_ingest(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> boo
     _mining_event(ev, entry, state)
     _VEHICLE.feed(ev, entry)                 # 5.0 (own-3): SRV or Nomad for the left line
     _LIFE.feed(ev, entry, _event_ts(entry))  # 5.0 (R8): life support off - Loadout, AFMU repairs
+    _REBUY.feed(ev, entry)                   # 5.1.0 (RB1): the rebuy and the credits at login
     # EDMC enriches NavRoute with the full Route array
     if ev == "NavRoute" and entry.get("Route"):
         cockpit._note_navroute(entry.get("Route"))
@@ -134,7 +136,10 @@ def _mining_event(ev: str, entry: Dict[str, Any], state: Dict[str, Any]) -> None
         try:
             cargo = state.get("Cargo") if isinstance(state, dict) else None
             changed = ST.mine.feed(entry, cargo=cargo)
-            if changed or (ev == "Cargo" and ST.mine.active()):
+            if ev == "Loadout":             # 5.1.0: what the HOLD line knows - for the log
+                logger.info("mining | %s: hold %d t, mining ship %s", entry.get("ShipName") or entry.get("Ship"),
+                            ST.mine.capacity, ST.mine.miner)
+            if changed or (ev == "Cargo" and (ST.mine.active() or ST.mine.flying)):
                 _mining_overlay(force=True)
         except Exception:
             logger.debug("mining overlay failed", exc_info=True)
@@ -526,7 +531,8 @@ def _nav_overlay(pos: Dict[str, Any], radius: float, now: float, low: bool) -> N
         logger.info("surface | the hovering ship has flown off (SRV over %.0f m away) - recall it",
                     surfacenav.SHIP_LEAVE_M)
     lines = surfacenav.compass_lines(pos, c[1], radius, sig_bio=c[2], genera=c[3],
-                                     colours=overlay.COL, orbit=not low, lost=c[4], now=now)
+                                     colours=overlay.COL, orbit=not low, lost=c[4], now=now,
+                                     hide_done=cfg_bool(CFG["overlay_bio_hide_done"], False))
     if lines:
         ov.show_nav(lines, seconds=4)
 
@@ -544,17 +550,47 @@ def _mining_overlay(force: bool = False) -> None:
     if ST.ground.in_rhino:
         _ground_overlay(ov, now, force)
         return
+    _hold_capacity_check(now)
     if not ST.mine.active(now):
-        if ST._mine_drawn:
-            ov.clear("mine")
-            ST._mine_drawn = False
         ov.mute_route(False)                 # the route targets come back
+        _flight_hold(ov, now, force)
         return
     ov.mute_route(True)                      # while mining they are no help
     if not force and now - ST._mine_shown < MINE_EVERY_S:
         return
     ST._mine_shown = now
     if ov.show_mining(ST.mine.lines(now, overlay.COL), seconds=30):
+        ST._mine_drawn = True
+
+
+HOLD_RETRY_S = 60.0
+
+
+def _hold_capacity_check(now: float) -> None:
+    """5.1.0 (user 24.11.): mining or flying out with no hold capacity known
+    (HOLD showed limpets and ore, no free room) - read the newest journal's
+    Loadout in a worker, at most once a minute."""
+    m = ST.mine
+    if m.capacity or not (m.flying or m.active(now)) or now - ST._mine_cap_asked < HOLD_RETRY_S:
+        return
+    ST._mine_cap_asked = now
+    logger.info("mining | hold capacity unknown - reading it from the journal")
+    uithread._run_async(survey._bootstrap_mining, label="mining hold")
+
+
+def _flight_hold(ov: Any, now: float, force: bool) -> None:
+    """MO1 (5.1.0): no mining session - in a mining ship in flight only the
+    HOLD line (free room), else the block goes."""
+    lines = ST.mine.flight_lines(overlay.COL)
+    if not lines:
+        if ST._mine_drawn:
+            ov.clear("mine")
+            ST._mine_drawn = False
+        return
+    if not force and now - ST._mine_shown < MINE_EVERY_S:
+        return
+    ST._mine_shown = now
+    if ov.show_mining(lines, seconds=30):
         ST._mine_drawn = True
 
 
@@ -663,6 +699,7 @@ def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
 _SUIT = suittemp.SuitWatch()
 _VEHICLE = shipstate.VehicleWatch()
 _LIFE = lifesupport.LifeSupportWatch()
+_REBUY = rebuywarn.RebuyWatch()
 
 
 def _event_ts(entry: Dict[str, Any]) -> Optional[float]:
@@ -686,7 +723,9 @@ def _state_overlay(entry: Dict[str, Any]) -> None:
     """The left line: out of supercruise gear, lights, hardpoints still out
     in the ship, SRV or Nomad (shipstate, setting "overlay_state"); on foot
     in heat or cold the suit's health and time left (suittemp, setting
-    "overlay_suit"); first of all life support off (lifesupport, R8).
+    "overlay_suit"); first of all life support off (lifesupport, R8); when
+    nothing else is to say, credits short of the rebuy (rebuywarn, RB1,
+    setting "overlay_rebuy", off by default).
     Never raises; a failure is logged once."""
     global _STATE_FAILED
     ov = getattr(ST, "overlay", None)
@@ -698,6 +737,9 @@ def _state_overlay(entry: Dict[str, Any]) -> None:
             lines = _SUIT.feed(time.time(), entry.get("Flags2"), entry.get("Health"), entry.get("Temperature"))
         if not lines and ov.enabled and cfg_bool(CFG["overlay_state"], True):
             lines = shipstate.reminder_lines(entry.get("Flags"), _VEHICLE.kind)
+        rebuy = _REBUY.lines(entry)                  # always fed: Balance is live
+        if not lines and ov.enabled and cfg_bool(CFG["overlay_rebuy"], False):
+            lines = rebuy
         ov.show_state(lines)
     except Exception:
         if not _STATE_FAILED:

@@ -427,7 +427,10 @@ def _gaps_and_probes(acc: _Plan, b: _Boxel, bdist: float, bcenter: Tuple[float, 
 
 
 PROBE_WEIGHT = 10.0      # FX4: pseudo-probes a mass code needs to outweigh the average
-PROBE_MIN_HITS = 2       # below this every mass code probes alike
+PROBE_MIN_HITS = 2       # below this the misses alone decide (F4) ...
+PRIOR_RATE = 0.02        # ... against the hit rate measured before (18.11.2026: 4 of 332)
+PRIOR_WEIGHT = 50.0      # ... worth this many probes
+PRIOR_MIN_N = 30         # ... and only for a mass code probed this often
 
 
 def probe_factors(outcomes: Dict[int, Sequence[int]]) -> Dict[int, float]:
@@ -437,11 +440,19 @@ def probe_factors(outcomes: Dict[int, Sequence[int]]) -> Dict[int, float]:
     SystemDB.probe_outcomes): rate_mc = (hits + W * rate) / (n + W),
     factor = rate_mc / rate, W = PROBE_WEIGHT. {} (all alike) before
     PROBE_MIN_HITS hits. Measured 18.11.2026: mass code a 2 of 319, b 2 of
-    13 - a probe in b paid about 25 times as often.
+    13 - a probe in b paid about 25 times as often. F4 (5.1.0): below
+    PROBE_MIN_HITS hits a mass code probed PRIOR_MIN_N times or more is
+    judged by its misses against PRIOR_RATE.
     """
     hits = sum(int(v[0]) for v in outcomes.values())
     n = sum(int(v[1]) for v in outcomes.values())
-    if hits < PROBE_MIN_HITS or n <= 0:
+    if hits < PROBE_MIN_HITS:
+        # F4 (5.1.0): without hits the misses still tell - 317 probes in mass
+        # code a without one find put it behind b and c (before: every mass
+        # code alike until two hits, which never came)
+        return {mc: ((h + PRIOR_WEIGHT * PRIOR_RATE) / (k + PRIOR_WEIGHT)) / PRIOR_RATE
+                for mc, (h, k) in outcomes.items() if int(k) >= PRIOR_MIN_N}
+    if n <= 0:
         return {}
     rate = (hits + 1.0) / (n + 2.0)
     return {mc: ((h + PROBE_WEIGHT * rate) / (k + PROBE_WEIGHT)) / rate

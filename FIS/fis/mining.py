@@ -23,9 +23,11 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import miningmethods
 from .live import parse_ts
 
 GAP_S = 30 * 60
@@ -142,7 +144,34 @@ def _vehicle_name(e: Dict[str, Any]) -> str:
             or e.get("SRVType") or e.get("VesselType") or "SRV")
 
 
+_MEMO: Dict[str, Tuple[Any, Any]] = {}
+_MEMO_LOCK = threading.Lock()
+
+
+def _memo(name: str, events: List[Dict[str, Any]], build: Any) -> Any:
+    """OP1 (5.1.0): one pass over the journal per name and journal state -
+    MINING cut the sessions three times per answer, MINING LIVE (asked every
+    few seconds) twice, each 0.05-0.1 s with the EDDiscovery archive on. The
+    state is the very list (one answer passes the same list everywhere), its
+    length and its first and last event; callers only read what comes back."""
+    sig = (id(events), len(events), events[0].get("timestamp") if events else None,
+           events[-1].get("timestamp") if events else None)
+    with _MEMO_LOCK:
+        hit = _MEMO.get(name)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+    val = build(events)
+    with _MEMO_LOCK:
+        _MEMO[name] = (sig, val)
+    return val
+
+
 def _runs(events: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    """Mining runs (cached per journal state, see _cut_runs)."""
+    return _memo("runs", events, _cut_runs)
+
+
+def _cut_runs(events: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
     """Mining events in runs without a break longer than GAP_S; only runs
     that refined or prospected something (repair, fuel or research limpets
     are no mining). Refining while out in a surface vehicle (the Rhino's
@@ -262,6 +291,22 @@ WAVE_GAP_S = 60.0
 _GRADE = {"1": "E", "2": "D", "3": "C", "4": "B", "5": "A"}
 LIMPET_RESERVE = 0.10
 MIN_TONNES = 20              # sessions shorter than this tell nothing
+# MO2 (5.1.0, user 24.11.: "still too many"): on the developer's journals
+# (7 sessions, Type-11, 0.37-0.47 limpets per tonne, the last two 0.40 and
+# 0.375) the plain mean 0.42 plus 10 % left ~40 limpets in a full hold. The
+# advice now weights recent sessions more (half-life RECENT_HALF sessions,
+# your technique improves), and once LEARN_SESSIONS sessions of the hull
+# are in, the reserve is their spread (relative SD) between RESERVE_MIN and
+# LIMPET_RESERVE instead of a flat 10 %.
+LEARN_SESSIONS = 5
+RECENT_HALF = 3.0
+RESERVE_MIN = 0.05
+# MO2b (5.1.0, user's test 24.11.: "spread ±59 %" on 38 Type-11 sessions):
+# the plain SD took the whole EDD history and one 23 t / 55 limpet session
+# (r 2.4). The spread is now the median deviation (x 1.4826, an SD for normal
+# data) of the last SPREAD_WINDOW sessions: one odd session moves it little,
+# old technique not at all.
+SPREAD_WINDOW = 10
 
 
 def controller_of(loadout: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -333,6 +378,11 @@ def collector_life(events: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def collector_waves(events: List[Dict[str, Any]]) -> Dict[str, List[float]]:
+    """ML1: the collector waves per controller (cached per journal state)."""
+    return _memo("waves", events, _collector_waves)
+
+
+def _collector_waves(events: List[Dict[str, Any]]) -> Dict[str, List[float]]:
     """ML1: the seconds each collector wave was seen working, per limpet
     controller, in the order they flew (also for the reality check)."""
     ctrl: Optional[str] = None
@@ -368,6 +418,33 @@ def room_for(free: int, ratio: float) -> int:
     return int(free / (1.0 - ratio)) if ratio < 1 else free
 
 
+def _ratio_learning(lst: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """MO2: the recent ratio (recency-weighted, tonne-weighted), the spread of
+    the sessions, the reserve it gives and whether the hull is learnt."""
+    lst = sorted(lst, key=lambda r: r.get("start") or 0)
+    n = len(lst)
+    w = [0.5 ** ((n - 1 - i) / RECENT_HALF) for i in range(n)]
+    lim = sum(wi * (r["drones"]["prospector"] + r["drones"]["collection"]) for wi, r in zip(w, lst))
+    ton = sum(wi * r["total"] for wi, r in zip(w, lst))
+    rs = [(r["drones"]["prospector"] + r["drones"]["collection"]) / r["total"] for r in lst if r["total"]]
+    rs = rs[-SPREAD_WINDOW:]
+    spread = None
+    if len(rs) >= 3:
+        med = _median(rs)
+        spread = round(1.4826 * _median([abs(x - med) for x in rs]) / med, 3) if med else None
+    learnt = n >= LEARN_SESSIONS
+    reserve = (min(LIMPET_RESERVE, max(RESERVE_MIN, spread)) if learnt and spread is not None
+               else LIMPET_RESERVE)
+    return {"recent": round(lim / ton, 3) if ton else None, "spread": spread, "spread_of": len(rs),
+            "reserve": round(reserve, 3), "learnt": learnt, "need": max(0, LEARN_SESSIONS - n)}
+
+
+def _median(xs: List[float]) -> float:
+    xs = sorted(xs)
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
+
+
 def limpet_ratio(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Limpets launched per refined tonne over your sessions, overall and
     per hull type, with what it rests on."""
@@ -379,6 +456,7 @@ def limpet_ratio(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
         t = sum(r["total"] for r in lst)
         rocks = sum(r["asteroids"] for r in lst)
         return {"ratio": round(lim / t, 3) if t else None, "sessions": len(lst), "tonnes": t, "limpets": lim,
+                **_ratio_learning(lst),
                 "per_rock_prospector": round(sum(r["drones"]["prospector"] for r in lst) / rocks, 2) if rocks else None,
                 "per_rock_collector": round(sum(r["drones"]["collection"] for r in lst) / rocks, 2) if rocks else None,
                 "tonnes_per_rock": round(t / rocks, 1) if rocks else None}
@@ -411,7 +489,7 @@ def _target_material(live: Dict[str, Any]) -> Optional[str]:
 
 
 def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
-               now: Optional[float] = None) -> Dict[str, Any]:
+               now: Optional[float] = None, db: Any = None) -> Dict[str, Any]:
     """What the miner needs right now: the hold (limpets / goods / free), the
     refining rate, the target hotspot, the last prospector reports - and how
     far cargo space and limpets will go."""
@@ -452,6 +530,8 @@ def build_live(archive: Any, live: Dict[str, Any], journal_dir: Optional[str],
     rh = rhino_hold(live, cargo, evs=evs, now=now)
     if rh:
         out["rhino"] = rh
+    if db is not None:
+        out["odds"] = _live_odds(_shared_events(archive), db, live, out["target"] or (s and s["main"]))
     if s:
         recent = [t for t in s["ticks"] if now - t <= RATE_WINDOW_S]
         out["active"] = s["active"]
@@ -498,6 +578,61 @@ def _collectors_now(evs: List[Dict[str, Any]], runs: List[List[Dict[str, Any]]],
     last = _waves(runs[-1])[1] if runs and s and s.get("active") else None
     return {"life": life, "label": controller_label(c),
             "last_wave_ago": round(now - last) if last is not None else None}
+
+
+def _shared_events(archive: Any) -> List[Dict[str, Any]]:
+    """SP2: every commander's events - what a ring yields is shared knowledge
+    (as BEST HOTSPOTS), and the plugin's overlay counts the same fields."""
+    from .fleet import ALL_COMMANDERS
+    try:
+        return archive.events(ALL_COMMANDERS)
+    except TypeError:                                   # an archive without commanders
+        return archive.events()
+
+
+def _field_odds(evs: List[Dict[str, Any]], db: Any, hotspots: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """MP4: the chance of a good field for each hotspot shown, and what the
+    model rests on."""
+    from . import fieldodds
+    try:
+        m, rf, smp = fieldodds.model(evs, db)
+    except Exception:
+        return {"fields": 0, "min": fieldodds.MIN_FIELDS}
+    for h in hotspots:
+        h["odds"] = fieldodds.odds_for(m, rf, h["ring"], h["key"])
+    return {"fields": m.fields, "good": m.n[1], "min": fieldodds.MIN_FIELDS, "thin": fieldodds.THIN_FIELDS}
+
+
+def _live_ring(db: Any, live: Dict[str, Any]) -> Optional[str]:
+    """The ring ahead: the destination (a hotspot is a ring's body), else
+    the ring the ship is at."""
+    st = live.get("status") or {}
+    dest = st.get("destination") or {}
+    if dest.get("system") is not None and dest.get("body") is not None:
+        try:
+            rows = db.query("SELECT body_name FROM hotspots WHERE sys_id64 = ? AND body_id = ? LIMIT 1",
+                            (dest["system"], dest["body"]))
+            if rows and rows[0]["body_name"]:
+                return rows[0]["body_name"]
+        except Exception:
+            pass
+    name = st.get("body_name") or ""
+    return name if name.endswith(("Ring", "Belt")) else None
+
+
+def _live_odds(evs: List[Dict[str, Any]], db: Any, live: Dict[str, Any],
+               key: Optional[str]) -> Optional[Dict[str, Any]]:
+    """MP4 on the approach: the chance for the ring ahead and its material."""
+    from . import fieldodds
+    ring = _live_ring(db, live)
+    if not ring or not key:
+        return None
+    try:
+        m, rf, _smp = fieldodds.model(evs, db)
+    except Exception:
+        return None
+    o = fieldodds.odds_for(m, rf, ring, key)
+    return dict(o, ring=ring) if o else None
 
 
 def _ly(a, b) -> Optional[float]:
@@ -551,6 +686,9 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     # ---------------------------------------------------------- goods: mined, sold, against upkeep
     goods = _mined_goods(evs, car, month, to_carrier)
     out["goods"] = sorted(goods.values(), key=lambda g: (-g["refined"]))
+    out["methods"] = miningmethods.compare(hist, out["goods"])        # MP2: laser - core - ground
+    from . import fieldrating
+    out["fields"] = fieldrating.rate_fields(evs)                         # MP3: purity, prospectors, by-catch
     rev30 = sum(g["revenue_30d"] for g in goods.values())
     from . import capi
     fup = (capi.load(capi_path, now) or {}).get("upkeep") or {}
@@ -562,6 +700,7 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     pos = (live.get("system") or {}).get("pos")
     out["hotspots"] = hotspots_near(db, pos)
     out["from"] = (live.get("system") or {}).get("name")
+    out["field_odds"] = _field_odds(_shared_events(archive), db, out["hotspots"])   # MP4: good field before mining?
     # L3: the nearby hotspots ranked by what YOU mined there per hour - in
     # that ring, else in rings of its class, else in any ring
     try:
@@ -572,6 +711,7 @@ def build_mining(archive: Any, db: Any, live: Dict[str, Any], journal_dir: Optio
     # ---------------------------------------------------------- limpet load per mining ship
     rat = limpet_ratio(hist)
     out["limpet_plan"] = {"ratio": rat, "default": DEFAULT_RATIO, "reserve": LIMPET_RESERVE,
+                          "reserve_min": RESERVE_MIN, "learn_sessions": LEARN_SESSIONS,
                           "ships": _limpet_plans(rat, out["ships"], out["limpets"]),
                           "collector_life": list(collector_life(evs).values())}
     return out
@@ -589,6 +729,7 @@ def _session_ships(hist: List[Dict[str, Any]], evs: List[Dict[str, Any]]) -> Non
         if lo:
             s["ship_type"] = (lo.get("Ship") or "").lower()
             s["ship_name"] = lo.get("ShipName")
+            s["tools"] = miningmethods.tools(lo)           # MP2: lasers, abrasion, seismic, sub-surface
 
 
 def _tritium_moved(evs: List[Dict[str, Any]], month: float) -> Tuple[Dict[str, int], Dict[str, int]]:
@@ -709,9 +850,14 @@ def _limpet_plans(rat: Dict[str, Any], ships: List[Dict[str, Any]], limpets: int
     for s in ships:
         typ = (s.get("type_key") or "").lower()
         basis = rat["by_type"].get(typ) or rat["all"]
-        r = basis["ratio"] if basis and basis["ratio"] else DEFAULT_RATIO
-        p = dict(limpet_load(int(s["cargo"] or 0), r), name=s["name"] or s["type"], cargo=s["cargo"], ratio=r,
-                 own=bool(rat["by_type"].get(typ)), current=s["current"])
+        r = (basis.get("recent") or basis["ratio"]) if basis and basis["ratio"] else DEFAULT_RATIO
+        own = bool(rat["by_type"].get(typ))
+        reserve = basis["reserve"] if basis and own else LIMPET_RESERVE
+        p = dict(limpet_load(int(s["cargo"] or 0), r, reserve), name=s["name"] or s["type"], cargo=s["cargo"],
+                 ratio=r, own=own, current=s["current"], reserve=reserve,
+                 learnt=bool(own and basis["learnt"]), sessions=basis["sessions"] if own else 0,
+                 need=basis["need"] if own else LEARN_SESSIONS, spread=basis["spread"] if own else None,
+                 spread_of=basis.get("spread_of") if own else None)
         if s["current"]:
             p["on_board"] = limpets
             p["diff"] = p["limpets"] - limpets

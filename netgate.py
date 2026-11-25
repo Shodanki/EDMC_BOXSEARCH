@@ -148,7 +148,8 @@ class Gateway:
             return None
         why = self._rest_why.get(service, "resting")
         if until == SESSION_REST:
-            return "%s - resting until EDMC restarts" % why
+            # M4: the same gateway runs in EDMC and in the FIS - say neither
+            return "%s - resting until the program restarts" % why
         return "%s - resting until %s UTC" % (
             why, time.strftime("%H:%M", time.gmtime(until)))
 
@@ -265,47 +266,70 @@ class Gateway:
         if self.resting(service):
             return None
         endpoint = endpoint or url
-        with self._lock:
-            attempt = 0
-            while True:
-                if self._stop.is_set() or self.resting(service):
+        attempt = 0
+        waited_for = None                          # the _next_ok this thread has waited out
+        while True:
+            # A6 (5.1.0): one request at a time still (the lock is held while
+            # a request is out), but the pause before it is waited OUTSIDE the
+            # lock - a service waiting its turn (up to MAX_WAIT) no longer
+            # holds up the others. After the wait it sends, unless another
+            # request to the service went out meanwhile (then it waits again).
+            with self._lock:
+                if self._stop.is_set() or self.resting(service) or self._capped(service):
                     return None
-                cap = DAILY_CAP.get(service)
-                if cap and self.today(service) >= cap:
-                    midnight = (int(self._clock() // 86400) + 1) * 86400.0
-                    self._rest(service, midnight, "daily cap of %d requests reached" % cap)
-                    return None
-                gap = self._next_ok.get(service, 0.0) - self._clock()
-                if gap > 0 and not self._wait(gap):
-                    return None
-                started = self._clock()
-                pause = MIN_INTERVAL.get(service, DEFAULT_INTERVAL)
-                self._next_ok[service] = started + pause * (1.0 + JITTER * self._rand())
-                try:
-                    resp = self._session(service).request(method, url, **kw)
-                except Exception as e:
-                    self._record(service, endpoint, 0, False, started)
-                    logger.warning("%s %s failed: %s", service, endpoint, e)
-                    return None
-                status = int(getattr(resp, "status_code", 0) or 0)
-                self._record(service, endpoint, status, status == 200, started)
-                if status not in RETRY_STATUS:
-                    self._pace_from_headers(service, resp)
-                    return resp
-                attempt += 1
-                if attempt >= MAX_ATTEMPTS:
-                    self._rest(service, SESSION_REST,
-                               "HTTP %d after %d tries" % (status, attempt))
-                    return None
-                headers = getattr(resp, "headers", None) or {}
-                wait = _retry_after(headers.get("Retry-After"), self._clock())
-                if wait is None:
-                    wait = BACKOFF_BASE * (2 ** (attempt - 1))
-                    wait *= 1.0 + JITTER * self._rand()
-                if wait > MAX_WAIT:
-                    self._rest(service, self._clock() + wait,
-                               "HTTP %d, asked to wait %d s" % (status, wait))
-                    return None
-                logger.info("%s: HTTP %d, waiting %.0f s (try %d of %d)",
-                            service, status, wait, attempt + 1, MAX_ATTEMPTS)
-                self._next_ok[service] = self._clock() + wait
+                due = self._next_ok.get(service, 0.0)
+                gap = due - self._clock()
+                if gap <= 0 or due == waited_for:
+                    waited_for = None
+                    done, resp, attempt = self._attempt(service, method, url, endpoint, attempt, kw)
+                    if done:
+                        return resp
+                    continue                       # a retry: its wait is set in _next_ok
+                waited_for = due
+            if not self._wait(gap):
+                return None
+
+    def _capped(self, service: str) -> bool:
+        """The daily cap is reached: the service rests until midnight UTC."""
+        cap = DAILY_CAP.get(service)
+        if cap and self.today(service) >= cap:
+            midnight = (int(self._clock() // 86400) + 1) * 86400.0
+            self._rest(service, midnight, "daily cap of %d requests reached" % cap)
+            return True
+        return False
+
+    def _attempt(self, service: str, method: str, url: str, endpoint: str, attempt: int,
+                 kw: Dict[str, Any]) -> Tuple[bool, Any, int]:
+        """Under the lock: send one request. (True, response or None, n) when
+        the caller is answered; (False, None, n) for a retry after the wait
+        set in _next_ok."""
+        started = self._clock()
+        pause = MIN_INTERVAL.get(service, DEFAULT_INTERVAL)
+        self._next_ok[service] = started + pause * (1.0 + JITTER * self._rand())
+        try:
+            resp = self._session(service).request(method, url, **kw)
+        except Exception as e:
+            self._record(service, endpoint, 0, False, started)
+            logger.warning("%s %s failed: %s", service, endpoint, e)
+            return True, None, attempt
+        status = int(getattr(resp, "status_code", 0) or 0)
+        self._record(service, endpoint, status, status == 200, started)
+        if status not in RETRY_STATUS:
+            self._pace_from_headers(service, resp)
+            return True, resp, attempt
+        attempt += 1
+        if attempt >= MAX_ATTEMPTS:
+            self._rest(service, SESSION_REST, "HTTP %d after %d tries" % (status, attempt))
+            return True, None, attempt
+        headers = getattr(resp, "headers", None) or {}
+        wait = _retry_after(headers.get("Retry-After"), self._clock())
+        if wait is None:
+            wait = BACKOFF_BASE * (2 ** (attempt - 1))
+            wait *= 1.0 + JITTER * self._rand()
+        if wait > MAX_WAIT:
+            self._rest(service, self._clock() + wait, "HTTP %d, asked to wait %d s" % (status, wait))
+            return True, None, attempt
+        logger.info("%s: HTTP %d, waiting %.0f s (try %d of %d)",
+                    service, status, wait, attempt + 1, MAX_ATTEMPTS)
+        self._next_ok[service] = self._clock() + wait
+        return False, None, attempt

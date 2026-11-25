@@ -291,6 +291,19 @@ function renderShipBar() {
   if (flags.includes("scooping")) focus += " · SCOOP";
   document.getElementById("sb-focus").textContent = focus;
   renderCombat(s.combat);
+  renderServer(s.server);
+}
+
+// SV1b (5.1.0): the game wrote its journal anew - what a lost connection to
+// its servers leaves; amber, for half an hour, no blinking
+function renderServer(v) {
+  const cell = document.getElementById("sb-server");
+  if (!cell) return;
+  cell.hidden = !v;
+  if (!v) return;
+  const hhmm = new Date(v.since * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+  document.getElementById("sb-server-v").textContent = t("GAME SERVER: journal rewritten {t}", { t: hhmm });
+  cell.title = t("The game wrote its journal anew - after a lost connection to its servers. EDMC may have missed events; the plugin warns and fetches them itself.");
 }
 
 // M8: combat mode - ALERT (shot at, interdicted), COMBAT MODE (hardpoints out,

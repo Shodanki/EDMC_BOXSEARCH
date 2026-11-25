@@ -425,6 +425,76 @@ class TestServer(_Base):
         st, js = self.getj("/api/health")
         self.assertFalse(js["ai_at_runtime"])
 
+    def test_json_gzip_when_asked(self):
+        """R1: a JSON answer of 2 KB or more goes out gzip-compressed when the
+        browser says it takes gzip; without that header it is plain."""
+        import gzip as gz
+        st, h, body = self.get("/api/statistics", {"Accept-Encoding": "gzip, deflate"})
+        self.assertEqual(st, 200)
+        self.assertEqual(h.get("Content-Encoding"), "gzip")
+        self.assertEqual(h.get("Vary"), "Accept-Encoding")
+        self.assertEqual(int(h.get("Content-Length")), len(body))
+        data = json.loads(gz.decompress(body))
+        self.assertIn("systime", data)
+        st, h, plain = self.get("/api/statistics")
+        self.assertIsNone(h.get("Content-Encoding"))
+        self.assertEqual(json.loads(plain).keys(), data.keys())
+        st, h, small = self.get("/api/health", {"Accept-Encoding": "gzip"})
+        self.assertIsNone(h.get("Content-Encoding"), "small answers stay plain")
+
+    def test_calls_today_with_own_requests(self):
+        """A4: the cap counts the plugin's call log plus fis_calls.json."""
+        import callcount
+        base = self.app._calls_today().get("spansh", 0)
+        try:
+            self.app._note_own_calls({"spansh": 2})
+            self.assertEqual(self.app._calls_today().get("spansh", 0), base + 2)
+            self.assertEqual(callcount.today(self.app.own_calls_path).get("spansh"), 2)
+        finally:
+            try:
+                os.remove(self.app.own_calls_path)
+            except OSError:
+                pass
+
+    def test_brake_memory_is_bounded(self):
+        """M12: addresses with nothing in their window are forgotten once more
+        than TRACK_MAX are tracked."""
+        from fis.server import Handler
+        with Handler._brake_lock:
+            saved = (dict(Handler._hits), dict(Handler._fails), dict(Handler._blocked))
+            try:
+                now = 1000.0
+                for i in range(300):
+                    Handler._hits["10.0.%d.%d" % (i // 250, i % 250)] = [now - 60]        # long ago
+                Handler._hits["10.9.9.9"] = [now - 1]                                       # still counting
+                Handler._blocked["10.8.8.8"] = now + 30
+                Handler._blocked["10.7.7.7"] = now - 1
+                Handler._prune(now)
+                self.assertEqual(set(Handler._hits), {"10.9.9.9"})
+                self.assertEqual(set(Handler._blocked), {"10.8.8.8"})
+            finally:
+                Handler._hits.clear(); Handler._hits.update(saved[0])        # noqa: E702
+                Handler._fails.clear(); Handler._fails.update(saved[1])      # noqa: E702
+                Handler._blocked.clear(); Handler._blocked.update(saved[2])  # noqa: E702
+
+    def test_statistics_cached_and_days_whitelisted(self):
+        """M2: ?days= only as a span the pages offer; M3: STATISTICS is built
+        once while the database and the journals stay as they are."""
+        from fis import server, stats
+        self.assertEqual([server._days({"days": [v]}) for v in ("7", "30.0", "0", "3.5", "1e400", "x", "90")],
+                         [7, 30, None, None, None, None, 90])
+        calls = []
+        real = stats.build_statistics
+        stats.build_statistics = lambda *a, **k: calls.append(a[1:]) or real(*a, **k)
+        try:
+            for q in ("", "?days=7", "?days=7", "?days=7.0", "?days=3.14159"):
+                self.assertEqual(self.getj("/api/statistics" + q)[0], 200)
+        finally:
+            stats.build_statistics = real
+        # all time, 7 days - the repeats and 3.14159 (= all time) come from the cache
+        self.assertLessEqual(len(calls), 2 + 1, calls)              # +1: a minute may turn over
+        self.assertNotIn(("3.14159",), calls)
+
     def test_config_language(self):
         st, js = self.getj("/api/config")
         self.assertEqual(st, 200)

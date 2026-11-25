@@ -105,7 +105,7 @@ def _selftest() -> int:
           and abs(sess.sent[2][0] - sess.sent[1][0] - 2 * BACKOFF_BASE) < 0.01,
           "backoff without Retry-After: 5 s, then 10 s")
     r = gw.request("spansh", "POST", "u", "search")
-    check(r is None and len(sess.sent) == 3 and "EDMC restarts" in (gw.resting("spansh") or ""),
+    check(r is None and len(sess.sent) == 3 and "until the program restarts" in (gw.resting("spansh") or ""),
           "then the service rests for the session - nothing more is sent")
     check(gw.request("edsm", "GET", "u", "sphere") is not None,
           "another service is not affected")
@@ -188,6 +188,36 @@ def _selftest() -> int:
     now = time.time()
     check(_retry_after("Wed, 21 Oct 2099 07:28:00 GMT", now) > 0
           and _retry_after("abc", now) is None, "Retry-After as HTTP date")
+
+    # A6 (5.1.0): a service waiting for its pause does not hold the lock -
+    # another service is asked meanwhile; still one request at a time
+    import threading
+    import time as _t
+    out: List[Any] = []
+    busy = [0, 0]                                   # requests out now, most at once
+
+    class _Slow:
+        headers: Dict[str, str] = {}
+
+        def request(self, method: str, url: str, **kw: Any) -> Any:
+            busy[0] += 1
+            busy[1] = max(busy[1], busy[0])
+            _t.sleep(0.05)
+            busy[0] -= 1
+            return _FakeResp()
+
+    gw = Gateway("9.9.9", session_factory=_Slow, rand=lambda: 0.0)
+    gw._next_ok["spansh"] = _t.time() + 0.6         # Spansh must wait its pause
+    th = threading.Thread(target=lambda: out.append(("spansh", gw.request("spansh", "GET", "s"), _t.time())))
+    th.start()
+    _t.sleep(0.05)
+    t0 = _t.time()
+    gw.request("edsm", "GET", "e")
+    edsm_s = _t.time() - t0
+    th.join()
+    check(edsm_s < 0.3, "EDSM answered in %.2f s while Spansh waited its pause" % edsm_s)
+    check(out and out[0][1] is not None, "Spansh asked after its pause")
+    check(busy[1] == 1, "never two requests out at once (%d)" % busy[1])
 
     print("failures: %d" % fails)
     return fails

@@ -98,6 +98,24 @@ jobs:
         run: python tests/lost_on_replay.py
       - name: false loss marks are taken back on start and replay (LM1, 22.11.)
         run: python tests/false_losses.py
+      - name: bio display variant 1 - PLANET rows, overlay finished species, hide switch (5.1.0)
+        run: python tests/bio_display.py
+      - name: overlay warns when the credits would not pay the rebuy (RB1, 5.1.0)
+        run: python tests/rebuy_warn.py
+      - name: the FIS's own online requests count into the daily cap (A4, 5.1.0)
+        run: python tests/call_count.py
+      - name: a refined tonne looks the Rhino up by an index, not a table scan (R1, 5.1.0)
+        run: python tests/surface_track_index.py
+      - name: the mining hold comes from the journal when EDMC started late (MO1, 5.1.0)
+        run: python tests/mining_bootstrap.py
+      - name: a ring hotspot as target shows its chance and record in the overlay (SP2, 5.1.0)
+        run: python tests/spot_overlay.py
+      - name: unredeemed bounties, bonds and codex vouchers at stake (ST13, 5.1.0)
+        run: python tests/vouchers.py
+      - name: 'not in the galaxy map' kept with version and date, asked again, phantoms (F2, 5.1.0)
+        run: python tests/negative_cache.py
+      - name: a plotted route's hops in no database shown in passing (F5, 5.1.0)
+        run: python tests/route_finds.py
       - name: the FIS starts from an argument list, no shell (M11)
         run: python tests/fis_launch.py
       - name: package import (relative imports, both of EDMC's ways to load a plugin)

@@ -74,6 +74,44 @@ def _run_async(fn, *args, label: str = "working", **kw) -> None:
 _UI_EVENT = "<<SHBOXSEARCHUpdate>>"
 _ui_queue: "queue.Queue[Any]" = queue.Queue()
 _ui_target: Any = None
+# M6 (5.1.0): the queue is bounded - while Tk is busy the same update (the
+# panel refresh) is queued once, and past UI_QUEUE_MAX updates are dropped
+# (logged once) instead of piling up without end
+UI_QUEUE_MAX = 200
+_ui_lock = threading.Lock()
+_ui_pending: set = set()          # updates queued and not yet run (hashable ones)
+_ui_dropped = [False]
+
+
+def _enqueue(fn) -> bool:
+    """Queue an update unless the same one already waits or the queue is
+    full; True when queued."""
+    with _ui_lock:
+        try:
+            hash(fn)
+            key = fn
+        except TypeError:
+            key = None
+        if key is not None and key in _ui_pending:
+            return False
+        if _ui_queue.qsize() >= UI_QUEUE_MAX:
+            if not _ui_dropped[0]:
+                logger.warning("UI queue full (%d) - updates dropped until Tk catches up", UI_QUEUE_MAX)
+            _ui_dropped[0] = True
+            return False
+        _ui_dropped[0] = False
+        if key is not None:
+            _ui_pending.add(key)
+        _ui_queue.put(fn)
+        return True
+
+
+def _done(fn) -> None:
+    with _ui_lock:
+        try:
+            _ui_pending.discard(fn)
+        except TypeError:
+            pass
 
 
 def _shutting_down() -> bool:
@@ -82,8 +120,13 @@ def _shutting_down() -> bool:
 
 
 def _ui(fn) -> None:
-    """Run fn on Tk's main thread, from any thread."""
-    if not panel._frame or _ui_target is None or _shutting_down():
+    """Run fn on Tk's main thread, from any thread. Before plugin_app built
+    the panel an update waits in the queue (M6) - no Tk call - and runs
+    when plugin_app drains it."""
+    if _shutting_down():
+        return
+    if not panel._frame or _ui_target is None:
+        _enqueue(fn)
         return
     if threading.current_thread() is threading.main_thread():
         try:
@@ -92,7 +135,8 @@ def _ui(fn) -> None:
         except Exception:
             pass
         return
-    _ui_queue.put(fn)
+    if not _enqueue(fn):
+        return                           # the same update already waits (or the queue is full)
     try:
         _ui_target.event_generate(_UI_EVENT, when="tail")
     except Exception:
@@ -106,6 +150,7 @@ def _ui_drain(_event: Any = None) -> None:
             fn = _ui_queue.get_nowait()
         except queue.Empty:
             return
+        _done(fn)
         if _shutting_down():
             continue                     # empty the queue, draw nothing
         try:

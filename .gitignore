@@ -20,5 +20,6 @@ FIS/lost_hidden.json*
 FIS/vehicle_tanks.json*
 FIS/learn_reset.json*
 FIS/market_means.json*
+FIS/fis_calls.json*
 FIS/tests/data/
 FIS/.run.lock

@@ -81,7 +81,8 @@ for r in rows:
     n = " · n %d" % r["n"] if r["n"] else ""
     print("    %-*s  %-5s %s%s" % (w, r["label"], mark, r["value"] or "no data yet", n))
 keys = [r["key"] for r in rows]
-check(keys == ["kepler", "kepler_moons", "fuel", "route", "work", "value", "finds", "bio", "scoop", "rocks", "collectors"],
+check(keys == ["kepler", "kepler_moons", "fuel", "route", "work", "value", "finds", "bio", "scoop", "rocks", "collectors",
+               "fields"],
       "every model has its row, in order: %s" % ", ".join(keys))
 check(all(set(r) >= {"key", "label", "value", "n", "good"} for r in rows), "rows keep their shape")
 by = {r["key"]: r for r in rows}

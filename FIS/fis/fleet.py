@@ -24,6 +24,7 @@ Also here, because the views need them:
 
 from __future__ import annotations
 
+import copy
 import glob
 import json
 import math
@@ -71,6 +72,9 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "Market", "DockingGranted", "DockingDenied",
           # a nav beacon handed over every body of the system (SYSTEM hint)
           "NavBeaconScan",
+          # EQ1 (5.1.0): what was stored, retrieved, sold or sent off since the
+          # last storage list (fis/equipment.py reads the list itself)
+          "ModuleStore", "MassModuleStore", "ModuleBuy", "ModuleRetrieve", "ModuleSellRemote", "FetchRemoteModule",
           # unsold exploration data: which bodies you scanned (kept slim)
           "Scan",
           # 5.0 EA2: bio rates and Brain Trees also from the EDDiscovery archive
@@ -86,6 +90,8 @@ EVENTS = ("Loadout", "StoredShips", "ShipyardSwap", "ShipyardBuy", "ShipyardNew"
           "PayBounties", "PayLegacyFines", "NpcCrewPaidWage", "CrewHire", "BuyExplorationData",
           "BuyTradeData", "RedeemVoucher", "MarketBuy", "SearchAndRescue", "CommunityGoalReward",
           "PowerplaySalary",
+          # ST13 (5.1.0): vouchers earned, not redeemed yet (the plugin's vouchers.py)
+          "Bounty", "FactionKillBond", "CapShipBond",
           # first footfall (unsold data: the x5 bonus is paid only there)
           "Disembark")
 _NEEDLES = tuple(('"event":"%s"' % e).encode() for e in EVENTS)
@@ -456,6 +462,8 @@ def _slim_scan(e: Dict[str, Any]) -> Dict[str, Any]:
     # B6: what the data is worth (bodyvalue) - class, mass, terraforming
     slim.update({k: e[k] for k in ("StarType", "StellarMass", "PlanetClass", "MassEM",
                                    "TerraformState", "WasMapped") if k in e})
+    # ST2 (5.1.0): personal records - size, gravity, temperature, spin
+    slim.update({k: e[k] for k in ("Radius", "SurfaceGravity", "SurfaceTemperature", "RotationPeriod") if k in e})
     if e.get("Landable"):
         slim["AtmosphereType"] = e.get("AtmosphereType") or "None"     # 5.0 EA2: bio rates
     return slim
@@ -470,11 +478,13 @@ def _slim_signals(e: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _slim_codex(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """CodexEntry (5.0 EA2): biological entries only - which species where."""
+    """CodexEntry (5.0 EA2): biological entries - which species where; ST13:
+    any other entry that paid a codex voucher stays as a slim CodexVoucher."""
+    pay = {k: e[k] for k in ("VoucherAmount", "Region_Localised") if e.get(k)}
     if "Biology" not in str(e.get("Category") or ""):
-        return None
-    return {"event": "CodexEntry", "timestamp": e.get("timestamp"), "SystemAddress": e.get("SystemAddress"),
-            "BodyID": e.get("BodyID"), "Name_Localised": e.get("Name_Localised") or e.get("Name")}
+        return dict(pay, event="CodexVoucher", timestamp=e.get("timestamp")) if pay.get("VoucherAmount") else None
+    return dict(pay, event="CodexEntry", timestamp=e.get("timestamp"), SystemAddress=e.get("SystemAddress"),
+                BodyID=e.get("BodyID"), Name_Localised=e.get("Name_Localised") or e.get("Name"))
 
 
 def _slim_ship_targeted(e: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -793,10 +803,19 @@ class Archive:
     def __init__(self, journal_dir: str) -> None:
         self.journal_dir = journal_dir
         self._files: Dict[str, Tuple[Tuple[int, int], List[Dict[str, Any]]]] = {}
+        # A5 (5.1.0): per file where the last complete line ended, the
+        # commander logged in there and the bytes before it (a rewritten file
+        # is read whole again)
+        self._tails: Dict[str, Tuple[int, Optional[str], bytes]] = {}
+        self._heads: Dict[str, bytes] = {}      # A5: the first bytes of each file read
         self._lock = threading.Lock()
+        self._refresh_lock = threading.Lock()   # one refresh at a time; readers are not held up
         self._scanned = 0.0
         self.rev = 0
-        self._evcache: Tuple[Any, List[Dict[str, Any]]] = (None, [])
+        # OP2 (5.1.0): one list per commander view - the own commander's and
+        # every commander's (MINING asks for both) no longer push each other out
+        self._evcache: Dict[Any, List[Dict[str, Any]]] = {}
+        self._memos: Dict[str, Tuple[Any, Any]] = {}     # OP1: fleet() / carrier() per journal state
         # the EDDiscovery archive: off until use_edd(path)
         self._edd_path: Optional[str] = None
         self._edd_raw: List[Dict[str, Any]] = []     # every event read from it
@@ -879,59 +898,134 @@ class Archive:
             self.edd_state.update(added=len(stamps), first=min(stamps) if stamps else None)
 
     def refresh(self, force: bool = False) -> None:
-        """Read the journals again - only the files that changed - at most
-        every MIN_RESCAN_S unless forced."""
+        """Read the journals again - only the files that changed, and of a
+        file that only grew only the new lines - at most every MIN_RESCAN_S
+        unless forced. A5 (5.1.0): the reading and parsing happen outside the
+        archive's lock; under it only the results are swapped in."""
         if not force and time.time() - self._scanned < self.MIN_RESCAN_S:
             return
-        with self._lock:
+        with self._refresh_lock:
             self._scanned = time.time()
             paths = sorted(glob.glob(os.path.join(self.journal_dir, "Journal.*.log")))
-            changed = False
+            with self._lock:
+                known = {p: (self._files.get(p), self._tails.get(p)) for p in paths}
+            fresh: Dict[str, Any] = {}
             for p in paths:
-                try:
-                    st = os.stat(p)
-                except OSError:
-                    continue
-                sig = (int(st.st_mtime), st.st_size)
-                old = self._files.get(p)
-                if old and old[0] == sig:
-                    continue
-                self._files[p] = (sig, self._read(p))
-                changed = True
-            for p in list(self._files):
-                if p not in paths:
-                    del self._files[p]
+                got = self._fresh(p, *known[p])
+                if got is not None:
+                    fresh[p] = got
+            with self._lock:
+                changed = False
+                for p, (sig, events, tail, head) in fresh.items():
+                    self._files[p] = (sig, events)
+                    self._tails[p] = tail
+                    if head is not None:
+                        self._heads[p] = head
                     changed = True
-            if changed and self._edd_raw:
-                self._merge_edd()          # the journals on disk changed: what the archive adds, again
-            if changed:
-                self.rev += 1
+                for p in list(self._files):
+                    if p not in paths:
+                        del self._files[p]
+                        self._tails.pop(p, None)
+                        self._heads.pop(p, None)
+                        changed = True
+                if changed and self._edd_raw:
+                    self._merge_edd()          # the journals on disk changed: what the archive adds, again
+                if changed:
+                    self.rev += 1
         self._kick_edd()
+
+    TAIL_CHECK = 64          # bytes before the read end that must still match
+
+    def _fresh(self, p: str, old: Any, tail: Any) -> Optional[Tuple[Any, List[Dict[str, Any]], Any, Any]]:
+        """Outside the lock: (signature, events, tail, head - None: kept) of a
+        changed file, or None when it is unchanged. A file that only grew is read from where
+        the last complete line ended; one that shrank or whose bytes there
+        differ (the game rewrote it) is read whole."""
+        try:
+            st = os.stat(p)
+        except OSError:
+            return None
+        sig = (int(st.st_mtime), st.st_size)
+        if old and old[0] == sig:
+            return None
+        if old and tail and st.st_size >= tail[0] and self._same_before(p, tail):
+            events, end, fid, last = self._read_from(p, tail[0], tail[1])
+            return sig, old[1] + events, (end, fid, last), None
+        events, end, fid, last = self._read_from(p, 0, None)
+        return sig, events, (end, fid, last), self._head(p)
+
+    def _same_before(self, p: str, tail: Tuple[int, Optional[str], bytes]) -> bool:
+        """The file's first bytes and those before the last read end are
+        still the same (else the game rewrote it: read it whole)."""
+        end, _fid, last = tail
+        head = self._heads.get(p)
+        try:
+            with open(p, "rb") as fh:
+                if head is not None and fh.read(len(head)) != head:
+                    return False
+                fh.seek(max(0, end - len(last)))
+                return fh.read(len(last)) == last
+        except OSError:
+            return False
+
+    def _head(self, p: str) -> bytes:
+        try:
+            with open(p, "rb") as fh:
+                return fh.read(self.TAIL_CHECK)
+        except OSError:
+            return b""
 
     @staticmethod
     def _read(path: str) -> List[Dict[str, Any]]:
         """The events of one journal file the FIS needs, slimmed, each tagged
         with the commander (FID) logged in when it happened."""
+        return Archive._read_from(path, 0, None)[0]
+
+    @staticmethod
+    def _read_from(path: str, start: int, fid: Optional[str]
+                   ) -> Tuple[List[Dict[str, Any]], int, Optional[str], bytes]:
+        """The events from byte ``start`` to the last complete line, the
+        offset after it, the commander logged in then and the TAIL_CHECK
+        bytes before it. A line still being written is left for next time."""
         # one journal folder can hold several commanders: every event is
         # tagged with the commander (FID) that was logged in when it happened
         out: List[Dict[str, Any]] = []
-        fid = None
+        end = start
         try:
             with open(path, "rb") as fh:
-                for raw in fh:
-                    if b'"event"' not in raw:
-                        continue
-                    compact = raw.replace(b" ", b"")
-                    if not any(n in compact for n in _NEEDLES):
-                        continue
-                    try:
-                        e = json.loads(raw.decode("utf-8", errors="replace"))
-                    except ValueError:
-                        continue
-                    fid = Archive._take(e, fid, out)
+                fh.seek(start)
+                data = fh.read()
         except OSError:
-            pass
-        return out
+            return out, start, fid, b""
+        cut = data.rfind(b"\n") + 1            # complete lines ...
+        rest = data[cut:].strip()
+        if rest:                                # ... and a last one without its newline yet,
+            try:                                # when it is already whole JSON
+                json.loads(rest.decode("utf-8", errors="replace"))
+                cut = len(data)
+            except ValueError:
+                pass                            # still being written: next time
+        end = start + cut
+        for raw in data[:cut].splitlines():
+            if b'"event"' not in raw:
+                continue
+            compact = raw.replace(b" ", b"")
+            if not any(n in compact for n in _NEEDLES):
+                continue
+            try:
+                e = json.loads(raw.decode("utf-8", errors="replace"))
+            except ValueError:
+                continue
+            fid = Archive._take(e, fid, out)
+        last = b""
+        if end:
+            try:
+                with open(path, "rb") as fh:
+                    fh.seek(max(0, end - Archive.TAIL_CHECK))
+                    last = fh.read(min(end, Archive.TAIL_CHECK))
+            except OSError:
+                last = b""
+        return out, end, fid, last
 
     @staticmethod
     def _take(e: Dict[str, Any], fid: Optional[str], out: List[Dict[str, Any]]) -> Optional[str]:
@@ -980,13 +1074,15 @@ class Archive:
         every = fid == ALL_COMMANDERS
         with self._lock:
             key = (self.rev, fid)
-            if self._evcache[0] == key:
-                return list(self._evcache[1])
+            hit = self._evcache.get(key)
+            if hit is not None:
+                return list(hit)
             evs = [e for lst in self._lists() for e in lst
                    if e["event"] != "Commander"
                    and (every or fid is None or e.get("_fid") in (fid, None))]
             evs.sort(key=lambda e: e.get("timestamp") or "")
-            self._evcache = (key, evs)
+            self._evcache = {k: v for k, v in self._evcache.items() if k[0] == self.rev}
+            self._evcache[key] = evs
         return list(evs)
 
     def _lists(self) -> List[List[Dict[str, Any]]]:
@@ -1010,8 +1106,26 @@ class Archive:
                         names[str(e[k]).lower()] = loc
         return names
 
+    def _memo(self, name: str, build: Any) -> Any:
+        """OP1 (5.1.0): ``build()`` once per journal state (revision, commander,
+        EDDiscovery archive) - MINING, CARRIER and STATISTICS each asked for
+        fleet() and carrier() anew, 0.3-0.4 s apiece with the archive on.
+        Every caller gets its own copy, so none can change another's."""
+        key = (self.rev, self.commander()[0], (self.edd_state or {}).get("state"))
+        with self._lock:
+            hit = self._memos.get(name)
+        if hit is None or hit[0] != key:
+            hit = (key, build())
+            with self._lock:
+                self._memos[name] = hit
+        return copy.deepcopy(hit[1])
+
     def fleet(self) -> Dict[str, Any]:
-        """Every ship you own: where it is, its last known fitting and roles."""
+        """Every ship you own: where it is, its last known fitting and roles
+        (cached per journal state)."""
+        return self._memo("fleet", self._fleet)
+
+    def _fleet(self) -> Dict[str, Any]:
         evs = self.events()
         names = self.ship_names(evs)
         loadouts, sold, stored, current = _fleet_history(evs)
@@ -1098,7 +1212,10 @@ class Archive:
     def carrier(self) -> Optional[Dict[str, Any]]:
         """The own carrier from the journals: stats, location, fuel, load, jump
         history, a pending jump with its tritium, upkeep and changed
-        services."""
+        services (cached per journal state)."""
+        return self._memo("carrier", self._carrier)
+
+    def _carrier(self) -> Optional[Dict[str, Any]]:
         c = _CarrierLog()
         for e in self.own_carrier_events():
             c.feed(e)

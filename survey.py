@@ -15,6 +15,7 @@ sorted and pruned. Also the measured work model (DSS, sampling times).
 from __future__ import annotations
 
 import itertools
+import json
 import math
 import sqlite3
 import time
@@ -145,36 +146,48 @@ def _bootstrap_work_model() -> None:
 
 
 def _bootstrap_session() -> None:
-    """Establish fuel, work timings and last position from the journals."""
-    try:
-        _bootstrap_fuel()
-    except Exception:
-        logger.exception("fuel bootstrap failed")
-    try:
-        _bootstrap_work_model()
-    except Exception:
-        logger.exception("work model bootstrap failed")
-    try:
-        _bootstrap_last_body()
-    except Exception:
-        logger.exception("last position bootstrap failed")
-    try:
-        _bootstrap_ground()
-    except Exception:
-        logger.exception("ground mining bootstrap failed")
-    try:
-        _bootstrap_rock_yield()
-    except Exception:
-        logger.exception("rock yield bootstrap failed")
-    try:
-        _bootstrap_body_physics()
-    except Exception:
-        logger.exception("body physics bootstrap failed")
-    try:
-        updater._check_for_update()
-    except Exception:
-        logger.exception("update check failed")
+    """Establish fuel, work timings and last position from the journals -
+    each step on its own, a failing one is logged and the next runs."""
+    steps = ((_bootstrap_fuel, "fuel bootstrap"), (_bootstrap_work_model, "work model bootstrap"),
+             (_bootstrap_last_body, "last position bootstrap"), (_bootstrap_ground, "ground mining bootstrap"),
+             (_bootstrap_mining, "mining hold bootstrap"), (_bootstrap_rock_yield, "rock yield bootstrap"),
+             (_bootstrap_body_physics, "body physics bootstrap"), (_bootstrap_fields, "mining fields bootstrap"),
+             (_expire_absent, "negative cache expiry"),
+             (updater._check_for_update, "update check"))
+    for step, what in steps:
+        try:
+            step()
+        except Exception:
+            logger.exception("%s failed", what)
     uithread._ui(panel._refresh)
+
+
+def _bootstrap_mining() -> None:
+    """5.1.0 (user 24.11., MO1): EDMC started while the game was running -
+    the ship's Loadout came before EDMC and was never passed on, so the
+    mining overlay knew no capacity and showed no free room in HOLD. The
+    newest journal's last Loadout (capacity, mining tools) and the ship's
+    Cargo.json are fed in here - only what has not arrived meanwhile."""
+    d = maintenance._journal_dir()
+    files = journalscan.journal_files(d, last=1) if d else []
+    lo = None
+    for e in journalscan.read_events_matching(files, ('"Loadout"',)):
+        lo = e
+    cargo = None
+    try:
+        with open(os.path.join(d, "Cargo.json"), encoding="utf-8") as fh:
+            c = json.load(fh)
+        if c.get("Vessel", "Ship") == "Ship" and isinstance(c.get("Inventory"), list):
+            cargo = {str(i.get("Name") or "").lower(): int(i.get("Count") or 0) for i in c["Inventory"]}
+    except (OSError, ValueError, TypeError, AttributeError):
+        cargo = None
+    with ST.lock:
+        if lo is not None and not ST.mine.capacity:
+            ST.mine.loadout(lo)                 # not feed(): that would close the rock being counted
+        if cargo is not None and not ST.mine.cargo:
+            ST.mine.cargo = cargo
+    logger.info("mining | hold from the journal: capacity %s t, %s t aboard, mining ship %s",
+                ST.mine.capacity, sum(ST.mine.cargo.values()) if ST.mine.cargo else 0, ST.mine.miner)
 
 
 def _bootstrap_ground() -> None:
@@ -235,6 +248,34 @@ def _bootstrap_body_physics() -> None:
     with ST.lock:
         n = ST.db.fill_missing_physics(found)
     logger.info("body physics | %d of %d bodies without radius and tilt filled from the archive", n, len(todo))
+
+
+def _expire_absent() -> None:
+    """F2 (worker): "not in the galaxy map" entries older than ABSENT_DAYS
+    are asked again; a boxel one closed opens."""
+    if not ST.db:
+        return
+    with ST.lock:
+        n = ST.db.expire_absent()
+    if n:
+        logger.info("negative cache | %d 'not in the galaxy map' entries are old - checked again", n)
+
+
+def _bootstrap_fields() -> None:
+    """5.1.0 SP2 + ST13 (worker): one pass over all journals (and
+    EDDiscovery's archive when switched on) for the overlay - the mining
+    events for the SPOT item (fields rated, their chance) and the vouchers
+    for the RISK line; live events follow from the hook."""
+    from . import cockpitinfo, miningfields, vouchers
+    d = maintenance._journal_dir()
+    files = journalscan.journal_files(d) if d else []
+    names = tuple(dict.fromkeys(miningfields.NEEDED + vouchers.EVENTS))
+    evs = _archive_lines(names, files, "mining fields and vouchers")
+    evs += list(journalscan.read_events_matching(files, tuple('"event":"%s"' % n for n in names)))
+    cockpitinfo.FIELDS.load(evs)
+    cockpitinfo.VOUCHERS.load(evs)
+    logger.info("mining fields | %d events, %d fields rated; vouchers held %s Cr", len(evs),
+                len(cockpitinfo.FIELDS.rated()), cockpitinfo.VOUCHERS.totals()["total"])
 
 
 def _bootstrap_rock_yield() -> None:
@@ -525,6 +566,21 @@ def _probe_absent() -> None:
     """
     t = current_probe()
     if not t:
+        return
+    with ST.lock:
+        known = ST.db.known_elsewhere(t.name)
+        if known:
+            ST.db.mark_phantom(t.name, known)
+    if known:
+        # F2 (5.1.0): a database knows the name - the map is wrong there (as in
+        # the permit-bugged regions), the system is not missing
+        ST.probe = [q for q in ST.probe if q.name != t.name]
+        logger.info("%s not found in the galaxy map, but %s knows it - a map bug in this region, "
+                    "boxel %s stays open", t.name, known, t.boxel_key)
+        panel._set_status("%s: the galaxy map misses it, %s knows it - a map bug here, "
+                          "not a missing system (see NEXT HOP)" % (t.name, known))
+        panel._refresh()
+        _copy_probe()
         return
     with ST.lock:
         closes = ST.db.mark_absent(t.name)

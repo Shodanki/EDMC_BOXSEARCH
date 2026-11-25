@@ -39,7 +39,7 @@ from .sysroute import ALL_FILTERS, DEFAULT_MODEL, F_OUTSTANDING
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-VERSION = "5.0.1"
+VERSION = "5.1.0"
 PLUGIN_NAME = os.path.basename(_PLUGIN_DIR)
 logger = logging.getLogger("%s.%s" % (appname, PLUGIN_NAME))
 for _mod in (_sysdb_mod, _sources_mod, netgate, _overlay_mod):
@@ -91,9 +91,11 @@ CFG = {
     "overlay_pos": "%s_overlay_pos" % PLUGIN_NAME,
     "overlay_brief": "%s_overlay_brief" % PLUGIN_NAME,
     "overlay_nav": "%s_overlay_nav" % PLUGIN_NAME,
+    "overlay_bio_hide_done": "%s_overlay_bio_hide_done" % PLUGIN_NAME,   # 5.1.0: finished species out
     "overlay_mining": "%s_overlay_mining" % PLUGIN_NAME,
     "overlay_state": "%s_overlay_state" % PLUGIN_NAME,       # 5.0 (own-3): gear, lights, hardpoints
     "overlay_suit": "%s_overlay_suit" % PLUGIN_NAME,         # 5.0 (own-2): suit heat / cold, time left
+    "overlay_rebuy": "%s_overlay_rebuy" % PLUGIN_NAME,       # 5.1.0 (RB1): credits short of the rebuy
     "overlay_backend": "%s_overlay_backend" % PLUGIN_NAME,   # D3: "modern" | "window"
     # 4.12: the situation column (cockpitinfo) - warnings, places, session tally
     "overlay_info_warn": "%s_overlay_info_warn" % PLUGIN_NAME,
@@ -191,6 +193,7 @@ class State:
         self.ground = groundmine.GroundMine()           # 4.12: Rhino trip - rigs, Rhino and ship hold
         self._mine_shown = 0.0
         self._mine_drawn = False
+        self._mine_cap_asked = 0.0                       # 5.1.0: last read of the hold from the journal
         self._nav_cache: Optional[Tuple[Any, ...]] = None   # (key, marks, sig_bio, genera, lost)
         self._route_checked: Optional[Tuple[str, ...]] = None  # I1: the route checked last
         self.last_dest_id64: Optional[int] = None

@@ -232,3 +232,12 @@ export function classDe(c) {
   const m = /^Sudarsky class (\w+) gas giant$/.exec(c);
   return m ? "Gasriese Kl. " + m[1] : c;
 }
+
+// SC1 (5.1.0, StellarCartography idea): how old a piece of data is
+export function ageText(tr, ts) {
+  const ms = typeof ts === "number" ? ts * 1000 : Date.parse(String(ts || "").replace(" ", "T") + (/Z|[+-]\d\d:?\d\d$/.test(String(ts)) ? "" : "Z"));
+  if (!ms || isNaN(ms)) return "";
+  const min = Math.max(0, (Date.now() - ms) / 60000);
+  return min < 60 ? tr("{n} min ago", { n: Math.round(min) }) : min < 2880 ? tr("{n} h ago", { n: Math.round(min / 60) })
+    : tr("{n} days ago", { n: Math.round(min / 1440) });
+}

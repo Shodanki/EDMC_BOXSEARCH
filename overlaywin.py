@@ -31,6 +31,11 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
+if __package__:     # inside the plugin package (EDMC)
+    from .biosig import DONE_MARK
+else:               # on its own: tests
+    from biosig import DONE_MARK
+
 CANVAS_W, CANVAS_H = 1280, 960        # ModernOverlay's virtual canvas
 KEY = "#010203"                       # the transparent colour (no text uses it)
 FONT_PT = {"small": 10, "normal": 12}
@@ -120,8 +125,11 @@ class WindowClient:
         show = bool(msgs) and self._in_front()
         for text, colour, x, y, size, _until in msgs:
             pt = max(8, round(FONT_PT.get(size, 10) * h / CANVAS_H))
+            font: Tuple[Any, ...] = ("Consolas", pt)
+            if text.startswith(DONE_MARK):           # 5.1.0: a finished species, struck through
+                text, font = text[len(DONE_MARK):], ("Consolas", pt, "overstrike")
             canvas.create_text(x * w / CANVAS_W, y * h / CANVAS_H, anchor="nw", text=text,
-                               fill=colour, font=("Consolas", pt))
+                               fill=colour, font=font)
         if show:
             top.deiconify()
         else:

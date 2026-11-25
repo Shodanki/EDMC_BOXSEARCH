@@ -132,7 +132,9 @@ def mark(path: str, part: str, ts: Optional[float] = None, ship: Any = None) -> 
 
 
 def _write(path: str, data: Dict[str, Any]) -> None:
-    tmp = path + ".tmp"
+    # M1: only the FIS writes (under _LOCK), the plugin reads; the temporary
+    # name carries the process, so two FIS started by mistake never share it
+    tmp = "%s.%d.tmp" % (path, os.getpid())
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=1, sort_keys=True)
     os.replace(tmp, path)

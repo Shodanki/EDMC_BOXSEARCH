@@ -1,4 +1,4 @@
-# SHBOXSEARCH v5.0.1
+# SHBOXSEARCH v5.1.0
 
 > **AI disclosure (Art. 50 EU AI Act):** developed with the help of the AI
 > assistant Claude (Anthropic); every change is reviewed and tested in the game
@@ -791,7 +791,7 @@ update check.
 * EDSM's rate-limit headers are followed - when few requests are left before
   its reset, the pauses grow; at zero, EDSM is left alone until the reset;
 * HTTP 429/503: the wait from `Retry-After` (or 5 s, 10 s), at most three
-  tries; then the service is left alone until EDMC restarts. A wait longer
+  tries; then the service is left alone until EDMC (or the FIS) restarts. A wait longer
   than two minutes is not slept through - the service rests until then;
 * the User-Agent names the plugin version and this repository;
 * every request is logged with time, status and duration in the database
@@ -1515,6 +1515,7 @@ what changed in each release from 4.1 on.
 | 4.12.1 | fix: when EDMC passes on no journal events (the game wrote its journal anew), the plugin warns, stores the missed landings, samples and finds itself and places them by the stored track; a replay fills in positions marks were stored without |
 | 5.0.0 | finding unknown systems first: chance of a find per candidate, probes in the order that pays, proofs of absence, NEXT HOP; orbits in their parent's frame (94 % within 1 %), far companions and brown dwarfs drawn right; a reality check of every learnt model; faster pages; STATISTICS in sub-tabs, forecasts, GAIN / LOSS as a company's books, TRADE, CARRIER TRADE and JUMP PLAN; themes on every page; LIFE SUPPORT lamp; fixes |
 | 5.0.1 | fixes: in-system route reaches the best order; EDDiscovery's archive read in short pieces; false "lost in a crash" marks taken back; ships stored after the hangar list keep their place; FIS header, tables and BRIEFING readable at 1600 px; FIS hardening (token, writing calls, fis.ini) |
+| 5.1.0 | mining fields rated and their chance before mining, self-learning; SPOT in the overlay on a hotspot target; vouchers at stake; unexplained credits; statistics: records & atlas, play patterns, engineering, materials flow, trip report; carrier equipment; LEDGER and PLANET INFO as reports; source and age, codex region outlines, legend switches; 'not in the galaxy map' expires, phantoms; probe order from misses; first finds on a route; FIS answers 2-3x faster |
 
 ## Fixed since v3.0.8
 
@@ -2956,6 +2957,127 @@ they change only when needed: fixes, and what new game updates require.
 old folder (it carries none of your files). No database change you have to
 make: the new column for open work is added on the first start, and false
 loss marks are taken back by themselves.
+
+## What changed in 5.1
+
+**The focus of 5.1** - what daily play asked for after 5.0: mining that
+learns which fields pay, money that is at stake or unexplained, statistics
+of the whole career, and every page faster.
+
+### Mining that learns
+* **Fields rated.** MINING > HISTORY > FIELDS rates each ring and the
+  material you mostly refined there: purity (rocks that held it),
+  prospectors per good rock (one with at least your typical share of it)
+  and by-catch - good, fair or poor against your own average for that
+  material.
+* **The chance of a good field, before mining.** Learnt from your rated
+  fields by what a ring is known by before the first shot - ring class,
+  reserve level, a hotspot of the material, overlapping hotspots, the
+  material; counting, no AI. Every field you mine teaches it. Shown in
+  MINING > PLACES beside every hotspot, under LIVE for the ring ahead, and
+  checked in LEARNING STATUS (each field left out and predicted from the
+  others).
+* **SPOT in the overlay.** Set a ring hotspot as target and the overlay
+  shows the chance and what you got there before, in three short lines.
+  PLANET INFO shows the same under each ring, and in a MINING FIELD block
+  for a ring opened itself, with a note on where the numbers come from.
+* **Mining methods compared** - laser, core and ground mining from your own
+  sessions; MINING in sub-tabs LIVE / HISTORY / PLACES.
+* **The hold.** The overlay's HOLD line shows the free room also while
+  flying, and reads the hold again when EDMC started after the game. The
+  limpet count per ship is learnt from your last sessions, robust against
+  odd ones, and says when it is learnt.
+
+### Money at stake
+* **Vouchers.** Bounty vouchers, combat bonds and codex vouchers not
+  redeemed yet are lost with the ship, like unsold data: the overlay's RISK
+  line names them when you are in danger, LEDGER > OPEN lists them with
+  where to redeem them and the last loss at a death.
+* **Unexplained credits.** LEDGER lists the largest balance moves no
+  journal event explains (missions, community goals, gifts, or journals
+  missing for a stretch), with date and amount.
+* **Rebuy per ship** in AIR WING, and an optional overlay warning when your
+  credits are below the rebuy of the ship you fly.
+
+### Statistics of the whole career
+* **RECORDS & ATLAS** - personal records, the codex regions visited and not
+  visited, stars and worlds, the way through the galaxy, ships compared, a
+  bio catalogue per genus.
+* **HISTORY** - travel per day, week and month; PLAY PATTERNS: when you
+  play, as a weekday x hour map in your local time, sessions and pauses.
+* **ENGINEERING** - per engineer the crafts and the highest grade per
+  blueprint, the materials they took; MATERIALS FLOW: what you collected,
+  where, and what went out again.
+* **TRIP REPORT** - pick a span and get one page: the way, the finds, the
+  money, the hours, and a map of the route; printable on its own.
+
+### Ship, carrier and pages
+* **CARRIER > EQUIPMENT** - every module in storage, at stations or on your
+  carrier, what it fits, with choices for module, class, engineering and
+  place. **SHIP > MATERIALS** - everything collected, with the count.
+* **Themes per page** - MINING, VEHICLE, PLANET, PLANET INFO, SETTINGS,
+  GALAXY and ATLAS in each theme's own look; the ATLAS radar also in
+  standard; NEXT HOP in GALAXY can be switched off.
+* **Bio** - PLANET lists every bio signal of the body with its value;
+  finished species are shown dim (and optionally hidden) in the compass.
+
+### Faster, and fair to the services
+* **The FIS** keeps what only the journals decide between answers: with
+  EDDiscovery's archive on, MINING 0.87 -> 0.35 s, MINING LIVE 0.3 -> 0.13 s,
+  CARRIER 0.60 -> 0.30 s; answers are gzip-compressed (GALAXY 615 -> 120 KB);
+  a growing journal is read only from where it ended.
+* **The plugin** finds the Rhino for a refined tonne by an index (0.66 ->
+  0.20 ms a tonne on EDMC's main thread).
+* **One daily cap** of 50 requests per service for the plugin and the FIS
+  together; the pause before a request is waited without holding others up.
+
+### Exploration: fewer wasted probes
+* **"Not in the galaxy map" no longer lasts for ever.** Each entry keeps its
+  date and the game's version; after a patch or 90 days the name is asked
+  again, and a boxel it closed opens. A name a database knows but the map
+  cannot find is a map bug in that region (as where NEXT HOP helps), not a
+  missing system - it closes nothing.
+* **Probes in the order that pays, also without hits.** Mass codes probed
+  often without a find (in the developer's sphere: 317 probes in mass code a,
+  none found) go behind the others - the first 20 probes were a 4 / b 13 /
+  c 3, now b 16 / c 3 / d 1.
+* **In passing:** after the route check of a plotted route the overlay's
+  ROUTE item says how many hops no database knows - first finds at no extra
+  flight.
+
+### Pages that read like a report
+* **LEDGER** in reading order - the result, the money's ways, the ships, what
+  is open - in balanced columns: all time fits one 1920 x 1080 screen; PER
+  SHIP one line a ship.
+* **PLANET INFO** as one report - what the body is, the science and life,
+  what it holds, its rings - in columns that fill, whatever is shown.
+* **Source and age** in SYSTEM and PLANET INFO ("known: Spansh · updated 3
+  days ago · your scans: journal, 12 min ago").
+* **GALAXY:** the 42 codex regions as outlines with their names (from the
+  bundled region map), and legend entries that switch their layer. Ideas
+  seen in StellarCartography (MIT) - ideas only, no code.
+
+### Game server
+* The FIS ship bar shows **GAME SERVER: journal rewritten hh:mm** for half
+  an hour after the game wrote its journal anew - what a lost connection
+  to its servers leaves; the plugin's overlay already warns when EDMC gets
+  no journal events. The game's network log was looked at and left out: in
+  every session it reads the same, the outage day included.
+
+### Also fixed
+* "LIFE SUPPORT OFF?" no longer lights when the modules panel is opened
+  while mining (only an AFMU repair counts).
+* Ids above 2^53 are passed as text, so the browser does not round them;
+  a chunked POST gets a clean refusal; the request brake and the nearby
+  cache forget old entries; STATISTICS is cached and only takes the spans
+  the page offers.
+
+**Updating to 5.1.0:** close EDMC and the FIS and unpack the ZIP over the
+old folder (it carries none of your files). Nothing to replay: the new
+index and columns are added on the first start, and the mining fields and
+vouchers are read from your journals in the background after every start
+(a few seconds). "Not in the galaxy map" entries older than 90 days are
+asked again once - the probe list grows by those.
 
 ## Releasing (for whoever maintains this)
 

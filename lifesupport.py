@@ -80,8 +80,11 @@ def judge(flags: Any, loadout: Optional[Dict[str, Any]] = None, info: Optional[D
         return {"state": "off", "why": why}
     if not flags & DANGER or flags & (OVERHEATING | INTERDICTED):
         return None
-    sv = [s for s in service if s and s[0] is not None]
-    if any(ev == "AfmuRepairs" and is_life_support(mod) and now - t <= REPAIRED_S for t, ev, mod in sv) \
+    # 5.1.0 (user 24.11., mining): a ModuleInfo alone - the modules panel
+    # opened, e.g. for the refinery - with DANGER lit counted as a repair
+    # session and lit "LIFE SUPPORT OFF?" while mining. Only AFMU repairs count.
+    sv = [s for s in service if s and s[0] is not None and s[1] == "AfmuRepairs"]
+    if any(is_life_support(mod) and now - t <= REPAIRED_S for t, _ev, mod in sv) \
             or any(now - t <= SERVICE_S for t, _ev, _mod in sv):
         return {"state": "probable", "why": "afmu"}
     return None

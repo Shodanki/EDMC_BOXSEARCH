@@ -147,6 +147,27 @@ class TestApiLocal(_Api):
             self.assertEqual(self._code(bad, {"X-FIS-Settings": "1"})[0], 400, bad)
         self.assertEqual(self.app.lost_hidden.get("F7"), [])
 
+    def test_chunked_post_is_refused(self):
+        """M10: a chunked body (no Content-Length) gets 411 and the connection
+        is closed - it is not left in the stream as the next request."""
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            # 5.1.0: only the headers - the server answers 411 on them and closes;
+            # a chunk sent after that raced the close (a reset now and then)
+            conn.putrequest("POST", "/api/ship/lost_hidden")
+            for k, v in (("Content-Type", "application/json"), ("X-FIS-Settings", "1"),
+                         ("Transfer-Encoding", "chunked")):
+                conn.putheader(k, v)
+            conn.endheaders()
+            r = conn.getresponse()
+            r.read()
+            self.assertEqual(r.status, 411)
+            self.assertEqual((r.getheader("Connection") or "").lower(), "close")
+        finally:
+            conn.close()
+        self.assertEqual(self.app.lost_hidden.get("F7"), [])
+
     def test_hide_shows_in_shipstatus_and_reset(self):
         h = {"X-FIS-Settings": "1", "Origin": self.base}
         code, out = self._code({"hide": [{"id64": 1, "what": "bio:Bacterium Cerbrus"}, {"id64": 3, "what": None}]}, h)

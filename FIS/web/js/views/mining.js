@@ -17,6 +17,8 @@ const CONTENT = { low: N_("low"), medium: N_("medium"), high: N_("high") };
 const VERDICT = { good: N_("good rock"), fair: N_("fair"), poor: N_("poor - move on") };
 let root = null, data = null, busy = false, live = null, liveBusy = false, liveBox = null;
 let material = localStorage.getItem("fis.mine.material") || "tritium";
+// TH8 (5.1.0): sub-tabs LIVE | HISTORY | PLACES (KONZEPT 2.2) - one long page before
+let tab = (() => { try { return localStorage.getItem("fis.mine.tab") || "live"; } catch (e) { return "live"; } })();
 
 export function mount(r) {
   root = r;
@@ -63,10 +65,21 @@ function render() {
   if (!root) return;
   root.replaceChildren();
   if (!data) { root.append(frame(t("MINING"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
-  root.append(el("div", { class: "mine-grid" },
-    // the sessions under the mining ships: the left column has the room (11.11.)
-    el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session(), limpets(), ships(), history()),
-    el("div", { class: "mine-col" }, tritium(), hotspotRank(), hotspots(), goods())));
+  const tb = (k, label) => el("button", { class: tab === k ? "on" : "", "aria-pressed": tab === k ? "true" : "false", text: label,
+    onclick: () => { tab = k; try { localStorage.setItem("fis.mine.tab", k); } catch (e) { /* private window */ } render(); } });
+  root.append(el("div", { class: "kc-tabs" }, tb("live", t("LIVE")), tb("history", t("HISTORY")), tb("places", t("PLACES"))));
+  liveBox = null;
+  if (tab === "history") {
+    root.append(el("div", { class: "mine-grid" }, el("div", { class: "mine-col" }, history()),
+      el("div", { class: "mine-col" }, fields(), methods(), goods())));          // TRITIUM only under LIVE (user 24.11.)
+  } else if (tab === "places") {
+    root.append(el("div", { class: "mine-grid" }, el("div", { class: "mine-col" }, hotspots(), ships()),
+      el("div", { class: "mine-col" }, hotspotRank())));
+  } else {
+    root.append(el("div", { class: "mine-grid" },
+      el("div", { class: "mine-col" }, withPopout(liveBox = liveStatus(), "mining"), session()),
+      el("div", { class: "mine-col" }, limpets(), tritium())));
+  }
 }
 
 // ------------------------------------------------------------ live status
@@ -74,6 +87,12 @@ function render() {
 // marked) and the refining of the last 10 minutes (one tick per tonne - the
 // game writes nothing about the refinery's bins, only each finished tonne)
 const GOOD_COL = [C.green, C.amber, C.violet, C.blue, "#E8A06A"];
+
+// TH8: a number as one element per digit - plain text in most themes, counter
+// segments in Belt industrial
+function counter(n) {
+  return el("span", { class: "mh-count", title: String(n) }, ...String(n).split("").map(d => el("b", { text: d })));
+}
 
 function liveStatus() {
   const L = live;
@@ -84,7 +103,7 @@ function liveStatus() {
   const hold = el("div", { class: "mh-bar" }, ...segs,
     L.advice ? el("b", { class: "mh-mark", style: { left: pct(L.advice.limpets) }, title: t("advised: {n} limpets", { n: L.advice.limpets }) }) : null);
   const legend = el("div", { class: "mh-legend small" },
-    el("span", { class: "c-cyan", text: "■ " + t("Limpets") + " " + L.limpets }),
+    el("span", { class: "c-cyan" }, "■ " + t("Limpets") + " ", counter(L.limpets)),
     ...L.goods.map((g, i) => el("span", { style: { color: GOOD_COL[i % GOOD_COL.length] }, text: "■ " + g.name + " " + g.count + " t" })),
     el("span", { class: "c-dim", text: "□ " + t("free") + " " + fmt(L.free, 0) + " / " + fmt(cap, 0) + " t" }));
   const ticks = el("div", { class: "mh-bar mh-ticks", title: t("each tonne refined in the last 10 minutes") },
@@ -98,6 +117,10 @@ function liveStatus() {
   ];
   if (L.rhino) rows.unshift(rhinoHold(L.rhino));
   if (L.target_name) rows.push(el("div", { class: "small", text: t("Target") + ": " + L.target_name }));
+  const O = L.odds;
+  if (O && O.p !== null && O.p !== undefined)            // MP4: before the first laser shot
+    rows.push(el("div", { class: "small " + (O.thin ? "c-dim" : ODDS_CLS[O.verdict] || ""), title: oddsTitle(O),
+      text: t("{r}: {p} % chance of a good field ({n} fields)", { r: O.ring.replace(/^.* Sector /, ""), p: fmt(100 * O.p, 0), n: O.n }) }));
   // how far cargo space and limpets go
   const est = [];
   if (L.full_in_min !== undefined) est.push(t("full in ~{m} min at this rate", { m: fmt(L.full_in_min, 0) }));
@@ -111,7 +134,8 @@ function liveStatus() {
   if (CL && CL.life && CL.last_wave_ago !== null && CL.last_wave_ago !== undefined) {
     const old = CL.last_wave_ago > CL.life.max_s;
     rows.push(el("div", { class: "small " + (old ? "c-amber" : "c-dim"),
-      text: t("collectors out for {a} - waves seen working up to {m} (median {d}, {n} waves)",
+      text: t(CL.life.n === 1 ? "collectors out for {a} - waves seen working up to {m} (median {d}, {n} wave)"
+        : "collectors out for {a} - waves seen working up to {m} (median {d}, {n} waves)",
         { a: mmss(CL.last_wave_ago), m: mmss(CL.life.max_s), d: mmss(CL.life.median_s), n: CL.life.n })
         + (old ? " · " + t("longer than ever seen - they may be gone") : "") }));
   }
@@ -143,6 +167,7 @@ function session() {
   // M2: ground mining (SRV Rhino) has no limpets and no asteroids
   const ground = m.kind === "ground";
   return frame(t("MINING"), (ground ? t("ground · {v}", { v: m.vehicle || "SRV" }) + " · " : "") + (m.active ? t("active") : stamp(m.end)), [
+    el("div", { class: "mine-rate-big", text: fmt(m.per_hour, 1) + " t/h" }),
     el("div", { class: "gal-big" }, el("span", { class: "c-cyan", text: fmt(m.total, 0) + " t" }),
       el("span", { class: "c-dim", text: "  " + t("{h} t/h · {m} per minute · {n} min", { h: fmt(m.per_hour, 1), m: fmt(m.per_min, 2), n: m.minutes }) })),
     ...m.refined.map(r => el("div", { class: "cg" }, el("span", { text: r.name }),
@@ -167,7 +192,8 @@ const CTRL = { collector: N_("collector limpet controller"), mining: N_("mining 
 function collectorLife(P) {
   return (P.collector_life || []).map(c => el("div", { class: "c-dim small",
     title: t("From a launch wave to the last tonne refined before the next wave or the end of the session. The journal writes no expiry, so this is only what was seen."),
-    text: t("Collectors ({c} {g}): seen working up to {m}, median {d}, 90 % {p} ({n} waves)",
+    text: t(c.n === 1 ? "Collectors ({c} {g}): seen working up to {m}, median {d}, 90 % {p} ({n} wave)"
+      : "Collectors ({c} {g}): seen working up to {m}, median {d}, 90 % {p} ({n} waves)",
       { c: c.label ? t(CTRL[c.label.kind]) : "?", g: c.label ? c.label.grade : "", m: mmss(c.max_s), d: mmss(c.median_s), p: mmss(c.p90_s), n: c.n }) }));
 }
 
@@ -192,10 +218,20 @@ function limpets() {
       text: t("On board {h}", { h: cur.on_board }) + " · " + (Math.abs(cur.diff) <= 2 ? t("about right")
         : cur.diff > 0 ? t("take {n} more", { n: cur.diff }) : t("{n} too many - room for ore", { n: -cur.diff })) }) : null,
     el("div", { class: "c-dim small", text: basis }),
+    ...learning(P),
     ...collectorLife(P),
-    el("div", { class: "c-dim small", text: t("Limpets = r × cargo + {p} % reserve: every limpet launched frees its tonne, so the hold can end full of ore. Ore = what the hold holds at the end. * no session with this hull - your average.",
-      { p: Math.round(P.reserve * 100) }) }),
+    el("div", { class: "c-dim small", text: t("Limpets = r × cargo + reserve ({lo}-{hi} %, the spread of your sessions): every limpet launched frees its tonne, so the hold can end full of ore. Ore = what the hold holds at the end. r counts recent sessions most. * no session with this hull - your average.",
+      { lo: Math.round((P.reserve_min || P.reserve) * 100), hi: Math.round(P.reserve * 100) }) }),
   ], { appear: false });
+}
+
+// MO2 (5.1.0): from when the limpet count is learnt, per hull with own sessions
+function learning(P) {
+  return P.ships.filter(s => s.own && s.sessions).map(s => s.learnt
+    ? el("div", { class: "small c-green", text: s.name + ": " + t("limpet count learnt from {n} sessions, spread of the last {w} ±{s} % - reserve {p} %",
+        { n: s.sessions, w: s.spread_of || s.sessions, s: Math.round((s.spread || 0) * 100), p: Math.round(s.reserve * 100) }) })
+    : el("div", { class: "small c-amber", text: s.name + ": " + t("limpet count still learning - {n} of {m} sessions, until then {p} % reserve",
+        { n: s.sessions, m: P.learn_sessions || 5, p: Math.round(s.reserve * 100) }) }));
 }
 
 // ------------------------------------------------------------ tritium -> carrier
@@ -246,10 +282,34 @@ function hotspots() {
     el("div", { class: "gal-row" }, el("span", { class: "c-dim", text: t("Material") }), sel),
     list.length ? el("div", { class: "mine-list" }, ...list.map(h => el("div", { class: "cg mine-hs", title: h.system, onclick: () => detail(h.id) },
       el("span", { text: h.ring + (h.count > 1 ? "  ×" + h.count : "") + (sel.value ? "" : " · " + h.material) }),
+      oddsSpan(h.odds),
       el("span", { class: "num", text: h.ly === null ? "?" : h.ly < 0.1 ? t("here") : fmt(h.ly, 1) + " ly" }))))
       : el("div", { class: "c-dim", text: t("No hotspots known for this material - scan rings with the DSS.") }),
     el("div", { class: "c-dim small", text: t("Rings you mapped (plugin database). A click opens the system.") }),
+    oddsNote(),
   ], { appear: false });
+}
+
+// MP4: the chance of a good field before mining, learnt from your rated fields
+const ODDS_CLS = { good: "c-green", open: "", poor: "c-amber" };
+function oddsTitle(o) {
+  return t("chance of a good field (not poor) from {n} rated fields, {m} of this material - known: {k}",
+    { n: o.n, m: o.n_mat, k: o.known.map(k => t(ODDS_FEAT[k])).join(", ") });
+}
+const ODDS_FEAT = { cls: N_("ring class"), reserve: N_("reserve"), spot: N_("hotspot"), overlap: N_("overlapping hotspots"), mat: N_("material") };
+function oddsSpan(o) {
+  if (!o || o.p === null || o.p === undefined) return el("span", { class: "num c-dim", text: "" });
+  return el("span", { class: "num " + (o.thin ? "c-dim" : ODDS_CLS[o.verdict] || ""), title: oddsTitle(o),
+    text: fmt(100 * o.p, 0) + " %" });
+}
+
+function oddsNote() {
+  const F = data.field_odds;
+  if (!F) return null;
+  return el("div", { class: "c-dim small", text: F.fields < F.min
+    ? t("Chance of a good field: learning - {n} of {m} rated fields (MINING › HISTORY › FIELDS).", { n: F.fields, m: F.min })
+    : t("% = chance of a good field before mining, learnt from your {n} rated fields (all commanders, {g} good or fair); it learns from every field you mine. Dim: fewer than {t} fields or the material not mined yet.",
+      { n: F.fields, g: F.good, t: F.thin }) });
 }
 
 // L3: the nearby hotspots by what YOU refined there per hour
@@ -262,6 +322,7 @@ function hotspotRank() {
       el("span", { text: h.ring + " · " + h.material }),
       el("span", { class: "num" + (h.rate.thin ? " c-dim" : " c-green"), text: fmt(h.rate.t_h, 1) + " t/h"
         + (h.rate.runs > 1 ? " (" + fmt(h.rate.lo, 0) + "–" + fmt(h.rate.hi, 0) + ")" : "") }),
+      oddsSpan(h.odds),
       el("span", { class: "num", text: h.ly === null ? "?" : h.ly < 0.1 ? t("here") : fmt(h.ly, 1) + " ly" })))),
     el("div", { class: "c-dim small", text: t("From your own mining runs (all commanders): the main refined material per hour - in that ring, else rings of its class, else any ring. Dim: fewer than 3 runs.") }),
   ], { appear: false });
@@ -285,6 +346,54 @@ function goods() {
 }
 
 // ------------------------------------------------------------ sessions
+// MP2 (5.1.0): the mining methods compared, from your own sessions
+const METHOD = { laser: N_("Laser"), core: N_("Core"), ground: N_("Ground (SRV)") };
+const TOOL = { laser: N_("mining laser"), abrasion: N_("abrasion blaster"), seismic: N_("seismic charges"),
+  subsurface: N_("sub-surface missiles") };
+function methods() {
+  const M = data.methods || [];
+  if (!M.length) return null;
+  const best = Math.max(...M.map(m => m.cr_per_hour || 0));
+  const rows = M.map(m => el("tr", { class: best && m.cr_per_hour === best && M.length > 1 ? "c-green" : "" },
+    el("td", { title: m.tools.length ? t("tools aboard: {t}", { t: m.tools.map(x => t(TOOL[x])).join(", ") }) : "", text: t(METHOD[m.method]) }),
+    el("td", { class: "num", text: fmt(m.sessions, 0) }), el("td", { class: "num", text: fmt(m.hours, 1) }),
+    el("td", { class: "num", text: m.per_hour !== null ? fmt(m.per_hour, 0) : "–" }),
+    el("td", { class: "num", text: m.per_rock !== null ? fmt(m.per_rock, 1) : "–" }),
+    el("td", { class: "num", text: m.limpets_per_t !== null ? fmt(m.limpets_per_t, 2) : "–" }),
+    el("td", { class: "num", text: m.cr_per_hour ? cr(m.cr_per_hour) : "–" }),
+    el("td", { class: "small c-dim", text: m.top.map(g => g.name).join(", ") })));
+  return frame(t("METHODS"), t("{n} sessions", { n: M.reduce((s, m) => s + m.sessions, 0) }), [
+    el("table", { class: "mine-table" },
+      el("tr", {}, ...[t("Method"), t("Sessions"), "h", "t/h", t("t/rock"), t("limpets/t"), t("Cr/h"), t("mostly")].map(h => el("th", { text: h }))), ...rows),
+    el("div", { class: "c-dim small", text: t("From your own sessions: Core = a core was cracked in the session (it mines with lasers too), Ground = from the SRV, Laser = the rest. Cr/h at your own average sale price, only where it is known for most of the tonnes. The journal does not say which tool brought which tonne - the tools aboard show on hover.") }),
+  ], { appear: false });
+}
+
+// MP3 (5.1.0, user 24.11.): the fields rated - purity, prospectors per good rock, by-catch
+const RATING = { good: [N_("good field"), "c-green"], fair: [N_("fair field"), "c-dim"], poor: [N_("poor field"), "c-amber"] };
+let showAllFields = false;
+function fields() {
+  const F = data.fields || [];
+  if (!F.length) return null;
+  const list = showAllFields ? F : F.slice(0, 6);
+  const short = (ring) => ring.replace(/^.* Sector /, "").replace(/ Ring$/, "");
+  const rows = list.map(f => el("tr", {},
+    el("td", { title: f.ring }, el("div", { text: f.mat_name }), el("div", { class: "c-dim small", text: short(f.ring) })),
+    el("td", { class: "num", text: fmt(f.sessions, 0) }),
+    el("td", { class: "num", title: t("{n} of {m} rocks held it, {s} % on average", { n: Math.round(f.rocks * (f.purity || 0) / 100), m: f.rocks, s: fmt(f.mean_share, 1) }),
+      text: f.purity !== null ? f.purity + " %" : "–" }),
+    el("td", { class: "num", title: f.good_pct ? t("good rock: at least {p} % (your typical rock of it); your average {a} prospectors", { p: fmt(f.good_pct, 1), a: fmt(f.avg_per_good, 1) }) : "",
+      text: f.per_good !== null ? fmt(f.per_good, 1) : "–" }),
+    el("td", { class: "num", title: f.bycatch.map(b => b.name + " " + b.t + " t").join(", "), text: f.bycatch_pct + " %" }),
+    el("td", { class: (RATING[f.rating] || ["", "c-dim"])[1], text: f.rating ? t(RATING[f.rating][0]) : "–" })));
+  return frame(t("FIELDS"), t("{n} rated", { n: F.length }), [
+    el("table", { class: "mine-table" }, el("tr", {}, ...[t("Field"), t("Sessions"), t("purity"), t("prosp./good"), t("by-catch"), ""].map(h => el("th", { text: h }))), ...rows),
+    F.length > 6 ? el("button", { class: "linkish small", text: showAllFields ? t("fewer") : t("show {n} more", { n: F.length - 6 }),
+      onclick: () => { showAllFields = !showAllFields; render(); } }) : null,
+    el("div", { class: "c-dim small", text: t("Per ring and the material you mostly refined there: purity = rocks that held it; prosp./good = prospectors per rock with at least your typical share of it; by-catch = the other tonnes. Rated against your own average for that material.") }),
+  ], { appear: false });
+}
+
 function history() {
   if (!data.sessions.length) return null;
   return frame(t("SESSIONS"), String(data.sessions.length), el("table", { class: "mine-table" },

@@ -233,6 +233,10 @@ def build(parts: Dict[str, Any]) -> List[Dict[str, Any]]:
     rows.append(_row("collectors", "Collector lifetime", co and "%.0f %% of waves within the learnt 90 %% mark"
                      % co["within_pct"], co and co["n"],
                      (co["within_pct"] >= 75.0) if co and co["n"] >= 10 else None))
+    fo = parts.get("fields")
+    rows.append(_row("fields", "Field odds before mining (good / poor)", fo and "%d of %d right · Brier %.2f"
+                     % (fo["hits"], fo["n"], fo["brier"]), fo and fo["n"],
+                     (fo["hit_pct"] >= 60.0) if fo and fo["n"] >= 10 else None))
     for row in rows:
         if not row["value"]:
             row["value"], row["good"] = None, None

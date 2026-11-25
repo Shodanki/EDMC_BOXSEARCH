@@ -90,7 +90,10 @@ def _probe_selftest() -> int:
         print("  [%s] %s" % ("OK" if ok else "FAIL", what))
         fails += 0 if ok else 1
 
-    check(probe_factors({0: [1, 300], 1: [0, 10]}) == {}, "one hit: every mass code alike")
+    f0 = probe_factors({0: [1, 300], 1: [0, 10]})
+    check(set(f0) == {0} and f0[0] < 0.4, "F4: one hit - the 300 misses of a still put it back, b too few to say (%s)" % f0)
+    f1 = probe_factors({0: [0, 317], 1: [0, 11], 2: [0, 2]})
+    check(set(f1) == {0} and 0.1 < f1[0] < 0.2, "F4: the developer's 317 empty probes in a: about 0.14 (%s)" % f1)
     f = probe_factors({0: [2, 319], 1: [2, 13], 2: [0, 2]})
     check(f[1] > 5 > 1 > f[2] > f[0] > 0.3, "measured 18.11.: a %.2f, b %.2f, c %.2f" % (f[0], f[1], f[2]))
     near_a = Target("Synuefe AA-A a1-5", K_PROBE, 10.0, mc=0, boxel_key="Synuefe AA-A a1")

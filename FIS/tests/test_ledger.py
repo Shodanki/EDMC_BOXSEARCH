@@ -78,6 +78,34 @@ class TestLedger(unittest.TestCase):
         missions = TRIP[:-2] + [ev(10, "11:25", "MissionCompleted", Reward=-(1_000_000 + booked))] + TRIP[-2:]
         self.assertEqual(ledger.build_ledger(missions, now=1e10)["rest"]["gaps"], 0)
 
+    def test_each_unexplained_move_listed(self):
+        # ST12 (5.1.0): the moves behind "from the balance", largest first kept, newest first shown
+        booked = -500 + 7_000_000 + 300_000 - 1_500 - 15_000_000 - 1_000_000 - 400_000 + 500_000
+        booked += 5_000_000 + 10_000_000 - 1_000_000
+        r = ledger.build_ledger(TRIP + [ev(11, "08:00", "LoadGame", ShipID=2, Ship="mandalay", Credits=250_000)],
+                                now=1e10)
+        # after the transfer 0 Cr, the rebuy booked (-750 k): 250 k at the next login is 1 M unexplained
+        self.assertEqual([j["cr"] for j in r["jumps"]], [1_000_000, -(1_000_000 + booked)])
+        self.assertEqual(r["jumps"][0]["ts"], parse_ts("2026-11-11T08:00:00Z"))
+        many = [(float(i), float(i * 1000 - 5000)) for i in range(20)]
+        top = ledger._jumps(many)
+        self.assertEqual(len(top), ledger.JUMPS_TOP)
+        self.assertEqual(top[0]["ts"], 19.0, "newest first")
+        self.assertNotIn(5.0, [j["ts"] for j in top], "the small ones left out")
+        self.assertEqual(ledger._jumps([(1.0, 999.0), (2.0, -450.0)]), [], "below 1000 Cr: no story")
+
+    def test_codex_vouchers_kept_slim(self):
+        # ST13: a codex entry that paid a voucher stays in the archive - as a
+        # CodexVoucher when it is no biology (the bio counts read CodexEntry)
+        geo = fleet.Archive._slim({"event": "CodexEntry", "timestamp": "t", "Category": "$Codex_Category_Geology;",
+                                   "VoucherAmount": 2500, "Region_Localised": "Inner Orion Spur", "SystemAddress": 9})
+        self.assertEqual(geo, {"event": "CodexVoucher", "timestamp": "t", "VoucherAmount": 2500,
+                               "Region_Localised": "Inner Orion Spur"})
+        self.assertIsNone(fleet.Archive._slim({"event": "CodexEntry", "Category": "$Codex_Category_Geology;"}))
+        bio = fleet.Archive._slim({"event": "CodexEntry", "timestamp": "t", "Category": "$Codex_Category_Biology;",
+                                   "VoucherAmount": 50000, "Name_Localised": "Osseus", "SystemAddress": 9})
+        self.assertEqual((bio["event"], bio["VoucherAmount"], bio["Name_Localised"]), ("CodexEntry", 50000, "Osseus"))
+
     def test_trade_gross_keeps_the_net(self):
         """GV2: trade at its full sale with the goods' cost beside it - the
         net, the cash flow and the balance rest stay what they were; the

@@ -144,6 +144,37 @@
   --white-rgb: 255, 255, 255;
   --text-rgb: 211, 228, 255;
 }
+/* TH8 (5.1.0): "next" gets its own quiet colours - neutral greys instead of the
+   standard teal, so the canvas views (PLANET map, SYSTEM, GALAXY) and every
+   page follow it through ui.C. --cyan stays the browser's accent (theme-boot.js). */
+:root[data-theme="next"] {
+  --bg: #0E1014;
+  --bg-1: #15181D;
+  --bg-2: #1C2026;
+  --green: #4ADE80;
+  --amber: #F5B942;
+  --red: #F05252;
+  --violet: #B57CFF;
+  --text: #E6E8EB;
+  --dim: #8A9099;
+  --faint: #2A2F36;
+  --blue: #60A5FA;
+  --gold: #F5C542;
+  --ink: #0E1014;
+  --bg-glow: #14171C;
+  --panel: #0B0D10;
+  --white: #FFFFFF;
+  --green-rgb: 74, 222, 128;
+  --amber-rgb: 245, 185, 66;
+  --red-rgb: 240, 82, 82;
+  --violet-rgb: 181, 124, 255;
+  --dim-rgb: 138, 144, 153;
+  --bg-rgb: 14, 16, 20;
+  --bg-1-rgb: 21, 24, 29;
+  --bg-2-rgb: 28, 32, 38;
+  --white-rgb: 255, 255, 255;
+  --text-rgb: 230, 232, 235;
+}
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -753,6 +784,7 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .mine-grid { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(380px, 1.2fr); gap: 10px; align-content: start; }
 .mine-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .mine-hs { cursor: pointer; } .mine-hs:hover { color: var(--cyan); }
+.mine-hs { gap: 10px; } .mine-hs > span:first-child { flex: 1; min-width: 0; } .mine-hs > .num { min-width: 3.6em; text-align: right; }  /* MP4: ring | odds | ly */
 .mine-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .mine-table th { text-align: left; color: var(--dim); font-weight: normal; border-bottom: 1px solid rgba(var(--cyan-rgb), .2); padding: 2px 4px; }
 .mine-table td { padding: 2px 4px; border-bottom: 1px solid rgba(var(--cyan-rgb), .06); }
@@ -857,6 +889,13 @@ body.solo:has(.solo-detail) #solo-ctl { opacity: 1; }
 .sr-line.c-red::before { color: var(--red); } .sr-line.c-amber::before { color: var(--amber); } .sr-line.c-green::before { color: var(--green); }
 .sf-active { font-weight: bold; }
 .sf-dim { opacity: .55; }
+/* 5.1.0 bio display (variant 1): every bio of the body with its value -
+   finished paler, begun as before, not started in the theme's violet */
+.sf-bio-h { font: 600 12px var(--font-display); letter-spacing: .1em; color: var(--cyan); margin-top: 6px; }
+.sf-bio { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.sf-bio > div { min-width: 0; }
+.sf-bio.sf-done { opacity: .45; }
+.sf-val { color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .bio-body.bio-done { opacity: .5; }
 
 /* ---------------------------------------------------------------- display profiles (E6/P7)
@@ -876,6 +915,10 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
   height: 100%; overflow: auto; }
 .vh-name { font: 600 17px var(--font-display); letter-spacing: .06em; margin-bottom: 6px; }
 .vh-fuel { width: 100%; margin: 6px 0 2px; }
+/* TH8 (5.1.0): the tank is the shared meter now - in standard drawn as the bar was */
+.vh-fuel.lbar { display: block; height: 8px; border: 1px solid var(--line-dim); background: #050909; }
+.vh-fuel.lbar i { background: var(--green); box-shadow: 0 0 6px rgba(var(--green-rgb), .5); }
+.vh-fuel.lbar.warn i { background: var(--amber); } .vh-fuel.lbar.alert i { background: var(--red); }
 .vh-list { margin-top: 6px; font-size: 12px; }
 .vh-ship { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 14px; }
 .vh-ship .k { font: 600 11px var(--font-display); letter-spacing: .12em; color: var(--dim); }
@@ -1499,6 +1542,76 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
   :root[data-theme="station"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) :is(.lbar i, .hbar .track > i) { filter: none; }
 }
 
+/* -- TH8 (5.1.0) MINING: sub-tabs (all themes); Belt: the limpet count as counter
+   segments; station: the session's rate as a large phosphor figure; bridge: the
+   hotspot lists striped like CARRIER's tables. Standard stays as it was. */
+.mh-count b { font-weight: inherit; }
+.mine-rate-big { display: none; }
+:root[data-theme="industrial"] .mine-view .mh-count b { display: inline-block; min-width: 1.1em; margin-right: 1px; text-align: center;
+  font: 600 12px var(--font-mono); color: rgb(95, 211, 196); background: linear-gradient(180deg, #2f3537, #1c2022);
+  border: 1px solid rgba(95, 211, 196, .35); box-shadow: inset 0 -1px 0 rgba(var(--amber-rgb), .6); }
+:root[data-theme="station"] .mine-view .mine-rate-big { display: block; font: 600 34px var(--font-mono); letter-spacing: .04em;
+  color: var(--green); text-shadow: 0 0 8px rgba(var(--green-rgb), .75); margin: 2px 0 4px; }
+:root[data-theme="bridge"] .mine-view .mine-list .cg:nth-child(even) { background: rgba(var(--white-rgb), .025); }
+:root[data-theme="bridge"] .mine-view .mine-list .cg { padding: 2px 6px; }
+
+/* -- TH8 (5.1.0) VEHICLE: the tank as the themed meter with a cap at its level; the
+   switches as capsule chips in Federation classic and as toggle plaques in Belt */
+:root[data-theme="console"] .vehicle-view .vh-fuel.lbar { height: 10px; }
+:root[data-theme="console"] .vehicle-view .vh-switches .chip { padding: 2px 10px; background: rgba(var(--cyan-rgb), .10); border-color: rgba(var(--cyan-rgb), .45); }
+:root[data-theme="bridge"] .vehicle-view .vh-fuel.lbar i { box-shadow: 3px 0 0 var(--white); }
+:root[data-theme="next"] .vehicle-view .vh-fuel.lbar i { box-shadow: 2px 0 0 var(--cyan); }
+:root[data-theme="industrial"] .vehicle-view .vh-switches .chip { position: relative; padding: 3px 8px 3px 18px; margin: 0 4px 4px 0;
+  border: 2px solid rgba(95, 211, 196, .45); color: rgb(95, 211, 196); }
+:root[data-theme="industrial"] .vehicle-view .vh-switches .chip::before { content: ""; position: absolute; left: 5px; top: 50%; width: 6px; height: 10px;
+  margin-top: -5px; background: var(--amber); box-shadow: 0 0 0 1px #111; }
+
+/* -- TH8 (5.1.0) PLANET INFO: station draws the datasheet as a printed table -
+   two columns, key left, value right, dotted rules between the rows */
+:root[data-theme="station"] .planet-view .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+:root[data-theme="station"] .planet-view .tile { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  border-left: 0; border-bottom: 1px dotted rgba(var(--cyan-rgb), .25); padding: 3px 0; }
+:root[data-theme="station"] .planet-view .tile .k::before { content: "> "; }
+:root[data-theme="station"] .planet-view .tile .v { font: 14px var(--font-mono); text-align: right; text-shadow: 0 0 6px rgba(var(--green-rgb), .5); }
+
+/* -- TH8 (5.1.0) SETTINGS: switches and fields per theme (Belt had its own already):
+   classic a capsule switch, bridge an amber pill, station a phosphor box, next a
+   flat accent toggle and underlined fields. No movement - the knob jumps. */
+:root[data-theme="console"] .settings-view .st-set input[type="checkbox"] { appearance: none; width: 34px; height: 18px; margin: 0; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: radial-gradient(circle at 9px 50%, var(--dim) 5px, transparent 6px), rgba(var(--cyan-rgb), .08); }
+:root[data-theme="console"] .settings-view .st-set input[type="checkbox"]:checked {
+  background: radial-gradient(circle at 25px 50%, var(--ink) 5px, transparent 6px), var(--cyan); border-color: var(--cyan); }
+:root[data-theme="console"] .settings-view :is(select, input[type="number"]) { border-radius: 999px; padding: 2px 10px; }
+:root[data-theme="bridge"] .settings-view .st-set input[type="checkbox"] { appearance: none; width: 44px; height: 18px; margin: 0; cursor: pointer;
+  border: 0; border-radius: 999px; background: radial-gradient(circle at 10px 50%, var(--dim) 5px, transparent 6px), rgba(var(--dim-rgb), .25); }
+:root[data-theme="bridge"] .settings-view .st-set input[type="checkbox"]:checked {
+  background: radial-gradient(circle at 34px 50%, var(--ink) 5px, transparent 6px), var(--amber); }
+:root[data-theme="bridge"] .settings-view :is(select, input[type="number"]) { border-radius: 999px; border-color: rgba(var(--amber-rgb), .6); padding: 2px 10px; }
+:root[data-theme="station"] .settings-view .st-set input[type="checkbox"] { appearance: none; width: 16px; height: 16px; margin: 0; cursor: pointer;
+  border: 1px solid rgba(var(--green-rgb), .6); background: transparent; }
+:root[data-theme="station"] .settings-view .st-set input[type="checkbox"]:checked { background: var(--green); box-shadow: 0 0 8px rgba(var(--green-rgb), .8); }
+:root[data-theme="station"] .settings-view .st-set > span::before { content: "> "; color: var(--green); }
+:root[data-theme="station"] .settings-view :is(select, input[type="number"]) { font-family: var(--font-mono); color: var(--green); border-color: rgba(var(--green-rgb), .5);
+  text-shadow: 0 0 6px rgba(var(--green-rgb), .5); }
+:root[data-theme="next"] .settings-view .st-set input[type="checkbox"] { appearance: none; width: 32px; height: 16px; margin: 0; cursor: pointer;
+  border-radius: 4px; background: radial-gradient(circle at 8px 50%, var(--text) 4px, transparent 5px), rgba(255, 255, 255, .12); }
+:root[data-theme="next"] .settings-view .st-set input[type="checkbox"]:checked {
+  background: radial-gradient(circle at 24px 50%, var(--white) 4px, transparent 5px), var(--cyan); }
+:root[data-theme="next"] .settings-view :is(select, input[type="number"]) { border: 0; border-bottom: 2px solid var(--cyan); border-radius: 0;
+  background: transparent; padding: 2px 4px; }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="station"] .settings-view .st-set input[type="checkbox"]:checked { box-shadow: none; }
+}
+
+/* -- TH8 (5.1.0) ATLAS: in station - and since the user's wish of 24.11. also in
+   standard - the surroundings map stands above the list as a radar (drawn in
+   atlas.js); the list stays below it. The other themes keep the layout and get
+   a map style of their own (atlas.js MAP_STYLE) */
+:root:is([data-theme="station"], [data-theme="standard"]) .atlas-view .at-grid { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 42vh) minmax(0, 1fr); }
+:root:is([data-theme="station"], [data-theme="standard"]) .atlas-view .at-side { order: -1; }
+:root:is([data-theme="station"], [data-theme="standard"]) .atlas-view .at-map { min-height: 280px; }
+
 /* 5.0 CARRIER > JUMP PLAN */
 .jp .jp-q { flex: 1 1 14em; min-width: 10em; }
 .jp-tab tr.jp-done td { color: var(--dim); }
@@ -1510,6 +1623,99 @@ body.obs.solo #views, body.kiosk.solo #views { padding-top: var(--gap); }
 .ns-tab.jp-tab td:last-child { text-align: left; white-space: nowrap; }
 .jp-spansh summary { cursor: pointer; }
 .jp-paste { width: 100%; box-sizing: border-box; font: 12px var(--font-mono); }
+
+/* -- EQ1 (5.1.0) EQUIPMENT: the modules in storage, the ships they fit */
+.eq-grid { grid-template-columns: minmax(0, 2.2fr) minmax(260px, 1fr); }
+.eq-list { max-height: 62vh; }
+.eq-tab td { vertical-align: top; }
+.eq-tab tr.away td:first-child div:first-child { color: var(--dim); }
+.eq-tabs button { font-size: .85em; }
+.eq-q, .eq-pick { font-size: 12px; padding: 2px 4px; }
+.eq-q { min-width: 160px; flex: 0 1 240px; }
+.eq-ship { padding: 4px 0; border-bottom: 1px solid rgba(var(--dim-rgb), .18); }
+.eq-ship.sel { background: rgba(var(--green-rgb), .08); }
+.eq-sn, .eq-place { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.eq-place { display: block; padding: 2px 0; }
+.eq-place.sel, .eq-ship.sel .eq-sn { text-decoration: underline; }
+.eq-links { float: right; }
+.eq-links a { color: var(--cyan); }
+@media (max-width: 1100px) { .eq-grid { grid-template-columns: 1fr; } }
+
+/* -- MATERIALS (5.1.0): everything collected, four columns */
+.inv-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.inv-tab td { padding: 1px 4px; }
+.inv-tab td.num { white-space: nowrap; }
+.inv-tab td:first-child { width: 100%; }
+@media (max-width: 1400px) { .inv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 800px) { .inv-grid { grid-template-columns: 1fr; } }
+
+/* -- RECORDS & ATLAS (5.1.0): system names as links, the journey line wide */
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--cyan); cursor: pointer; text-align: left; }
+.linkish:hover { text-decoration: underline; }
+.st-spark-wide svg { width: 100%; height: 90px; }
+.st-records td:nth-child(3) { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* -- ST3/ST4/ST5 (5.1.0): travel bars, bio catalogue rows */
+.st-tbar { position: relative; min-width: 80px; height: 14px; }
+.st-tbar i { position: absolute; left: 0; top: 2px; bottom: 2px; background: rgba(var(--cyan-rgb), .35); }
+.st-tbar span { position: relative; padding-left: 4px; font-size: 11px; }
+.st-tspan { margin-bottom: 4px; }
+.st-bio { padding: 3px 0; border-bottom: 1px solid rgba(var(--dim-rgb), .15); }
+
+/* -- ST7/ST10 (5.1.0): play patterns heatmap, the materials table -- */
+.st-heat { display: grid; grid-template-columns: 2.6em repeat(24, minmax(0, 1fr)); gap: 2px; align-items: center; margin: 4px 0 8px; font-size: 10px; }
+.st-heat i { display: block; height: 11px; background: var(--cyan); border-radius: 1px; }
+.st-heat b { font-weight: normal; color: var(--dim, #8FA3A6); font-size: 9px; }
+.st-mats { grid-template-columns: minmax(0, 1fr) 44px 44px 76px; }
+.st-sub { margin: -2px 0 4px 10px; }
+
+/* -- ST14 (5.1.0): the trip report, and printing it alone -- */
+.trip-head input[type=date] { width: auto; }
+.trip-title { font-size: 18px; letter-spacing: .08em; margin: 6px 0 8px; color: var(--cyan); }
+.trip-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 22px; }
+.trip-map { width: 100%; max-width: 720px; height: auto; display: block; margin: 10px 0 4px;
+  border: 1px solid rgba(var(--cyan-rgb), .18); background: rgba(var(--cyan-rgb), .03); }
+.trip-map polyline { fill: none; stroke: var(--cyan); stroke-width: 1.4; stroke-linejoin: round; }
+.trip-map .start { fill: var(--green); } .trip-map .end { fill: var(--amber); }
+@media print {
+  body * { visibility: hidden !important; }
+  .trip-report, .trip-report * { visibility: visible !important; }
+  .trip-report { position: absolute; left: 0; top: 0; width: 100%; background: #fff !important; color: #000 !important; }
+  .trip-report .c-dim, .trip-report .c-cyan, .trip-report .c-green, .trip-report .c-amber, .trip-title { color: #000 !important; }
+  .trip-head { display: none !important; }
+  .trip-map { border-color: #999; background: none; }
+  .trip-map polyline { stroke: #000; }
+}
+
+/* -- LEDGER overview (5.1.0, user 25.11.): balanced columns in reading order -- */
+.ledger-scroll { height: 100%; min-height: 0; overflow-y: auto; }
+.ledger-cols { column-count: 4; column-gap: 10px; column-fill: balance; }   /* 1500 px and up: the four groups */
+@media (max-width: 1499px) { .ledger-cols { column-count: 3; } }
+@media (max-width: 1099px) { .ledger-cols { column-count: 2; } }
+@media (max-width: 719px) { .ledger-cols { column-count: 1; } }
+.lay-phone .ledger-cols { column-count: 1; }
+.ledger-cols > * { break-inside: avoid; margin: 0 0 10px; width: 100%; box-sizing: border-box; }
+.ledger-cols .mine-table { table-layout: fixed; }
+.ledger-cols .mine-table th:first-child { width: 40%; }
+.ledger-cols .mine-table td.num { white-space: nowrap; font-size: 11.5px; }
+.ledger-ship { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* -- PLANET INFO (5.1.0, user 25.11.): one report in reading order, balanced columns -- */
+.pl-report { --cols: 3; column-count: var(--cols); column-gap: var(--gap); column-fill: balance; max-width: 1880px; margin: 0 auto; }
+.pl-report > * { break-inside: avoid; margin: 0 0 var(--gap); width: 100%; box-sizing: border-box; }
+@media (max-width: 1499px) { .pl-report { column-count: min(var(--cols), 2); } }
+@media (max-width: 899px) { .pl-report { column-count: 1; } }
+.lay-phone .pl-report { column-count: 1; }
+
+
+/* -- SC2 (5.1.0): legend entries that switch their layer -- */
+.legend .lg-chip { font: inherit; background: none; border: 0; padding: 0 2px; cursor: pointer; text-align: left; }
+.legend .lg-chip:hover { text-decoration: underline; }
+.legend .lg-chip.off { opacity: .35; text-decoration: line-through; }
+.legend .lg-chip:focus-visible { outline: 1px solid var(--cyan); }
+
+/* -- SV1b (5.1.0): the game rewrote its journal - in the ship bar -- */
+.sb-server .v { color: var(--amber); }
 
 /* TB1 (5.0.1, user 20.11.): every table, every page, every theme - a column
    of numbers (any cell td.num) is centred, its heading with it; a text

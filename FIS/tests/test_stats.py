@@ -163,6 +163,14 @@ class SessionsTest(unittest.TestCase):
         self.assertEqual(out["value_h"], (int(scan * 1.5) + int(full - scan)) / 2.0)
 
 
+def _own_block(css, mark):
+    """A theme block from its marker to the next "/* -- " section (5.1.0: later
+    blocks may name standard - the ATLAS radar, user 24.11.)."""
+    i = css.index(mark)
+    j = css.find("\n/* -- ", i + len(mark))
+    return css[i:j if j > 0 else len(css)]
+
+
 class StatsLayoutTest(unittest.TestCase):
     """Test findings f-tip and st-bio (17.11.2026): long texts overlapped
     their neighbours in STATISTICS - checked by eye in headless Chrome at
@@ -265,7 +273,7 @@ class StatsLayoutTest(unittest.TestCase):
         """TH7 (user 18.11.2026): MINING, VEHICLE, PLANET, PLANET INFO, ATLAS and GALAXY take
         each theme's bars, chips and sub-tabs; Belt's bezel covers every page."""
         css = self._read("css", "fis.css")
-        block = css[css.index("/* -- TH7 (18.11.): the remaining pages per theme"):]
+        block = _own_block(css, "/* -- TH7 (18.11.): the remaining pages per theme")
         for theme in ("console", "bridge", "industrial", "station", "next"):
             self.assertIn(':root[data-theme="%s"] :is(.mine-view, .vehicle-view, .planet-view, .surface-view, .atlas-view, .galaxy-view) ' % theme, block)
         self.assertNotIn('data-theme="standard"', block)
@@ -277,7 +285,7 @@ class StatsLayoutTest(unittest.TestCase):
         services, last jumps and air wing; standard unchanged, nothing animated."""
         css, js = self._read("css", "fis.css"), self._read("js", "views", "carrier.js")
         self.assertIn('meter(pctTank, 100, pctTank < 25 ? "warn" : "")', js)
-        block = css[css.index("/* -- TH6 (18.11.): CARRIER per theme"):]
+        block = _own_block(css, "/* -- TH6 (18.11.): CARRIER per theme")
         for theme in ("console", "bridge", "industrial", "station", "next"):
             self.assertIn(':root[data-theme="%s"] .carrier-view ' % theme, block)
         self.assertNotIn('data-theme="standard"', block)
@@ -289,7 +297,7 @@ class StatsLayoutTest(unittest.TestCase):
         hands its share to the theme as --p) and navpoints; standard unchanged, nothing animated."""
         css, ui = self._read("css", "fis.css"), self._read("js", "ui.js")
         self.assertIn('el("div", { class: "track", style: "--p: " + pct.toFixed(1) }', ui)
-        block = css[css.index("/* -- TH5 (18.11.): BRIEFING per theme"):]
+        block = _own_block(css, "/* -- TH5 (18.11.): BRIEFING per theme")
         for theme in ("console", "bridge", "industrial", "station", "next"):
             self.assertIn(':root[data-theme="%s"] .briefing-view .navlist li' % theme, block)
         self.assertNotIn('data-theme="standard"', block)
@@ -300,7 +308,7 @@ class StatsLayoutTest(unittest.TestCase):
         """TH4 (user 18.11.2026): SYSTEM per theme - flight plan, report and head on the side;
         every rule bound to a non-standard theme, Belt's bezel on SYSTEM too."""
         css = self._read("css", "fis.css")
-        block = css[css.index("/* -- TH4 (18.11.): SYSTEM per theme"):]
+        block = _own_block(css, "/* -- TH4 (18.11.): SYSTEM per theme")
         for theme in ("console", "bridge", "industrial", "station", "next"):
             self.assertIn(':root[data-theme="%s"] .tac-view .leg' % theme, block)
         self.assertNotIn('data-theme="standard"', block)
@@ -334,7 +342,7 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertIn('meter(pct(s.hull) ?? 0, 100, "sh-hull-m " + hcls(s.hull))', js)
         self.assertIn("const bar = (v, max, cls) => meter(v || 0, max, cls);", js)
         self.assertIn('class: "m-h", style: "--p: " + (pct(m.health) ?? 0)', js)
-        block = css[css.index("/* -- TH3 (18.11.): SHIP per theme."):]
+        block = _own_block(css, "/* -- TH3 (18.11.): SHIP per theme.")
         self.assertIn(".sh-hull-m { display: none; }", block)
         for theme in ("console", "bridge", "industrial", "station", "next"):
             self.assertIn(':root[data-theme="%s"] .sh-ann .sh-hull-m { display: block;' % theme, block)
@@ -383,7 +391,7 @@ class StatsLayoutTest(unittest.TestCase):
         self.assertNotIn("animation", block.split("@media (prefers-reduced-motion")[0])
         self.assertNotIn('content: "_"', block)
         # the views hand the share to the theme through meter(); the lead figure is marked
-        self.assertEqual(js.count("meter("), 3)
+        self.assertEqual(js.count("meter("), 4)                  # 5.1.0: + regions visited (RECORDS & ATLAS)
         self.assertIn('rows.length ? "st-row" : "st-row st-lead"', js)
 
     def test_sub_tabs_hold_every_frame_once(self):
@@ -393,13 +401,15 @@ class StatsLayoutTest(unittest.TestCase):
         js, css, i18n = self._read("js", "views", "statistics.js"), self._read("css", "fis.css"), self._read("js", "i18n.js")
         block = js[js.index("const PANES = ["):js.index("];", js.index("const PANES = ["))]
         keys = re.findall(r'"([A-Za-z]+)"', re.sub(r'N_\("[^"]*"\)', "", block))
-        panes = ["overview", "trends", "rates", "learning"]
+        panes = ["overview", "trends", "rates", "learning", "atlas", "craft", "trip"]
         frames = list(keys)
         for k in panes:                     # each pane id once; "learning" is a pane and its frame
             frames.remove(k)
         cards = re.findall(r'^  \["([A-Z]+)", N_\(', js, re.M)
         expected = ["ranks", "overTime", "firstFinds", "surfaceMaps", "bioRates", "perSession", "timePerSystem", "learning",
                     "carrierMoney"] + cards          # CT2: the carrier's money in OVERVIEW
+        expected += ["records", "regions", "starsWorlds", "journey", "travel", "ships", "bioCatalogue"]   # 5.1.0 ST2-ST9
+        expected += ["playPatterns", "engineering", "materialsFlow", "trip"]                             # ST7-ST14
         self.assertEqual(sorted(frames), sorted(expected))          # each once, none missing
         for k in expected[:9]:
             self.assertIn(k + ": () => " + k + "()", js)

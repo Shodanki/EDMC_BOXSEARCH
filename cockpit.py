@@ -227,6 +227,8 @@ def _route_check(hops: List[Tuple[str, Any, Any]]) -> None:
     logger.info("route check | %d systems not checked before: %d known, %d asked EDSM in one "
                 "request, %d in no database", len(todo), len(known), asked_edsm,
                 len(todo) - len(known) if asked_edsm or len(rest) == 0 else 0)
+    from . import cockpitinfo                       # F5: the result in passing, in the ROUTE item
+    cockpitinfo.route_finds(hops)
 
 
 def _route_check_todo(hops: List[Tuple[str, Any, Any]]) -> List[Tuple[str, Tuple[float, float, float]]]:

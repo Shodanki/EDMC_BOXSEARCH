@@ -171,6 +171,42 @@ class TestNearby(unittest.TestCase):
         self.assertIsNone(self.lk.from_nearby("JFM-21Z"))
         self.assertEqual(len(FakeSession.sent), 1)       # nothing asked for any of this
 
+    def test_own_requests_counted_into_the_cap(self):
+        """A4: every request the FIS sends is counted (fis_calls.json via
+        note_calls); after a restart the gateway starts from plugin + own."""
+        import tempfile
+        import callcount
+        noted = []
+        lk = CarrierLookup("5.1-test", calls_today=lambda: self.calls, offline=lambda: False,
+                           session_factory=FakeSession, clock=lambda: self.now, note_calls=noted.append)
+        lk.nearby([0.0, 0.0, 0.0])
+        lk.nearby([500.0, 0.0, 0.0])                     # another cell: asked
+        lk.nearby([0.0, 0.0, 0.0])                       # cached: nothing sent, nothing counted
+        self.assertEqual(noted, [{"spansh": 1}, {"spansh": 1}])
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, callcount.FILE_NAME)
+            for n in noted:
+                callcount.add(path, n, clock=lambda: self.now)
+            own = callcount.today(path, clock=lambda: self.now)
+            self.assertEqual(own, {"spansh": 2})
+            # a restarted FIS: seeded with the plugin's 3 plus its own 2
+            again = CarrierLookup("5.1-test", calls_today=lambda: {"spansh": self.calls["spansh"] + own["spansh"]},
+                                  offline=lambda: False, session_factory=FakeSession, clock=lambda: self.now)
+            self.assertEqual(again._gateway().today("spansh"), 5)
+
+    def test_nearby_memory_is_bounded(self):
+        """M12: expired cells go, at most NEARBY_CELLS stay - the dict grew
+        with every region asked."""
+        from fis import online
+        for i in range(online.NEARBY_CELLS + 10):
+            self.lk._keep_nearby((i, 0, 0, False), {"carriers": []})
+            self.now += 1
+        self.assertEqual(len(self.lk._nearby), online.NEARBY_CELLS)
+        self.assertNotIn((0, 0, 0, False), self.lk._nearby, "the oldest went first")
+        self.now += online.NEARBY_CACHE_S + 1
+        self.lk._keep_nearby((999, 0, 0, False), {"carriers": []})
+        self.assertEqual(list(self.lk._nearby), [(999, 0, 0, False)], "expired ones went")
+
     def test_offline_cap_and_errors(self):
         self.offline = True
         self.assertEqual(self.lk.nearby([0.0, 0.0, 0.0]), {"error": "offline"})

@@ -77,6 +77,7 @@ def plugin():
         p.learnreset = _optional("learnreset")     # plugin 5.0+: model resets (SK3)
         p.bodyvalue = _optional("bodyvalue")       # plugin 4.12+: what exploration data is worth (B6)
         p.findodds = _optional("findodds")         # plugin 5.0+: chance of a find, V0 (FX3)
+        p.callcount = _optional("callcount")       # plugin 5.1+: the FIS's own online requests (A4)
         _plugin = p
     return _plugin
 
@@ -444,6 +445,7 @@ def build_system(db: Database, id64: int, live: Optional[Dict[str, Any]] = None,
 
     hs_by_ring = _hotspots_by_ring(db, id64)
     bodies, by_row = _system_bodies(p, db, rows, name, now)
+    out["scanned_ts"] = max((r["scan_ts"] or 0 for r in rows), default=0) or None   # SC1
     rt = _system_route(sr, db, bodies, name, filters, cost_model, order_model, skip_arrival, fid, id64)
     if not any(b.pos for b in bodies.values()):
         sr.resolve_positions(bodies)
@@ -498,6 +500,8 @@ def _system_head(db: Database, id64: int, srow: Any, rows: Any, fid: Optional[st
         "fss_complete": bool(srow["fss_complete"]) if srow is not None else False,
         "visited": bool(srow["visited"]) if srow is not None else False,
         "known_sources": Database.known_sources(srow),
+        # SC1 (5.1.0): how old what we know is - the system row, your newest scan
+        "known_updated": srow["updated"] if srow is not None else None,
         "info_level": info_level(srow, db.shell_regions())[0],
         "bodies": [], "route": None, "fix": None, "generated": now,
         # C1: other commanders on this PC who have been here
@@ -1215,6 +1219,41 @@ def _ring_mining(db: Database, rings: List[Dict[str, Any]], archive: Any) -> Non
         g["expected"] = exp
 
 
+def _ring_spots(db: Database, rings: List[Dict[str, Any]], archive: Any) -> None:
+    """SP1 (5.1.0, user 25.11.): under each ring, per hotspot material and per
+    material mined there - the chance of a good field before mining (MP4) and
+    your record there (MP3), from every commander's journals as the overlay."""
+    if archive is None:
+        return
+    from . import fieldodds, mining
+    mf = fieldodds.mf()
+    if mf is None:
+        return
+    evs = mining._shared_events(archive)
+    m, rf, _smp = fieldodds.model(evs, db)
+    rated = fieldodds.rated(evs, db)
+    for g in rings:
+        name = g.get("name") or ""
+        mats = {mf.mat_key(h.get("key") or h.get("material")): h.get("material") for h in g.get("hotspots") or []}
+        for f in rated:
+            if f["ring"] == name:
+                mats.setdefault(f["mat"], f["mat_name"])
+        g["spots"] = [{"mat": k, "name": label, "odds": mf.odds_for(m, rf, name, k),
+                       "field": mf.field_of(rated, name, k)} for k, label in mats.items() if k]
+
+
+def _self_ring_spots(db: Database, out: Dict[str, Any], archive: Any) -> Optional[List[Dict[str, Any]]]:
+    """SP1: a ring opened itself (the body you are at while mining) - its
+    own spots, as under its planet's RINGS."""
+    name = out.get("name") or ""
+    if out.get("rings") or not name.endswith(("Ring", "Belt")):
+        return None
+    me = [{"name": name, "hotspots": [{"material": h["label"] or h["material"], "key": h["material"]}
+                                      for h in db.hotspots_of(out["id64"], out["body_id"])]}]
+    _ring_spots(db, me, archive)
+    return me[0].get("spots") or None
+
+
 def _ground_mining(db: Database, body_name: str, planet_class: Optional[str]) -> Optional[Dict[str, Any]]:
     """
     Ground mining (Rhino rigs) on this body - tonnes per material and the
@@ -1303,6 +1342,10 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
     out: Dict[str, Any] = {
         "id64": id64, "body_id": body_id, "system": sysname,
         "name": r["name"], "short": p.sysroute.shorten(r["name"] or "", sysname),
+        # SC1 (5.1.0): where the sheet's data comes from and how old it is
+        "provenance": {"scan_ts": r["scan_ts"], "updated": r["updated"],
+                       "system_sources": Database.known_sources(srow) if srow is not None else [],
+                       "system_updated": srow["updated"] if srow is not None else None},
         "kind": r["kind"], "cls": body_class(r), "colour": colour_key(r),
         "terraform": r["terraform"] or "", "landable": bool(r["landable"]),
         "arrival_ls": _r(r["arrival_ls"], 1),
@@ -1372,6 +1415,11 @@ def build_body(db: Database, id64: int, body_id: int, archive: Any = None,
     from . import science
     try:
         _ring_mining(db, out["rings"], archive)    # rocks per ring, what to expect at a hotspot
+    except Exception:
+        pass
+    try:
+        _ring_spots(db, out["rings"], archive)     # SP1: chance of a good field, your record there
+        out["ring_spots"] = _self_ring_spots(db, out, archive)
     except Exception:
         pass
     try:
@@ -1501,6 +1549,7 @@ def build_surface(db: Database, live: Optional[Dict[str, Any]],
     """The SURFACE view of a body: track, marks, samples; on foot with the life
     support."""
     out = _build_surface(db, live, id64, body)
+    _surface_bio_all(db, archive, out)
     life = life_support((live or {}).get("status") or {})
     if life:
         out = dict(out, life=life, suit=(live or {}).get("suit"))
@@ -1509,6 +1558,53 @@ def build_surface(db: Database, live: Optional[Dict[str, Any]],
     if rh:
         out = dict(out, rhino=rh)
     return out
+
+
+def _surface_bio_all(db: Database, archive: Any, out: Dict[str, Any]) -> None:
+    """
+    5.1.0 (bio display, variant 1): every collectable bio of the body, one
+    row each - finished, begun, not started (biosig.species_rows, the same
+    logic as the overlay) - with its value: what your own sales paid for the
+    species, or "~" the mean of your sales of its genus.
+    """
+    p = plugin()
+    if p.biosig is None or not out.get("body") or not out.get("id64"):
+        return
+    brow = db.body_by_name(out["id64"], out["body"])
+    if brow is None:
+        return
+    keys = set(brow.keys())
+
+    def col(k: str) -> Any:                          # an older plugin database lacks columns
+        return brow[k] if k in keys else None
+
+    analysed = [a for a in _json(col("bio_species"), []) if isinstance(a, dict)]
+    analysed += [{"species": b["species"], "genus": b["genus"]} for b in out.get("bio") or [] if b.get("done")]
+    progress = [{"species": b["species"], "genus": b["genus"],
+                 "samples": b["samples"] if b.get("samples") is not None else len(b.get("points") or [])}
+                for b in out.get("bio") or [] if not b.get("done")]
+    genera = [g.strip() for g in (col("genuses") or "").split(",") if g.strip()]
+    try:
+        seen = db.codex_species(out["id64"], brow["body_id"]).get(brow["body_id"], [])
+    except Exception:                                # no signals table yet
+        seen = []
+    rows = p.biosig.species_rows(analysed, progress, genera, seen)
+    try:
+        values = archive.organic_values() if archive is not None else {}
+    except Exception:  # pragma: no cover - journals are best effort
+        values = {}
+    by_genus: Dict[str, List[int]] = {}
+    for name, v in values.items():
+        if v.get("value"):
+            by_genus.setdefault(p.biosig.genus_of(name) or "", []).append(int(v["value"]))
+    for r in rows:
+        v = values.get(r["species"] or "")
+        if v and v.get("value"):
+            r["value"] = int(v["value"])
+        elif by_genus.get(r["genus"] or ""):
+            vals = by_genus[r["genus"]]
+            r["value"], r["est"] = int(round(sum(vals) / len(vals))), True
+    out["bio_all"] = {"signals": int(col("sig_bio") or 0), "rows": rows}
 
 
 def backpack(journal_dir: Optional[str]) -> Optional[Dict[str, Any]]:

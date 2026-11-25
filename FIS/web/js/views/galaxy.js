@@ -20,7 +20,8 @@ import { t, N_ } from "../i18n.js";
 
 const LAYERS = [["path", N_("flight path")], ["carrier", N_("carrier")], ["systems", N_("systems")],
   ["boxels", N_("boxels")], ["spheres", N_("spheres")], ["finds", N_("finds")], ["navroute", N_("route")],
-  ["corridor", N_("corridor")]];
+  ["corridor", N_("corridor")], ["nexthop", N_("next hop")],    // 5.1.0: NEXT HOP can be switched off (user 24.11.)
+  ["regions", N_("regions")]];                                  // SC3 (5.1.0): the codex regions' outlines
 const SPANS = [[0, N_("all time")], [90, N_("90 days")], [30, N_("30 days")], [7, N_("7 days")], [1, N_("24 hours")]];
 const MC = "abcdefgh";
 // interface colours: C / alpha() from ui.js (theme tokens)
@@ -47,6 +48,13 @@ let mode = new URLSearchParams(location.search).has("2d") ? "2d" : (localStorage
 let g3 = null, g3load = null, ov = null, stage = null, replay = 1, playTimer = null;
 let ui = {};                     // toolbar elements
 let focus = null, focusMe = true;  // what the map turns around; focusMe: follows you
+
+// TH8 (5.1.0): a colour between two theme tokens (0..1), with alpha
+function mixRGBA(a, b, k, al) {
+  const rgb = (tok) => { const n = parseInt(String(C[tok]).slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+  const x = rgb(a), y = rgb(b);
+  return "rgba(" + x.map((v, i) => Math.round(v + (y[i] - v) * k)).join(",") + "," + al + ")";
+}
 
 export function mount(r) {
   root = r;
@@ -107,6 +115,29 @@ function fromPick(p) {
   if (p.kind === "carriernow") return carrierFocus();
   if (p.kind === "favcarrier") return { kind: "system", name: p.c.system, id: p.c.id, x: p.c.x, y: p.c.y, z: p.c.z };
   return null;
+}
+// 5.1.0: a label beside a point on the side (right, left, above, below) that
+// keeps the most angle to the lines leaving it, amber with a dark rim
+const SIDES = [[0, "start", 1, 4], [Math.PI, "end", -1, 4], [-Math.PI / 2, "center", 0, -12], [Math.PI / 2, "center", 0, 18]];
+function labelAway(g, text, x, y, lines, gap) {
+  const angs = lines.map(([dx, dy]) => Math.atan2(dy, dx));
+  const room = (a) => angs.length ? Math.min(...angs.map(b => { const d = Math.abs(a - b) % (2 * Math.PI); return Math.min(d, 2 * Math.PI - d); })) : Math.PI;
+  const [, align, sx, dy] = SIDES.reduce((best, s) => room(s[0]) > room(best[0]) + 0.01 ? s : best, SIDES[0]);
+  g.font = "11px monospace"; g.textAlign = align;
+  g.lineWidth = 3; g.lineJoin = "round"; g.strokeStyle = alpha("panel", .85); g.strokeText(text, x + sx * gap, y + dy);
+  g.fillStyle = C.amber; g.fillText(text, x + sx * gap, y + dy);
+  g.textAlign = "start";
+}
+// where the dashed carrier path leaves the point: to the stops before and
+// after each stop at that spot (screen points, as vectors from it)
+function pathNeighbours(pts, x, y) {
+  const out = [];
+  const at = (p) => Math.hypot(p[0] - x, p[1] - y) <= 2;
+  pts.forEach((p, i) => {
+    if (!at(p)) return;
+    for (const q of [pts[i - 1], pts[i + 1]]) if (q && !at(q)) out.push([q[0] - x, q[1] - y]);
+  });
+  return out;
 }
 function carrierFocus() {
   const c = data && data.carrier_now;
@@ -286,6 +317,7 @@ function draw() {
   for (let x = Math.floor(x0 / step) * step; x <= x1; x += step) { const [sx] = toScreen(x, 0); g.moveTo(sx, 0); g.lineTo(sx, H); }
   for (let z = Math.floor(z0 / step) * step; z <= z1; z += step) { const [, sy] = toScreen(0, z); g.moveTo(0, sy); g.lineTo(W, sy); }
   g.stroke();
+  if (on.regions) drawRegions(W, H);
   // boxels of the active sphere
   if (on.boxels && data.boxels.length && data.boxel_size) {
     // seen from above, the boxels of one column (different heights) lie on
@@ -303,8 +335,9 @@ function draw() {
       if (!vis(c.x, c.z, s)) continue;
       const [sx, sy] = toScreen(c.x, c.z), n = c.list.length;
       const gF = c.closed / n, aF = c.open / n;
-      if (gF) { g.fillStyle = `rgba(124,255,107,${(.08 + .32 * gF).toFixed(3)})`; g.fillRect(sx - s / 2, sy - s / 2, s, s); }
-      if (aF) { g.fillStyle = `rgba(255,178,62,${(.06 + .22 * aF).toFixed(3)})`; g.fillRect(sx - s / 2, sy - s / 2, s, s); }
+      // TH8 (5.1.0): the theme's green and amber, not standard's fixed values
+      if (gF) { g.fillStyle = alpha("green", (.08 + .32 * gF).toFixed(3)); g.fillRect(sx - s / 2, sy - s / 2, s, s); }
+      if (aF) { g.fillStyle = alpha("amber", (.06 + .22 * aF).toFixed(3)); g.fillRect(sx - s / 2, sy - s / 2, s, s); }
       g.strokeStyle = c.open ? alpha("amber", .45) : c.closed === n ? alpha("green", .5) : alpha("dim", .22);
       g.lineWidth = 1; g.strokeRect(sx - s / 2 + .5, sy - s / 2 + .5, s - 1, s - 1);
       if (s > 34) { g.fillStyle = c.closed === n ? C.green : c.open ? C.amber : C.dim; g.font = "10px monospace"; g.fillText(c.closed + "/" + n, sx - s / 2 + 4, sy + s / 2 - 4); }
@@ -353,7 +386,7 @@ function draw() {
       const a = data.path[i - 1], b = data.path[i];
       if (b.kind === "login" && Math.hypot(b.x - a.x, b.z - a.z) > 100) continue;   // other session, no flight
       const k = ((b.t || t0) - t0) / span;
-      g.strokeStyle = `rgba(${Math.round(181 - 119 * k)},${Math.round(124 + 118 * k)},${Math.round(255 - 31 * k)},${.35 + .6 * k})`;
+      g.strokeStyle = mixRGBA("violet", "cyan", k, .35 + .6 * k);   // old flights violet, new ones the accent
       const [ax, ay] = toScreen(a.x, a.z), [bx, by] = toScreen(b.x, b.z);
       g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
     }
@@ -407,17 +440,22 @@ function draw() {
   if (on.carrier && data.carrier_now) {
     const cn = data.carrier_now, [main, jump] = carrierTexts(cn);
     const [sx, sy] = toScreen(cn.x, cn.z);
+    // 5.1.0: the labels go where no dashed line leaves the point (they lay on
+    // the carrier path or the jump line), with a dark rim
+    const away = pathNeighbours(data.carrier.map(c => toScreen(c.x, c.z)), sx, sy);
+    let jumpV = null;
     if (jump && cn.jump.x !== undefined) {
       const [jx, jy] = toScreen(cn.jump.x, cn.jump.z);
       g.strokeStyle = C.amber; g.lineWidth = 1.5; g.setLineDash([6, 4]);
       g.beginPath(); g.moveTo(sx, sy); g.lineTo(jx, jy); g.stroke(); g.setLineDash([]);
       g.beginPath(); g.arc(jx, jy, 6, 0, Math.PI * 2); g.stroke();
-      g.fillStyle = C.amber; g.font = "11px monospace"; g.fillText(jump, jx + 9, jy + 14);
+      jumpV = [jx - sx, jy - sy];
+      labelAway(g, jump, jx, jy, [[sx - jx, sy - jy]], 10);
     }
     g.fillStyle = alpha("panel", .9); g.strokeStyle = C.amber; g.lineWidth = 1.5;
     g.fillRect(sx - 9, sy - 3, 18, 7); g.strokeRect(sx - 9, sy - 3, 18, 7);
     g.fillStyle = C.amber; g.fillRect(sx + 2, sy - 8, 4, 5);
-    g.font = "11px monospace"; g.fillText(main, sx + 13, sy + 4);
+    labelAway(g, main, sx, sy, away.concat(jumpV ? [jumpV] : []), 13);
     picks.push({ sx, sy, kind: "carriernow", c: cn, id: cn.id });
   }
   // K4: favourite carriers at their last known position - a star
@@ -510,7 +548,7 @@ function renderSide() {
   if (!data) { side.append(frame(t("GALAXY"), "", el("div", { class: "empty", text: t("no data yet") }))); return; }
   const st = data.stats;
   if (focus) side.append(focusFrame());
-  if (hop) side.append(hopFrame());
+  if (hop && on.nexthop) side.append(hopFrame());
   const period = st.first ? new Date(st.first * 1000).toLocaleDateString() + " – " + new Date(st.last * 1000).toLocaleDateString() : "";
   const daySel = el("select", { class: "lay-pick", onchange: (e) => { days = Number(e.target.value); localStorage.setItem("fis.gal.days", String(days)); view.scale = null; update(null, "data"); } },
     ...SPANS.map(([v, l]) => el("option", { value: String(v), text: t(l) })));
@@ -522,11 +560,7 @@ function renderSide() {
   ], { appear: false }));
   // layers
   side.append(frame(t("LAYERS"), "", el("div", { class: "gal-layers" }, ...LAYERS.map(([k, l]) => el("label", { class: "gal-lay" },
-    el("input", { type: "checkbox", checked: on[k] ? true : null, onchange: (e) => {
-      on[k] = e.target.checked; localStorage.setItem("fis.gal.layers", JSON.stringify(on));
-      if (g3) g3.setLayers(on);
-      draw();
-    } }),
+    el("input", { type: "checkbox", checked: on[k] ? true : null, onchange: (e) => setLayer(k, e.target.checked) }),
     " " + t(l)))), { appear: false }));
   // survey sphere
   if (data.active) {
@@ -551,14 +585,68 @@ function renderSide() {
         el("button", { text: t("all"), onclick: () => refit() })),
     ], { appear: false }));
   }
+  // SC2 (5.1.0, StellarCartography idea): a legend entry switches its layer
   side.append(el("div", { class: "legend" },
-    el("span", { class: "c-violet", text: "■ " + t("only known to us") }), el("span", { class: "c-green", text: "■ " + t("visited") }),
-    el("span", { class: "c-amber", text: "┄ " + t("carrier") }),
-    ...Object.entries(FIND_COL).map(([k, c]) => el("span", { style: { color: c }, text: "◆ " + t(FIND_NAME[k]) })),
+    legendChip("systems", "c-violet", "■ " + t("only known to us")), legendChip("systems", "c-green", "■ " + t("visited")),
+    legendChip("carrier", "c-amber", "┄ " + t("carrier")),
+    ...Object.entries(FIND_COL).map(([k, c]) => legendChip("finds", "", "◆ " + t(FIND_NAME[k]), { color: c })),
+    legendChip("path", "c-cyan", "━ " + t("flight path")),
     el("span", { class: "c-dim", text: view3d()
       ? t("path: violet = old, cyan = recent · drag turns · right drag or two fingers pan · wheel zooms")
       : t("path: violet = old, cyan = recent · wheel zoom · drag · double click fits") }),
     el("span", { class: "c-dim", text: t("click: focus there · double click: details in their own window") })));
+}
+
+// SC3 (5.1.0, StellarCartography idea): the 42 codex regions as outlines on
+// the galactic plane - fetched once, the borders found once, drawn per frame
+let regions = null, regionSegs = null, regionsAsked = false;
+async function loadRegions() {
+  if (regionsAsked) return;
+  regionsAsked = true;
+  try { regions = await getJSON("/api/regions"); } catch (e) { regions = null; return; }
+  const { step, x0, z0, w, h, rows } = regions, grid = new Uint8Array(w * h);
+  rows.forEach((row, j) => { let i = 0; for (let k = 0; k < row.length; k += 2) { grid.fill(row[k], j * w + i, j * w + i + row[k + 1]); i += row[k + 1]; } });
+  const segs = [];
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const a = grid[j * w + i], x = x0 + (i + 0.5) * step, z = z0 + (j + 0.5) * step;
+    if (i + 1 < w && grid[j * w + i + 1] !== a && (a || grid[j * w + i + 1])) segs.push(x, z - step, x, z);
+    if (j + 1 < h && grid[(j + 1) * w + i] !== a && (a || grid[(j + 1) * w + i])) segs.push(x - step, z, x, z);
+  }
+  regionSegs = new Float32Array(segs);
+  draw();
+}
+function drawRegions(W, H) {
+  if (!regionSegs) { loadRegions(); return; }
+  g.strokeStyle = alpha("violet", .28); g.lineWidth = 1; g.beginPath();
+  for (let k = 0; k < regionSegs.length; k += 4) {
+    const [ax, ay] = toScreen(regionSegs[k], regionSegs[k + 1]), [bx, by] = toScreen(regionSegs[k + 2], regionSegs[k + 3]);
+    if ((ax < 0 && bx < 0) || (ay < 0 && by < 0) || (ax > W && bx > W) || (ay > H && by > H)) continue;
+    g.moveTo(ax, ay); g.lineTo(bx, by);
+  }
+  g.stroke();
+  g.fillStyle = alpha("violet", .55); g.font = "11px " + getComputedStyle(document.body).fontFamily; g.textAlign = "center";
+  for (const [id, x, z] of regions.labels) {
+    const [sx, sy] = toScreen(x, z);
+    if (sx > 0 && sx < W && sy > 0 && sy < H) g.fillText(regions.names[String(id)] || "", sx, sy);
+  }
+  g.textAlign = "start";
+}
+
+/** SC2: switch a layer from the LAYERS list or a legend entry - remembered,
+ *  the 2D and 3D map and the side updated. */
+function setLayer(k, v) {
+  on[k] = v;
+  try { localStorage.setItem("fis.gal.layers", JSON.stringify(on)); } catch (e) { /* private window */ }
+  if (g3) g3.setLayers(on);
+  renderSide();
+  draw();
+}
+
+/** SC2: a legend entry as a button for its layer; dim while the layer is off. */
+function legendChip(k, cls, text, style) {
+  return el("button", { type: "button", class: "lg-chip " + cls + (on[k] ? "" : " off"), style: style || {},
+    "aria-pressed": on[k] ? "true" : "false", title: t(on[k] ? "click: hide this layer" : "click: show this layer"),
+    text, onclick: () => setLayer(k, !on[k]) });
 }
 
 function focusFrame() {

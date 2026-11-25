@@ -55,8 +55,8 @@ for hms, ev, e in SESSION:
     v, changed = w.check(IN_SHIP | LANDED | DANGER, ts(hms) + 1)
     if changed:
         seen.append((hms, v and v["state"]))
-check(seen == [("20:08:42", "probable")],
-      "probable from the ModuleInfo on: %s" % seen)
+check(seen == [("20:09:15", "probable")],
+      "probable from the first AFMU repair on, not from the ModuleInfo (user 24.11.): %s" % seen)
 v, _ = w.check(IN_SHIP | LANDED | DANGER, ts("20:13:20"))
 check(v == {"state": "probable", "why": "afmu"}, "still probable after the last repair")
 check(ls.overlay_lines(v) == [("LIFE SUPPORT OFF?", ls.RED)], "overlay: red, with a question mark")
@@ -68,6 +68,11 @@ v, _ = w.check(IN_SHIP | LANDED | DANGER, ts("22:40:00"))
 check(v is None, "hours later DANGER (a hostile ship): no stale guess")
 v, _ = w.check(DANGER | LANDED, ts("20:13:20"))
 check(v is None, "not in the ship (on foot): no lamp")
+m = ls.LifeSupportWatch()                       # 24.11.: the modules panel opened while mining
+m.feed("Loadout", LOADOUT, ts("22:40:00"))
+m.feed("ModuleInfo", {}, ts("22:46:50"))
+v, _ = m.check(IN_SHIP | DANGER, ts("22:46:55"))
+check(v is None, "a ModuleInfo alone (panel opened) with DANGER: no guess")
 
 print("sure cases")
 off = dict(LOADOUT, Modules=[dict(LS_ON, On=False)])
